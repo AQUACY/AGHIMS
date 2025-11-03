@@ -1,0 +1,582 @@
+<template>
+  <div class="app-background" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'"></div>
+  <q-layout view="hHh lpR fFf" class="layout-glass">
+    <q-header elevated class="glass-header text-white">
+      <q-toolbar>
+        <q-toolbar-title class="text-weight-bold">
+          Hospital Management System
+        </q-toolbar-title>
+        <q-space />
+        <div class="q-mr-md text-weight-medium">{{ authStore.userName }}</div>
+        <q-btn
+          flat
+          round
+          dense
+          :icon="themeStore.isDark ? 'light_mode' : 'dark_mode'"
+          class="q-mr-sm glass-button"
+          @click="themeStore.toggleTheme()"
+        >
+          <q-tooltip>Toggle {{ themeStore.isDark ? 'Light' : 'Dark' }} Mode</q-tooltip>
+        </q-btn>
+        <q-btn
+          flat
+          icon="logout"
+          label="Logout"
+          class="glass-button"
+          @click="handleLogout"
+        />
+      </q-toolbar>
+    </q-header>
+
+    <q-drawer
+      v-model="drawerOpen"
+      show-if-above
+      :width="300"
+      :breakpoint="1024"
+      class="glass-drawer"
+    >
+      <!-- Patient Search Section -->
+      <q-card class="q-ma-sm glass-card" flat>
+        <q-card-section class="q-pa-md">
+          <div class="text-subtitle1 q-mb-sm text-weight-bold glass-text">Search Patient</div>
+          
+          <!-- Search by Card Number -->
+          <q-input
+            v-model="searchCardNumber"
+            filled
+            dense
+            label="Card Number"
+            class="q-mb-sm"
+            @keyup.enter="searchByCardNumber"
+            clearable
+          >
+            <template v-slot:append>
+              <q-icon 
+                name="search" 
+                class="cursor-pointer" 
+                @click="searchByCardNumber"
+                :class="{ 'text-primary': searchCardNumber }"
+              />
+            </template>
+          </q-input>
+          
+          <!-- Search by Name -->
+          <q-input
+            v-model="searchPatientName"
+            filled
+            dense
+            label="Patient Name"
+            class="q-mb-sm"
+            @keyup.enter="searchByName"
+            clearable
+          >
+            <template v-slot:append>
+              <q-icon 
+                name="search" 
+                class="cursor-pointer" 
+                @click="searchByName"
+                :class="{ 'text-primary': searchPatientName }"
+              />
+            </template>
+          </q-input>
+          
+          <q-btn
+            v-if="searchCardNumber"
+            color="primary"
+            size="sm"
+            label="Search Card"
+            @click="searchByCardNumber"
+            class="full-width q-mb-xs glass-button"
+            :loading="searchingByCard"
+            :disable="!searchCardNumber || searchingByCard"
+          />
+          
+          <q-btn
+            v-if="searchPatientName"
+            color="primary"
+            size="sm"
+            label="Search Name"
+            @click="searchByName"
+            class="full-width glass-button"
+            :loading="searchingByName"
+            :disable="!searchPatientName || searchingByName"
+          />
+        </q-card-section>
+      </q-card>
+
+      <q-separator class="q-my-sm" />
+
+      <q-list class="glass-nav-list">
+        <q-item-label header class="text-weight-bold q-py-md" style="opacity: 0.9;">
+          Navigation
+        </q-item-label>
+
+        <q-item
+          clickable
+          v-ripple
+          :to="{ name: 'Dashboard' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="dashboard" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Dashboard</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Records', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'PatientRegistration' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="person_add" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Patient Registration</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          clickable
+          v-ripple
+          :to="{ name: 'EncountersCalendar' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="calendar_month" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Appointment Calendar</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Nurse', 'Doctor', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Vitals' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="favorite" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Vitals</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Doctor', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Consultation' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="medical_services" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Consultation</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Billing', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Billing' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="receipt" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Billing</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Pharmacy', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Pharmacy' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="medication" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Pharmacy</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Lab', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Lab' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="science" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Lab</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Scan', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Scan' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="biotech" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Scan</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Xray', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Xray' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="radio_button_checked" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>X-ray</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Claims', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'Claims' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="description" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Claims</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Nurse', 'Doctor', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'IPD' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="local_hospital" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>IPD</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'PriceListManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="price_check" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Price List Management</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'StaffManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="people" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Staff Management</q-item-label>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </q-drawer>
+
+    <q-page-container>
+      <router-view />
+    </q-page-container>
+  </q-layout>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '../stores/auth';
+import { useThemeStore } from '../stores/theme';
+import { useQuasar } from 'quasar';
+import { patientsAPI } from '../services/api';
+
+const $q = useQuasar();
+const router = useRouter();
+const authStore = useAuthStore();
+const themeStore = useThemeStore();
+const drawerOpen = ref(true);
+
+// Patient search fields
+const searchCardNumber = ref('');
+const searchPatientName = ref('');
+const searchingByCard = ref(false);
+const searchingByName = ref(false);
+
+// Search by card number
+const searchByCardNumber = async () => {
+  if (!searchCardNumber.value || !searchCardNumber.value.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a card number',
+    });
+    return;
+  }
+
+  searchingByCard.value = true;
+  try {
+    const response = await patientsAPI.getByCard(searchCardNumber.value.trim());
+    console.log('Card search response:', response);
+    console.log('Response data:', response.data);
+    
+    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
+    // Handle both array and single object responses
+    let patients = [];
+    if (Array.isArray(response.data)) {
+      patients = response.data;
+    } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
+      // Single object returned - convert to array
+      patients = [response.data];
+    } else if (response.data?.data && Array.isArray(response.data.data)) {
+      patients = response.data.data;
+    } else if (response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
+      // Single object in data property
+      patients = [response.data.data];
+    } else if (response.data?.results && Array.isArray(response.data.results)) {
+      patients = response.data.results;
+    }
+    
+    console.log('Extracted patients:', patients);
+    
+    if (patients.length === 0) {
+      $q.notify({
+        type: 'info',
+        message: 'No patients found with that card number',
+      });
+      return;
+    }
+    
+    // Always go to search results page
+    await router.push({
+      name: 'PatientSearchResults',
+      query: { 
+        searchType: 'card',
+        searchTerm: searchCardNumber.value.trim(),
+        patients: JSON.stringify(patients) 
+      }
+    });
+    // Clear search field
+    searchCardNumber.value = '';
+  } catch (error) {
+    console.error('Card search error:', error);
+    console.error('Error response:', error.response);
+    console.error('Error data:', error.response?.data);
+    
+    // Check if it's a 404 or empty response
+    if (error.response?.status === 404 || error.response?.status === 200) {
+      // API returned empty list or not found - show appropriate message
+      $q.notify({
+        type: 'info',
+        message: 'No patients found with that card number',
+      });
+    } else {
+      // Actual error occurred
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || error.message || 'Failed to search patients',
+      });
+    }
+  } finally {
+    searchingByCard.value = false;
+  }
+};
+
+// Search by name
+const searchByName = async () => {
+  if (!searchPatientName.value || !searchPatientName.value.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a patient name',
+    });
+    return;
+  }
+
+  searchingByName.value = true;
+  try {
+    const response = await patientsAPI.searchByName(searchPatientName.value.trim());
+    console.log('Name search response:', response);
+    console.log('Response data:', response.data);
+    
+    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
+    // Handle both array and single object responses
+    let patients = [];
+    if (Array.isArray(response.data)) {
+      patients = response.data;
+    } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
+      // Single object returned - convert to array
+      patients = [response.data];
+    } else if (response.data?.data && Array.isArray(response.data.data)) {
+      patients = response.data.data;
+    } else if (response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
+      // Single object in data property
+      patients = [response.data.data];
+    } else if (response.data?.results && Array.isArray(response.data.results)) {
+      patients = response.data.results;
+    }
+    
+    console.log('Extracted patients:', patients);
+    
+    if (patients.length === 0) {
+      $q.notify({
+        type: 'info',
+        message: 'No patients found with that name',
+      });
+      return;
+    }
+    
+    // Always go to search results page
+    await router.push({
+      name: 'PatientSearchResults',
+      query: { 
+        searchType: 'name',
+        searchTerm: searchPatientName.value.trim(),
+        patients: JSON.stringify(patients) 
+      }
+    });
+    // Clear search field
+    searchPatientName.value = '';
+  } catch (error) {
+    console.error('Name search error:', error);
+    console.error('Error response:', error.response);
+    console.error('Error data:', error.response?.data);
+    
+    // Check if it's a 404 or empty response
+    if (error.response?.status === 404 || error.response?.status === 200) {
+      // API returned empty list or not found - show appropriate message
+      $q.notify({
+        type: 'info',
+        message: 'No patients found with that name',
+      });
+    } else {
+      // Actual error occurred
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || error.message || 'Failed to search patients',
+      });
+    }
+  } finally {
+    searchingByName.value = false;
+  }
+};
+
+const canAccess = (roles) => authStore.canAccess(roles);
+
+const handleLogout = () => {
+  $q.dialog({
+    title: 'Confirm Logout',
+    message: 'Are you sure you want to logout?',
+    cancel: true,
+    persistent: true,
+  }).onOk(() => {
+    authStore.logout();
+    router.push('/login');
+  });
+};
+</script>
+
+<style scoped>
+.layout-glass {
+  position: relative;
+}
+
+.glass-nav-list {
+  padding: 8px;
+}
+
+.glass-nav-item {
+  margin: 4px 0;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.glass-nav-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateX(4px);
+}
+
+.glass-nav-active {
+  background: rgba(46, 139, 87, 0.3) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 215, 0, 0.5);
+  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.3);
+}
+
+.body--dark .glass-nav-item {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.body--dark .glass-nav-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.body--dark .glass-nav-active {
+  background: rgba(46, 139, 87, 0.25) !important;
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.4);
+}
+
+.q-drawer {
+  border-right: none;
+}
+</style>
+

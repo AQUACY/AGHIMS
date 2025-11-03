@@ -1,0 +1,327 @@
+<template>
+  <q-page class="q-pa-md">
+    <div class="text-h4 q-mb-md text-weight-bold glass-text">Appointment Calendar</div>
+
+    <q-card class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="row items-center q-gutter-md">
+          <q-input
+            v-model="selectedDate"
+            filled
+            type="date"
+            label="Select Date"
+            class="col-12 col-md-4"
+            @update:model-value="loadEncounters"
+          />
+          <q-input
+            v-model="cardSearch"
+            filled
+            label="Filter by Card Number"
+            class="col-12 col-md-4"
+            clearable
+          />
+          <q-btn
+            icon="today"
+            label="Today"
+            @click="setToday"
+            color="primary"
+            class="col-12 col-md-2 glass-button"
+          />
+          <q-space />
+          <q-badge color="primary" :label="`${encounters.length} encounters`" />
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <q-card class="glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">Appointments for {{ formattedDate }}</div>
+        
+        <q-table
+          v-if="encounters.length > 0"
+          :rows="filteredEncounters"
+          :columns="columns"
+          row-key="id"
+          flat
+          :loading="loading"
+        >
+          <template v-slot:body-cell-status="props">
+            <q-td :props="props">
+              <q-badge
+                :color="getStatusColor(props.value)"
+                :label="props.value"
+              />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-time="props">
+            <q-td :props="props">
+              {{ formatTime(props.value) }}
+            </q-td>
+          </template>
+          <template v-slot:body-cell-actions="props">
+            <q-td :props="props">
+              <q-btn
+                size="sm"
+                color="primary"
+                icon="visibility"
+                flat
+                @click="viewEncounter(props.row)"
+                class="q-mr-xs"
+              />
+              <q-btn
+                size="sm"
+                color="secondary"
+                icon="edit"
+                flat
+                :disable="props.row.status === 'finalized' && !isAdmin"
+                @click="editEncounter(props.row)"
+                class="q-mr-xs"
+              />
+              <q-btn
+                v-if="isAdmin"
+                size="sm"
+                color="negative"
+                icon="delete"
+                flat
+                @click="deleteEncounterConfirm(props.row)"
+              />
+            </q-td>
+          </template>
+        </q-table>
+
+        <div v-else class="text-center q-pa-lg text-grey-6">
+          <q-icon name="event_busy" size="64px" />
+          <div class="text-h6 q-mt-md">No appointments found for this date</div>
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <!-- Edit Encounter Dialog -->
+    <q-dialog v-model="showEditDialog" persistent>
+      <q-card style="min-width: 500px">
+        <q-card-section>
+          <div class="text-h6">Edit Appointment #{{ currentEncounter?.id }}</div>
+        </q-card-section>
+
+        <q-card-section>
+          <q-form @submit="saveEncounterEdit" class="q-gutter-md">
+            <q-select
+              v-model="editForm.department"
+              filled
+              :options="departmentOptions"
+              label="Department *"
+              lazy-rules
+              :rules="[(val) => !!val || 'Required']"
+            />
+            <q-input
+              v-model="editForm.ccc_number"
+              filled
+              label="CCC Number"
+            />
+            <q-select
+              v-model="editForm.status"
+              filled
+              :options="statusOptions"
+              label="Status"
+            />
+            <div>
+              <q-btn
+                label="Save Changes"
+                type="submit"
+                color="primary"
+              />
+              <q-btn
+                label="Cancel"
+                flat
+                color="grey"
+                @click="showEditDialog = false"
+                class="q-ml-sm"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+  </q-page>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { encountersAPI } from '../services/api';
+import { useEncountersStore } from '../stores/encounters';
+import { useAuthStore } from '../stores/auth';
+import { useQuasar } from 'quasar';
+
+const $q = useQuasar();
+const router = useRouter();
+const encountersStore = useEncountersStore();
+const authStore = useAuthStore();
+
+const selectedDate = ref('');
+const encounters = ref([]);
+const loading = ref(false);
+const cardSearch = ref('');
+
+const columns = [
+  { name: 'time', label: 'Time', field: 'created_at', align: 'left', sortable: true },
+  { name: 'id', label: 'Encounter ID', field: 'id', align: 'left' },
+  { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left' },
+  { name: 'card_number', label: 'Card Number', field: 'patient_card_number', align: 'left' },
+  { name: 'department', label: 'Department', field: 'department', align: 'left' },
+  { name: 'status', label: 'Status', field: 'status', align: 'center' },
+  { name: 'ccc_number', label: 'CCC Number', field: 'ccc_number', align: 'left' },
+  { name: 'actions', label: 'Actions', align: 'center' },
+];
+
+const formattedDate = computed(() => {
+  if (!selectedDate.value) return 'Select a date';
+  const date = new Date(selectedDate.value);
+  return date.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+});
+
+const filteredEncounters = computed(() => {
+  const needle = (cardSearch.value || '').toLowerCase().trim();
+  if (!needle) return encounters.value;
+  return encounters.value.filter(e => (e.patient_card_number || '').toLowerCase().includes(needle));
+});
+
+const setToday = () => {
+  const today = new Date();
+  selectedDate.value = today.toISOString().split('T')[0];
+  loadEncounters();
+};
+
+const formatTime = (dateString) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true 
+  });
+};
+
+const getStatusColor = (status) => {
+  const colors = {
+    draft: 'orange',
+    in_consultation: 'blue',
+    awaiting_services: 'purple',
+    finalized: 'green',
+  };
+  return colors[status] || 'grey';
+};
+
+const loadEncounters = async () => {
+  if (!selectedDate.value) {
+    encounters.value = [];
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const response = await encountersAPI.getByDate(selectedDate.value);
+    encounters.value = response.data;
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load encounters',
+    });
+    encounters.value = [];
+  } finally {
+    loading.value = false;
+  }
+};
+
+const isAdmin = computed(() => authStore.userRole === 'Admin');
+
+const viewEncounter = (encounter) => {
+  // Non-admin viewing a finalized encounter -> open in read-only mode
+  if (!isAdmin.value && encounter.status === 'finalized') {
+    router.push({ path: `/consultation/${encounter.id}`, query: { readonly: '1' } });
+  } else {
+    router.push(`/consultation/${encounter.id}`);
+  }
+};
+
+const editEncounter = (encounter) => {
+  showEditDialog.value = true;
+  currentEncounter.value = encounter;
+  editForm.department = encounter.department;
+  editForm.ccc_number = encounter.ccc_number || '';
+  editForm.status = encounter.status;
+};
+
+const deleteEncounterConfirm = (encounter) => {
+  $q.dialog({
+    title: 'Archive Appointment',
+    message: `Are you sure you want to archive Appointment #${encounter.id} for ${encounter.patient_name}? This action cannot be undone.`,
+    cancel: true,
+    persistent: true,
+    ok: {
+      label: 'Archive',
+      color: 'negative'
+    }
+  }).onOk(async () => {
+    try {
+      await encountersStore.deleteEncounter(encounter.id);
+      await loadEncounters(); // Reload list
+    } catch (error) {
+      // Error handled in store
+    }
+  });
+};
+
+const showEditDialog = ref(false);
+const currentEncounter = ref(null);
+const editForm = reactive({
+  department: '',
+  ccc_number: '',
+  status: '',
+});
+
+const departmentOptions = ['General', 'Pediatrics', 'ENT', 'Eye', 'Emergency'];
+const statusOptions = ['draft', 'in_consultation', 'awaiting_services', 'finalized'];
+
+const saveEncounterEdit = async () => {
+  if (!currentEncounter.value) return;
+  
+  const updateData = {};
+  if (editForm.department !== currentEncounter.value.department) {
+    updateData.department = editForm.department;
+  }
+  if (editForm.ccc_number !== currentEncounter.value.ccc_number) {
+    updateData.ccc_number = editForm.ccc_number || null;
+  }
+  if (editForm.status !== currentEncounter.value.status) {
+    updateData.status = editForm.status;
+  }
+  
+  if (Object.keys(updateData).length === 0) {
+    $q.notify({
+      type: 'info',
+      message: 'No changes detected',
+    });
+    showEditDialog.value = false;
+    return;
+  }
+  
+  try {
+    await encountersStore.updateEncounter(currentEncounter.value.id, updateData);
+    showEditDialog.value = false;
+    await loadEncounters(); // Reload list
+  } catch (error) {
+    // Error handled in store
+  }
+};
+
+onMounted(() => {
+  setToday();
+});
+</script>
+

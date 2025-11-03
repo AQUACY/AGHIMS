@@ -1,0 +1,50 @@
+/* Ghana Health Service Color Theme for Quasar */
+
+:root {
+  /* GHS Primary Colors */
+  --q-primary: #2E8B57;      /* Sea Green (from hands) */
+  --q-secondary: #FFD700;    /* Gold/Yellow */
+  --q-accent: #FF6B35;       /* Red/Orange */
+  
+  /* Light theme variations */
+  --q-positive: #2E8B57;     /* Green for success */
+  --q-negative: #DC143C;      /* Crimson for errors */
+  --q-info: #4A90E2;         /* Blue for info */
+  --q-warning: #FFD700;      /* Gold for warnings */
+}
+
+/* Override Quasar default colors */
+.q-primary {
+  background-color: var(--q-primary) !important;
+  color: white !important;
+}
+
+.q-secondary {
+  background-color: var(--q-secondary) !important;
+  color: #000 !important;
+}
+
+.q-accent {
+  background-color: var(--q-accent) !important;
+  color: white !important;
+}
+
+/* Badge colors with GHS theme */
+.q-badge.bg-primary {
+  background-color: #2E8B57 !important;
+}
+
+.q-badge.bg-secondary {
+  background-color: #FFD700 !important;
+  color: #000 !important;
+}
+
+.q-badge.bg-positive {
+  background-color: #2E8B57 !important;
+}
+
+.q-badge.bg-warning {
+  background-color: #FFD700 !important;
+  color: #000 !important;
+}
+

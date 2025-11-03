@@ -1,0 +1,1565 @@
+"""
+Consultation endpoints (diagnoses, prescriptions, investigations)
+"""
+from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form, Response
+from sqlalchemy.orm import Session, joinedload
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime
+from app.core.database import get_db
+from app.core.dependencies import require_role, get_current_user
+from app.models.user import User
+from app.models.encounter import Encounter
+from app.models.diagnosis import Diagnosis
+from app.models.prescription import Prescription
+from app.models.investigation import Investigation, InvestigationStatus
+from app.models.lab_result import LabResult
+from app.models.scan_result import ScanResult
+from app.models.xray_result import XrayResult
+from app.models.consultation_notes import ConsultationNotes
+from app.models.admission import AdmissionRecommendation
+
+router = APIRouter(prefix="/consultation", tags=["consultation"])
+
+
+def auto_generate_bill_for_chief_diagnosis(
+    db: Session,
+    diagnosis: Diagnosis,
+    encounter: Encounter,
+    current_user_id: int
+) -> bool:
+    """
+    Auto-generate bill for a chief diagnosis if it doesn't already exist.
+    Returns True if bill was created, False if it already existed.
+    """
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    # Only generate bill if diagnosis has GDRG code
+    if not diagnosis.gdrg_code:
+        return False
+    
+    # Check if bill item already exists for this diagnosis
+    # Match by gdrg_code and diagnosis name pattern
+    existing_item = db.query(BillItem).join(Bill).filter(
+        Bill.encounter_id == encounter.id,
+        BillItem.item_code == diagnosis.gdrg_code,
+        BillItem.item_name.like(f"%{diagnosis.diagnosis}%"),
+        BillItem.category == "drg"
+    ).first()
+    
+    if existing_item:
+        # Bill already exists for this diagnosis
+        return False
+    
+    # Determine if insured based on encounter CCC number
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    # Get price for the diagnosis (co-pay for insured, base rate for cash)
+    unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
+    
+    if unit_price <= 0:
+        # No price found or price is 0, don't create bill
+        return False
+    
+    # Find or create a bill for this encounter
+    existing_bill = db.query(Bill).filter(
+        Bill.encounter_id == encounter.id,
+        Bill.is_paid == False  # Only use unpaid bills
+    ).first()
+    
+    if existing_bill:
+        # Add bill item to existing bill
+        bill_item = BillItem(
+            bill_id=existing_bill.id,
+            item_code=diagnosis.gdrg_code,
+            item_name=f"Diagnosis: {diagnosis.diagnosis}",
+            category="drg",
+            quantity=1,
+            unit_price=unit_price,
+            total_price=unit_price
+        )
+        db.add(bill_item)
+        existing_bill.total_amount += unit_price
+    else:
+        # Create new bill
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=encounter.id,
+            bill_number=bill_number,
+            is_insured=is_insured_encounter,
+            total_amount=unit_price,
+            created_by=current_user_id
+        )
+        db.add(bill)
+        db.flush()
+        
+        # Create bill item
+        bill_item = BillItem(
+            bill_id=bill.id,
+            item_code=diagnosis.gdrg_code,
+            item_name=f"Diagnosis: {diagnosis.diagnosis}",
+            category="drg",
+            quantity=1,
+            unit_price=unit_price,
+            total_price=unit_price
+        )
+        db.add(bill_item)
+    
+    db.commit()
+    return True
+
+
+# Diagnosis schemas
+class DiagnosisCreate(BaseModel):
+    """Diagnosis creation model"""
+    encounter_id: int
+    icd10: Optional[str] = None
+    diagnosis: str
+    gdrg_code: Optional[str] = None
+    is_provisional: bool = False
+    is_chief: bool = False
+
+
+class DiagnosisResponse(BaseModel):
+    """Diagnosis response model"""
+    id: int
+    encounter_id: int
+    icd10: Optional[str]
+    diagnosis: str
+    gdrg_code: Optional[str]
+    is_provisional: bool
+    is_chief: bool
+    
+    class Config:
+        from_attributes = True
+
+
+# Prescription schemas
+class PrescriptionCreate(BaseModel):
+    """Prescription creation model"""
+    encounter_id: int
+    medicine_code: str
+    medicine_name: str
+    dose: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    quantity: int
+    unparsed: Optional[str] = None
+
+
+class PrescriptionResponse(BaseModel):
+    """Prescription response model"""
+    id: int
+    encounter_id: int
+    medicine_code: str
+    medicine_name: str
+    dose: Optional[str]
+    frequency: Optional[str]
+    duration: Optional[str]
+    quantity: int
+    unparsed: Optional[str] = None
+    prescribed_by: int
+    confirmed_by: Optional[int] = None
+    dispensed_by: Optional[int] = None
+    confirmed_at: Optional[datetime] = None
+    service_date: datetime
+    created_at: datetime
+    is_dispensed: bool = False
+    is_confirmed: bool = False
+    
+    class Config:
+        from_attributes = True
+    
+    @classmethod
+    def from_orm(cls, obj):
+        """Custom from_orm to add is_dispensed and is_confirmed computed fields"""
+        # Handle cases where confirmed_by and confirmed_at might not exist in old database records
+        confirmed_by = getattr(obj, 'confirmed_by', None)
+        confirmed_at = getattr(obj, 'confirmed_at', None)
+        dispensed_by = getattr(obj, 'dispensed_by', None)
+        
+        data = {
+            "id": obj.id,
+            "encounter_id": obj.encounter_id,
+            "medicine_code": obj.medicine_code,
+            "medicine_name": obj.medicine_name,
+            "dose": obj.dose,
+            "frequency": obj.frequency,
+            "duration": obj.duration,
+            "quantity": obj.quantity,
+            "unparsed": obj.unparsed,
+            "prescribed_by": obj.prescribed_by,
+            "confirmed_by": confirmed_by,
+            "dispensed_by": dispensed_by,
+            "confirmed_at": confirmed_at,
+            "service_date": obj.service_date,
+            "created_at": obj.created_at,
+            "is_dispensed": dispensed_by is not None,
+            "is_confirmed": confirmed_by is not None,
+        }
+        return cls(**data)
+
+
+# Investigation schemas
+class InvestigationCreate(BaseModel):
+    """Investigation creation model"""
+    encounter_id: int
+    gdrg_code: str
+    procedure_name: Optional[str] = None
+    investigation_type: str  # lab, scan, xray
+
+
+class InvestigationResponse(BaseModel):
+    """Investigation response model"""
+    id: int
+    encounter_id: int
+    gdrg_code: str
+    procedure_name: Optional[str]
+    investigation_type: str
+    status: str
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/diagnosis", response_model=DiagnosisResponse, status_code=status.HTTP_201_CREATED)
+def create_diagnosis(
+    diagnosis_data: DiagnosisCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin"]))
+):
+    """Add a diagnosis to an encounter"""
+    from app.models.icd10_drg_mapping import ICD10DRGMapping
+    
+    encounter = db.query(Encounter).filter(Encounter.id == diagnosis_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Convert None ICD-10 to empty string for database compatibility
+    diagnosis_dict = diagnosis_data.dict()
+    if diagnosis_dict.get('icd10') is None:
+        diagnosis_dict['icd10'] = ''
+    
+    # Auto-map ICD-10 to DRG code if ICD-10 is provided but DRG is not
+    if diagnosis_dict.get('icd10') and not diagnosis_dict.get('gdrg_code'):
+        icd10_code = diagnosis_dict['icd10'].strip()
+        if icd10_code:
+            # Find first DRG code mapped to this ICD-10 code
+            mapping = db.query(ICD10DRGMapping).filter(
+                ICD10DRGMapping.icd10_code == icd10_code,
+                ICD10DRGMapping.is_active == True
+            ).first()
+            
+            if mapping:
+                diagnosis_dict['gdrg_code'] = mapping.drg_code
+                # Optionally update diagnosis description if it's empty
+                if not diagnosis_dict.get('diagnosis') or not diagnosis_dict['diagnosis'].strip():
+                    if mapping.icd10_description:
+                        diagnosis_dict['diagnosis'] = mapping.icd10_description
+    
+    diagnosis = Diagnosis(**diagnosis_dict, created_by=current_user.id)
+    db.add(diagnosis)
+    db.commit()
+    db.refresh(diagnosis)
+    
+    # If diagnosis is marked as chief and has GDRG code, auto-generate bill
+    if diagnosis.is_chief and diagnosis.gdrg_code:
+        auto_generate_bill_for_chief_diagnosis(db, diagnosis, encounter, current_user.id)
+    
+    return diagnosis
+
+
+@router.get("/diagnosis/encounter/{encounter_id}", response_model=List[DiagnosisResponse])
+def get_diagnoses(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all diagnoses for an encounter"""
+    diagnoses = db.query(Diagnosis).filter(Diagnosis.encounter_id == encounter_id).all()
+    return diagnoses
+
+
+@router.put("/diagnosis/{diagnosis_id}", response_model=DiagnosisResponse)
+def update_diagnosis(
+    diagnosis_id: int,
+    diagnosis_data: DiagnosisCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Update a diagnosis"""
+    diagnosis = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
+    if not diagnosis:
+        raise HTTPException(status_code=404, detail="Diagnosis not found")
+    
+    # Verify encounter exists
+    encounter = db.query(Encounter).filter(Encounter.id == diagnosis_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Check if diagnosis is being marked as chief
+    was_chief = diagnosis.is_chief
+    is_now_chief = diagnosis_data.is_chief
+    
+    # Update diagnosis fields
+    diagnosis.encounter_id = diagnosis_data.encounter_id
+    diagnosis.icd10 = diagnosis_data.icd10 if diagnosis_data.icd10 else ''
+    diagnosis.diagnosis = diagnosis_data.diagnosis
+    diagnosis.gdrg_code = diagnosis_data.gdrg_code
+    diagnosis.is_provisional = diagnosis_data.is_provisional
+    diagnosis.is_chief = diagnosis_data.is_chief
+    
+    # If diagnosis is marked as chief (and wasn't before), auto-generate bill
+    if is_now_chief and not was_chief and diagnosis.gdrg_code:
+        auto_generate_bill_for_chief_diagnosis(db, diagnosis, encounter, current_user.id)
+    else:
+        db.commit()
+    
+    db.refresh(diagnosis)
+    return diagnosis
+
+
+@router.delete("/diagnosis/{diagnosis_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_diagnosis(
+    diagnosis_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Delete a diagnosis"""
+    diagnosis = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
+    if not diagnosis:
+        raise HTTPException(status_code=404, detail="Diagnosis not found")
+    
+    db.delete(diagnosis)
+    db.commit()
+    return None
+
+
+@router.post("/prescription", response_model=PrescriptionResponse, status_code=status.HTTP_201_CREATED)
+def create_prescription(
+    prescription_data: PrescriptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "PA"]))
+):
+    """Add a prescription to an encounter"""
+    encounter = db.query(Encounter).filter(Encounter.id == prescription_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    prescription = Prescription(**prescription_data.dict(), prescribed_by=current_user.id)
+    db.add(prescription)
+    db.commit()
+    db.refresh(prescription)
+    return PrescriptionResponse.from_orm(prescription)
+
+
+@router.get("/prescription/encounter/{encounter_id}", response_model=List[PrescriptionResponse])
+def get_prescriptions(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all prescriptions for an encounter"""
+    prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).all()
+    return [PrescriptionResponse.from_orm(p) for p in prescriptions]
+
+
+@router.get("/prescription/patient/{card_number}/encounter/{encounter_id}", response_model=List[PrescriptionResponse])
+def get_prescriptions_by_patient_card(
+    card_number: str,
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get prescriptions for a patient (by card number) for a specific encounter"""
+    from app.models.patient import Patient
+    
+    # Verify patient exists
+    patient = db.query(Patient).filter(Patient.card_number == card_number).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Verify encounter belongs to patient
+    encounter = db.query(Encounter).filter(
+        Encounter.id == encounter_id,
+        Encounter.patient_id == patient.id
+    ).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found or does not belong to this patient")
+    
+    # Get prescriptions for the encounter
+    prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).all()
+    return [PrescriptionResponse.from_orm(p) for p in prescriptions]
+
+
+class PrescriptionDispense(BaseModel):
+    """Prescription dispense model - allows updating prescription details during dispense"""
+    dose: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    quantity: Optional[int] = None
+
+
+@router.put("/prescription/{prescription_id}/dispense", response_model=PrescriptionResponse)
+def dispense_prescription(
+    prescription_id: int,
+    dispense_data: Optional[PrescriptionDispense] = Body(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Admin"]))
+):
+    """Mark a prescription as dispensed - only allowed if bill is paid or bill amount is 0"""
+    from app.models.bill import Bill, BillItem, ReceiptItem, Receipt
+    
+    prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    if prescription.dispensed_by is not None:
+        raise HTTPException(status_code=400, detail="Prescription has already been dispensed")
+    
+    if prescription.confirmed_by is None:
+        raise HTTPException(status_code=400, detail="Prescription must be confirmed before dispense")
+    
+    # Check if bill for this prescription is paid or amount is 0
+    # Find the bill item for this prescription
+    bill_item = db.query(BillItem).filter(
+        BillItem.item_code == prescription.medicine_code,
+        BillItem.item_name.like(f"%{prescription.medicine_name}%")
+    ).join(Bill).filter(
+        Bill.encounter_id == prescription.encounter_id,
+        Bill.is_paid == False
+    ).first()
+    
+    if bill_item:
+        # Check if bill item is fully paid
+        total_paid = 0.0
+        for receipt_item in db.query(ReceiptItem).filter(
+            ReceiptItem.bill_item_id == bill_item.id
+        ).join(Receipt).filter(Receipt.refunded == False).all():
+            total_paid += receipt_item.amount_paid
+        
+        remaining_balance = bill_item.total_price - total_paid
+        
+        # Only allow dispense if bill amount is 0 or fully paid
+        if bill_item.total_price > 0 and remaining_balance > 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot dispense prescription. Bill not paid. Remaining balance: {remaining_balance:.2f}"
+            )
+    
+    # Update prescription fields if provided
+    if dispense_data:
+        if dispense_data.dose is not None:
+            prescription.dose = dispense_data.dose
+        if dispense_data.frequency is not None:
+            prescription.frequency = dispense_data.frequency
+        if dispense_data.duration is not None:
+            prescription.duration = dispense_data.duration
+        if dispense_data.quantity is not None:
+            if dispense_data.quantity <= 0:
+                raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+            prescription.quantity = dispense_data.quantity
+    
+    prescription.dispensed_by = current_user.id
+    prescription.service_date = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(prescription)
+    return PrescriptionResponse.from_orm(prescription)
+
+
+@router.put("/prescription/{prescription_id}/confirm", response_model=PrescriptionResponse)
+def confirm_prescription(
+    prescription_id: int,
+    dispense_data: Optional[PrescriptionDispense] = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Admin"]))
+):
+    """Confirm a prescription (allows pharmacy to update details) and automatically generate a bill item"""
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    if prescription.confirmed_by is not None:
+        raise HTTPException(status_code=400, detail="Prescription has already been confirmed")
+    
+    encounter = db.query(Encounter).filter(Encounter.id == prescription.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Allow pharmacy to update prescription details during confirmation
+    if dispense_data:
+        if dispense_data.dose is not None:
+            prescription.dose = dispense_data.dose
+        if dispense_data.frequency is not None:
+            prescription.frequency = dispense_data.frequency
+        if dispense_data.duration is not None:
+            prescription.duration = dispense_data.duration
+        if dispense_data.quantity is not None:
+            if dispense_data.quantity <= 0:
+                raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+            prescription.quantity = dispense_data.quantity
+    
+    # Mark prescription as confirmed
+    prescription.confirmed_by = current_user.id
+    prescription.confirmed_at = datetime.utcnow()
+    
+    # Determine if insured based on encounter CCC number
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    # Get price for the medicine (co-pay for insured, base rate for cash)
+    unit_price = get_price_from_all_tables(db, prescription.medicine_code, is_insured_encounter)
+    total_price = unit_price * prescription.quantity
+    
+    # Find or create a bill for this encounter
+    existing_bill = db.query(Bill).filter(
+        Bill.encounter_id == encounter.id,
+        Bill.is_paid == False  # Only use unpaid bills
+    ).first()
+    
+    if existing_bill:
+        # Check if this prescription is already in the bill
+        existing_item = db.query(BillItem).filter(
+            BillItem.bill_id == existing_bill.id,
+            BillItem.item_code == prescription.medicine_code,
+            BillItem.item_name.like(f"%{prescription.medicine_name}%")
+        ).first()
+        
+        if not existing_item:
+            # Add bill item to existing bill
+            bill_item = BillItem(
+                bill_id=existing_bill.id,
+                item_code=prescription.medicine_code,
+                item_name=f"Prescription: {prescription.medicine_name}",
+                category="product",
+                quantity=prescription.quantity,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+            db.add(bill_item)
+            existing_bill.total_amount += total_price
+    else:
+        # Create new bill
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=encounter.id,
+            bill_number=bill_number,
+            is_insured=is_insured_encounter,
+            total_amount=total_price,
+            created_by=current_user.id
+        )
+        db.add(bill)
+        db.flush()
+        
+        # Create bill item
+        bill_item = BillItem(
+            bill_id=bill.id,
+            item_code=prescription.medicine_code,
+            item_name=f"Prescription: {prescription.medicine_name}",
+            category="product",
+            quantity=prescription.quantity,
+            unit_price=unit_price,
+            total_price=total_price
+        )
+        db.add(bill_item)
+    
+    db.commit()
+    db.refresh(prescription)
+    return PrescriptionResponse.from_orm(prescription)
+
+
+@router.put("/prescription/{prescription_id}/return", response_model=PrescriptionResponse)
+def return_prescription(
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Admin"]))
+):
+    """Return a dispensed prescription (undo dispense - patient couldn't pay)"""
+    prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    if prescription.dispensed_by is None:
+        raise HTTPException(status_code=400, detail="Prescription has not been dispensed")
+    
+    prescription.dispensed_by = None
+    prescription.service_date = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(prescription)
+    return PrescriptionResponse.from_orm(prescription)
+
+
+@router.get("/prescription/encounter/{encounter_id}/dispensed", response_model=List[PrescriptionResponse])
+def get_dispensed_prescriptions(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get only dispensed prescriptions for an encounter (for billing)"""
+    prescriptions = db.query(Prescription).filter(
+        Prescription.encounter_id == encounter_id,
+        Prescription.dispensed_by.isnot(None)
+    ).all()
+    return [PrescriptionResponse.from_orm(p) for p in prescriptions]
+
+
+@router.put("/prescription/{prescription_id}", response_model=PrescriptionResponse)
+def update_prescription(
+    prescription_id: int,
+    prescription_data: PrescriptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Update a prescription"""
+    prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    # Verify encounter exists
+    encounter = db.query(Encounter).filter(Encounter.id == prescription_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Update prescription fields
+    prescription.encounter_id = prescription_data.encounter_id
+    prescription.medicine_code = prescription_data.medicine_code
+    prescription.medicine_name = prescription_data.medicine_name
+    prescription.dose = prescription_data.dose
+    prescription.frequency = prescription_data.frequency
+    prescription.duration = prescription_data.duration
+    prescription.quantity = prescription_data.quantity
+    prescription.unparsed = prescription_data.unparsed
+    
+    db.commit()
+    db.refresh(prescription)
+    return PrescriptionResponse.from_orm(prescription)
+
+
+@router.delete("/prescription/{prescription_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_prescription(
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Delete a prescription"""
+    prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    db.delete(prescription)
+    db.commit()
+    return None
+
+
+@router.post("/investigation", response_model=InvestigationResponse, status_code=status.HTTP_201_CREATED)
+def create_investigation(
+    investigation_data: InvestigationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin"]))
+):
+    """Request an investigation (lab, scan, x-ray)"""
+    encounter = db.query(Encounter).filter(Encounter.id == investigation_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    investigation = Investigation(
+        encounter_id=investigation_data.encounter_id,
+        gdrg_code=investigation_data.gdrg_code,
+        procedure_name=investigation_data.procedure_name,
+        investigation_type=investigation_data.investigation_type,
+        requested_by=current_user.id,
+        status=InvestigationStatus.REQUESTED.value
+    )
+    db.add(investigation)
+    db.commit()
+    db.refresh(investigation)
+    return investigation
+
+
+@router.get("/investigation/encounter/{encounter_id}", response_model=List[InvestigationResponse])
+def get_investigations(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all investigations for an encounter"""
+    investigations = db.query(Investigation).filter(Investigation.encounter_id == encounter_id).all()
+    return investigations
+
+
+@router.put("/investigation/{investigation_id}", response_model=InvestigationResponse)
+def update_investigation(
+    investigation_id: int,
+    investigation_data: InvestigationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Update an investigation"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Verify encounter exists
+    encounter = db.query(Encounter).filter(Encounter.id == investigation_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Update investigation fields
+    investigation.encounter_id = investigation_data.encounter_id
+    investigation.gdrg_code = investigation_data.gdrg_code
+    investigation.procedure_name = investigation_data.procedure_name
+    investigation.investigation_type = investigation_data.investigation_type
+    
+    db.commit()
+    db.refresh(investigation)
+    return investigation
+
+
+@router.delete("/investigation/{investigation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_investigation(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Delete an investigation"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    db.delete(investigation)
+    db.commit()
+    return None
+
+
+@router.get("/investigation/patient/{card_number}/encounter/{encounter_id}", response_model=List[InvestigationResponse])
+def get_investigations_by_patient_card(
+    card_number: str,
+    encounter_id: int,
+    investigation_type: Optional[str] = None,  # Filter by type: lab, scan, xray
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get investigations for a patient (by card number) for a specific encounter"""
+    from app.models.patient import Patient
+    
+    # Verify patient exists
+    patient = db.query(Patient).filter(Patient.card_number == card_number).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Verify encounter belongs to patient
+    encounter = db.query(Encounter).filter(
+        Encounter.id == encounter_id,
+        Encounter.patient_id == patient.id
+    ).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found or does not belong to this patient")
+    
+    # Build query
+    query = db.query(Investigation).filter(Investigation.encounter_id == encounter_id)
+    
+    # Filter by investigation type if provided
+    if investigation_type:
+        query = query.filter(Investigation.investigation_type == investigation_type)
+    
+    investigations = query.all()
+    return investigations
+
+
+class InvestigationUpdateDetails(BaseModel):
+    """Investigation update details model"""
+    gdrg_code: str
+    procedure_name: str
+    investigation_type: Optional[str] = None
+
+
+@router.put("/investigation/{investigation_id}/update-details", response_model=InvestigationResponse)
+def update_investigation_details(
+    investigation_id: int,
+    update_data: InvestigationUpdateDetails,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin"]))
+):
+    """Update investigation details (gdrg_code, procedure_name, investigation_type) - allows staff to change service"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check permissions - only staff matching investigation type or Admin can update
+    if current_user.role != "Admin":
+        if investigation.investigation_type == "lab" and current_user.role != "Lab":
+            raise HTTPException(status_code=403, detail="Only Lab staff can update lab investigations")
+        elif investigation.investigation_type == "scan" and current_user.role != "Scan":
+            raise HTTPException(status_code=403, detail="Only Scan staff can update scan investigations")
+        elif investigation.investigation_type == "xray" and current_user.role != "Xray":
+            raise HTTPException(status_code=403, detail="Only Xray staff can update xray investigations")
+    
+    # Update both gdrg_code and procedure_name together (required)
+    investigation.gdrg_code = update_data.gdrg_code
+    investigation.procedure_name = update_data.procedure_name
+    
+    # Update investigation_type if provided
+    if update_data.investigation_type is not None:
+        investigation.investigation_type = update_data.investigation_type
+    
+    db.commit()
+    db.refresh(investigation)
+    return investigation
+
+
+@router.put("/investigation/{investigation_id}/confirm")
+def confirm_investigation(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin"]))
+):
+    """Confirm an investigation request"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Verify user role matches investigation type (Lab can confirm labs, etc.)
+    if current_user.role != "Admin":
+        if investigation.investigation_type == "lab" and current_user.role != "Lab":
+            raise HTTPException(
+                status_code=403,
+                detail="Only Lab staff can confirm lab investigations"
+            )
+        elif investigation.investigation_type == "scan" and current_user.role != "Scan":
+            raise HTTPException(
+                status_code=403,
+                detail="Only Scan staff can confirm scan investigations"
+            )
+        elif investigation.investigation_type == "xray" and current_user.role != "Xray":
+            raise HTTPException(
+                status_code=403,
+                detail="Only Xray staff can confirm xray investigations"
+            )
+    
+    investigation.status = InvestigationStatus.CONFIRMED.value
+    investigation.confirmed_by = current_user.id
+    db.commit()
+    db.refresh(investigation)
+    return {"investigation_id": investigation.id, "status": investigation.status}
+
+
+# Lab Result schemas
+class LabResultCreate(BaseModel):
+    """Lab result creation model"""
+    investigation_id: int
+    results_text: Optional[str] = None
+
+
+class LabResultResponse(BaseModel):
+    """Lab result response model"""
+    id: int
+    investigation_id: int
+    results_text: Optional[str]
+    attachment_path: Optional[str]
+    entered_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/lab-result", response_model=LabResultResponse, status_code=status.HTTP_201_CREATED)
+async def create_lab_result(
+    investigation_id: int = Form(...),
+    results_text: Optional[str] = Form(None),
+    attachment: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Admin"]))
+):
+    """Create or update lab result with optional file attachment"""
+    # Verify investigation exists and is a lab investigation
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    if investigation.investigation_type != "lab":
+        raise HTTPException(status_code=400, detail="This endpoint is only for lab investigations")
+    
+    # Handle file upload
+    attachment_path = None
+    if attachment:
+        import os
+        import uuid
+        from pathlib import Path
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = Path("uploads/lab_results")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        file_ext = Path(attachment.filename).suffix if attachment.filename else ".pdf"
+        file_name = f"{investigation_id}_{uuid.uuid4()}{file_ext}"
+        file_path = upload_dir / file_name
+        
+        # Save file - UploadFile.read() returns bytes
+        content = await attachment.read()
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+        
+        # Store relative path for serving
+        attachment_path = f"lab_results/{file_name}"
+    
+    # Check if result already exists
+    existing_result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    
+    if existing_result:
+        # Update existing result
+        existing_result.results_text = results_text
+        if attachment_path:
+            # Delete old attachment if exists
+            old_path = Path("uploads") / existing_result.attachment_path
+            if existing_result.attachment_path and old_path.exists():
+                old_path.unlink()
+            existing_result.attachment_path = attachment_path
+        existing_result.updated_at = datetime.utcnow()
+        
+        # Mark investigation as completed if results are entered
+        if results_text or attachment_path:
+            investigation.status = InvestigationStatus.COMPLETED.value
+    else:
+        # Create new result
+        lab_result = LabResult(
+            investigation_id=investigation_id,
+            results_text=results_text,
+            attachment_path=attachment_path,
+            entered_by=current_user.id
+        )
+        db.add(lab_result)
+        
+        # Mark investigation as completed if results are entered
+        if results_text or attachment_path:
+            investigation.status = InvestigationStatus.COMPLETED.value
+    
+    db.commit()
+    if existing_result:
+        db.refresh(existing_result)
+        return existing_result
+    else:
+        db.refresh(lab_result)
+        return lab_result
+
+
+@router.get("/lab-result/investigation/{investigation_id}", response_model=Optional[LabResultResponse])
+def get_lab_result(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get lab result for an investigation"""
+    result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    return result
+
+
+@router.get("/lab-result/{investigation_id}/download")
+def download_lab_result_attachment(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Download lab result attachment file"""
+    import os
+    import mimetypes
+    from pathlib import Path
+    
+    # Get lab result
+    result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    if not result:
+        raise HTTPException(status_code=404, detail="Lab result not found")
+    
+    if not result.attachment_path:
+        raise HTTPException(status_code=404, detail="No attachment found for this lab result")
+    
+    # Build full file path
+    file_path = Path("uploads") / result.attachment_path
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Determine MIME type
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    if not mime_type:
+        # Default to application/octet-stream if unknown
+        mime_type = "application/octet-stream"
+    
+    # Read file
+    with open(file_path, "rb") as f:
+        file_content = f.read()
+    
+    # Get filename for download
+    filename = file_path.name
+    
+    return Response(
+        content=file_content,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(file_content))
+        }
+    )
+
+
+# Scan Result schemas
+class ScanResultCreate(BaseModel):
+    """Scan result creation model"""
+    investigation_id: int
+    results_text: Optional[str] = None
+
+
+class ScanResultResponse(BaseModel):
+    """Scan result response model"""
+    id: int
+    investigation_id: int
+    results_text: Optional[str]
+    attachment_path: Optional[str]
+    entered_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/scan-result", response_model=ScanResultResponse, status_code=status.HTTP_201_CREATED)
+async def create_scan_result(
+    investigation_id: int = Form(...),
+    results_text: Optional[str] = Form(None),
+    attachment: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Scan", "Admin"]))
+):
+    """Create or update scan result with optional file attachment"""
+    # Verify investigation exists and is a scan investigation
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    if investigation.investigation_type != "scan":
+        raise HTTPException(status_code=400, detail="This endpoint is only for scan investigations")
+    
+    # Handle file upload
+    attachment_path = None
+    if attachment:
+        import os
+        import uuid
+        from pathlib import Path
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = Path("uploads/scan_results")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        file_ext = Path(attachment.filename).suffix if attachment.filename else ".pdf"
+        file_name = f"{investigation_id}_{uuid.uuid4()}{file_ext}"
+        file_path = upload_dir / file_name
+        
+        # Save file - UploadFile.read() returns bytes
+        content = await attachment.read()
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+        
+        # Store relative path for serving
+        attachment_path = f"scan_results/{file_name}"
+    
+    # Check if result already exists
+    existing_result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    
+    if existing_result:
+        # Update existing result
+        existing_result.results_text = results_text
+        if attachment_path:
+            # Delete old attachment if exists
+            old_path = Path("uploads") / existing_result.attachment_path
+            if existing_result.attachment_path and old_path.exists():
+                old_path.unlink()
+            existing_result.attachment_path = attachment_path
+        existing_result.updated_at = datetime.utcnow()
+        
+        # Mark investigation as completed if results are entered
+        if results_text or attachment_path:
+            investigation.status = InvestigationStatus.COMPLETED.value
+    else:
+        # Create new result
+        scan_result = ScanResult(
+            investigation_id=investigation_id,
+            results_text=results_text,
+            attachment_path=attachment_path,
+            entered_by=current_user.id
+        )
+        db.add(scan_result)
+        
+        # Mark investigation as completed if results are entered
+        if results_text or attachment_path:
+            investigation.status = InvestigationStatus.COMPLETED.value
+    
+    db.commit()
+    if existing_result:
+        db.refresh(existing_result)
+        return existing_result
+    else:
+        db.refresh(scan_result)
+        return scan_result
+
+
+@router.get("/scan-result/investigation/{investigation_id}", response_model=Optional[ScanResultResponse])
+def get_scan_result(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get scan result for an investigation"""
+    result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    return result
+
+
+@router.get("/scan-result/{investigation_id}/download")
+def download_scan_result_attachment(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Download scan result attachment file"""
+    import mimetypes
+    from pathlib import Path
+    
+    # Get scan result
+    result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    if not result:
+        raise HTTPException(status_code=404, detail="Scan result not found")
+    
+    if not result.attachment_path:
+        raise HTTPException(status_code=404, detail="No attachment found for this scan result")
+    
+    # Build full file path
+    file_path = Path("uploads") / result.attachment_path
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Determine MIME type
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    if not mime_type:
+        mime_type = "application/octet-stream"
+    
+    # Read file
+    with open(file_path, "rb") as f:
+        file_content = f.read()
+    
+    # Get filename for download
+    filename = file_path.name
+    
+    return Response(
+        content=file_content,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(file_content))
+        }
+    )
+
+
+# X-ray Result schemas
+class XrayResultCreate(BaseModel):
+    """X-ray result creation model"""
+    investigation_id: int
+    results_text: Optional[str] = None
+
+
+class XrayResultResponse(BaseModel):
+    """X-ray result response model"""
+    id: int
+    investigation_id: int
+    results_text: Optional[str]
+    attachment_path: Optional[str]
+    entered_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/xray-result", response_model=XrayResultResponse, status_code=status.HTTP_201_CREATED)
+async def create_xray_result(
+    investigation_id: int = Form(...),
+    results_text: Optional[str] = Form(None),
+    attachment: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Xray", "Admin"]))
+):
+    """Create or update x-ray result with optional file attachment"""
+    # Verify investigation exists and is an xray investigation
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    if investigation.investigation_type != "xray":
+        raise HTTPException(status_code=400, detail="This endpoint is only for x-ray investigations")
+    
+    # Handle file upload
+    attachment_path = None
+    if attachment:
+        import os
+        import uuid
+        from pathlib import Path
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = Path("uploads/xray_results")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        file_ext = Path(attachment.filename).suffix if attachment.filename else ".pdf"
+        file_name = f"{investigation_id}_{uuid.uuid4()}{file_ext}"
+        file_path = upload_dir / file_name
+        
+        # Save file - UploadFile.read() returns bytes
+        content = await attachment.read()
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+        
+        # Store relative path for serving
+        attachment_path = f"xray_results/{file_name}"
+    
+    # Check if result already exists
+    existing_result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    
+    if existing_result:
+        # Update existing result
+        existing_result.results_text = results_text
+        if attachment_path:
+            # Delete old attachment if exists
+            old_path = Path("uploads") / existing_result.attachment_path
+            if existing_result.attachment_path and old_path.exists():
+                old_path.unlink()
+            existing_result.attachment_path = attachment_path
+        existing_result.updated_at = datetime.utcnow()
+        
+        # Mark investigation as completed if results are entered
+        if results_text or attachment_path:
+            investigation.status = InvestigationStatus.COMPLETED.value
+    else:
+        # Create new result
+        xray_result = XrayResult(
+            investigation_id=investigation_id,
+            results_text=results_text,
+            attachment_path=attachment_path,
+            entered_by=current_user.id
+        )
+        db.add(xray_result)
+        
+        # Mark investigation as completed if results are entered
+        if results_text or attachment_path:
+            investigation.status = InvestigationStatus.COMPLETED.value
+    
+    db.commit()
+    if existing_result:
+        db.refresh(existing_result)
+        return existing_result
+    else:
+        db.refresh(xray_result)
+        return xray_result
+
+
+@router.get("/xray-result/investigation/{investigation_id}", response_model=Optional[XrayResultResponse])
+def get_xray_result(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get x-ray result for an investigation"""
+    result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    return result
+
+
+@router.get("/xray-result/{investigation_id}/download")
+def download_xray_result_attachment(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Download x-ray result attachment file"""
+    import mimetypes
+    from pathlib import Path
+    
+    # Get x-ray result
+    result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    if not result:
+        raise HTTPException(status_code=404, detail="X-ray result not found")
+    
+    if not result.attachment_path:
+        raise HTTPException(status_code=404, detail="No attachment found for this x-ray result")
+    
+    # Build full file path
+    file_path = Path("uploads") / result.attachment_path
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    # Determine MIME type
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    if not mime_type:
+        mime_type = "application/octet-stream"
+    
+    # Read file
+    with open(file_path, "rb") as f:
+        file_content = f.read()
+    
+    # Get filename for download
+    filename = file_path.name
+    
+    return Response(
+        content=file_content,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(file_content))
+        }
+    )
+
+
+# Consultation Notes schemas
+class ConsultationNotesCreate(BaseModel):
+    """Consultation notes creation/update model"""
+    encounter_id: int
+    presenting_complaints: Optional[str] = None
+    doctor_notes: Optional[str] = None
+    follow_up_date: Optional[str] = None  # ISO date string (YYYY-MM-DD)
+    outcome: Optional[str] = None  # referred | discharged | recommended_for_admission
+    admission_ward: Optional[str] = None  # required when outcome == recommended_for_admission
+
+
+class ConsultationNotesResponse(BaseModel):
+    """Consultation notes response model"""
+    id: int
+    encounter_id: int
+    presenting_complaints: Optional[str]
+    doctor_notes: Optional[str]
+    follow_up_date: Optional[str] = None
+    outcome: Optional[str] = None
+    admission_ward: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.get("/notes/encounter/{encounter_id}", response_model=Optional[ConsultationNotesResponse])
+def get_consultation_notes(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get consultation notes for an encounter"""
+    notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter_id).first()
+    if notes:
+        # Fetch admission recommendation if exists
+        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == encounter_id).first()
+        # Serialize follow_up_date properly
+        return {
+            "id": notes.id,
+            "encounter_id": notes.encounter_id,
+            "presenting_complaints": notes.presenting_complaints,
+            "doctor_notes": notes.doctor_notes,
+            "follow_up_date": notes.follow_up_date.isoformat() if notes.follow_up_date else None,
+            "outcome": notes.outcome,
+            "admission_ward": (admission.ward if admission else None),
+            "created_at": notes.created_at,
+            "updated_at": notes.updated_at,
+        }
+    return None
+
+
+@router.post("/notes", response_model=ConsultationNotesResponse, status_code=status.HTTP_201_CREATED)
+def create_or_update_consultation_notes(
+    notes_data: ConsultationNotesCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Create or update consultation notes for an encounter"""
+    encounter = db.query(Encounter).filter(Encounter.id == notes_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Check if notes already exist
+    existing_notes = db.query(ConsultationNotes).filter(
+        ConsultationNotes.encounter_id == notes_data.encounter_id
+    ).first()
+    
+    from datetime import date as date_type
+    follow_up_date = None
+    if notes_data.follow_up_date and notes_data.follow_up_date.strip():
+        try:
+            follow_up_date = date_type.fromisoformat(notes_data.follow_up_date.strip())
+        except (ValueError, AttributeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid follow_up_date format. Use YYYY-MM-DD. Error: {str(e)}")
+    
+    if existing_notes:
+        # Update existing notes
+        existing_notes.presenting_complaints = notes_data.presenting_complaints
+        existing_notes.doctor_notes = notes_data.doctor_notes
+        existing_notes.follow_up_date = follow_up_date
+        existing_notes.outcome = notes_data.outcome
+        existing_notes.updated_at = datetime.utcnow()
+        # Handle admission recommendation
+        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
+        if notes_data.outcome == "recommended_for_admission" and notes_data.admission_ward:
+            if admission:
+                admission.ward = notes_data.admission_ward
+                admission.updated_at = datetime.utcnow()
+            else:
+                admission = AdmissionRecommendation(
+                    encounter_id=notes_data.encounter_id,
+                    ward=notes_data.admission_ward,
+                    recommended_by=current_user.id
+                )
+                db.add(admission)
+        else:
+            # If outcome changed away from admission, remove admission record if exists
+            if admission:
+                db.delete(admission)
+        db.commit()
+        db.refresh(existing_notes)
+        # Serialize response properly
+        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
+        return {
+            "id": existing_notes.id,
+            "encounter_id": existing_notes.encounter_id,
+            "presenting_complaints": existing_notes.presenting_complaints,
+            "doctor_notes": existing_notes.doctor_notes,
+            "follow_up_date": existing_notes.follow_up_date.isoformat() if existing_notes.follow_up_date else None,
+            "outcome": existing_notes.outcome,
+            "admission_ward": (admission.ward if admission else None),
+            "created_at": existing_notes.created_at,
+            "updated_at": existing_notes.updated_at,
+        }
+    else:
+        # Create new notes
+        notes = ConsultationNotes(
+            encounter_id=notes_data.encounter_id,
+            presenting_complaints=notes_data.presenting_complaints,
+            doctor_notes=notes_data.doctor_notes,
+            follow_up_date=follow_up_date,
+            outcome=notes_data.outcome,
+            created_by=current_user.id
+        )
+        db.add(notes)
+        # Create admission recommendation if applicable
+        if notes_data.outcome == "recommended_for_admission" and notes_data.admission_ward:
+            admission = AdmissionRecommendation(
+                encounter_id=notes_data.encounter_id,
+                ward=notes_data.admission_ward,
+                recommended_by=current_user.id
+            )
+            db.add(admission)
+        db.commit()
+        db.refresh(notes)
+        # Serialize response properly
+        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
+        return {
+            "id": notes.id,
+            "encounter_id": notes.encounter_id,
+            "presenting_complaints": notes.presenting_complaints,
+            "doctor_notes": notes.doctor_notes,
+            "follow_up_date": notes.follow_up_date.isoformat() if notes.follow_up_date else None,
+            "outcome": notes.outcome,
+            "admission_ward": (admission.ward if admission else None),
+            "created_at": notes.created_at,
+            "updated_at": notes.updated_at,
+        }
+
+
+
+# Admission recommendations endpoints
+class AdmissionRecommendationResponse(BaseModel):
+    """Admission recommendation response model"""
+    id: int
+    encounter_id: int
+    ward: str
+    recommended_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    # Patient and encounter details
+    patient_name: Optional[str] = None
+    patient_surname: Optional[str] = None
+    patient_other_names: Optional[str] = None
+    patient_card_number: Optional[str] = None
+    patient_gender: Optional[str] = None
+    patient_date_of_birth: Optional[str] = None
+    encounter_created_at: Optional[datetime] = None
+    encounter_service_type: Optional[str] = None
+
+
+@router.get("/admissions", response_model=List[AdmissionRecommendationResponse])
+def get_admission_recommendations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "Admin"]))
+):
+    """Get all admission recommendations with patient and encounter details"""
+    from app.models.patient import Patient
+    
+    try:
+        admissions = db.query(AdmissionRecommendation)\
+            .options(
+                joinedload(AdmissionRecommendation.encounter).joinedload(Encounter.patient)
+            )\
+            .order_by(AdmissionRecommendation.created_at.desc())\
+            .all()
+        
+        print(f"Found {len(admissions)} admission recommendations")  # Debug log
+        
+        result = []
+        for admission in admissions:
+            try:
+                encounter = admission.encounter
+                if not encounter:
+                    print(f"Warning: Admission {admission.id} has no encounter")
+                    continue
+                
+                patient = encounter.patient
+                if not patient:
+                    print(f"Warning: Encounter {encounter.id} has no patient")
+                    continue
+                
+                result.append({
+                    "id": admission.id,
+                    "encounter_id": admission.encounter_id,
+                    "ward": admission.ward,
+                    "recommended_by": admission.recommended_by,
+                    "created_at": admission.created_at,
+                    "updated_at": admission.updated_at,
+                    "patient_name": patient.name,
+                    "patient_surname": patient.surname,
+                    "patient_other_names": patient.other_names,
+                    "patient_card_number": patient.card_number,
+                    "patient_gender": patient.gender,
+                    "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
+                    "encounter_created_at": encounter.created_at,
+                    "encounter_service_type": encounter.department,
+                })
+            except Exception as e:
+                print(f"Error processing admission {admission.id}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        print(f"Returning {len(result)} admission recommendations")  # Debug log
+        return result
+    except Exception as e:
+        print(f"Error in get_admission_recommendations: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching admission recommendations: {str(e)}")
