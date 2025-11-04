@@ -91,14 +91,14 @@ body {
   /* Ghana Health Service Colors: Yellow, Red, Green */
   background: linear-gradient(-45deg, #FFD700, #FF6B35, #2E8B57, #FFD700, #FF6B35);
   background-size: 400% 400%;
-  animation: gradientShift 20s ease infinite;
+  /* animation: gradientShift 20s ease infinite; */
 }
 
 .dark-gradient {
   /* Ghana Health Service Colors - Darker variants */
   background: linear-gradient(-45deg, #1a1a1a, #8B4513, #0F5132, #1a1a1a, #8B4513);
   background-size: 400% 400%;
-  animation: gradientShift 20s ease infinite;
+  /* animation: gradientShift 20s ease infinite; */
 }
 
 @keyframes gradientShift {

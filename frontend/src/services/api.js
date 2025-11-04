@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api';
+const API_BASE_URL = process.env.API_BASE_URL || (process.env.NODE_ENV === 'production' ? '/backend/api' : 'http://localhost:8000/api');
 
 // Create axios instance
 const api = axios.create({
@@ -49,6 +49,12 @@ export const authAPI = {
     });
   },
   getMe: () => api.get('/auth/me'),
+  changePassword: (currentPassword, newPassword) => 
+    api.post('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  refreshToken: () => api.post('/auth/refresh'),
 };
 
 // Patient endpoints

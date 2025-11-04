@@ -8,12 +8,7 @@ const routes = [
     component: () => import('../pages/Login.vue'),
     meta: { requiresAuth: false },
   },
-  {
-    path: '/admin/patients/upload',
-    name: 'PatientUpload',
-    component: () => import('../pages/PatientUpload.vue'),
-    meta: { requiresAuth: true, requiresRole: 'Admin' },
-  },
+ 
   {
     path: '/',
     component: () => import('../layouts/MainLayout.vue'),
@@ -23,6 +18,12 @@ const routes = [
         path: '',
         name: 'Dashboard',
         component: () => import('../pages/Dashboard.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: '/profile',
+        name: 'UserProfile',
+        component: () => import('../pages/UserProfile.vue'),
         meta: { requiresAuth: true },
       },
       {
@@ -59,7 +60,7 @@ const routes = [
         path: '/consultation/:encounterId?',
         name: 'Consultation',
         component: () => import('../pages/Consultation.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'Admin'] },
       },
       {
         path: '/billing/:encounterId?',
@@ -116,6 +117,12 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/patient-upload',
+        name: 'PatientUpload',
+        component: () => import('../pages/PatientUpload.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin' },
+      },
+      {
         path: '/ipd',
         name: 'IPD',
         component: () => import('../pages/IPD.vue'),
@@ -125,8 +132,11 @@ const routes = [
   },
 ];
 
+// Use /frontend/ as base path in production
+const base = process.env.NODE_ENV === 'production' ? '/frontend/' : '/';
+
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(base),
   routes,
 });
 

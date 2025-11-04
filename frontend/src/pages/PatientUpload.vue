@@ -1,4 +1,5 @@
 <template>
+    <q-page class="q-pa-md">    
   <div class="upload-background" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'">
     <div class="upload-container">
       <!-- Header -->
@@ -24,7 +25,7 @@
       <q-card class="upload-card glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">Instructions</div>
-        <q-banner rounded class="bg-blue-1 q-mb-md">
+        <q-banner rounded class=" q-mb-md">
           <div class="text-body2">
             <strong>CSV Template Format:</strong>
             <ul class="q-mt-sm q-ml-md">
@@ -149,6 +150,7 @@
       </q-card>
     </div>
   </div>
+</q-page>
 </template>
 
 <script setup>
@@ -275,14 +277,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.upload-background {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: -1;
-}
+
 
 .upload-container {
   min-height: 100vh;

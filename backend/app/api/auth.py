@@ -55,6 +55,8 @@ def login(
         )
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    # Debug: Log token expiration setting
+    print(f"DEBUG: Creating token with expiration: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
     access_token = create_access_token(
         data={"sub": str(user.id), "role": user.role},
         expires_delta=access_token_expires
@@ -68,3 +70,60 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current user information"""
     return current_user
 
+
+class PasswordChange(BaseModel):
+    """Password change request model"""
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+def change_password(
+    password_data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Change user password"""
+    # Verify current password
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    # Validate new password (minimum 6 characters)
+    if len(password_data.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 6 characters long"
+        )
+    
+    # Hash and update password
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    db.commit()
+    db.refresh(current_user)
+    
+    return {"message": "Password changed successfully"}
+
+
+@router.post("/refresh", response_model=Token)
+def refresh_token(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Refresh the access token"""
+    # Verify user is still active
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive"
+        )
+    
+    # Create new token with same expiration
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": str(current_user.id), "role": current_user.role},
+        expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}

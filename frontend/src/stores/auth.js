@@ -81,6 +81,49 @@ export const useAuthStore = defineStore('auth', {
         }
       }
     },
+
+    async refreshToken() {
+      try {
+        const response = await authAPI.refreshToken();
+        const { access_token } = response.data;
+        
+        this.token = access_token;
+        localStorage.setItem('auth_token', access_token);
+        
+        return true;
+      } catch (error) {
+        console.error('Failed to refresh token:', error);
+        // If refresh fails, logout user
+        this.logout();
+        return false;
+      }
+    },
+
+    getTokenExpiration() {
+      if (!this.token) return null;
+      
+      try {
+        // Decode JWT token (base64url)
+        const base64Url = this.token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+          atob(base64)
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join('')
+        );
+        const payload = JSON.parse(jsonPayload);
+        
+        // Return expiration timestamp (in seconds, convert to milliseconds)
+        if (payload.exp) {
+          return payload.exp * 1000; // Convert to milliseconds
+        }
+        return null;
+      } catch (error) {
+        console.error('Error decoding token:', error);
+        return null;
+      }
+    },
   },
 });
 

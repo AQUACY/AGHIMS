@@ -28,8 +28,8 @@ module.exports = configure(function (ctx) {
       vueRouterMode: 'history',
       env: {
         API_BASE_URL: ctx.dev
-          ? 'http://localhost:8000/api'
-          : 'http://localhost:8000/api'
+          ? 'http://localhost:8000/api'  // Development
+          : '/backend/api'  // Production - relative path
       }
     },
     devServer: {

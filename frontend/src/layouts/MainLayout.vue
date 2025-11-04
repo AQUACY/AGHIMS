@@ -3,11 +3,42 @@
   <q-layout view="hHh lpR fFf" class="layout-glass">
     <q-header elevated class="glass-header text-white">
       <q-toolbar>
+        <!-- Hamburger Menu (Mobile Only) -->
+        <q-btn
+          flat
+          dense
+          round
+          icon="menu"
+          class="q-mr-sm"
+          @click="drawerOpen = !drawerOpen"
+          v-if="$q.screen.lt.md"
+        >
+          <q-tooltip>Menu</q-tooltip>
+        </q-btn>
         <q-toolbar-title class="text-weight-bold">
-          Hospital Management System
+          <img src="../../public/logos/ghana-health-service-logo.png" alt="AGHIMS" width="32px" height="32px" /> 
+          ASESEWA GOVERNMENT HOSPITAL
         </q-toolbar-title>
         <q-space />
-        <div class="q-mr-md text-weight-medium">{{ authStore.userName }}</div>
+        <!-- Session Timer -->
+        <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
+          <q-icon name="schedule" size="sm" />
+          <span class="text-caption text-weight-medium" :class="sessionTimeLeftMinutes < 5 ? 'text-negative' : 'text-white'">
+            {{ formatTimeLeft(sessionTimeLeft) }}
+          </span>
+          <q-tooltip v-if="sessionTimeLeftMinutes > 35">
+            You're using an old token. Please log out and log back in to get a 30-minute session.
+          </q-tooltip>
+        </div>
+        <q-btn
+          flat
+          :label="authStore.userName"
+          class="q-mr-md text-weight-medium glass-button"
+          @click="goToProfile"
+          style="text-transform: none;"
+        >
+          <q-tooltip>Click to view profile and change password</q-tooltip>
+        </q-btn>
         <q-btn
           flat
           round
@@ -332,6 +363,22 @@
             <q-item-label>Staff Management</q-item-label>
           </q-item-section>
         </q-item>
+        
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'PatientUpload' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="file_upload" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Patient Upload</q-item-label>
+          </q-item-section>
+        </q-item>
       </q-list>
     </q-drawer>
 
@@ -342,7 +389,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
@@ -354,6 +401,122 @@ const router = useRouter();
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const drawerOpen = ref(true);
+
+// Session timer
+const sessionTimeLeft = ref(null);
+const sessionTimerInterval = ref(null);
+const refreshingToken = ref(false);
+
+// Computed session time in minutes
+const sessionTimeLeftMinutes = computed(() => {
+  if (!sessionTimeLeft.value) return 0;
+  return Math.floor(sessionTimeLeft.value / 60000);
+});
+
+// Format time left as HH:MM:SS or MM:SS (for sessions under 1 hour)
+const formatTimeLeft = (ms) => {
+  if (!ms || ms <= 0) return '00:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  // If more than 1 hour, show HH:MM:SS
+  if (hours > 0) {
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  }
+  // Otherwise show MM:SS
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+};
+
+// Update session timer
+const updateSessionTimer = () => {
+  if (!authStore.token) {
+    sessionTimeLeft.value = null;
+    return;
+  }
+  
+  const expiration = authStore.getTokenExpiration();
+  if (!expiration) {
+    sessionTimeLeft.value = null;
+    return;
+  }
+  
+  const now = Date.now();
+  const timeLeft = expiration - now;
+  
+  if (timeLeft <= 0) {
+    // Token expired
+    sessionTimeLeft.value = 0;
+    $q.notify({
+      type: 'warning',
+      message: 'Your session has expired. Please login again.',
+      position: 'top',
+    });
+    authStore.logout();
+    router.push('/login');
+    return;
+  }
+  
+  // Always set the time left, even if it's a large value (old 7-day token)
+  sessionTimeLeft.value = timeLeft;
+  
+  // Auto-refresh token when 5 minutes or less remaining (only if token is actually close to expiring)
+  // Only refresh if we have less than 5 minutes AND it's a new 30-minute token (not old 7-day token)
+  const minutesLeft = timeLeft / (60 * 1000);
+  if (minutesLeft <= 5 && !refreshingToken.value && minutesLeft > 0 && minutesLeft <= 35) {
+    // Only refresh if it's a 30-minute token (max 35 minutes to account for slight timing differences)
+    refreshToken();
+  }
+};
+
+// Refresh token
+const refreshToken = async () => {
+  if (refreshingToken.value) return;
+  
+  refreshingToken.value = true;
+  try {
+    const success = await authStore.refreshToken();
+    if (success) {
+      // Update timer with new expiration
+      updateSessionTimer();
+      $q.notify({
+        type: 'positive',
+        message: 'Session refreshed',
+        position: 'top',
+        timeout: 2000,
+      });
+    }
+  } catch (error) {
+    console.error('Failed to refresh token:', error);
+  } finally {
+    refreshingToken.value = false;
+  }
+};
+
+// Start session timer
+const startSessionTimer = () => {
+  // Clear any existing interval
+  if (sessionTimerInterval.value) {
+    clearInterval(sessionTimerInterval.value);
+  }
+  
+  // Update immediately
+  updateSessionTimer();
+  
+  // Update every second
+  sessionTimerInterval.value = setInterval(() => {
+    updateSessionTimer();
+  }, 1000);
+};
+
+// Stop session timer
+const stopSessionTimer = () => {
+  if (sessionTimerInterval.value) {
+    clearInterval(sessionTimerInterval.value);
+    sessionTimerInterval.value = null;
+  }
+};
 
 // Patient search fields
 const searchCardNumber = ref('');
@@ -519,6 +682,10 @@ const searchByName = async () => {
 
 const canAccess = (roles) => authStore.canAccess(roles);
 
+const goToProfile = () => {
+  router.push('/profile');
+};
+
 const handleLogout = () => {
   $q.dialog({
     title: 'Confirm Logout',
@@ -526,10 +693,43 @@ const handleLogout = () => {
     cancel: true,
     persistent: true,
   }).onOk(() => {
+    stopSessionTimer();
     authStore.logout();
     router.push('/login');
   });
 };
+
+// Start timer when component mounts
+onMounted(() => {
+  if (authStore.isAuthenticated && authStore.token) {
+    startSessionTimer();
+  }
+});
+
+// Stop timer when component unmounts
+onUnmounted(() => {
+  stopSessionTimer();
+});
+
+// Watch for authentication changes
+watch(() => authStore.isAuthenticated, (isAuth) => {
+  if (isAuth && authStore.token) {
+    startSessionTimer();
+  } else {
+    stopSessionTimer();
+    sessionTimeLeft.value = null;
+  }
+});
+
+// Also watch for token changes
+watch(() => authStore.token, (token) => {
+  if (token && authStore.isAuthenticated) {
+    startSessionTimer();
+  } else {
+    stopSessionTimer();
+    sessionTimeLeft.value = null;
+  }
+});
 </script>
 
 <style scoped>

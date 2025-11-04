@@ -1,6 +1,6 @@
 # Hospital Management System (HMS) - Production Deployment Guide
 
-This guide covers deploying the HMS backend to a production server with MySQL database.
+This guide covers deploying the HMS backend and frontend to a production server using Apache web server, with the backend accessible at `localhost/backend` and frontend at `localhost/frontend` (or `10.10.16.50/frontend` for network access).
 
 ## Table of Contents
 
@@ -103,39 +103,44 @@ If successful, you'll see the MySQL prompt. Type `EXIT;` to leave.
 
 ### 1. Prepare Directory Structure
 
-Create application directory:
+Create application directories in `/var/www/html`:
 ```bash
-sudo mkdir -p /opt/hms
-sudo chown $USER:$USER /opt/hms
-cd /opt/hms
+sudo mkdir -p /var/www/html/backend
+sudo mkdir -p /var/www/html/frontend
+sudo chown -R $USER:$USER /var/www/html/backend
+sudo chown -R $USER:$USER /var/www/html/frontend
+
+# Ensure Apache can access the html directory
+sudo chmod 755 /var/www/html
+sudo chown www-data:www-data /var/www/html
 ```
 
-### 2. Upload Application Files
+**Note**: If `/var/www/html` already exists and contains other files (like `index.html`), that's fine. The backend and frontend will be in subdirectories.
 
-Upload the entire `backend` directory to `/opt/hms/backend`:
+### 2. Upload Backend Files
+
+Upload the entire `backend` directory to `/var/www/html/backend`:
 
 **Using SCP:**
 ```bash
 # From your local machine
-scp -r backend/ user@your-server:/opt/hms/
+scp -r backend/* user@your-server:/var/www/html/backend/
 ```
 
 **Using Git (recommended):**
 ```bash
 # On server
-cd /opt/hms
-git clone your-repository-url .
-# Or if backend is a subdirectory
+cd /var/www/html
 git clone your-repository-url repo
-mv repo/backend .
+cp -r repo/backend/* /var/www/html/backend/
 ```
 
 ### 3. Create Virtual Environment
 
 ```bash
-cd /opt/hms/backend
+cd /var/www/html/backend
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 ```
 
 ### 4. Install Dependencies
@@ -266,17 +271,21 @@ For initial testing:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### Option 2: Production with Uvicorn
+### Option 2: Production with Uvicorn (Behind Apache)
 
 **Basic Production Command:**
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-access-log
+cd /var/www/html/backend
+source venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4 --no-access-log
 ```
 
 **Recommended Production Command:**
 ```bash
+cd /var/www/html/backend
+source venv/bin/activate
 uvicorn app.main:app \
-  --host 0.0.0.0 \
+  --host 127.0.0.1 \
   --port 8000 \
   --workers 4 \
   --worker-class uvicorn.workers.UvicornWorker \
@@ -284,6 +293,8 @@ uvicorn app.main:app \
   --no-access-log \
   --timeout-keep-alive 5
 ```
+
+**Note**: We use `127.0.0.1` instead of `0.0.0.0` since Apache will proxy requests to this local address.
 
 ### Option 3: Systemd Service (Recommended for Linux)
 
@@ -301,12 +312,12 @@ After=network.target mysql.service
 
 [Service]
 Type=notify
-User=your_user
-Group=your_user
-WorkingDirectory=/opt/hms/backend
-Environment="PATH=/opt/hms/backend/venv/bin"
-ExecStart=/opt/hms/backend/venv/bin/uvicorn app.main:app \
-  --host 0.0.0.0 \
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/html/backend
+Environment="PATH=/var/www/html/backend/venv/bin"
+ExecStart=/var/www/html/backend/venv/bin/uvicorn app.main:app \
+  --host 127.0.0.1 \
   --port 8000 \
   --workers 4 \
   --log-level info \
@@ -317,8 +328,6 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
-
-**Important**: Replace `your_user` with your actual system username.
 
 **Enable and Start Service:**
 ```bash
@@ -366,8 +375,11 @@ Update CORS origins in `app/main.py` to include your production frontend URL:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:9000",  # Remove in production
-        "https://your-frontend-domain.com",  # Add your frontend URL
+        "http://localhost:9000",  # Development
+        "http://localhost:3000",  # Development
+        "http://localhost",  # Production (Apache)
+        "http://10.10.16.50",  # Production (Network IP)
+        "http://10.10.16.50/frontend",  # Production (Network IP with path)
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -375,54 +387,167 @@ app.add_middleware(
 )
 ```
 
-### 2. Reverse Proxy (Nginx/Apache)
+**Note**: Since the frontend and backend are on the same domain (localhost), you may not need CORS, but it's good to have it configured for flexibility.
 
-**Nginx Configuration Example:**
+### 2. Apache Configuration
 
-```nginx
-server {
-    listen 80;
-    server_name api.yourdomain.com;
+Since you're using `/var/www/html` and want the backend at `localhost/backend` and frontend at `localhost/frontend`, we'll configure Apache to proxy requests to the backend and serve the frontend.
 
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+**Enable Required Apache Modules:**
+```bash
+sudo a2enmod proxy
+sudo a2enmod proxy_http
+sudo a2enmod rewrite
+sudo a2enmod headers
+sudo systemctl restart apache2
+```
+
+**Create Apache Configuration File:**
+
+Create or edit `/etc/apache2/sites-available/000-default.conf` (or your site config):
+
+```apache
+<VirtualHost *:80>
+    ServerName localhost
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html
+
+    # Backend API Proxy - /backend -> http://127.0.0.1:8000
+    <LocationMatch "^/backend">
+        ProxyPreserveHost On
+        ProxyPass http://127.0.0.1:8000/
+        ProxyPassReverse http://127.0.0.1:8000/
+        
+        # CORS Headers (if needed)
+        Header always set Access-Control-Allow-Origin "*"
+        Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        Header always set Access-Control-Allow-Headers "Authorization, Content-Type"
         
         # Timeouts for long-running requests
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-    }
+        ProxyTimeout 300
+    </LocationMatch>
+
+    # Frontend - Serve from /var/www/html/frontend
+    Alias /frontend /var/www/html/frontend
+    <Directory /var/www/html/frontend>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+        
+        # Handle Vue Router history mode
+        RewriteEngine On
+        RewriteBase /frontend/
+        RewriteRule ^index\.html$ - [L]
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule . /frontend/index.html [L]
+    </Directory>
+
+    # Default directory - Allow access to /var/www/html
+    <Directory /var/www/html>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        Require all granted
+        
+        # Allow directory listing if needed
+        DirectoryIndex index.html index.php
+    </Directory>
 
     # For file uploads (adjust max size as needed)
-    client_max_body_size 50M;
-}
+    LimitRequestBody 52428800
+
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
 ```
 
-**SSL/HTTPS Configuration (Recommended):**
+**Important Notes:**
+- If your old applications are outside `/var/www/html`, they will continue to work as before
+- The new backend and frontend should be placed in `/var/www/html/backend` and `/var/www/html/frontend`
+- Make sure the `www-data` user (or Apache user) has read permissions on `/var/www/html`
 
-Use Let's Encrypt with Certbot:
+**Enable Site and Restart Apache:**
 ```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d api.yourdomain.com
+sudo a2ensite 000-default.conf
+sudo systemctl restart apache2
 ```
 
-Update Nginx config to redirect HTTP to HTTPS.
+**Test Configuration:**
+```bash
+# Check Apache config syntax
+sudo apache2ctl configtest
+
+# Check if backend is accessible
+curl http://localhost/backend/health
+
+# Check if frontend is accessible
+curl http://localhost/frontend/
+
+# Check Apache error logs if you get "Forbidden" errors
+sudo tail -f /var/log/apache2/error.log
+```
+
+**Troubleshooting "Forbidden" Errors:**
+
+If you get "403 Forbidden" when accessing `localhost`:
+
+1. **Check directory permissions:**
+   ```bash
+   sudo chmod 755 /var/www/html
+   sudo chown www-data:www-data /var/www/html
+   ```
+
+2. **Check if SELinux is blocking (CentOS/RHEL):**
+   ```bash
+   sudo setsebool -P httpd_read_user_content 1
+   sudo restorecon -R /var/www/html
+   ```
+
+3. **Check Apache error logs:**
+   ```bash
+   sudo tail -f /var/log/apache2/error.log
+   # Look for permission denied messages
+   ```
+
+4. **Verify Apache user has access:**
+   ```bash
+   sudo -u www-data ls -la /var/www/html
+   # Should list files without errors
+   ```
+
+**SSL/HTTPS Configuration (Optional but Recommended):**
+
+If you want to enable HTTPS:
+```bash
+sudo apt install certbot python3-certbot-apache
+sudo certbot --apache -d your-domain.com
+```
 
 ### 3. File Upload Directory
 
 Ensure the `uploads` directory exists and has proper permissions:
 ```bash
-mkdir -p /opt/hms/backend/uploads
-chmod 755 /opt/hms/backend/uploads
+mkdir -p /var/www/html/backend/uploads
+sudo chmod 755 /var/www/html/backend/uploads
+sudo chown -R www-data:www-data /var/www/html/backend/uploads
 ```
 
 Create subdirectories for different file types:
 ```bash
-mkdir -p /opt/hms/backend/uploads/{lab_results,scan_results,xray_results}
+mkdir -p /var/www/html/backend/uploads/{lab_results,scan_results,xray_results}
+sudo chmod -R 755 /var/www/html/backend/uploads
+sudo chown -R www-data:www-data /var/www/html/backend/uploads
+```
+
+**Set proper permissions for the entire backend directory:**
+```bash
+# Make sure Apache can read backend files
+sudo chmod -R 755 /var/www/html/backend
+sudo chown -R www-data:www-data /var/www/html/backend
+
+# But keep .env file secure
+sudo chmod 600 /var/www/html/backend/.env
+sudo chown $USER:www-data /var/www/html/backend/.env
 ```
 
 ### 4. Logging
@@ -447,20 +572,93 @@ Environment="SECRET_KEY=${SECRET_KEY}"
 
 ## Frontend Configuration
 
-Update your frontend API base URL to point to your production backend:
+### 1. Build Frontend for Production
 
-**In `frontend/src/services/api.js` or similar:**
-```javascript
-const API_BASE_URL = process.env.VUE_APP_API_URL || 'http://localhost:8000';
-
-// Production: 'https://api.yourdomain.com'
-// Development: 'http://localhost:8000'
+```bash
+cd /var/www/html/frontend
+# Or if you're building locally and copying:
+cd frontend  # from your local machine
+npm install
+npm run build
 ```
 
-**Or set via environment variable:**
+### 2. Copy Build Output
+
+**If building locally:**
 ```bash
-# In frontend .env
-VUE_APP_API_URL=https://api.yourdomain.com
+# Copy the dist/spa directory contents to server
+scp -r dist/spa/* user@your-server:/var/www/html/frontend/
+
+# Then set permissions on server
+ssh user@your-server
+sudo chown -R www-data:www-data /var/www/html/frontend
+sudo chmod -R 755 /var/www/html/frontend
+```
+
+**If building on server:**
+```bash
+cd /var/www/html/frontend
+npm install
+npm run build
+# The build output should be in dist/spa/
+sudo cp -r dist/spa/* /var/www/html/frontend/
+sudo chown -R www-data:www-data /var/www/html/frontend
+sudo chmod -R 755 /var/www/html/frontend
+```
+
+**Important**: Make sure all files in `/var/www/html/frontend` are owned by `www-data` and have proper permissions (755 for directories, 644 for files).
+
+### 3. Update Frontend API Base URL
+
+**Update `frontend/quasar.config.js`:**
+
+```javascript
+build: {
+  vueRouterMode: 'history',
+  env: {
+    API_BASE_URL: ctx.dev
+      ? 'http://localhost:8000/api'  // Development
+      : '/backend/api'  // Production - relative path
+  }
+}
+```
+
+**Update `frontend/src/services/api.js`:**
+
+```javascript
+const API_BASE_URL = process.env.API_BASE_URL || '/backend/api';
+
+// This will use:
+// - Development: http://localhost:8000/api
+// - Production: /backend/api (relative to current domain)
+```
+
+### 4. Set Correct Base Path for Vue Router
+
+**Update `frontend/src/router/index.js`:**
+
+```javascript
+const router = createRouter({
+  history: createWebHistory('/frontend/'),  // Add base path for production
+  routes: [
+    // ... your routes
+  ]
+});
+```
+
+**Or use environment-based configuration:**
+
+```javascript
+import { createRouter, createWebHistory } from 'vue-router';
+
+const base = process.env.NODE_ENV === 'production' ? '/frontend/' : '/';
+
+const router = createRouter({
+  history: createWebHistory(base),
+  routes: [
+    // ... your routes
+  ]
+});
 ```
 
 ## Backup and Maintenance
@@ -576,16 +774,25 @@ Check if you have configured file-based logging, or monitor stdout/stderr of you
 
 ### Testing the Deployment
 
-1. **Health Check:**
+1. **Backend Health Check:**
    ```bash
-   curl http://localhost:8000/health
+   curl http://localhost/backend/health
+   # Should return: {"status":"healthy"}
    ```
 
-2. **API Documentation:**
-   Visit: `http://your-server-ip:8000/docs`
+2. **Backend API Documentation:**
+   Visit: `http://localhost/backend/docs`
+   Or: `http://10.10.16.50/backend/docs`
 
-3. **Database Connection:**
-   Check application logs for database connection errors.
+3. **Frontend Access:**
+   Visit: `http://localhost/frontend`
+   Or: `http://10.10.16.50/frontend`
+
+4. **Database Connection:**
+   Check application logs for database connection errors:
+   ```bash
+   sudo journalctl -u hms-backend -f
+   ```
 
 ## Migration from SQLite to MySQL
 
