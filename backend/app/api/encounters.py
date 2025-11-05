@@ -95,92 +95,34 @@ def update_encounter_status(
             detail=f"Cannot transition from {encounter.status} to {new_status}"
         )
     
-    # If finalizing, require outcome, auto-generate bills for chief diagnoses, and check that all bills are paid
+    # If finalizing, require diagnosis, follow-up date, outcome, and payment
     if new_status == "finalized":
-        # Require consultation outcome to be set
         from app.models.consultation_notes import ConsultationNotes
+        from app.models.diagnosis import Diagnosis
+        from app.models.bill import Bill
+        
+        # Require at least one diagnosis
+        diagnoses = db.query(Diagnosis).filter(Diagnosis.encounter_id == encounter_id).all()
+        if not diagnoses or len(diagnoses) == 0:
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. At least one diagnosis is required.")
+        
+        # Require consultation notes with outcome and follow-up date
         notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter_id).first()
-        if not notes or not (notes.outcome and notes.outcome.strip()):
+        if not notes:
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation notes are required.")
+        
+        if not (notes.outcome and notes.outcome.strip()):
             raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation outcome is required.")
         
-        # Auto-generate bills for all chief diagnoses that don't have bills yet
-        from app.models.diagnosis import Diagnosis
-        from app.models.bill import Bill, BillItem
-        from app.services.price_list_service_v2 import get_price_from_all_tables
-        import random
+        if not notes.follow_up_date:
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. Follow-up date is required.")
         
-        chief_diagnoses = db.query(Diagnosis).filter(
-            Diagnosis.encounter_id == encounter_id,
-            Diagnosis.is_chief == True,
-            Diagnosis.gdrg_code.isnot(None),
-            Diagnosis.gdrg_code != ''
-        ).all()
+        # Determine if patient is insured (has CCC number)
+        is_insured = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
         
-        # Determine if insured based on encounter CCC number
-        is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
-        
-        for diagnosis in chief_diagnoses:
-            # Check if bill item already exists for this diagnosis
-            existing_item = db.query(BillItem).join(Bill).filter(
-                Bill.encounter_id == encounter_id,
-                BillItem.item_code == diagnosis.gdrg_code,
-                BillItem.item_name.like(f"%{diagnosis.diagnosis}%"),
-                BillItem.category == "drg"
-            ).first()
-            
-            if not existing_item:
-                # Get price for the diagnosis (co-pay for insured, base rate for cash)
-                unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
-                
-                if unit_price > 0:
-                    # Find or create a bill for this encounter
-                    existing_bill = db.query(Bill).filter(
-                        Bill.encounter_id == encounter.id,
-                        Bill.is_paid == False  # Only use unpaid bills
-                    ).first()
-                    
-                    if existing_bill:
-                        # Add bill item to existing bill
-                        bill_item = BillItem(
-                            bill_id=existing_bill.id,
-                            item_code=diagnosis.gdrg_code,
-                            item_name=f"Diagnosis: {diagnosis.diagnosis}",
-                            category="drg",
-                            quantity=1,
-                            unit_price=unit_price,
-                            total_price=unit_price
-                        )
-                        db.add(bill_item)
-                        existing_bill.total_amount += unit_price
-                    else:
-                        # Create new bill
-                        bill_number = f"BILL-{random.randint(100000, 999999)}"
-                        bill = Bill(
-                            encounter_id=encounter.id,
-                            bill_number=bill_number,
-                            is_insured=is_insured_encounter,
-                            total_amount=unit_price,
-                            created_by=current_user.id
-                        )
-                        db.add(bill)
-                        db.flush()
-                        
-                        # Create bill item
-                        bill_item = BillItem(
-                            bill_id=bill.id,
-                            item_code=diagnosis.gdrg_code,
-                            item_name=f"Diagnosis: {diagnosis.diagnosis}",
-                            category="drg",
-                            quantity=1,
-                            unit_price=unit_price,
-                            total_price=unit_price
-                        )
-                        db.add(bill_item)
-        
-        # Commit bill changes before checking unpaid bills
-        db.commit()
-        
-        # Check for unpaid bills > 0 only
+        # Check for unpaid bills
+        # For insured clients: bills can be 0 (fully covered) or must be paid
+        # For non-insured clients: all bills must be paid
         unpaid_bills = db.query(Bill).filter(
             Bill.encounter_id == encounter_id,
             Bill.is_paid == False,
@@ -189,10 +131,18 @@ def update_encounter_status(
         
         if unpaid_bills:
             unpaid_amount = sum(bill.total_amount for bill in unpaid_bills)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
-            )
+            if is_insured:
+                # For insured clients, if there's an unpaid amount > 0, it must be paid
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                )
+            else:
+                # For non-insured clients, all bills must be paid
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                )
         
         encounter.finalized_at = datetime.utcnow()
     
@@ -266,92 +216,34 @@ def update_encounter(
                 detail=f"Cannot transition from {encounter.status} to {encounter_data.status}"
             )
         
-        # If finalizing, require outcome, auto-generate bills for chief diagnoses, and check that all bills are paid
+        # If finalizing, require diagnosis, follow-up date, outcome, and payment
         if encounter_data.status == "finalized":
-            from app.models.bill import Bill, BillItem
+            from app.models.bill import Bill
             from app.models.consultation_notes import ConsultationNotes
             from app.models.diagnosis import Diagnosis
-            from app.services.price_list_service_v2 import get_price_from_all_tables
-            import random
             
-            # Require consultation outcome to be set
+            # Require at least one diagnosis
+            diagnoses = db.query(Diagnosis).filter(Diagnosis.encounter_id == encounter_id).all()
+            if not diagnoses or len(diagnoses) == 0:
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. At least one diagnosis is required.")
+            
+            # Require consultation notes with outcome and follow-up date
             notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter_id).first()
-            if not notes or not (notes.outcome and notes.outcome.strip()):
+            if not notes:
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation notes are required.")
+            
+            if not (notes.outcome and notes.outcome.strip()):
                 raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation outcome is required.")
             
-            # Auto-generate bills for all chief diagnoses that don't have bills yet
-            chief_diagnoses = db.query(Diagnosis).filter(
-                Diagnosis.encounter_id == encounter_id,
-                Diagnosis.is_chief == True,
-                Diagnosis.gdrg_code.isnot(None),
-                Diagnosis.gdrg_code != ''
-            ).all()
+            if not notes.follow_up_date:
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. Follow-up date is required.")
             
-            # Determine if insured based on encounter CCC number
-            is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+            # Determine if patient is insured (has CCC number)
+            is_insured = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
             
-            for diagnosis in chief_diagnoses:
-                # Check if bill item already exists for this diagnosis
-                existing_item = db.query(BillItem).join(Bill).filter(
-                    Bill.encounter_id == encounter_id,
-                    BillItem.item_code == diagnosis.gdrg_code,
-                    BillItem.item_name.like(f"%{diagnosis.diagnosis}%"),
-                    BillItem.category == "drg"
-                ).first()
-                
-                if not existing_item:
-                    # Get price for the diagnosis (co-pay for insured, base rate for cash)
-                    unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
-                    
-                    if unit_price > 0:
-                        # Find or create a bill for this encounter
-                        existing_bill = db.query(Bill).filter(
-                            Bill.encounter_id == encounter.id,
-                            Bill.is_paid == False  # Only use unpaid bills
-                        ).first()
-                        
-                        if existing_bill:
-                            # Add bill item to existing bill
-                            bill_item = BillItem(
-                                bill_id=existing_bill.id,
-                                item_code=diagnosis.gdrg_code,
-                                item_name=f"Diagnosis: {diagnosis.diagnosis}",
-                                category="drg",
-                                quantity=1,
-                                unit_price=unit_price,
-                                total_price=unit_price
-                            )
-                            db.add(bill_item)
-                            existing_bill.total_amount += unit_price
-                        else:
-                            # Create new bill
-                            bill_number = f"BILL-{random.randint(100000, 999999)}"
-                            bill = Bill(
-                                encounter_id=encounter.id,
-                                bill_number=bill_number,
-                                is_insured=is_insured_encounter,
-                                total_amount=unit_price,
-                                created_by=current_user.id
-                            )
-                            db.add(bill)
-                            db.flush()
-                            
-                            # Create bill item
-                            bill_item = BillItem(
-                                bill_id=bill.id,
-                                item_code=diagnosis.gdrg_code,
-                                item_name=f"Diagnosis: {diagnosis.diagnosis}",
-                                category="drg",
-                                quantity=1,
-                                unit_price=unit_price,
-                                total_price=unit_price
-                            )
-                            db.add(bill_item)
-            
-            # Commit bill changes before checking unpaid bills
-            db.commit()
-            
-            # Check for unpaid bills > 0 only
+            # Check for unpaid bills
+            # For insured clients: bills can be 0 (fully covered) or must be paid
+            # For non-insured clients: all bills must be paid
             unpaid_bills = db.query(Bill).filter(
                 Bill.encounter_id == encounter_id,
                 Bill.is_paid == False,
@@ -360,10 +252,18 @@ def update_encounter(
             
             if unpaid_bills:
                 unpaid_amount = sum(bill.total_amount for bill in unpaid_bills)
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
-                )
+                if is_insured:
+                    # For insured clients, if there's an unpaid amount > 0, it must be paid
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                    )
+                else:
+                    # For non-insured clients, all bills must be paid
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                    )
             
             encounter.finalized_at = datetime.utcnow()
         

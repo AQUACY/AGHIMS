@@ -5,6 +5,38 @@
     <q-card class="q-mb-md glass-card" v-if="!encounterLoaded" flat>
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">Load Encounter</div>
+        
+        <!-- Filter Section -->
+        <div class="row q-gutter-md q-mb-md">
+          <q-input
+            v-model="selectedDate"
+            filled
+            type="date"
+            label="Select Date"
+            class="col-12 col-md-3"
+            @update:model-value="loadEncountersForDate"
+          />
+          <q-input
+            v-model="cardNumberFilter"
+            filled
+            label="Filter by Card Number"
+            class="col-12 col-md-3"
+            clearable
+          />
+          <q-btn
+            icon="today"
+            label="Today"
+            @click="setToday"
+            color="primary"
+            class="col-12 col-md-2 glass-button"
+          />
+          <q-space />
+          <q-badge color="primary" :label="`${filteredEncounters.length} encounters`" />
+        </div>
+
+        <!-- Encounter ID Search (Alternative) -->
+        <q-separator class="q-mb-md" />
+        <div class="text-subtitle2 q-mb-sm glass-text">Or search by Encounter ID:</div>
         <div class="row q-gutter-md">
           <q-input
             v-model="searchEncounterId"
@@ -21,6 +53,57 @@
             class="col-12 col-md-4 glass-button"
             :loading="loadingEncounter"
           />
+        </div>
+
+        <!-- Encounters List -->
+        <div v-if="filteredEncounters.length > 0" class="q-mt-md">
+          <q-separator class="q-mb-md" />
+          <div class="text-subtitle2 q-mb-sm glass-text">Select an encounter:</div>
+          <q-table
+            :rows="filteredEncounters"
+            :columns="encounterColumns"
+            row-key="id"
+            flat
+            :loading="loadingEncounters"
+            :rows-per-page-options="[10, 20, 50]"
+            @row-click="selectEncounter"
+            class="cursor-pointer"
+          >
+            <template v-slot:body-cell-status="props">
+              <q-td :props="props">
+                <q-badge
+                  :color="getStatusColor(props.value)"
+                  :label="props.value"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-time="props">
+              <q-td :props="props">
+                {{ formatTime(props.value) }}
+              </q-td>
+            </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  size="sm"
+                  color="primary"
+                  icon="visibility"
+                  flat
+                  @click.stop="selectEncounter(props.row)"
+                  label="Select"
+                />
+              </q-td>
+            </template>
+          </q-table>
+        </div>
+
+        <!-- Empty State -->
+        <div v-if="!loadingEncounters && filteredEncounters.length === 0 && selectedDate" class="text-center q-pa-lg text-grey-6">
+          <q-icon name="event_busy" size="64px" />
+          <div class="text-h6 q-mt-md">No encounters found for this date</div>
+          <div class="text-caption q-mt-sm" v-if="cardNumberFilter">
+            Try removing the card number filter or selecting a different date
+          </div>
         </div>
       </q-card-section>
     </q-card>
@@ -48,6 +131,10 @@
           </div>
           <div class="row q-gutter-md">
             <div class="col-12 col-md-3">
+              <strong>Card Number:</strong> 
+              <span class="text-weight-bold text-primary">{{ patientInfo?.card_number || 'N/A' }}</span>
+            </div>
+            <div class="col-12 col-md-3">
               <strong>Insurance No:</strong> {{ patientInfo?.insurance_id || 'N/A' }}
             </div>
             <div class="col-12 col-md-3">
@@ -56,6 +143,8 @@
             <div class="col-12 col-md-3">
               <strong>Encounter Date:</strong> {{ formatDate(encounterStore.currentEncounter?.created_at) || 'N/A' }}
             </div>
+          </div>
+          <div class="row q-gutter-md q-mt-sm">
             <div class="col-12 col-md-3">
               <strong>CCC Number:</strong> {{ encounterStore.currentEncounter?.ccc_number || 'N/A' }}
             </div>
@@ -79,17 +168,47 @@
             />
           </div>
           <div class="row q-gutter-md">
-            <div v-if="encounterStore.encounterVitals.bp">
-              BP: {{ encounterStore.encounterVitals.bp }}
+            <div v-if="encounterStore.encounterVitals.bp" class="col-12 col-md-3">
+              <strong>BP:</strong> {{ encounterStore.encounterVitals.bp }} mmHg
             </div>
-            <div v-if="encounterStore.encounterVitals.temperature">
-              Temp: {{ encounterStore.encounterVitals.temperature }}°C
+            <div v-if="encounterStore.encounterVitals.temperature" class="col-12 col-md-3">
+              <strong>Temp:</strong> {{ encounterStore.encounterVitals.temperature }}°C
             </div>
-            <div v-if="encounterStore.encounterVitals.pulse">
-              Pulse: {{ encounterStore.encounterVitals.pulse }} bpm
+            <div v-if="encounterStore.encounterVitals.pulse" class="col-12 col-md-3">
+              <strong>Pulse:</strong> {{ encounterStore.encounterVitals.pulse }} bpm
             </div>
-            <div v-if="encounterStore.encounterVitals.weight">
-              Weight: {{ encounterStore.encounterVitals.weight }} kg
+            <div v-if="encounterStore.encounterVitals.respiration" class="col-12 col-md-3">
+              <strong>RR:</strong> {{ encounterStore.encounterVitals.respiration }} /min
+            </div>
+            <div v-if="encounterStore.encounterVitals.weight" class="col-12 col-md-3">
+              <strong>Weight:</strong> {{ encounterStore.encounterVitals.weight }} kg
+            </div>
+            <div v-if="encounterStore.encounterVitals.height" class="col-12 col-md-3">
+              <strong>Height:</strong> {{ encounterStore.encounterVitals.height }} cm
+            </div>
+            <div v-if="encounterStore.encounterVitals.bmi" class="col-12 col-md-3">
+              <strong>BMI:</strong> {{ encounterStore.encounterVitals.bmi }}
+            </div>
+            <div v-if="encounterStore.encounterVitals.spo2" class="col-12 col-md-3">
+              <strong>SpO2:</strong> {{ encounterStore.encounterVitals.spo2 }}%
+            </div>
+            <div v-if="encounterStore.encounterVitals.rbs" class="col-12 col-md-3">
+              <strong>RBS:</strong> {{ encounterStore.encounterVitals.rbs }} mmol/L
+            </div>
+            <div v-if="encounterStore.encounterVitals.fbs" class="col-12 col-md-3">
+              <strong>FBS:</strong> {{ encounterStore.encounterVitals.fbs }} mmol/L
+            </div>
+            <div v-if="encounterStore.encounterVitals.upt" class="col-12 col-md-3">
+              <strong>UPT:</strong> {{ encounterStore.encounterVitals.upt }}
+            </div>
+            <div v-if="encounterStore.encounterVitals.rdt_malaria" class="col-12 col-md-3">
+              <strong>Malaria RDT:</strong> {{ encounterStore.encounterVitals.rdt_malaria }}
+            </div>
+            <div v-if="encounterStore.encounterVitals.retro_rdt" class="col-12 col-md-3">
+              <strong>Retro RDT:</strong> {{ encounterStore.encounterVitals.retro_rdt }}
+            </div>
+            <div v-if="encounterStore.encounterVitals.remarks" class="col-12">
+              <strong>Remarks:</strong> {{ encounterStore.encounterVitals.remarks }}
             </div>
           </div>
         </q-card-section>
@@ -256,8 +375,11 @@
                   color="primary"
                   size="sm"
                   @click="editPrescription(props.row)"
+                  :disable="props.row.is_confirmed"
                 >
-                  <q-tooltip>Edit Prescription</q-tooltip>
+                  <q-tooltip>
+                    {{ props.row.is_confirmed ? 'Cannot edit confirmed prescription' : 'Edit Prescription' }}
+                  </q-tooltip>
                 </q-btn>
                 <q-btn
                   flat
@@ -267,9 +389,12 @@
                   color="negative"
                   size="sm"
                   @click="deletePrescription(props.row)"
+                  :disable="props.row.is_confirmed"
                   class="q-ml-xs"
                 >
-                  <q-tooltip>Delete Prescription</q-tooltip>
+                  <q-tooltip>
+                    {{ props.row.is_confirmed ? 'Cannot delete confirmed prescription' : 'Delete Prescription' }}
+                  </q-tooltip>
                 </q-btn>
               </q-td>
             </template>
@@ -305,7 +430,32 @@
             :columns="investigationColumns"
             row-key="id"
             flat
+            :row-class="(row) => row.status === 'cancelled' ? 'bg-red-1 text-negative' : ''"
           >
+            <template v-slot:body-cell-status="props">
+              <q-td :props="props">
+                <q-badge
+                  v-if="props.row.status === 'cancelled'"
+                  color="negative"
+                  label="Cancelled"
+                />
+                <q-badge
+                  v-else-if="props.row.status === 'completed'"
+                  color="positive"
+                  label="Completed"
+                />
+                <q-badge
+                  v-else-if="props.row.status === 'confirmed'"
+                  color="warning"
+                  label="Confirmed"
+                />
+                <q-badge
+                  v-else
+                  color="grey"
+                  label="Requested"
+                />
+              </q-td>
+            </template>
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
                 <q-btn
@@ -316,8 +466,26 @@
                   color="primary"
                   size="sm"
                   @click="editInvestigation(props.row)"
+                  :disable="props.row.confirmed_by || props.row.status === 'confirmed' || props.row.status === 'completed'"
                 >
-                  <q-tooltip>Edit Investigation</q-tooltip>
+                  <q-tooltip>
+                    {{ (props.row.confirmed_by || props.row.status === 'confirmed' || props.row.status === 'completed') 
+                        ? 'Cannot edit confirmed investigation' 
+                        : 'Edit Investigation' }}
+                  </q-tooltip>
+                </q-btn>
+                <q-btn
+                  v-if="props.row.status === 'confirmed'"
+                  flat
+                  dense
+                  round
+                  icon="cancel"
+                  color="negative"
+                  size="sm"
+                  @click="cancelInvestigation(props.row)"
+                  class="q-ml-xs"
+                >
+                  <q-tooltip>Cancel Investigation (Client cannot pay)</q-tooltip>
                 </q-btn>
                 <q-btn
                   v-if="props.row.status === 'confirmed' || props.row.status === 'completed'"
@@ -333,6 +501,7 @@
                   <q-tooltip>View Results</q-tooltip>
                 </q-btn>
                 <q-btn
+                  v-if="props.row.status !== 'cancelled'"
                   flat
                   dense
                   round
@@ -340,10 +509,25 @@
                   color="negative"
                   size="sm"
                   @click="deleteInvestigation(props.row)"
+                  :disable="props.row.confirmed_by || props.row.status === 'confirmed' || props.row.status === 'completed'"
                   class="q-ml-xs"
                 >
-                  <q-tooltip>Delete Investigation</q-tooltip>
+                  <q-tooltip>
+                    {{ (props.row.confirmed_by || props.row.status === 'confirmed' || props.row.status === 'completed') 
+                        ? 'Cannot delete confirmed investigation' 
+                        : 'Delete Investigation' }}
+                  </q-tooltip>
                 </q-btn>
+                <q-chip
+                  v-if="props.row.status === 'cancelled' && props.row.cancellation_reason"
+                  color="negative"
+                  text-color="white"
+                  size="sm"
+                  class="q-ml-xs"
+                >
+                  <q-tooltip>{{ props.row.cancellation_reason }}</q-tooltip>
+                  Reason: {{ props.row.cancellation_reason.substring(0, 30) }}{{ props.row.cancellation_reason.length > 30 ? '...' : '' }}
+                </q-chip>
               </q-td>
             </template>
           </q-table>
@@ -621,28 +805,61 @@
                 v-model="prescriptionForm.dose"
                 filled
                 label="Dose"
+                type="number"
                 class="col-12 col-md-4"
+                hint="e.g., 500 (for 500mg), 1 (for 1 tablet/capsule)"
+                @update:model-value="calculateQuantity"
               />
-              <q-input
+              <q-select
+                v-model="prescriptionForm.unit"
+                filled
+                :options="unitOptions"
+                label="Unit"
+                class="col-12 col-md-4"
+                hint="e.g., MG, ML, TAB"
+                use-input
+                input-debounce="0"
+                @new-value="createUnit"
+                @update:model-value="calculateQuantity"
+              />
+              <q-select
                 v-model="prescriptionForm.frequency"
                 filled
-                label="Frequency"
+                :options="frequencyOptions"
+                label="Frequency *"
                 class="col-12 col-md-4"
+                lazy-rules
+                :rules="[(val) => !!val || 'Required']"
+                @update:model-value="calculateQuantity"
               />
+            </div>
+            <div class="row q-gutter-md">
               <q-input
                 v-model="prescriptionForm.duration"
                 filled
-                label="Duration"
-                class="col-12 col-md-4"
+                label="Duration (e.g., 7 DAYS)"
+                class="col-12 col-md-6"
+                hint="e.g., 7 DAYS, 2 WEEKS"
+                @update:model-value="calculateQuantity"
+              />
+              <q-input
+                v-model.number="prescriptionForm.quantity"
+                filled
+                type="number"
+                label="Quantity *"
+                class="col-12 col-md-6"
+                lazy-rules
+                :rules="[(val) => !!val || 'Required']"
+                hint="Auto-calculated: (dose/100 for MG) × frequency × duration (editable if needed)"
               />
             </div>
             <q-input
-              v-model.number="prescriptionForm.quantity"
+              v-model="prescriptionForm.instructions"
               filled
-              type="number"
-              label="Quantity *"
-              lazy-rules
-              :rules="[(val) => !!val || 'Required']"
+              type="textarea"
+              label="Instructions"
+              rows="3"
+              hint="Add instructions for taking this medication"
             />
             <div>
               <q-btn :label="editingPrescriptionId ? 'Update' : 'Add'" type="submit" color="primary" />
@@ -725,6 +942,30 @@
               lazy-rules
               :rules="[(val) => !!val || 'Required']"
             />
+            <q-input
+              v-model="investigationForm.notes"
+              filled
+              type="textarea"
+              label="Notes/Remarks"
+              rows="3"
+              hint="Add any notes or remarks for this investigation request"
+            />
+            <q-input
+              v-model="investigationForm.price"
+              filled
+              label="Price (Auto-fetched from price list)"
+              readonly
+              hint="Automatically fetched from price list based on patient insurance status"
+              type="text"
+            >
+              <template v-slot:append>
+                <q-icon name="info" color="primary">
+                  <q-tooltip>
+                    Price shown is based on patient's insurance status. Doctors can see this before confirming the investigation.
+                  </q-tooltip>
+                </q-icon>
+              </template>
+            </q-input>
             <div>
               <q-btn :label="editingInvestigationId ? 'Update' : 'Add'" type="submit" color="primary" />
               <q-btn label="Cancel" flat v-close-popup @click="resetInvestigationForm" />
@@ -741,17 +982,48 @@
           <div class="text-h6">Edit Presenting Complaints</div>
         </q-card-section>
         <q-card-section>
+          <!-- Draft Banner for Presenting Complaints -->
+          <q-banner
+            v-if="hasDraft('presenting_complaints') && notesForm.presenting_complaints !== (getDraftValue('presenting_complaints') || '')"
+            class="bg-warning text-dark q-mb-md"
+            rounded
+          >
+            <template v-slot:avatar>
+              <q-icon name="save" color="dark" />
+            </template>
+            <strong>Draft Available</strong>
+            <div class="text-caption q-mt-xs">
+              A draft was saved {{ formatDraftTime(getDraftTime('presenting_complaints')) }}. 
+              Would you like to restore it?
+            </div>
+            <template v-slot:action>
+              <q-btn
+                flat
+                label="Restore Draft"
+                color="dark"
+                @click="restoreDraft('presenting_complaints')"
+              />
+              <q-btn
+                flat
+                label="Discard"
+                color="dark"
+                @click="clearDraft('presenting_complaints')"
+              />
+            </template>
+          </q-banner>
+          
           <q-input
             v-model="notesForm.presenting_complaints"
             filled
             type="textarea"
             label="Presenting Complaints"
             rows="6"
-            hint="Enter the patient's presenting complaints/history"
+            hint="Enter the patient's presenting complaints/history (auto-saved as draft)"
+            @update:model-value="autoSaveDraft('presenting_complaints')"
           />
           <div class="row q-mt-md q-gutter-md">
             <q-btn label="Save" color="primary" @click="saveConsultationNotes" />
-            <q-btn label="Cancel" flat v-close-popup />
+            <q-btn label="Cancel" flat @click="closePresentingComplaintsDialog" />
           </div>
         </q-card-section>
       </q-card>
@@ -764,17 +1036,48 @@
           <div class="text-h6">Edit Doctor Notes</div>
         </q-card-section>
         <q-card-section>
+          <!-- Draft Banner for Doctor Notes -->
+          <q-banner
+            v-if="hasDraft('doctor_notes') && notesForm.doctor_notes !== (getDraftValue('doctor_notes') || '')"
+            class="bg-warning text-dark q-mb-md"
+            rounded
+          >
+            <template v-slot:avatar>
+              <q-icon name="save" color="dark" />
+            </template>
+            <strong>Draft Available</strong>
+            <div class="text-caption q-mt-xs">
+              A draft was saved {{ formatDraftTime(getDraftTime('doctor_notes')) }}. 
+              Would you like to restore it?
+            </div>
+            <template v-slot:action>
+              <q-btn
+                flat
+                label="Restore Draft"
+                color="dark"
+                @click="restoreDraft('doctor_notes')"
+              />
+              <q-btn
+                flat
+                label="Discard"
+                color="dark"
+                @click="clearDraft('doctor_notes')"
+              />
+            </template>
+          </q-banner>
+          
           <q-input
             v-model="notesForm.doctor_notes"
             filled
             type="textarea"
             label="Doctor Notes"
             rows="8"
-            hint="Enter clinical notes and observations"
+            hint="Enter clinical notes and observations (auto-saved as draft)"
+            @update:model-value="autoSaveDraft('doctor_notes')"
           />
           <div class="row q-mt-md q-gutter-md">
             <q-btn label="Save" color="primary" @click="saveConsultationNotes" />
-            <q-btn label="Cancel" flat v-close-popup />
+            <q-btn label="Cancel" flat @click="closeDoctorNotesDialog" />
           </div>
         </q-card-section>
       </q-card>
@@ -1114,7 +1417,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { consultationAPI, priceListAPI, encountersAPI, patientsAPI, billingAPI, vitalsAPI } from '../services/api';
 import { useEncountersStore } from '../stores/encounters';
@@ -1134,6 +1437,90 @@ const readonly = computed(() => !isAdmin.value && encounterStore.currentEncounte
 const searchEncounterId = ref(route.params.encounterId || '');
 const encounterLoaded = ref(false);
 const loadingEncounter = ref(false);
+
+// Date and card number filtering
+const selectedDate = ref('');
+const cardNumberFilter = ref('');
+const encountersList = ref([]);
+const loadingEncounters = ref(false);
+
+// Encounter columns for the list
+const encounterColumns = [
+  { name: 'time', label: 'Time', field: 'created_at', align: 'left', sortable: true },
+  { name: 'id', label: 'Encounter ID', field: 'id', align: 'left' },
+  { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left' },
+  { name: 'card_number', label: 'Card Number', field: 'patient_card_number', align: 'left' },
+  { name: 'department', label: 'Department', field: 'department', align: 'left' },
+  { name: 'status', label: 'Status', field: 'status', align: 'center' },
+  { name: 'actions', label: 'Actions', align: 'center' },
+];
+
+// Filtered encounters based on card number
+const filteredEncounters = computed(() => {
+  if (!cardNumberFilter.value) return encountersList.value;
+  const needle = cardNumberFilter.value.toLowerCase().trim();
+  return encountersList.value.filter(e => 
+    (e.patient_card_number || '').toLowerCase().includes(needle)
+  );
+});
+
+// Set today's date on mount
+const setToday = () => {
+  const today = new Date();
+  selectedDate.value = today.toISOString().split('T')[0];
+  loadEncountersForDate();
+};
+
+// Load encounters for selected date
+const loadEncountersForDate = async () => {
+  if (!selectedDate.value) {
+    encountersList.value = [];
+    return;
+  }
+
+  loadingEncounters.value = true;
+  try {
+    const response = await encountersAPI.getByDate(selectedDate.value);
+    encountersList.value = response.data || [];
+  } catch (error) {
+    console.error('Failed to load encounters:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load encounters',
+    });
+    encountersList.value = [];
+  } finally {
+    loadingEncounters.value = false;
+  }
+};
+
+// Select encounter from list
+const selectEncounter = async (encounter) => {
+  searchEncounterId.value = encounter.id;
+  await loadEncounter();
+};
+
+// Format time for display
+const formatTime = (dateString) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleTimeString('en-US', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: true 
+  });
+};
+
+// Get status color
+const getStatusColor = (status) => {
+  const colors = {
+    draft: 'orange',
+    in_consultation: 'blue',
+    awaiting_services: 'purple',
+    finalized: 'green',
+  };
+  return colors[status] || 'grey';
+};
 const finalizing = ref(false);
 
 const showDiagnosisDialog = ref(false);
@@ -1168,6 +1555,7 @@ const investigationColumns = [
   { name: 'procedure_name', label: 'Procedure Name', field: 'procedure_name', align: 'left' },
   { name: 'gdrg_code', label: 'GDRG Code', field: 'gdrg_code', align: 'left' },
   { name: 'investigation_type', label: 'Type', field: 'investigation_type', align: 'left' },
+  { name: 'price', label: 'Price', field: 'price', align: 'right', format: (val) => val ? `₵${parseFloat(val).toFixed(2)}` : 'N/A' },
   { name: 'status', label: 'Status', field: 'status', align: 'left' },
   { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
 ];
@@ -1202,10 +1590,93 @@ const prescriptionForm = reactive({
   medicine_code: '',
   medicine_name: '',
   dose: '',
+  unit: '',
   frequency: '',
   duration: '',
+  instructions: '',
   quantity: 1,
 });
+
+// Frequency mapping for prescriptions
+const frequencyMapping = {
+  "Nocte": 1,
+  "Stat": 1,
+  "OD": 1,
+  "daily": 1,
+  "PRN": 1,
+  "BDS": 2,
+  "BID": 2,
+  "QDS": 4,
+  "QID": 4,
+  "TID": 3,
+  "TDS": 3,
+  "5X": 5,
+  "EVERY OTHER DAY": 1,
+  "AT BED TIME": 1,
+  "6 TIMES": 6
+};
+
+const frequencyOptions = Object.keys(frequencyMapping);
+const unitOptions = ref(['MG', 'ML', 'TAB', 'CAP', 'G', 'MCG', 'IU', 'UNITS']);
+
+// Create unit if not in list
+const createUnit = (val, done) => {
+  if (val.length > 0 && !unitOptions.value.includes(val.toUpperCase())) {
+    unitOptions.value.push(val.toUpperCase());
+  }
+  done(val.toUpperCase());
+};
+
+// Auto-calculate quantity based on pharmacist logic
+// For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
+// Then: (dose_mg / 100) × frequency_value × duration
+// Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
+const calculateQuantity = () => {
+  if (prescriptionForm.dose && prescriptionForm.frequency && prescriptionForm.duration) {
+    try {
+      const doseNum = parseFloat(prescriptionForm.dose);
+      const frequencyValue = frequencyMapping[prescriptionForm.frequency];
+      
+      if (doseNum && frequencyValue && doseNum > 0) {
+        // Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
+        const durationStr = prescriptionForm.duration.trim();
+        let durationNum = 1;
+        if (durationStr) {
+          // First try to parse as a number directly
+          const directNum = parseFloat(durationStr);
+          if (!isNaN(directNum) && directNum > 0) {
+            durationNum = Math.floor(directNum);
+          } else {
+            // Otherwise, extract number from string (e.g., "7 DAYS" -> 7)
+            const durationMatch = durationStr.match(/\d+/);
+            if (durationMatch) {
+              durationNum = parseInt(durationMatch[0]);
+            }
+          }
+        }
+        
+        // Convert dose to units based on unit type
+        let unitsPerDose = doseNum;
+        if (prescriptionForm.unit && prescriptionForm.unit.toUpperCase() === 'MG') {
+          // For MG: 100mg = 1 unit
+          unitsPerDose = doseNum / 100;
+        } else if (prescriptionForm.unit && prescriptionForm.unit.toUpperCase() === 'MCG') {
+          // For MCG: 1000mcg = 1 unit (or 100mcg = 0.1 unit, but typically 1000mcg = 1mg = 1 unit)
+          unitsPerDose = doseNum / 1000;
+        }
+        // For other units (TAB, CAP, ML, etc.), use dose as-is (1 tablet = 1 unit)
+        
+        // Calculate: units per dose × frequency per day × number of days
+        const calculatedQuantity = Math.floor(unitsPerDose * frequencyValue * durationNum);
+        if (calculatedQuantity > 0) {
+          prescriptionForm.quantity = calculatedQuantity;
+        }
+      }
+    } catch (error) {
+      console.error('Error calculating quantity:', error);
+    }
+  }
+};
 
 const investigationForm = reactive({
   encounter_id: null,
@@ -1213,6 +1684,8 @@ const investigationForm = reactive({
   gdrg_code: '',
   procedure_name: '',  // Procedure/service name
   investigation_type: '',
+  notes: '',  // Notes/remarks from doctor
+  price: '',  // Price of the investigation
 });
 
 const editingInvestigationId = ref(null);
@@ -1233,6 +1706,164 @@ const notesForm = reactive({
   outcome: '',
   admission_ward: ''
 });
+
+// Auto-save draft functionality
+const draftSaveTimers = ref({});
+const DRAFT_SAVE_DELAY = 2000; // Save after 2 seconds of no typing
+
+// Get draft storage key
+const getDraftKey = (field) => {
+  const encounterId = encounterStore.currentEncounter?.id;
+  if (!encounterId) return null;
+  return `consultation_draft_${encounterId}_${field}`;
+};
+
+// Auto-save draft (debounced)
+const autoSaveDraft = (field) => {
+  const encounterId = encounterStore.currentEncounter?.id;
+  if (!encounterId) {
+    console.warn('No encounter ID for draft save');
+    return;
+  }
+  
+  // Clear existing timer
+  if (draftSaveTimers.value[field]) {
+    clearTimeout(draftSaveTimers.value[field]);
+  }
+  
+  // Set new timer
+  draftSaveTimers.value[field] = setTimeout(() => {
+    const key = getDraftKey(field);
+    if (!key) {
+      console.warn(`No draft key for field: ${field}`);
+      return;
+    }
+    
+    const value = notesForm[field] || '';
+    if (value.trim()) {
+      const draftData = {
+        value: value,
+        timestamp: Date.now(),
+        encounterId: encounterId
+      };
+      localStorage.setItem(key, JSON.stringify(draftData));
+      console.log(`Draft saved for ${field}:`, draftData);
+    } else {
+      // Remove draft if empty
+      localStorage.removeItem(key);
+    }
+  }, DRAFT_SAVE_DELAY);
+};
+
+// Check if draft exists
+const hasDraft = (field) => {
+  const key = getDraftKey(field);
+  if (!key) return false;
+  const draft = localStorage.getItem(key);
+  if (!draft) return false;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    // Check if draft is for current encounter
+    return draftData.encounterId === encounterStore.currentEncounter?.id;
+  } catch {
+    return false;
+  }
+};
+
+// Get draft time
+const getDraftTime = (field) => {
+  const key = getDraftKey(field);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    return draftData.timestamp;
+  } catch {
+    return null;
+  }
+};
+
+// Get draft value
+const getDraftValue = (field) => {
+  const key = getDraftKey(field);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.encounterId === encounterStore.currentEncounter?.id) {
+      return draftData.value;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+// Format draft time
+const formatDraftTime = (timestamp) => {
+  if (!timestamp) return '';
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(minutes / 60);
+  
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  
+  const date = new Date(timestamp);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+// Restore draft
+const restoreDraft = (field) => {
+  const key = getDraftKey(field);
+  if (!key) return;
+  
+  const draft = localStorage.getItem(key);
+  if (!draft) return;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.value) {
+      notesForm[field] = draftData.value;
+      $q.notify({
+        type: 'positive',
+        message: 'Draft restored successfully',
+        position: 'top',
+        timeout: 2000
+      });
+    }
+  } catch (error) {
+    console.error('Failed to restore draft:', error);
+  }
+};
+
+// Clear draft
+const clearDraft = (field) => {
+  const key = getDraftKey(field);
+  if (key) {
+    localStorage.removeItem(key);
+  }
+};
+
+// Load drafts when dialog opens
+const loadDraftsWhenDialogOpens = (field) => {
+  if (hasDraft(field)) {
+    // Don't auto-restore, just show the banner
+    // User can choose to restore or discard
+  }
+};
 
 // Previous data dialogs and state
 const showPreviousVitalsDialog = ref(false);
@@ -1459,6 +2090,11 @@ const saveConsultationNotes = async () => {
     };
     
     await consultationAPI.saveConsultationNotes(dataToSend);
+    
+    // Clear drafts after successful save
+    clearDraft('presenting_complaints');
+    clearDraft('doctor_notes');
+    
     $q.notify({
       type: 'positive',
       message: 'Consultation notes saved successfully',
@@ -1482,23 +2118,106 @@ const clearFollowUpDate = () => {
 };
 
 const openEditPresentingComplaints = () => {
+  // Load saved notes first
   notesForm.presenting_complaints = consultationNotes.value?.presenting_complaints || '';
   notesForm.doctor_notes = consultationNotes.value?.doctor_notes || '';
   notesForm.follow_up_date = consultationNotes.value?.follow_up_date ? 
     consultationNotes.value.follow_up_date.split('T')[0] : '';
   notesForm.outcome = consultationNotes.value?.outcome || '';
   notesForm.admission_ward = consultationNotes.value?.admission_ward || '';
+  
   editPresentingComplaints.value = true;
+  
+  // Check for draft and restore if exists (only if saved notes are empty)
+  nextTick(() => {
+    if (hasDraft('presenting_complaints')) {
+      const draft = localStorage.getItem(getDraftKey('presenting_complaints'));
+      if (draft) {
+        try {
+          const draftData = JSON.parse(draft);
+          if (draftData.value && draftData.encounterId === encounterStore.currentEncounter?.id) {
+            // If there's no saved content, auto-restore draft
+            if (!notesForm.presenting_complaints.trim()) {
+              notesForm.presenting_complaints = draftData.value;
+            }
+            // Otherwise, the banner will show to let user choose
+          }
+        } catch (e) {
+          console.error('Failed to restore draft:', e);
+        }
+      }
+    }
+  });
 };
 
 const openEditDoctorNotes = () => {
+  // Load saved notes first
   notesForm.presenting_complaints = consultationNotes.value?.presenting_complaints || '';
   notesForm.doctor_notes = consultationNotes.value?.doctor_notes || '';
   notesForm.follow_up_date = consultationNotes.value?.follow_up_date ? 
     consultationNotes.value.follow_up_date.split('T')[0] : '';
   notesForm.outcome = consultationNotes.value?.outcome || '';
   notesForm.admission_ward = consultationNotes.value?.admission_ward || '';
+  
   editDoctorNotes.value = true;
+  
+  // Check for draft and restore if exists (only if saved notes are empty)
+  nextTick(() => {
+    if (hasDraft('doctor_notes')) {
+      const draft = localStorage.getItem(getDraftKey('doctor_notes'));
+      if (draft) {
+        try {
+          const draftData = JSON.parse(draft);
+          if (draftData.value && draftData.encounterId === encounterStore.currentEncounter?.id) {
+            // If there's no saved content, auto-restore draft
+            if (!notesForm.doctor_notes.trim()) {
+              notesForm.doctor_notes = draftData.value;
+            }
+            // Otherwise, the banner will show to let user choose
+          }
+        } catch (e) {
+          console.error('Failed to restore draft:', e);
+        }
+      }
+    }
+  });
+};
+
+// Close dialogs with auto-save
+const closePresentingComplaintsDialog = () => {
+  // Save draft immediately before closing
+  const encounterId = encounterStore.currentEncounter?.id;
+  if (encounterId && notesForm.presenting_complaints.trim()) {
+    const key = getDraftKey('presenting_complaints');
+    if (key) {
+      const draftData = {
+        value: notesForm.presenting_complaints,
+        timestamp: Date.now(),
+        encounterId: encounterId
+      };
+      localStorage.setItem(key, JSON.stringify(draftData));
+      console.log('Draft saved on dialog close:', draftData);
+    }
+  }
+  editPresentingComplaints.value = false;
+};
+
+const closeDoctorNotesDialog = () => {
+  // Save draft immediately before closing
+  const encounterId = encounterStore.currentEncounter?.id;
+  if (encounterId && notesForm.doctor_notes.trim()) {
+    const key = getDraftKey('doctor_notes');
+    if (key) {
+      const draftData = {
+        value: notesForm.doctor_notes,
+        timestamp: Date.now(),
+        encounterId: encounterId
+      };
+      localStorage.setItem(key, JSON.stringify(draftData));
+      console.log('Draft saved on dialog close:', draftData);
+    }
+  }
+  editDoctorNotes.value = false;
 };
 
 const openEditFollowUpDate = () => {
@@ -1681,16 +2400,16 @@ const editDiagnosis = (diagnosis) => {
 
 const resetDiagnosisForm = () => {
   editingDiagnosisId.value = null;
-  selectedDiagnosis.value = null;
+    selectedDiagnosis.value = null;
   selectedIcd10.value = null;
-  Object.assign(diagnosisForm, {
+    Object.assign(diagnosisForm, {
     encounter_id: encounterStore.currentEncounter?.id || null,
-    icd10: '',
-    diagnosis: '',
-    gdrg_code: '',
-    is_provisional: false,
-    is_chief: false,
-  });
+      icd10: '',
+      diagnosis: '',
+      gdrg_code: '',
+      is_provisional: false,
+      is_chief: false,
+    });
 };
 
 // Load ICD-10 codes when diagnosis dialog opens
@@ -1820,13 +2539,24 @@ const loadPharmacyMedications = async () => {
 };
 
 const editPrescription = (prescription) => {
+  // Prevent editing if prescription is confirmed
+  if (prescription.is_confirmed) {
+    $q.notify({
+      type: 'warning',
+      message: 'Cannot edit prescription that has been confirmed by pharmacy staff',
+      position: 'top'
+    });
+    return;
+  }
   editingPrescriptionId.value = prescription.id;
   prescriptionForm.encounter_id = prescription.encounter_id;
   prescriptionForm.medicine_code = prescription.medicine_code || '';
   prescriptionForm.medicine_name = prescription.medicine_name || '';
   prescriptionForm.dose = prescription.dose || '';
+  prescriptionForm.unit = prescription.unit || '';
   prescriptionForm.frequency = prescription.frequency || '';
   prescriptionForm.duration = prescription.duration || '';
+  prescriptionForm.instructions = prescription.instructions || '';
   prescriptionForm.quantity = prescription.quantity || 1;
   // Try to find the medication in the list to set selectedMedication
   selectedMedication.value = allMedications.value.find(
@@ -1843,8 +2573,10 @@ const resetPrescriptionForm = () => {
       medicine_code: '',
       medicine_name: '',
       dose: '',
+      unit: '',
       frequency: '',
       duration: '',
+      instructions: '',
       quantity: 1,
     });
 };
@@ -1880,6 +2612,16 @@ const savePrescription = async () => {
 
 
 const deletePrescription = (prescription) => {
+  // Prevent deleting if prescription is confirmed
+  if (prescription.is_confirmed) {
+    $q.notify({
+      type: 'warning',
+      message: 'Cannot delete prescription that has been confirmed by pharmacy staff',
+      position: 'top'
+    });
+    return;
+  }
+  
   $q.dialog({
     title: 'Delete Prescription',
     message: `Are you sure you want to delete this prescription: "${prescription.medicine_name}"?`,
@@ -1958,30 +2700,68 @@ const filterProcedures = (val, update) => {
   });
 };
 
-// When procedure is selected, auto-fill GDRG code and procedure name
-const onProcedureSelected = (procedure) => {
+// When procedure is selected, auto-fill GDRG code, procedure name, and price
+const onProcedureSelected = async (procedure) => {
   if (procedure && typeof procedure === 'object') {
     investigationForm.gdrg_code = procedure.g_drg_code;
     investigationForm.procedure_name = procedure.service_name || '';
+    
+    // Auto-fetch price from price list
+    if (procedure.g_drg_code && encounterStore.currentEncounter) {
+      try {
+        // Check if patient is insured (has CCC number)
+        const isInsured = !!encounterStore.currentEncounter.ccc_number;
+        // Use base_rate for cash patients, nhia_claim_co_payment or base_rate for insured
+        const price = isInsured && procedure.nhia_claim_co_payment 
+          ? procedure.nhia_claim_co_payment 
+          : procedure.base_rate;
+        investigationForm.price = price ? price.toString() : '';
+      } catch (error) {
+        console.error('Error fetching price:', error);
+        investigationForm.price = '';
+      }
+    }
   } else if (procedure) {
     // If it's just the code, find the procedure object
     const proc = allProcedures.value.find(p => p.g_drg_code === procedure);
     if (proc) {
       investigationForm.gdrg_code = proc.g_drg_code;
       investigationForm.procedure_name = proc.service_name || '';
+      
+      // Auto-fetch price
+      if (encounterStore.currentEncounter) {
+        const isInsured = !!encounterStore.currentEncounter.ccc_number;
+        const price = isInsured && proc.nhia_claim_co_payment 
+          ? proc.nhia_claim_co_payment 
+          : proc.base_rate;
+        investigationForm.price = price ? price.toString() : '';
+      }
     }
   } else {
     investigationForm.gdrg_code = '';
     investigationForm.procedure_name = '';
+    investigationForm.price = '';
   }
 };
 
 const editInvestigation = async (investigation) => {
+  // Prevent editing if investigation is confirmed
+  if (investigation.confirmed_by || investigation.status === 'confirmed' || investigation.status === 'completed') {
+    $q.notify({
+      type: 'warning',
+      message: 'Cannot edit investigation that has been confirmed by staff',
+      position: 'top'
+    });
+    return;
+  }
+  
   editingInvestigationId.value = investigation.id;
   investigationForm.encounter_id = investigation.encounter_id;
   investigationForm.gdrg_code = investigation.gdrg_code || '';
   investigationForm.procedure_name = investigation.procedure_name || '';
   investigationForm.investigation_type = investigation.investigation_type || '';
+  investigationForm.notes = investigation.notes || '';
+  investigationForm.price = investigation.price || '';
   
   // Try to find the procedure in existing procedures or load if needed
   let proc = allProcedures.value.find(p => p.g_drg_code === investigation.gdrg_code);
@@ -2009,6 +2789,8 @@ const resetInvestigationForm = () => {
     gdrg_code: '',
     procedure_name: '',
     investigation_type: '',
+    notes: '',
+    price: '',
   });
   allProcedures.value = [];
   procedureOptions.value = [];
@@ -2053,7 +2835,66 @@ const saveInvestigation = async () => {
   }
 };
 
+const cancelInvestigation = (investigation) => {
+  // Only allow cancelling confirmed investigations
+  if (investigation.status !== 'confirmed') {
+    $q.notify({
+      type: 'warning',
+      message: 'Can only cancel confirmed investigations',
+      position: 'top'
+    });
+    return;
+  }
+  
+  if (investigation.status === 'cancelled') {
+    $q.notify({
+      type: 'warning',
+      message: 'Investigation is already cancelled',
+      position: 'top'
+    });
+    return;
+  }
+  
+  $q.dialog({
+    title: 'Cancel Investigation',
+    message: `Cancel investigation: "${investigation.procedure_name || investigation.gdrg_code}"?`,
+    prompt: {
+      model: '',
+      type: 'text',
+      label: 'Reason for cancellation *',
+      hint: 'Enter the reason for cancelling this investigation (e.g., Client cannot pay)',
+      isValid: (val) => val && val.length > 0,
+    },
+    cancel: true,
+    persistent: true,
+  }).onOk(async (reason) => {
+    try {
+      await consultationAPI.cancelInvestigation(investigation.id, { reason });
+      $q.notify({
+        type: 'positive',
+        message: 'Investigation cancelled successfully',
+      });
+      await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to cancel investigation',
+      });
+    }
+  });
+};
+
 const deleteInvestigation = (investigation) => {
+  // Prevent deleting if investigation is confirmed, completed, or cancelled
+  if (investigation.confirmed_by || investigation.status === 'confirmed' || investigation.status === 'completed' || investigation.status === 'cancelled') {
+    $q.notify({
+      type: 'warning',
+      message: 'Cannot delete investigation that has been confirmed, completed, or cancelled',
+      position: 'top'
+    });
+    return;
+  }
+  
   $q.dialog({
     title: 'Delete Investigation',
     message: `Are you sure you want to delete this investigation: "${investigation.procedure_name || investigation.gdrg_code}"?`,
@@ -2210,12 +3051,40 @@ const finalizeConsultation = () => {
       flat: true
     }
   }).onOk(async () => {
-    // Require outcome before finalizing (frontend guard)
-    const outcomeVal = consultationNotes.value?.outcome || notesForm.outcome;
-    if (!outcomeVal) {
-      $q.notify({ type: 'negative', message: 'Please set consultation outcome before finalizing.' });
+    // Validate requirements before finalizing (frontend guard)
+    // Check for diagnosis
+    if (!encounterStore.encounterDiagnoses || encounterStore.encounterDiagnoses.length === 0) {
+      $q.notify({ 
+        type: 'negative', 
+        message: 'Cannot finalize consultation. At least one diagnosis is required.' 
+      });
       return;
     }
+    
+    // Check for outcome
+    const outcomeVal = consultationNotes.value?.outcome || notesForm.outcome;
+    if (!outcomeVal) {
+      $q.notify({ 
+        type: 'negative', 
+        message: 'Cannot finalize consultation. Consultation outcome is required.' 
+      });
+      return;
+    }
+    
+    // Check for follow-up date
+    const followUpDate = consultationNotes.value?.follow_up_date || notesForm.follow_up_date;
+    if (!followUpDate) {
+      $q.notify({ 
+        type: 'negative', 
+        message: 'Cannot finalize consultation. Follow-up date is required.' 
+      });
+      return;
+    }
+    
+    // Note: Payment validation is handled by backend
+    // For insured clients, bills can be 0 (fully covered)
+    // For non-insured clients, all bills must be paid
+    
     finalizing.value = true;
     let finalizationSuccess = false;
     try {
@@ -2229,6 +3098,10 @@ const finalizeConsultation = () => {
       if (encounterStore.currentEncounter?.id === encounterStore.currentEncounter.id) {
         encounterStore.currentEncounter.status = 'finalized';
       }
+      
+      // Clear all drafts after finalization
+      clearDraft('presenting_complaints');
+      clearDraft('doctor_notes');
       
       // Try to reload encounter data (but don't fail if this errors)
       try {
@@ -2289,6 +3162,14 @@ const saveDraftAndAwaitServices = async () => {
 };
 
 const cancelConsultation = () => {
+  // Clear any pending draft save timers
+  Object.keys(draftSaveTimers.value).forEach(field => {
+    if (draftSaveTimers.value[field]) {
+      clearTimeout(draftSaveTimers.value[field]);
+    }
+  });
+  draftSaveTimers.value = {};
+  
   encounterStore.clearCurrent();
   encounterLoaded.value = false;
   searchEncounterId.value = '';
@@ -2732,8 +3613,10 @@ const usePreviousPrescription = (previousPrescription) => {
     prescriptionForm.medicine_code = previousPrescription.medicine_code || '';
     prescriptionForm.medicine_name = previousPrescription.medicine_name || '';
     prescriptionForm.dose = previousPrescription.dose || '';
+    prescriptionForm.unit = previousPrescription.unit || '';
     prescriptionForm.frequency = previousPrescription.frequency || '';
     prescriptionForm.duration = previousPrescription.duration || '';
+    prescriptionForm.instructions = previousPrescription.instructions || '';
     prescriptionForm.quantity = previousPrescription.quantity || 1;
     
     // Try to find the medication in the list to set selectedMedication
@@ -2977,8 +3860,23 @@ onMounted(() => {
   
   // If encounterId is in route, load it
   if (route.params.encounterId) {
+    searchEncounterId.value = route.params.encounterId;
     loadEncounter();
+  } else {
+    // Otherwise, set today and load today's encounters
+    setToday();
   }
+});
+
+// Cleanup on unmount
+onUnmounted(() => {
+  // Clear any pending draft save timers
+  Object.keys(draftSaveTimers.value).forEach(field => {
+    if (draftSaveTimers.value[field]) {
+      clearTimeout(draftSaveTimers.value[field]);
+    }
+  });
+  draftSaveTimers.value = {};
 });
 </script>
 

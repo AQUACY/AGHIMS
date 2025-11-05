@@ -76,6 +76,7 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
     claim_amount_col = None
     nhia_claim_col = None
     bill_effective_col = None
+    insurance_covered_col = None
     
     # Map columns based on original and normalized names
     for i, orig_col in enumerate(original_columns):
@@ -132,6 +133,11 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
         # Bill Effective
         elif 'bill_effecti' in col_lower or 'bill_effective' in col_lower:
             bill_effective_col = col
+        
+        # Insurance Covered
+        elif 'insurance_covered' in col_lower or 'insurancecovered' in col_lower or \
+             (orig_col_lower.startswith('insurance') and 'covered' in orig_col_lower):
+            insurance_covered_col = col
     
     # Validate required columns
     if not product_name_col:
@@ -237,6 +243,17 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
             item['bill_effective'] = str(row[bill_effective_col]).strip()
         else:
             item['bill_effective'] = None
+        
+        # Insurance Covered (default to "yes" if not specified)
+        if insurance_covered_col and insurance_covered_col in df.columns and not pd.isna(row[insurance_covered_col]):
+            insurance_val = str(row[insurance_covered_col]).strip().lower()
+            # Normalize to "yes" or "no"
+            if insurance_val in ['no', 'n', 'false', '0']:
+                item['insurance_covered'] = 'no'
+            else:
+                item['insurance_covered'] = 'yes'
+        else:
+            item['insurance_covered'] = 'yes'  # Default to "yes" if not specified
         
         items.append(item)
     
@@ -556,6 +573,7 @@ def upload_product_prices(db: Session, items: List[Dict]):
                     'sr_no', 'sub_category_1', 'sub_category_2', 'product_id', 
                     'product_name', 'medication_code', 'formulation', 'strength',
                     'base_rate', 'nhia_app', 'claim_amount', 'nhia_claim', 'bill_effective',
+                    'insurance_covered',  # New field for insurance coverage
                     # Legacy fields for backward compatibility with existing table structure
                     'g_drg_code', 'service_name', 'service_type', 'service_id', 
                     'service_ty', 'nhia_claim_co_payment', 'clinic_bill_effective'
@@ -615,27 +633,35 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
     - Insured clients: Returns top-up amount (nhia_claim_co_payment), or 0 if null
     - Non-insured clients: Returns base_rate
     """
+    print(f"DEBUG get_price_from_all_tables: item_code='{item_code}', is_insured={is_insured}")
+    
     # Search in procedure, surgery, and unmapped_drg tables (use g_drg_code)
     tables = [
-        db.query(ProcedurePrice).filter(ProcedurePrice.g_drg_code == item_code, ProcedurePrice.is_active == True),
-        db.query(SurgeryPrice).filter(SurgeryPrice.g_drg_code == item_code, SurgeryPrice.is_active == True),
-        db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.g_drg_code == item_code, UnmappedDRGPrice.is_active == True),
+        ("ProcedurePrice", db.query(ProcedurePrice).filter(ProcedurePrice.g_drg_code == item_code, ProcedurePrice.is_active == True)),
+        ("SurgeryPrice", db.query(SurgeryPrice).filter(SurgeryPrice.g_drg_code == item_code, SurgeryPrice.is_active == True)),
+        ("UnmappedDRGPrice", db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.g_drg_code == item_code, UnmappedDRGPrice.is_active == True)),
     ]
     
-    for query in tables:
+    for table_name, query in tables:
         item = query.first()
         if item:
+            print(f"DEBUG: Found item in {table_name} table")
             if is_insured:
                 # For insured patients: use Co-Payment (top-up amount)
                 # If Co-Payment is not available, fall back to Base Rate
                 if item.nhia_claim_co_payment is not None:
+                    print(f"DEBUG: Returning co-payment from {table_name}: {item.nhia_claim_co_payment}")
                     return float(item.nhia_claim_co_payment)
                 else:
                     # Fallback to base rate if co-payment not specified
+                    print(f"DEBUG: No co-payment, returning base_rate from {table_name}: {item.base_rate}")
                     return float(item.base_rate)
             else:
                 # For cash patients: use Base Rate
+                print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
                 return float(item.base_rate)
+    
+    print(f"DEBUG: Item not found in procedure/surgery/unmapped_drg tables, checking ProductPrice table")
     
     # Search in product table (uses medication_code)
     product = db.query(ProductPrice).filter(
@@ -643,17 +669,47 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
         ProductPrice.is_active == True
     ).first()
     
-    if product:
-        if is_insured:
-            # For insured clients: use top-up (nhia_claim_co_payment)
-            # If top-up is null, billed amount is 0
-            if product.nhia_claim_co_payment is not None:
-                return float(product.nhia_claim_co_payment)
-            else:
-                return 0.0
+    if not product:
+        print(f"Product NOT FOUND - Code: {item_code}")
+        return 0.0
+    
+    # Check if product is covered by insurance
+    insurance_covered = product.insurance_covered
+    # Normalize: strip whitespace, convert to lowercase, handle None/empty
+    insurance_covered_str = None
+    if insurance_covered:
+        insurance_covered_str = str(insurance_covered).strip().lower()
+        # Handle empty strings
+        if insurance_covered_str == '':
+            insurance_covered_str = None
+    
+    # Debug logging
+    print(f"Product pricing - Code: {item_code}, Insurance Covered: '{insurance_covered_str}' (raw: '{insurance_covered}', type: {type(insurance_covered)}), Is Insured: {is_insured}, Base Rate: {product.base_rate}")
+    
+    # Check if product is NOT covered by insurance (case-insensitive, handles 'no', 'NO', ' No ', etc.)
+    if insurance_covered_str == 'no':
+        # If product is not covered by insurance, always charge base_rate regardless of patient insurance status
+        base_rate_value = float(product.base_rate) if product.base_rate is not None else 0.0
+        print(f"Product NOT covered by insurance - returning base_rate: {base_rate_value}")
+        if base_rate_value <= 0:
+            print(f"WARNING: base_rate is 0 or None for product {item_code} - this may prevent bill generation")
+        return base_rate_value
+    
+    # Product is covered by insurance (or insurance_covered is null/yes)
+    if is_insured:
+        # For insured clients: use top-up (nhia_claim_co_payment)
+        # If top-up is null, billed amount is 0
+        if product.nhia_claim_co_payment is not None:
+            print(f"Insured patient - returning co-payment: {product.nhia_claim_co_payment}")
+            return float(product.nhia_claim_co_payment)
         else:
-            # For non-insured clients: use Base Rate
-            return float(product.base_rate)
+            print(f"Insured patient - no co-payment, returning 0.0")
+            return 0.0
+    else:
+        # For non-insured clients: use Base Rate
+        base_rate_value = float(product.base_rate) if product.base_rate is not None else 0.0
+        print(f"Cash patient - returning base_rate: {base_rate_value}")
+        return base_rate_value
     
     return 0.0
 

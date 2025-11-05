@@ -63,6 +63,7 @@ export const patientsAPI = {
   get: (patientId) => api.get(`/patients/${patientId}`),
   getByCard: (cardNumber) => api.get(`/patients/card/${encodeURIComponent(cardNumber)}`),
   searchByName: (name) => api.get(`/patients/search/name?name=${encodeURIComponent(name)}`),
+  searchByCcc: (cccNumber) => api.get(`/patients/search/ccc?ccc_number=${encodeURIComponent(cccNumber)}`),
   update: (patientId, data) => api.put(`/patients/${patientId}`, data),
   import: (file) => {
     const formData = new FormData();
@@ -128,6 +129,8 @@ export const consultationAPI = {
   getInvestigations: (encounterId) => api.get(`/consultation/investigation/encounter/${encounterId}`),
   confirmInvestigation: (investigationId) => 
     api.put(`/consultation/investigation/${investigationId}/confirm`),
+  cancelInvestigation: (investigationId, data) => 
+    api.put(`/consultation/investigation/${investigationId}/cancel`, data),
   getConsultationNotes: (encounterId) => api.get(`/consultation/notes/encounter/${encounterId}`),
   saveConsultationNotes: (data) => api.post('/consultation/notes', data),
   getPrescriptionsByPatientCard: (cardNumber, encounterId) => 

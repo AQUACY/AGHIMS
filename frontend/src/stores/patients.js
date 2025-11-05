@@ -31,11 +31,28 @@ export const usePatientsStore = defineStore('patients', {
     async getPatientByCard(cardNumber) {
       try {
         const response = await patientsAPI.getByCard(cardNumber);
-        this.currentPatient = response.data;
-        return response.data;
+        // API returns a list, so take the first result
+        const patients = response.data || [];
+        if (patients.length > 0) {
+          this.currentPatient = patients[0];
+          return patients[0];
+        } else {
+          this.currentPatient = null;
+          Notify.create({
+            type: 'warning',
+            message: 'No patient found with this card number',
+            position: 'top',
+          });
+          return null;
+        }
       } catch (error) {
         if (error.response?.status === 404) {
           this.currentPatient = null;
+          Notify.create({
+            type: 'warning',
+            message: 'No patient found with this card number',
+            position: 'top',
+          });
           return null;
         }
         Notify.create({

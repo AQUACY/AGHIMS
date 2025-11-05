@@ -84,7 +84,6 @@
                 :icon="props.row.has_vitals ? 'edit' : 'add_circle'"
                 :label="props.row.has_vitals ? 'Edit Vitals' : 'Record Vitals'"
                 @click="recordVitals(props.row)"
-                :disable="props.row.status === 'finalized'"
                 class="q-mr-xs"
               />
             </q-td>

@@ -130,8 +130,6 @@ watch(() => route.query, () => {
 </script>
 
 <style scoped>
-.glass-text {
-  color: inherit;
-}
+/* Styles are now defined globally in App.vue */
 </style>
 

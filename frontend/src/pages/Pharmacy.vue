@@ -46,22 +46,61 @@
           />
         </div>
 
-        <!-- Encounter Selection -->
-        <div v-if="activeEncounters.length > 0" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm">Select Encounter:</div>
-          <q-select
-            v-model="selectedEncounterId"
-            :options="activeEncounters"
-            option-value="id"
-            option-label="label"
-            filled
-            label="Encounter"
-            emit-value
-            map-options
-            @update:model-value="loadPrescriptions"
-          />
+        <!-- Today's Encounter -->
+        <div v-if="todaysEncounter" class="q-mt-md">
+          <div class="text-subtitle1 q-mb-sm glass-text">Today's Encounter:</div>
+          <q-card class="q-mb-md" flat bordered style="background-color: rgba(46, 139, 87, 0.1);">
+            <q-card-section>
+              <div class="row items-center">
+                <div class="col">
+                  <div class="text-weight-bold">Encounter #{{ todaysEncounter.id }} - {{ getEncounterProcedures(todaysEncounter) }}</div>
+                  <div class="text-caption text-grey-7 q-mt-xs">
+                    {{ formatDate(todaysEncounter.created_at) }} - Status: {{ todaysEncounter.status }}
         </div>
-        <div v-else class="text-grey-7 q-mt-md">
+                </div>
+                <q-badge color="green" label="Today" />
+              </div>
+            </q-card-section>
+          </q-card>
+        </div>
+
+        <!-- Old Encounters - Collapsible -->
+        <div v-if="oldEncounters.length > 0" class="q-mt-md">
+          <q-expansion-item
+            v-model="oldEncountersExpanded"
+            icon="history"
+            :label="`Previous Services (${oldEncounters.length})`"
+            header-class="text-subtitle1 glass-text"
+            class="q-mb-sm"
+          >
+            <div class="q-gutter-sm q-pa-sm">
+              <q-card
+                v-for="encounter in oldEncounters"
+                :key="encounter.id"
+                flat
+                bordered
+                clickable
+                :class="{ 'bg-blue-1': selectedEncounterId === encounter.id }"
+                @click="selectOldEncounter(encounter.id)"
+                style="cursor: pointer;"
+              >
+                <q-card-section class="q-pa-sm">
+                  <div class="row items-center">
+                    <div class="col">
+                      <div class="text-weight-medium">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
+                      <div class="text-caption text-grey-7 q-mt-xs">
+                        {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
+                      </div>
+                    </div>
+                    <q-icon name="chevron_right" color="grey-6" />
+                  </div>
+                </q-card-section>
+              </q-card>
+            </div>
+          </q-expansion-item>
+        </div>
+
+        <div v-if="!todaysEncounter && oldEncounters.length === 0" class="text-grey-7 q-mt-md">
           No active encounters found for this patient
         </div>
       </q-card-section>
@@ -153,7 +192,7 @@
         <div class="row items-center q-mb-md">
           <div class="text-h6">Prescriptions</div>
           <q-space />
-          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized - Read Only" />
+          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized" />
           <q-btn
             color="secondary"
             icon="print"
@@ -167,7 +206,7 @@
             icon="add"
             label="Add Prescription"
             @click="openAddPrescriptionDialog"
-            :disable="!selectedEncounterId || isFinalized"
+            :disable="!selectedEncounterId"
           />
         </div>
         <q-table
@@ -178,6 +217,25 @@
           flat
           :loading="loadingPrescriptions"
         >
+          <template v-slot:top>
+            <div class="row items-center q-pa-sm">
+              <q-checkbox
+                :model-value="allPendingSelected"
+                :indeterminate="somePendingSelected"
+                @update:model-value="toggleAllPending"
+                label="Select all pending prescriptions"
+                class="q-mr-md"
+              />
+              <q-btn
+                v-if="selectedPrescriptions.length > 0"
+                color="primary"
+                icon="add"
+                label="Add Selected to Confirmation"
+                @click="addSelectedToConfirmation"
+                class="q-mr-sm"
+              />
+            </div>
+          </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
               <q-badge
@@ -197,9 +255,28 @@
               />
             </q-td>
           </template>
+          <template v-slot:body-cell-selection="props">
+            <q-td :props="props">
+              <q-checkbox
+                v-if="!props.row.is_confirmed"
+                :model-value="isPrescriptionSelected(props.row)"
+                @update:model-value="togglePrescriptionSelection(props.row, $event)"
+              />
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <div class="row q-gutter-xs">
+              <q-btn
+                  v-if="props.row.instructions"
+                  size="sm"
+                  color="info"
+                  icon="visibility"
+                  flat
+                  round
+                  @click="viewInstructions(props.row)"
+                  title="View Instructions"
+                />
               <q-btn
                   v-if="!props.row.is_confirmed"
                   size="sm"
@@ -208,18 +285,24 @@
                   label="Confirm"
                   @click="confirmPrescription(props.row)"
                   :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || isFinalized"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple"
                 />
                 <q-btn
                   v-else-if="!props.row.is_dispensed"
-                size="sm"
-                color="positive"
+                  size="sm"
+                  color="positive"
                   label="Dispense"
                   @click="dispensePrescription(props.row)"
                   :loading="dispensingId === props.row.id || returningId === props.row.id"
-                  :disable="dispensingId !== null || returningId !== null || !canDispense(props.row) || isFinalized"
-                  :title="canDispense(props.row) ? 'Dispense prescription' : 'Bill must be paid before dispense'"
-                />
+                  :disable="dispensingId !== null || returningId !== null || !canDispense(props.row)"
+                >
+                  <q-tooltip v-if="!canDispense(props.row)">
+                    Bill must be paid before dispense
+                  </q-tooltip>
+                  <q-tooltip v-else>
+                    Dispense prescription
+                  </q-tooltip>
+                </q-btn>
                 <q-btn
                   v-else
                   size="sm"
@@ -234,6 +317,134 @@
             </q-td>
           </template>
         </q-table>
+      </q-card-section>
+    </q-card>
+
+    <!-- Itemized Confirmation Section -->
+    <q-card v-if="itemizedPrescriptions.length > 0" class="q-mt-md glass-card">
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">Selected Prescriptions for Confirmation</div>
+        <div class="q-gutter-md">
+          <q-card
+            v-for="prescription in itemizedPrescriptions"
+            :key="prescription.id"
+            flat
+            bordered
+            class="q-pa-md"
+          >
+            <div class="row q-gutter-md items-start">
+              <!-- Drug Name Section - Left Side -->
+              <div class="col-12 col-md-3">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Drug Name</div>
+                <div class="text-weight-bold" style="word-break: break-word; line-height: 1.4;">
+                  {{ prescription.medicine_name }}
+                </div>
+                <div class="text-caption text-grey-6 q-mt-xs">{{ prescription.medicine_code }}</div>
+              </div>
+              
+              <!-- Dose and Unit - Side by Side -->
+              <div class="col-12 col-md-2">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Dose</div>
+                <q-input
+                  v-model.number="prescription.editableDose"
+                  type="number"
+                  filled
+                  dense
+                  @update:model-value="calculateItemizedQuantity(prescription)"
+                  hint="e.g., 500"
+                />
+              </div>
+              
+              <div class="col-12 col-md-2">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Unit</div>
+                <q-select
+                  v-model="prescription.editableUnit"
+                  :options="unitOptions"
+                  filled
+                  dense
+                  use-input
+                  input-debounce="0"
+                  @new-value="createUnit"
+                  @update:model-value="calculateItemizedQuantity(prescription)"
+                />
+              </div>
+              
+              <!-- Frequency -->
+              <div class="col-12 col-md-2">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Frequency</div>
+                <q-select
+                  v-model="prescription.editableFrequency"
+                  :options="frequencyOptions"
+                  filled
+                  dense
+                  @update:model-value="calculateItemizedQuantity(prescription)"
+                />
+              </div>
+              
+              <!-- Duration -->
+              <div class="col-12 col-md-2">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Duration</div>
+                <q-input
+                  v-model="prescription.editableDuration"
+                  filled
+                  dense
+                  @update:model-value="calculateItemizedQuantity(prescription)"
+                  hint="e.g., 7 DAYS"
+                />
+              </div>
+              
+              <!-- Quantity -->
+              <div class="col-12 col-md-1">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Quantity</div>
+                <q-input
+                  v-model.number="prescription.editableQuantity"
+                  type="number"
+                  filled
+                  dense
+                  hint="Auto-calc"
+                  class="text-center"
+                />
+              </div>
+              
+              <!-- Remove Button -->
+              <div class="col-12 col-md-auto">
+                <q-btn
+                  size="sm"
+                  color="negative"
+                  icon="delete"
+                  flat
+                  round
+                  @click="removeFromItemized(prescription.id)"
+                  class="q-mt-md"
+                />
+              </div>
+            </div>
+            <!-- Instructions Section -->
+            <div class="row q-mt-md">
+              <div class="col-12">
+                <div class="text-subtitle2 q-mb-xs text-grey-7">Instructions / Remarks</div>
+                <q-input
+                  v-model="prescription.editableInstructions"
+                  filled
+                  type="textarea"
+                  rows="2"
+                  placeholder="Add instructions for taking this medication"
+                />
+              </div>
+            </div>
+          </q-card>
+        </div>
+        <div class="row q-mt-md justify-end">
+          <q-btn
+            color="primary"
+            icon="check_circle"
+            label="Confirm and Generate Bill"
+            @click="confirmMultiplePrescriptions"
+            :loading="confirmingMultiple"
+            :disable="itemizedPrescriptions.length === 0"
+            size="md"
+          />
+        </div>
       </q-card-section>
     </q-card>
 
@@ -378,6 +589,14 @@
                 (val) => val > 0 || 'Quantity must be greater than 0'
               ]"
             />
+            <q-input
+              v-model="confirmForm.instructions"
+              filled
+              type="textarea"
+              label="Instructions / Remarks"
+              rows="3"
+              hint="Instructions for taking this medication"
+            />
             <div class="row q-gutter-md q-mt-md">
               <q-btn
                 label="Cancel"
@@ -395,6 +614,29 @@
             </div>
           </q-form>
         </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- View Instructions Dialog -->
+    <q-dialog v-model="showInstructionsDialog">
+      <q-card style="min-width: 400px; max-width: 600px">
+        <q-card-section>
+          <div class="text-h6">Instructions / Remarks</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="viewingInstructions">
+            {{ viewingInstructions?.medicine_name }} ({{ viewingInstructions?.medicine_code }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div v-if="viewingInstructions?.instructions" class="text-body1 q-pa-md" style="background-color: #f5f5f5; border-radius: 4px; white-space: pre-wrap;">
+            {{ viewingInstructions.instructions }}
+          </div>
+          <div v-else class="text-grey-6 text-center q-pa-md">
+            No instructions provided for this prescription
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn label="Close" color="primary" flat v-close-popup />
+        </q-card-actions>
       </q-card>
     </q-dialog>
 
@@ -476,6 +718,9 @@ const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
 const activeEncounters = ref([]);
+const todaysEncounter = ref(null);
+const oldEncounters = ref([]);
+const oldEncountersExpanded = ref(false);
 const selectedEncounterId = ref(null);
 const prescriptions = ref([]);
 const currentEncounter = ref(null);
@@ -483,12 +728,17 @@ const loadingPrescriptions = ref(false);
 const dispensingId = ref(null);
 const returningId = ref(null);
 const confirmingId = ref(null);
+const confirmingMultiple = ref(false);
+const selectedPrescriptions = ref([]);
+const itemizedPrescriptions = ref([]);
 const diagnoses = ref([]);
 const vitals = ref(null);
 const loadingData = ref(false);
 const showDispenseDialog = ref(false);
 const showConfirmDialog = ref(false);
 const showAddPrescriptionDialog = ref(false);
+const showInstructionsDialog = ref(false);
+const viewingInstructions = ref(null);
 const addingPrescription = ref(false);
 const dispenseForm = ref({
   id: null,
@@ -507,6 +757,7 @@ const confirmForm = ref({
   frequency: '',
   duration: '',
   quantity: 1,
+  instructions: '',
 });
 const bills = ref([]);
 const newPrescriptionForm = ref({
@@ -522,6 +773,231 @@ const selectedMedication = ref(null);
 const medicationOptions = ref([]);
 const allMedications = ref([]);
 const staffMap = ref({}); // Map of user_id -> user info for getting prescriber/dispenser names
+
+// Frequency mapping for prescriptions (same as Consultation.vue)
+const frequencyMapping = {
+  "Nocte": 1,
+  "Stat": 1,
+  "OD": 1,
+  "daily": 1,
+  "PRN": 1,
+  "BDS": 2,
+  "BID": 2,
+  "QDS": 4,
+  "QID": 4,
+  "TID": 3,
+  "TDS": 3,
+  "5X": 5,
+  "EVERY OTHER DAY": 1,
+  "AT BED TIME": 1,
+  "6 TIMES": 6
+};
+
+const frequencyOptions = Object.keys(frequencyMapping);
+const unitOptions = ref(['MG', 'ML', 'TAB', 'CAP', 'G', 'MCG', 'IU', 'UNITS']);
+
+// Create unit if not in list
+const createUnit = (val, done) => {
+  if (val.length > 0 && !unitOptions.value.includes(val.toUpperCase())) {
+    unitOptions.value.push(val.toUpperCase());
+  }
+  done(val.toUpperCase());
+};
+
+// Check if prescription is selected
+const isPrescriptionSelected = (prescription) => {
+  return selectedPrescriptions.value.some(p => p.id === prescription.id);
+};
+
+// Toggle prescription selection
+const togglePrescriptionSelection = (prescription, selected) => {
+  if (selected && !isPrescriptionSelected(prescription)) {
+    selectedPrescriptions.value.push(prescription);
+  } else if (!selected) {
+    selectedPrescriptions.value = selectedPrescriptions.value.filter(p => p.id !== prescription.id);
+    // Also remove from itemized if it's there
+    itemizedPrescriptions.value = itemizedPrescriptions.value.filter(p => p.id !== prescription.id);
+  }
+};
+
+// Get pending prescriptions
+const pendingPrescriptions = computed(() => {
+  return prescriptions.value.filter(p => !p.is_confirmed);
+});
+
+// Check if all pending are selected
+const allPendingSelected = computed(() => {
+  return pendingPrescriptions.value.length > 0 && 
+         pendingPrescriptions.value.every(p => isPrescriptionSelected(p));
+});
+
+// Check if some pending are selected
+const somePendingSelected = computed(() => {
+  return !allPendingSelected.value && 
+         pendingPrescriptions.value.some(p => isPrescriptionSelected(p));
+});
+
+// Toggle all pending prescriptions
+const toggleAllPending = (selected) => {
+  if (selected) {
+    pendingPrescriptions.value.forEach(p => {
+      if (!isPrescriptionSelected(p)) {
+        selectedPrescriptions.value.push(p);
+      }
+    });
+  } else {
+    selectedPrescriptions.value = selectedPrescriptions.value.filter(
+      p => pendingPrescriptions.value.every(pending => pending.id !== p.id)
+    );
+    itemizedPrescriptions.value = [];
+  }
+};
+
+// View instructions for a prescription
+const viewInstructions = (prescription) => {
+  viewingInstructions.value = prescription;
+  showInstructionsDialog.value = true;
+};
+
+// Add selected prescriptions to itemized confirmation
+const addSelectedToConfirmation = () => {
+  const pending = selectedPrescriptions.value.filter(p => !p.is_confirmed);
+  if (pending.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select at least one pending prescription',
+    });
+    return;
+  }
+  
+  pending.forEach(prescription => {
+    // Check if already in itemized
+    if (!itemizedPrescriptions.value.some(item => item.id === prescription.id)) {
+      const newItem = {
+        ...prescription,
+        editableDose: parseFloat(prescription.dose) || 0,
+        editableUnit: prescription.unit || 'TAB',
+        editableFrequency: prescription.frequency || 'OD',
+        editableDuration: prescription.duration || '1 DAY',
+        editableQuantity: prescription.quantity || 1,
+        editableInstructions: prescription.instructions || '',
+      };
+      itemizedPrescriptions.value.push(newItem);
+      // Calculate quantity for this prescription after adding
+      setTimeout(() => {
+        calculateItemizedQuantity(newItem);
+      }, 0);
+    }
+  });
+  
+  $q.notify({
+    type: 'positive',
+    message: `Added ${pending.length} prescription(s) to confirmation list`,
+  });
+};
+
+// Remove from itemized
+const removeFromItemized = (prescriptionId) => {
+  itemizedPrescriptions.value = itemizedPrescriptions.value.filter(p => p.id !== prescriptionId);
+  selectedPrescriptions.value = selectedPrescriptions.value.filter(p => p.id !== prescriptionId);
+};
+
+// Calculate quantity for itemized prescription (same logic as Consultation.vue)
+const calculateItemizedQuantity = (prescription) => {
+  if (!prescription || !prescription.editableDose || !prescription.editableFrequency || !prescription.editableDuration) {
+    return;
+  }
+  
+  try {
+    const doseNum = parseFloat(prescription.editableDose);
+    const frequencyValue = frequencyMapping[prescription.editableFrequency];
+    
+    if (doseNum && frequencyValue && doseNum > 0) {
+      // Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
+      const durationStr = prescription.editableDuration.trim();
+      let durationNum = 1;
+      if (durationStr) {
+        const directNum = parseFloat(durationStr);
+        if (!isNaN(directNum) && directNum > 0) {
+          durationNum = Math.floor(directNum);
+        } else {
+          const durationMatch = durationStr.match(/\d+/);
+          if (durationMatch) {
+            durationNum = parseInt(durationMatch[0]);
+          }
+        }
+      }
+      
+      // Convert dose to units based on unit type
+      let unitsPerDose = doseNum;
+      if (prescription.editableUnit && prescription.editableUnit.toUpperCase() === 'MG') {
+        // For MG: 100mg = 1 unit
+        unitsPerDose = doseNum / 100;
+      } else if (prescription.editableUnit && prescription.editableUnit.toUpperCase() === 'MCG') {
+        // For MCG: 1000mcg = 1 unit
+        unitsPerDose = doseNum / 1000;
+      }
+      // For other units (TAB, CAP, ML, etc.), use dose as-is (1 tablet = 1 unit)
+      
+      // Calculate: units per dose × frequency per day × number of days
+      const calculatedQuantity = Math.floor(unitsPerDose * frequencyValue * durationNum);
+      if (calculatedQuantity > 0) {
+        prescription.editableQuantity = calculatedQuantity;
+      }
+    }
+  } catch (error) {
+    console.error('Error calculating quantity:', error);
+  }
+};
+
+// Confirm multiple prescriptions and generate bills
+const confirmMultiplePrescriptions = async () => {
+  if (itemizedPrescriptions.value.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select at least one prescription to confirm',
+    });
+    return;
+  }
+  
+  confirmingMultiple.value = true;
+  try {
+    // Confirm each prescription with updated values
+    for (const prescription of itemizedPrescriptions.value) {
+      const confirmData = {
+        dose: prescription.editableDose ? String(prescription.editableDose) : null,
+        frequency: prescription.editableFrequency || null,
+        duration: prescription.editableDuration || null,
+        quantity: prescription.editableQuantity || null,
+        instructions: prescription.editableInstructions || null,
+      };
+      
+      await consultationAPI.confirmPrescription(prescription.id, confirmData);
+    }
+    
+    $q.notify({
+      type: 'positive',
+      message: `Successfully confirmed ${itemizedPrescriptions.value.length} prescription(s) and generated bills`,
+    });
+    
+    // Clear selections
+    selectedPrescriptions.value = [];
+    itemizedPrescriptions.value = [];
+    
+    // Reload prescriptions
+    await loadPrescriptions();
+  } catch (error) {
+    console.error('Failed to confirm prescriptions:', error);
+    const errorMessage = error.response?.data?.detail || error.message || 'Failed to confirm prescriptions';
+    $q.notify({
+      type: 'negative',
+      message: typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage),
+      timeout: 5000,
+    });
+  } finally {
+    confirmingMultiple.value = false;
+  }
+};
 
 // Load all pharmacy medications
 const loadPharmacyMedications = async () => {
@@ -573,6 +1049,7 @@ const openAddPrescriptionDialog = async () => {
 };
 
 const columns = [
+  { name: 'selection', label: '', field: 'selection', align: 'left', style: 'width: 50px' },
   { name: 'medicine_name', label: 'Medicine', field: 'medicine_name', align: 'left' },
   { name: 'medicine_code', label: 'Code', field: 'medicine_code', align: 'left' },
   { name: 'dose', label: 'Dose', field: 'dose', align: 'left' },
@@ -581,6 +1058,16 @@ const columns = [
   { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'right' },
   { name: 'status', label: 'Status', field: 'is_confirmed', align: 'center' },
   { name: 'actions', label: 'Actions', align: 'center' },
+];
+
+const itemizedColumns = [
+  { name: 'drug_name', label: 'Drug Name', field: 'medicine_name', align: 'left' },
+  { name: 'dose', label: 'Dose', field: 'editableDose', align: 'left' },
+  { name: 'unit', label: 'Unit', field: 'editableUnit', align: 'left' },
+  { name: 'frequency', label: 'Frequency', field: 'editableFrequency', align: 'left' },
+  { name: 'duration', label: 'Duration', field: 'editableDuration', align: 'left' },
+  { name: 'quantity', label: 'Quantity', field: 'editableQuantity', align: 'right' },
+  { name: 'actions', label: '', field: 'actions', align: 'center' },
 ];
 
 const searchPatient = async () => {
@@ -618,28 +1105,59 @@ const searchPatient = async () => {
 
     // Get patient's active encounters
     const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
-    // Filter for non-archived encounters and format for display
-    activeEncounters.value = encountersResponse.data
-      .filter(e => !e.archived)
-      .map(e => ({
+    const allEncounters = encountersResponse.data.filter(e => !e.archived);
+    
+    // Separate today's encounter from old encounters
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const todaysEncounters = allEncounters.filter(e => {
+      const encounterDate = new Date(e.created_at);
+      encounterDate.setHours(0, 0, 0, 0);
+      return encounterDate.getTime() === today.getTime();
+    });
+    
+    const oldEncs = allEncounters.filter(e => {
+      const encounterDate = new Date(e.created_at);
+      encounterDate.setHours(0, 0, 0, 0);
+      return encounterDate.getTime() !== today.getTime();
+    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
+    
+    // Set today's encounter (use the most recent one if multiple)
+    if (todaysEncounters.length > 0) {
+      todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+      selectedEncounterId.value = todaysEncounter.value.id;
+      // Pre-fetch procedure names for today's encounter
+      getEncounterProcedures(todaysEncounter.value);
+      await loadPrescriptions();
+    } else {
+      todaysEncounter.value = null;
+    }
+    
+    // Set old encounters and pre-fetch their procedure names
+    oldEncounters.value = oldEncs;
+    oldEncounters.value.forEach(encounter => {
+      getEncounterProcedures(encounter);
+    });
+    
+    // Keep for backward compatibility
+    activeEncounters.value = allEncounters.map(e => ({
         id: e.id,
         label: `Encounter #${e.id} - ${e.department} (${new Date(e.created_at).toLocaleDateString()})`,
         value: e.id,
       }));
 
-    if (activeEncounters.value.length === 0) {
+    if (allEncounters.length === 0) {
       $q.notify({
         type: 'info',
         message: 'No active encounters found for this patient',
       });
-    } else if (activeEncounters.value.length === 1) {
-      // Auto-select if only one encounter
-      selectedEncounterId.value = activeEncounters.value[0].id;
-      await loadPrescriptions();
     }
   } catch (error) {
     patient.value = null;
     activeEncounters.value = [];
+    todaysEncounter.value = null;
+    oldEncounters.value = [];
     selectedEncounterId.value = null;
     prescriptions.value = [];
     $q.notify({
@@ -693,7 +1211,82 @@ const loadPrescriptions = async () => {
     // Load bills for this encounter to check payment status
     try {
       const billsResponse = await billingAPI.getEncounterBills(selectedEncounterId.value);
-      bills.value = billsResponse.data || [];
+      const billsList = billsResponse.data || [];
+      
+      // Load detailed bill information including bill items and payment status
+      const detailedBills = await Promise.all(
+        billsList.map(async (bill) => {
+          try {
+            const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
+            console.log(`Bill details response for bill ${bill.id}:`, billDetailsResponse);
+            const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data || {};
+            console.log(`Bill details for bill ${bill.id}:`, billDetails);
+            console.log(`Bill items from API for bill ${bill.id}:`, billDetails.bill_items);
+            
+            // Calculate remaining balance for each bill item
+            // The API already returns amount_paid and remaining_balance, but we ensure they're set
+            const billItems = (billDetails.bill_items || []).map(item => {
+              try {
+                // The API returns amount_paid and remaining_balance already calculated
+                const amountPaid = (item.amount_paid !== undefined && item.amount_paid !== null) ? item.amount_paid : 0;
+                const totalPrice = (item.total_price !== undefined && item.total_price !== null) ? item.total_price : 0;
+                // Use the API's calculated remaining_balance if available, otherwise calculate it
+                const remainingBalance = (item.remaining_balance !== undefined && item.remaining_balance !== null)
+                  ? item.remaining_balance 
+                  : (totalPrice - amountPaid);
+                
+                console.log(`Bill item mapping: ${item.item_name || 'Unknown'}`, {
+                  item_code: item.item_code,
+                  totalPrice,
+                  amountPaid,
+                  remainingBalance,
+                  api_remaining_balance: item.remaining_balance,
+                  api_amount_paid: item.amount_paid,
+                });
+                
+                return {
+                  ...item,
+                  amount_paid: amountPaid,
+                  remaining_balance: remainingBalance,
+                  is_paid: remainingBalance <= 0,
+                };
+              } catch (itemError) {
+                console.error(`Error processing bill item:`, item, itemError);
+                return {
+                  ...item,
+                  amount_paid: 0,
+                  remaining_balance: item.total_price || 0,
+                  is_paid: false,
+                };
+              }
+            });
+            
+            return {
+              ...bill,
+              bill_items: billItems,
+              is_paid: bill.is_paid || false,
+              paid_amount: bill.paid_amount || 0,
+              total_amount: bill.total_amount || 0,
+            };
+          } catch (error) {
+            console.error(`Failed to load details for bill ${bill.id}:`, error);
+            console.error('Error details:', error.message, error.stack);
+            return {
+              ...bill,
+              bill_items: [],
+              is_paid: bill.is_paid || false,
+              paid_amount: bill.paid_amount || 0,
+              total_amount: bill.total_amount || 0,
+            };
+          }
+        })
+      );
+      
+      bills.value = detailedBills;
+      console.log('Loaded bills for encounter:', selectedEncounterId.value, detailedBills);
+      console.log('Total bills:', detailedBills.length);
+      console.log('Bill items:', detailedBills.flatMap(b => b.bill_items || []));
+      console.log('Bill items count:', detailedBills.flatMap(b => b.bill_items || []).length);
     } catch (error) {
       console.error('Failed to load bills:', error);
       bills.value = [];
@@ -723,6 +1316,7 @@ const confirmPrescription = (prescription) => {
     frequency: prescription.frequency || '',
     duration: prescription.duration || '',
     quantity: prescription.quantity || 1,
+    instructions: prescription.instructions || '',
   };
   showConfirmDialog.value = true;
 };
@@ -737,6 +1331,7 @@ const confirmPrescriptionSubmit = async () => {
       frequency: confirmForm.value.frequency,
       duration: confirmForm.value.duration,
       quantity: confirmForm.value.quantity,
+      instructions: confirmForm.value.instructions || null,
     };
 
     await consultationAPI.confirmPrescription(confirmForm.value.id, confirmData);
@@ -745,7 +1340,7 @@ const confirmPrescriptionSubmit = async () => {
       message: 'Prescription confirmed and bill generated successfully',
     });
     showConfirmDialog.value = false;
-    // Reload prescriptions to update status
+    // Reload prescriptions and bills to update status
     await loadPrescriptions();
   } catch (error) {
     $q.notify({
@@ -758,21 +1353,66 @@ const confirmPrescriptionSubmit = async () => {
 };
 
 const canDispense = (prescription) => {
-  if (!prescription.is_confirmed) return false;
+  // Must be confirmed before dispense
+  if (!prescription.is_confirmed) {
+    console.log(`canDispense: Prescription ${prescription.id} not confirmed`);
+    return false;
+  }
   
   // Find bill item for this prescription
   for (const bill of bills.value) {
+    // Skip paid bills entirely
+    if (bill.is_paid) {
+      console.log(`canDispense: Bill ${bill.id} is paid, skipping`);
+      continue;
+    }
+    
     for (const billItem of bill.bill_items || []) {
-      if (billItem.item_code === prescription.medicine_code && 
-          billItem.item_name && billItem.item_name.includes(prescription.medicine_name)) {
-        // Check if bill amount is 0 or fully paid
-        const remainingBalance = billItem.remaining_balance || (billItem.total_price - (billItem.amount_paid || 0));
-        return billItem.total_price === 0 || remainingBalance <= 0;
+      // Match by medicine code or name
+      const matchesCode = billItem.item_code === prescription.medicine_code;
+      const matchesName = billItem.item_name && (
+        billItem.item_name.includes(prescription.medicine_name) ||
+        billItem.item_name.includes(`Prescription: ${prescription.medicine_name}`)
+      );
+      
+      if (matchesCode || matchesName) {
+        console.log(`canDispense: Found matching bill item for prescription ${prescription.id}:`, {
+          prescription_code: prescription.medicine_code,
+          prescription_name: prescription.medicine_name,
+          billItem_name: billItem.item_name,
+          billItem_code: billItem.item_code,
+          totalPrice: billItem.total_price,
+          amountPaid: billItem.amount_paid,
+          remainingBalance: billItem.remaining_balance,
+        });
+        
+        // If there's a bill item with a price > 0, check if it's paid
+        const totalPrice = billItem.total_price || 0;
+        const remainingBalance = billItem.remaining_balance !== undefined 
+          ? billItem.remaining_balance 
+          : (totalPrice - (billItem.amount_paid || 0));
+        
+        console.log(`canDispense: Calculated values - totalPrice=${totalPrice}, remainingBalance=${remainingBalance}`);
+        
+        // Can only dispense if:
+        // 1. Total price is 0 (free), OR
+        // 2. Remaining balance is 0 or less (fully paid)
+        if (totalPrice > 0 && remainingBalance > 0) {
+          console.log(`canDispense: Returning FALSE - unpaid balance for prescription ${prescription.id}`);
+          return false; // Has unpaid balance
+        } else {
+          console.log(`canDispense: Bill item is paid or free for prescription ${prescription.id}`);
+        }
+      } else {
+        console.log(`canDispense: No match - prescription code: ${prescription.medicine_code}, bill item code: ${billItem.item_code}, prescription name: ${prescription.medicine_name}, bill item name: ${billItem.item_name}`);
       }
     }
   }
   
-  // If no bill found, assume it's free (can dispense)
+  console.log(`canDispense: No unpaid bills found for prescription ${prescription.id}, allowing dispense`);
+  // If no bill found, check if prescription was just confirmed (bill might be created)
+  // In this case, we'll allow dispense only if the bill is paid or doesn't exist yet
+  // The backend will enforce the payment check anyway
   return true;
 };
 
@@ -929,12 +1569,75 @@ const addPrescription = async () => {
   }
 };
 
+const selectOldEncounter = async (encounterId) => {
+  selectedEncounterId.value = encounterId;
+  await loadPrescriptions();
+};
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const encounterProceduresCache = ref(new Map());
+
+const getEncounterProcedures = (encounter) => {
+  if (!encounter || !encounter.id) return encounter?.department || 'N/A';
+  
+  // Check cache first
+  if (encounterProceduresCache.value.has(encounter.id)) {
+    const cached = encounterProceduresCache.value.get(encounter.id);
+    return cached || encounter.department || 'N/A';
+  }
+  
+  // Set loading placeholder
+  encounterProceduresCache.value.set(encounter.id, 'Loading...');
+  
+  // Fetch prescriptions asynchronously (Pharmacy page shows prescriptions)
+  consultationAPI.getPrescriptions(encounter.id)
+    .then(response => {
+      const prescriptions = response.data || [];
+      const medicationNames = prescriptions
+        .filter(pres => pres.medication_name)
+        .map(pres => pres.medication_name)
+        .filter((name, index, self) => self.indexOf(name) === index); // Remove duplicates
+      
+      const displayText = medicationNames.length > 0 
+        ? (medicationNames.length > 3 
+          ? `${medicationNames.slice(0, 3).join(', ')}... (+${medicationNames.length - 3} more)`
+          : medicationNames.join(', '))
+        : (encounter.department || 'N/A');
+      
+      encounterProceduresCache.value.set(encounter.id, displayText);
+    })
+    .catch(error => {
+      console.error('Failed to fetch procedures for encounter:', error);
+      encounterProceduresCache.value.set(encounter.id, encounter.department || 'N/A');
+    });
+  
+  // Return department as fallback while loading
+  return encounter.department || 'N/A';
+};
+
 const clearSearch = () => {
   cardNumber.value = '';
   patient.value = null;
   activeEncounters.value = [];
+  todaysEncounter.value = null;
+  oldEncounters.value = [];
+  oldEncountersExpanded.value = false;
   selectedEncounterId.value = null;
+  encounterProceduresCache.value.clear();
   prescriptions.value = [];
+  selectedPrescriptions.value = [];
+  itemizedPrescriptions.value = [];
   diagnoses.value = [];
   vitals.value = null;
   selectedMedication.value = null;

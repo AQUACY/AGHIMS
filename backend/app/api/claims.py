@@ -750,7 +750,7 @@ def get_claim_edit_details(
         "claim_summary": {
             "inpatient_amount": get_claim_amount_from_price_list(db, encounter.procedure_g_drg_code or "", is_insured=True) if claim.type_of_service == "IPD" else 0.0,
             "outpatient_amount": get_claim_amount_from_price_list(db, encounter.procedure_g_drg_code or "", is_insured=True) if claim.type_of_service == "OPD" else 0.0,
-            "investigations_amount": sum([get_claim_amount_from_price_list(db, inv.gdrg_code or "", is_insured=True) for inv in encounter.investigations if inv.status == "completed" and inv.gdrg_code]),
+            "investigations_amount": sum([get_claim_amount_from_price_list(db, inv.gdrg_code or "", is_insured=True) for inv in encounter.investigations if inv.status == "completed" and inv.gdrg_code and inv.status != "cancelled"]),
             "pharmacy_amount": sum([get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True) * presc.quantity for presc in encounter.prescriptions if presc.dispensed_by]),
         },
     }

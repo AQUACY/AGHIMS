@@ -26,6 +26,14 @@ class Patient(Base):
     ccc_number = Column(String(50), nullable=True)  # 5-digit CCC number
     contact = Column(String(100))
     address = Column(String(500))
+    # Emergency contact details
+    emergency_contact_name = Column(String(255), nullable=True)
+    emergency_contact_relationship = Column(String(100), nullable=True)
+    emergency_contact_number = Column(String(100), nullable=True)
+    # Additional demographic information
+    marital_status = Column(String(50), nullable=True)  # e.g., Single, Married, Divorced, Widowed
+    educational_level = Column(String(100), nullable=True)  # e.g., Primary, Secondary, Tertiary, None
+    occupation = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

@@ -33,6 +33,14 @@ class PatientCreate(BaseModel):
     insurance_end_date: Optional[date] = None
     contact: Optional[str] = None
     address: Optional[str] = None
+    # Emergency contact details
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = None
+    emergency_contact_number: Optional[str] = None
+    # Additional demographic information
+    marital_status: Optional[str] = None
+    educational_level: Optional[str] = None
+    occupation: Optional[str] = None
 
 
 class PatientResponse(BaseModel):
@@ -47,7 +55,18 @@ class PatientResponse(BaseModel):
     card_number: str
     insured: bool
     insurance_id: Optional[str]
+    insurance_start_date: Optional[date] = None
+    insurance_end_date: Optional[date] = None
     contact: Optional[str]
+    address: Optional[str] = None
+    # Emergency contact details
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = None
+    emergency_contact_number: Optional[str] = None
+    # Additional demographic information
+    marital_status: Optional[str] = None
+    educational_level: Optional[str] = None
+    occupation: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -304,6 +323,41 @@ def get_patient_by_card(
     except Exception as e:
         # Log the error and return empty list
         print(f"Error in card number search: {e}")
+        return []
+
+
+@router.get("/search/ccc", response_model=List[PatientResponse])
+def search_patient_by_ccc(
+    ccc_number: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Pharmacist", "Lab", "Claims", "Admin"]))
+):
+    """Search patients by CCC number (Ghana card/insurance number) - returns list of matches"""
+    if not ccc_number or not ccc_number.strip():
+        return []
+    
+    # Clean the search term - remove spaces
+    search_term = ccc_number.strip().replace(' ', '')
+    
+    if not search_term:
+        return []
+    
+    # Use case-insensitive matching
+    search_term_upper = search_term.upper()
+    
+    try:
+        patients = db.query(Patient).filter(
+            func.upper(func.coalesce(Patient.ccc_number, '')).like(f"%{search_term_upper}%")
+        ).all()
+        
+        # Debug logging (remove in production)
+        print(f"CCC search term: '{search_term}', Upper: '{search_term_upper}', Found: {len(patients)} patients")
+        
+        # Ensure we always return a list, even if it's empty or has one item
+        return list(patients) if patients else []
+    except Exception as e:
+        # Log the error and return empty list
+        print(f"Error in CCC number search: {e}")
         return []
 
 

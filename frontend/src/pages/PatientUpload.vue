@@ -304,20 +304,7 @@ onMounted(() => {
   padding: 24px;
 }
 
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.glass-button {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-}
+/* Styles are now defined globally in App.vue */
 
 .upload-btn {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);

@@ -43,22 +43,61 @@
           />
         </div>
 
-        <!-- Encounter Selection -->
-        <div v-if="activeEncounters.length > 0" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm">Select Encounter:</div>
-          <q-select
-            v-model="selectedEncounterId"
-            :options="activeEncounters"
-            option-value="id"
-            option-label="label"
-            filled
-            label="Encounter"
-            emit-value
-            map-options
-            @update:model-value="loadInvestigations"
-          />
+        <!-- Today's Encounter -->
+        <div v-if="todaysEncounter" class="q-mt-md">
+          <div class="text-subtitle1 q-mb-sm glass-text">Today's Encounter:</div>
+          <q-card class="q-mb-md" flat bordered style="background-color: rgba(46, 139, 87, 0.1);">
+            <q-card-section>
+              <div class="row items-center">
+                <div class="col">
+                  <div class="text-weight-bold">Encounter #{{ todaysEncounter.id }} - {{ getEncounterProcedures(todaysEncounter) }}</div>
+                  <div class="text-caption text-grey-7 q-mt-xs">
+                    {{ formatDate(todaysEncounter.created_at) }} - Status: {{ todaysEncounter.status }}
+                  </div>
+                </div>
+                <q-badge color="green" label="Today" />
+              </div>
+            </q-card-section>
+          </q-card>
         </div>
-        <div v-else class="text-grey-7 q-mt-md">
+
+        <!-- Old Encounters - Collapsible -->
+        <div v-if="oldEncounters.length > 0" class="q-mt-md">
+          <q-expansion-item
+            v-model="oldEncountersExpanded"
+            icon="history"
+            :label="`Previous Services (${oldEncounters.length})`"
+            header-class="text-subtitle1 glass-text"
+            class="q-mb-sm"
+          >
+            <div class="q-gutter-sm q-pa-sm">
+              <q-card
+                v-for="encounter in oldEncounters"
+                :key="encounter.id"
+                flat
+                bordered
+                clickable
+                :class="{ 'bg-blue-1': selectedEncounterId === encounter.id }"
+                @click="selectOldEncounter(encounter.id)"
+                style="cursor: pointer;"
+              >
+                <q-card-section class="q-pa-sm">
+                  <div class="row items-center">
+                    <div class="col">
+                      <div class="text-weight-medium">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
+                      <div class="text-caption text-grey-7 q-mt-xs">
+                        {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
+                      </div>
+                    </div>
+                    <q-icon name="chevron_right" color="grey-6" />
+                  </div>
+                </q-card-section>
+              </q-card>
+            </div>
+          </q-expansion-item>
+        </div>
+
+        <div v-if="!todaysEncounter && oldEncounters.length === 0" class="text-grey-7 q-mt-md">
           No active encounters found for this patient
         </div>
       </q-card-section>
@@ -70,7 +109,7 @@
         <div class="row items-center q-mb-md">
           <div class="text-h6">Lab Investigations</div>
           <q-space />
-          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized - Read Only" />
+          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized" />
         </div>
         <q-table
           v-if="investigations.length > 0"
@@ -97,7 +136,7 @@
                 label="Confirm"
                 @click="confirmInvestigation(props.row)"
                 :loading="confirmingId === props.row.id"
-                :disable="confirmingId !== null || isFinalized"
+                :disable="confirmingId !== null"
               />
               <q-badge
                 v-else
@@ -131,8 +170,15 @@
                 color="primary"
                 :label="props.row.id ? 'Edit' : 'Add Results'"
                 @click="openResultDialog(props.row)"
-                :disable="isFinalized"
-              />
+                :disable="!canAddResults(props.row)"
+              >
+                <q-tooltip v-if="!canAddResults(props.row)">
+                  Bill must be paid before adding results
+                </q-tooltip>
+                <q-tooltip v-else>
+                  {{ props.row.id ? 'Edit results' : 'Add results' }}
+                </q-tooltip>
+              </q-btn>
               <q-btn
                 v-if="props.row.attachment_path"
                 size="sm"
@@ -193,7 +239,6 @@
                 color="primary"
                 class="col"
                 :loading="savingResult"
-                :disable="isFinalized"
               />
             </div>
           </q-form>
@@ -207,7 +252,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, patientsAPI, encountersAPI } from '../services/api';
+import { consultationAPI, patientsAPI, encountersAPI, billingAPI } from '../services/api';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -215,6 +260,9 @@ const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
 const activeEncounters = ref([]);
+const todaysEncounter = ref(null);
+const oldEncounters = ref([]);
+const oldEncountersExpanded = ref(false);
 const selectedEncounterId = ref(null);
 const currentEncounter = ref(null);
 const investigations = ref([]);
@@ -266,6 +314,46 @@ const isFinalized = computed(() => {
   return currentEncounter.value?.status === 'finalized';
 });
 
+const canAddResults = (investigation) => {
+  // Must be confirmed before adding results
+  if (investigation.status !== 'confirmed' && investigation.status !== 'completed') {
+    return false;
+  }
+  
+  // Find bill item for this investigation
+  for (const bill of bills.value) {
+    // Skip paid bills entirely
+    if (bill.is_paid) continue;
+    
+    for (const billItem of bill.bill_items || []) {
+      // Match by gdrg_code or procedure name
+      const matchesCode = billItem.item_code === investigation.gdrg_code;
+      const matchesName = billItem.item_name && (
+        billItem.item_name.includes(investigation.procedure_name || '') ||
+        billItem.item_name.includes(investigation.gdrg_code || '')
+      );
+      
+      if (matchesCode || matchesName) {
+        // If there's a bill item with a price > 0, check if it's paid
+        const totalPrice = billItem.total_price || 0;
+        const remainingBalance = billItem.remaining_balance !== undefined 
+          ? billItem.remaining_balance 
+          : (totalPrice - (billItem.amount_paid || 0));
+        
+        // Can only add results if:
+        // 1. Total price is 0 (free), OR
+        // 2. Remaining balance is 0 or less (fully paid)
+        if (totalPrice > 0 && remainingBalance > 0) {
+          return false; // Has unpaid balance
+        }
+      }
+    }
+  }
+  
+  // If no bill found, allow adding results (backend will enforce payment check)
+  return true;
+};
+
 const searchPatient = async () => {
   if (!cardNumber.value || !cardNumber.value.trim()) {
     $q.notify({
@@ -299,22 +387,53 @@ const searchPatient = async () => {
     patient.value = patients[0];
 
     const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
-    activeEncounters.value = encountersResponse.data
-      .filter(e => !e.archived)
-      .map(e => ({
+    const allEncounters = encountersResponse.data.filter(e => !e.archived);
+    
+    // Separate today's encounter from old encounters
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const todaysEncounters = allEncounters.filter(e => {
+      const encounterDate = new Date(e.created_at);
+      encounterDate.setHours(0, 0, 0, 0);
+      return encounterDate.getTime() === today.getTime();
+    });
+    
+    const oldEncs = allEncounters.filter(e => {
+      const encounterDate = new Date(e.created_at);
+      encounterDate.setHours(0, 0, 0, 0);
+      return encounterDate.getTime() !== today.getTime();
+    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
+    
+    // Set today's encounter (use the most recent one if multiple)
+    if (todaysEncounters.length > 0) {
+      todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+      selectedEncounterId.value = todaysEncounter.value.id;
+      // Pre-fetch procedure names for today's encounter
+      getEncounterProcedures(todaysEncounter.value);
+      await loadInvestigations();
+    } else {
+      todaysEncounter.value = null;
+    }
+    
+    // Set old encounters and pre-fetch their procedure names
+    oldEncounters.value = oldEncs;
+    oldEncounters.value.forEach(encounter => {
+      getEncounterProcedures(encounter);
+    });
+    
+    // Keep for backward compatibility
+    activeEncounters.value = allEncounters.map(e => ({
         id: e.id,
         label: `Encounter #${e.id} - ${e.department} (${new Date(e.created_at).toLocaleDateString()})`,
         value: e.id,
       }));
 
-    if (activeEncounters.value.length === 0) {
+    if (allEncounters.length === 0) {
       $q.notify({
         type: 'info',
         message: 'No active encounters found for this patient',
       });
-    } else if (activeEncounters.value.length === 1) {
-      selectedEncounterId.value = activeEncounters.value[0].id;
-      await loadInvestigations();
     }
   } catch (error) {
     patient.value = null;
@@ -346,6 +465,70 @@ const loadInvestigations = async () => {
       'lab'
     );
     investigations.value = response.data || [];
+
+    // Load bills for this encounter to check payment status
+    try {
+      const billsResponse = await billingAPI.getEncounterBills(selectedEncounterId.value);
+      const billsList = billsResponse.data || [];
+      
+      // Load detailed bill information including bill items and payment status
+      const detailedBills = await Promise.all(
+        billsList.map(async (bill) => {
+          try {
+            const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
+            const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data || {};
+            
+            // Calculate remaining balance for each bill item
+            const billItems = (billDetails.bill_items || []).map(item => {
+              try {
+                const amountPaid = (item.amount_paid !== undefined && item.amount_paid !== null) ? item.amount_paid : 0;
+                const totalPrice = (item.total_price !== undefined && item.total_price !== null) ? item.total_price : 0;
+                const remainingBalance = (item.remaining_balance !== undefined && item.remaining_balance !== null)
+                  ? item.remaining_balance 
+                  : (totalPrice - amountPaid);
+                
+                return {
+                  ...item,
+                  amount_paid: amountPaid,
+                  remaining_balance: remainingBalance,
+                  is_paid: remainingBalance <= 0,
+                };
+              } catch (itemError) {
+                console.error(`Error processing bill item:`, item, itemError);
+                return {
+                  ...item,
+                  amount_paid: 0,
+                  remaining_balance: item.total_price || 0,
+                  is_paid: false,
+                };
+              }
+            });
+            
+            return {
+              ...bill,
+              bill_items: billItems,
+              is_paid: bill.is_paid || false,
+              paid_amount: bill.paid_amount || 0,
+              total_amount: bill.total_amount || 0,
+            };
+          } catch (error) {
+            console.error(`Failed to load details for bill ${bill.id}:`, error);
+            return {
+              ...bill,
+              bill_items: [],
+              is_paid: bill.is_paid || false,
+              paid_amount: bill.paid_amount || 0,
+              total_amount: bill.total_amount || 0,
+            };
+          }
+        })
+      );
+      
+      bills.value = detailedBills;
+    } catch (error) {
+      console.error('Failed to load bills:', error);
+      bills.value = [];
+    }
 
     // Load lab results for confirmed investigations (after investigations are loaded)
     await loadLabResults();
@@ -535,14 +718,76 @@ const downloadAttachment = async (result) => {
   }
 };
 
+const selectOldEncounter = async (encounterId) => {
+  selectedEncounterId.value = encounterId;
+  await loadInvestigations();
+};
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const encounterProceduresCache = ref(new Map());
+const bills = ref([]);
+
+const getEncounterProcedures = (encounter) => {
+  if (!encounter || !encounter.id) return encounter?.department || 'N/A';
+  
+  // Check cache first
+  if (encounterProceduresCache.value.has(encounter.id)) {
+    const cached = encounterProceduresCache.value.get(encounter.id);
+    return cached || encounter.department || 'N/A';
+  }
+  
+  // Set loading placeholder
+  encounterProceduresCache.value.set(encounter.id, 'Loading...');
+  
+  // Fetch investigations asynchronously
+  consultationAPI.getInvestigations(encounter.id)
+    .then(response => {
+      const investigations = response.data || [];
+      const procedureNames = investigations
+        .filter(inv => inv.procedure_name)
+        .map(inv => inv.procedure_name)
+        .filter((name, index, self) => self.indexOf(name) === index); // Remove duplicates
+      
+      const displayText = procedureNames.length > 0 
+        ? (procedureNames.length > 3 
+          ? `${procedureNames.slice(0, 3).join(', ')}... (+${procedureNames.length - 3} more)`
+          : procedureNames.join(', '))
+        : (encounter.department || 'N/A');
+      
+      encounterProceduresCache.value.set(encounter.id, displayText);
+    })
+    .catch(error => {
+      console.error('Failed to fetch procedures for encounter:', error);
+      encounterProceduresCache.value.set(encounter.id, encounter.department || 'N/A');
+    });
+  
+  // Return department as fallback while loading
+  return encounter.department || 'N/A';
+};
+
 const clearSearch = () => {
   cardNumber.value = '';
   patient.value = null;
   activeEncounters.value = [];
+  todaysEncounter.value = null;
+  oldEncounters.value = [];
+  oldEncountersExpanded.value = false;
   selectedEncounterId.value = null;
   currentEncounter.value = null;
   investigations.value = [];
   labResults.value = [];
+  encounterProceduresCache.value.clear();
 };
 
 // Auto-load from route query parameter
@@ -566,6 +811,31 @@ const autoLoadFromRoute = async () => {
         // Load all encounters for this patient
         const encountersResponse = await encountersAPI.getPatientEncounters(encounter.patient_id);
         const allEncounters = encountersResponse.data.filter(e => !e.archived);
+        
+        // Separate today's encounter from old encounters
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const todaysEncounters = allEncounters.filter(e => {
+          const encounterDate = new Date(e.created_at);
+          encounterDate.setHours(0, 0, 0, 0);
+          return encounterDate.getTime() === today.getTime();
+        });
+        
+        const oldEncs = allEncounters.filter(e => {
+          const encounterDate = new Date(e.created_at);
+          encounterDate.setHours(0, 0, 0, 0);
+          return encounterDate.getTime() !== today.getTime();
+        }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        if (todaysEncounters.length > 0) {
+          todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+        } else {
+          todaysEncounter.value = null;
+        }
+        
+        oldEncounters.value = oldEncs;
+        
         activeEncounters.value = allEncounters.map(e => ({
           id: e.id,
           label: `Encounter #${e.id} - ${e.department} (${new Date(e.created_at).toLocaleDateString()})`,

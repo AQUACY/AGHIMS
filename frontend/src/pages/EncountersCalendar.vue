@@ -10,14 +10,32 @@
             filled
             type="date"
             label="Select Date"
-            class="col-12 col-md-4"
+            class="col-12 col-md-3"
             @update:model-value="loadEncounters"
           />
+          <q-select
+            v-model="selectedDepartment"
+            filled
+            :options="departmentOptions"
+            label="Filter by Department/Clinic"
+            class="col-12 col-md-3"
+            clearable
+            emit-value
+            map-options
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.label || scope.opt }}</q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
           <q-input
             v-model="cardSearch"
             filled
             label="Filter by Card Number"
-            class="col-12 col-md-4"
+            class="col-12 col-md-3"
             clearable
           />
           <q-btn
@@ -28,7 +46,7 @@
             class="col-12 col-md-2 glass-button"
           />
           <q-space />
-          <q-badge color="primary" :label="`${encounters.length} encounters`" />
+          <q-badge color="primary" :label="`${filteredEncounters.length} / ${encounters.length} encounters`" />
         </div>
       </q-card-section>
     </q-card>
@@ -108,11 +126,21 @@
             <q-select
               v-model="editForm.department"
               filled
-              :options="departmentOptions"
+              :options="departmentOptionsForEdit"
               label="Department *"
               lazy-rules
               :rules="[(val) => !!val || 'Required']"
-            />
+              emit-value
+              map-options
+            >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.label || scope.opt }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
             <q-input
               v-model="editForm.ccc_number"
               filled
@@ -148,7 +176,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { encountersAPI } from '../services/api';
+import { encountersAPI, priceListAPI } from '../services/api';
 import { useEncountersStore } from '../stores/encounters';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar } from 'quasar';
@@ -162,6 +190,9 @@ const selectedDate = ref('');
 const encounters = ref([]);
 const loading = ref(false);
 const cardSearch = ref('');
+const selectedDepartment = ref(null);
+const departmentOptions = ref([]);
+const loadingDepartments = ref(false);
 
 const columns = [
   { name: 'time', label: 'Time', field: 'created_at', align: 'left', sortable: true },
@@ -186,9 +217,24 @@ const formattedDate = computed(() => {
 });
 
 const filteredEncounters = computed(() => {
+  let filtered = encounters.value;
+  
+  // Filter by department/clinic
+  if (selectedDepartment.value) {
+    filtered = filtered.filter(e => 
+      (e.department || '').toLowerCase() === (selectedDepartment.value || '').toLowerCase()
+    );
+  }
+  
+  // Filter by card number
   const needle = (cardSearch.value || '').toLowerCase().trim();
-  if (!needle) return encounters.value;
-  return encounters.value.filter(e => (e.patient_card_number || '').toLowerCase().includes(needle));
+  if (needle) {
+    filtered = filtered.filter(e => 
+      (e.patient_card_number || '').toLowerCase().includes(needle)
+    );
+  }
+  
+  return filtered;
 });
 
 const setToday = () => {
@@ -285,8 +331,37 @@ const editForm = reactive({
   status: '',
 });
 
-const departmentOptions = ['General', 'Pediatrics', 'ENT', 'Eye', 'Emergency'];
 const statusOptions = ['draft', 'in_consultation', 'awaiting_services', 'finalized'];
+
+// Department options for edit dialog (without "All" option)
+const departmentOptionsForEdit = computed(() => {
+  return departmentOptions.value.filter(opt => opt.value !== null);
+});
+
+const loadServiceTypes = async () => {
+  loadingDepartments.value = true;
+  try {
+    const response = await priceListAPI.getServiceTypes();
+    // Format options with "All" option first
+    departmentOptions.value = [
+      { label: 'All Departments', value: null },
+      ...response.data.map(dept => ({ label: dept, value: dept }))
+    ];
+  } catch (error) {
+    console.error('Failed to load service types:', error);
+    // Fallback to default options
+    departmentOptions.value = [
+      { label: 'All Departments', value: null },
+      { label: 'General', value: 'General' },
+      { label: 'Pediatrics', value: 'Pediatrics' },
+      { label: 'ENT', value: 'ENT' },
+      { label: 'Eye', value: 'Eye' },
+      { label: 'Emergency', value: 'Emergency' }
+    ];
+  } finally {
+    loadingDepartments.value = false;
+  }
+};
 
 const saveEncounterEdit = async () => {
   if (!currentEncounter.value) return;
@@ -320,7 +395,8 @@ const saveEncounterEdit = async () => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
+  await loadServiceTypes();
   setToday();
 });
 </script>

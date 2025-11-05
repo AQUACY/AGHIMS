@@ -24,6 +24,7 @@ class ProductPrice(Base):
     claim_amount = Column(Float, nullable=True)  # Claim Amount column
     nhia_claim = Column(String(100), nullable=True)  # NHIA Claim column
     bill_effective = Column(String(100), nullable=True)  # Bill Effective column
+    insurance_covered = Column(String(10), nullable=True, default="yes")  # "yes" or "no" - whether product is covered by insurance
     is_active = Column(Boolean, default=True)
     
     # Legacy fields (for backward compatibility with old table structure)

@@ -66,74 +66,78 @@
       :breakpoint="1024"
       class="glass-drawer"
     >
-      <!-- Patient Search Section -->
-      <q-card class="q-ma-sm glass-card" flat>
-        <q-card-section class="q-pa-md">
-          <div class="text-subtitle1 q-mb-sm text-weight-bold glass-text">Search Patient</div>
-          
-          <!-- Search by Card Number -->
-          <q-input
-            v-model="searchCardNumber"
-            filled
-            dense
-            label="Card Number"
-            class="q-mb-sm"
-            @keyup.enter="searchByCardNumber"
-            clearable
-          >
-            <template v-slot:append>
-              <q-icon 
-                name="search" 
-                class="cursor-pointer" 
-                @click="searchByCardNumber"
-                :class="{ 'text-primary': searchCardNumber }"
-              />
-            </template>
-          </q-input>
-          
-          <!-- Search by Name -->
-          <q-input
-            v-model="searchPatientName"
-            filled
-            dense
-            label="Patient Name"
-            class="q-mb-sm"
-            @keyup.enter="searchByName"
-            clearable
-          >
-            <template v-slot:append>
-              <q-icon 
-                name="search" 
-                class="cursor-pointer" 
-                @click="searchByName"
-                :class="{ 'text-primary': searchPatientName }"
-              />
-            </template>
-          </q-input>
-          
-          <q-btn
-            v-if="searchCardNumber"
-            color="primary"
-            size="sm"
-            label="Search Card"
-            @click="searchByCardNumber"
-            class="full-width q-mb-xs glass-button"
-            :loading="searchingByCard"
-            :disable="!searchCardNumber || searchingByCard"
-          />
-          
-          <q-btn
-            v-if="searchPatientName"
-            color="primary"
-            size="sm"
-            label="Search Name"
-            @click="searchByName"
-            class="full-width glass-button"
-            :loading="searchingByName"
-            :disable="!searchPatientName || searchingByName"
-          />
-        </q-card-section>
-      </q-card>
+      <!-- Patient Search Section - Collapsible -->
+      <q-expansion-item
+        v-model="searchExpanded"
+        icon="search"
+        label="Search Patient"
+        header-class="text-weight-bold glass-text"
+        class="q-ma-xs"
+      >
+        <q-card class="glass-card" flat>
+          <q-card-section class="q-pa-sm">
+            <!-- Search by Card Number -->
+            <q-input
+              v-model="searchCardNumber"
+              filled
+              dense
+              label="Card Number"
+              class="q-mb-xs"
+              @keyup.enter="searchByCardNumber"
+              clearable
+            >
+              <template v-slot:append>
+                <q-icon 
+                  name="search" 
+                  class="cursor-pointer" 
+                  @click="searchByCardNumber"
+                  :class="{ 'text-primary': searchCardNumber }"
+                />
+              </template>
+            </q-input>
+            
+            <!-- Search by CCC/Insurance Number -->
+            <q-input
+              v-model="searchCccNumber"
+              filled
+              dense
+              label="Ghana Card/Insurance #"
+              class="q-mb-xs"
+              @keyup.enter="searchByCcc"
+              clearable
+            >
+              <template v-slot:append>
+                <q-icon 
+                  name="search" 
+                  class="cursor-pointer" 
+                  @click="searchByCcc"
+                  :class="{ 'text-primary': searchCccNumber }"
+                />
+              </template>
+            </q-input>
+            
+            <!-- Search by Name -->
+            <q-input
+              v-model="searchPatientName"
+              filled
+              dense
+              label="Patient Name"
+              class="q-mb-xs"
+              @keyup.enter="searchByName"
+              clearable
+            >
+              <template v-slot:append>
+                <q-icon 
+                  name="search" 
+                  class="cursor-pointer" 
+                  @click="searchByName"
+                  :class="{ 'text-primary': searchPatientName }"
+                />
+              </template>
+            </q-input>
+          </q-card-section>
+        </q-card>
+      </q-expansion-item>
 
       <q-separator class="q-my-sm" />
 
@@ -521,8 +525,11 @@ const stopSessionTimer = () => {
 // Patient search fields
 const searchCardNumber = ref('');
 const searchPatientName = ref('');
+const searchCccNumber = ref('');
 const searchingByCard = ref(false);
 const searchingByName = ref(false);
+const searchingByCcc = ref(false);
+const searchExpanded = ref(false);
 
 // Search by card number
 const searchByCardNumber = async () => {
@@ -599,6 +606,79 @@ const searchByCardNumber = async () => {
     }
   } finally {
     searchingByCard.value = false;
+  }
+};
+
+// Search by CCC/Insurance number
+const searchByCcc = async () => {
+  if (!searchCccNumber.value || !searchCccNumber.value.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a Ghana card/insurance number',
+    });
+    return;
+  }
+
+  searchingByCcc.value = true;
+  try {
+    const response = await patientsAPI.searchByCcc(searchCccNumber.value.trim());
+    console.log('CCC search response:', response);
+    console.log('Response data:', response.data);
+    
+    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
+    let patients = [];
+    if (Array.isArray(response.data)) {
+      patients = response.data;
+    } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
+      patients = [response.data];
+    } else if (response.data?.data && Array.isArray(response.data.data)) {
+      patients = response.data.data;
+    } else if (response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
+      patients = [response.data.data];
+    } else if (response.data?.results && Array.isArray(response.data.results)) {
+      patients = response.data.results;
+    }
+    
+    console.log('Extracted patients:', patients);
+    
+    if (patients.length === 0) {
+      $q.notify({
+        type: 'info',
+        message: 'No patients found with that Ghana card/insurance number',
+      });
+      return;
+    }
+    
+    // Always go to search results page
+    await router.push({
+      name: 'PatientSearchResults',
+      query: { 
+        searchType: 'ccc',
+        searchTerm: searchCccNumber.value.trim(),
+        patients: JSON.stringify(patients) 
+      }
+    });
+    // Clear search field
+    searchCccNumber.value = '';
+  } catch (error) {
+    console.error('CCC search error:', error);
+    console.error('Error response:', error.response);
+    console.error('Error data:', error.response?.data);
+    
+    // Check if it's a 404 or empty response
+    if (error.response?.status === 404 || error.response?.status === 200) {
+      $q.notify({
+        type: 'info',
+        message: 'No patients found with that Ghana card/insurance number',
+      });
+    } else {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || error.message || 'Failed to search patients',
+      });
+    }
+  } finally {
+    searchingByCcc.value = false;
   }
 };
 

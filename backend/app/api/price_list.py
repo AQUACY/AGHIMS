@@ -36,6 +36,7 @@ class PriceItemUpdate(BaseModel):
     # Product-specific
     product_name: Optional[str] = None
     claim_amount: Optional[float] = None
+    insurance_covered: Optional[str] = None  # "yes" or "no"
 
 @router.put("/item/{file_type}/{item_id}")
 def update_price_item(
@@ -428,6 +429,8 @@ def search_price_items_endpoint(
                 "claim_amount": float(item.claim_amount) if item.claim_amount else None,
                 "nhia_claim": item.nhia_claim,
                 "bill_effective": item.bill_effective,
+                "insurance_covered": item.insurance_covered or "yes",  # Include insurance_covered field
+                "is_active": item.is_active,  # Include is_active field
                 # For backward compatibility with billing page
                 "g_drg_code": item.medication_code,  # Map medication_code to g_drg_code
                 "service_name": item.product_name,  # Map product_name to service_name

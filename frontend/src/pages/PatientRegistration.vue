@@ -249,6 +249,64 @@
             rows="2"
           />
 
+          <!-- Emergency Contact Details -->
+          <div class="text-subtitle1 q-mt-md q-mb-sm glass-text">Emergency Contact Details</div>
+          <div class="row q-gutter-md">
+            <q-input
+              v-model="form.emergency_contact_name"
+              filled
+              label="Emergency Contact Name"
+              class="col-12 col-md-4"
+            />
+            <q-select
+              v-model="form.emergency_contact_relationship"
+              filled
+              :options="relationshipOptions"
+              label="Relationship"
+              class="col-12 col-md-4"
+              use-input
+              input-debounce="0"
+              @new-value="createRelationship"
+            />
+            <q-input
+              v-model="form.emergency_contact_number"
+              filled
+              label="Emergency Contact Number"
+              class="col-12 col-md-4"
+            />
+          </div>
+
+          <!-- Additional Demographic Information -->
+          <div class="text-subtitle1 q-mt-md q-mb-sm glass-text">Additional Information</div>
+          <div class="row q-gutter-md">
+            <q-select
+              v-model="form.marital_status"
+              filled
+              :options="maritalStatusOptions"
+              label="Marital Status"
+              class="col-12 col-md-4"
+              use-input
+              input-debounce="0"
+              @new-value="createMaritalStatus"
+            />
+            <q-select
+              v-model="form.educational_level"
+              filled
+              :options="educationalLevelOptions"
+              label="Educational Level"
+              class="col-12 col-md-4"
+              use-input
+              input-debounce="0"
+              @new-value="createEducationalLevel"
+            />
+            <q-input
+              v-model="form.occupation"
+              filled
+              label="Occupation"
+              class="col-12 col-md-4"
+            />
+          </div>
+
           <div>
             <q-btn
               label="Register Patient"
@@ -362,6 +420,64 @@
               rows="2"
             />
 
+            <!-- Emergency Contact Details -->
+            <div class="text-subtitle1 q-mt-md q-mb-sm">Emergency Contact Details</div>
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="editForm.emergency_contact_name"
+                filled
+                label="Emergency Contact Name"
+                class="col-12 col-md-4"
+              />
+              <q-select
+                v-model="editForm.emergency_contact_relationship"
+                filled
+                :options="relationshipOptions"
+                label="Relationship"
+                class="col-12 col-md-4"
+                use-input
+                input-debounce="0"
+                @new-value="createRelationship"
+              />
+              <q-input
+                v-model="editForm.emergency_contact_number"
+                filled
+                label="Emergency Contact Number"
+                class="col-12 col-md-4"
+              />
+            </div>
+
+            <!-- Additional Demographic Information -->
+            <div class="text-subtitle1 q-mt-md q-mb-sm">Additional Information</div>
+            <div class="row q-gutter-md">
+              <q-select
+                v-model="editForm.marital_status"
+                filled
+                :options="maritalStatusOptions"
+                label="Marital Status"
+                class="col-12 col-md-4"
+                use-input
+                input-debounce="0"
+                @new-value="createMaritalStatus"
+              />
+              <q-select
+                v-model="editForm.educational_level"
+                filled
+                :options="educationalLevelOptions"
+                label="Educational Level"
+                class="col-12 col-md-4"
+                use-input
+                input-debounce="0"
+                @new-value="createEducationalLevel"
+              />
+              <q-input
+                v-model="editForm.occupation"
+                filled
+                label="Occupation"
+                class="col-12 col-md-4"
+              />
+            </div>
+
             <div>
               <q-btn
                 label="Save Changes"
@@ -386,7 +502,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue';
+import { ref, reactive, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePatientsStore } from '../stores/patients';
 import { useQuasar } from 'quasar';
@@ -422,6 +538,12 @@ const editPatient = () => {
       ? patient.insurance_end_date.split('T')[0] : '',
     contact: patient.contact || '',
     address: patient.address || '',
+    emergency_contact_name: patient.emergency_contact_name || '',
+    emergency_contact_relationship: patient.emergency_contact_relationship || '',
+    emergency_contact_number: patient.emergency_contact_number || '',
+    marital_status: patient.marital_status || '',
+    educational_level: patient.educational_level || '',
+    occupation: patient.occupation || '',
   });
   
   showEditDialog.value = true;
@@ -457,6 +579,24 @@ const savePatientEdit = async () => {
     if (patientData.address === '') {
       patientData.address = null;
     }
+    if (patientData.emergency_contact_name === '') {
+      patientData.emergency_contact_name = null;
+    }
+    if (patientData.emergency_contact_relationship === '') {
+      patientData.emergency_contact_relationship = null;
+    }
+    if (patientData.emergency_contact_number === '') {
+      patientData.emergency_contact_number = null;
+    }
+    if (patientData.marital_status === '') {
+      patientData.marital_status = null;
+    }
+    if (patientData.educational_level === '') {
+      patientData.educational_level = null;
+    }
+    if (patientData.occupation === '') {
+      patientData.occupation = null;
+    }
     
     await patientsStore.updatePatient(patientsStore.currentPatient.id, patientData);
     showEditDialog.value = false;
@@ -477,6 +617,44 @@ const viewPatientProfile = () => {
 
 const genderOptions = ['M', 'F'];
 const departmentOptions = ['General', 'Pediatrics', 'ENT', 'Eye', 'Emergency']; // Kept for backwards compatibility if needed
+
+// Emergency contact relationship options
+const relationshipOptions = ref([
+  'Spouse', 'Parent', 'Child', 'Sibling', 'Friend', 'Relative', 'Other'
+]);
+
+// Marital status options
+const maritalStatusOptions = ref([
+  'Single', 'Married', 'Divorced', 'Widowed', 'Separated'
+]);
+
+// Educational level options
+const educationalLevelOptions = ref([
+  'None', 'Primary', 'Junior High School', 'Senior High School', 
+  'Tertiary', 'University', 'Postgraduate', 'Other'
+]);
+
+// Functions to allow custom values
+const createRelationship = (val, done) => {
+  if (val.length > 0 && !relationshipOptions.value.includes(val)) {
+    relationshipOptions.value.push(val);
+  }
+  done(val);
+};
+
+const createMaritalStatus = (val, done) => {
+  if (val.length > 0 && !maritalStatusOptions.value.includes(val)) {
+    maritalStatusOptions.value.push(val);
+  }
+  done(val);
+};
+
+const createEducationalLevel = (val, done) => {
+  if (val.length > 0 && !educationalLevelOptions.value.includes(val)) {
+    educationalLevelOptions.value.push(val);
+  }
+  done(val);
+};
 
 // Service Type and Procedure selection for encounter creation
 const showEncounterDialog = ref(false);
@@ -500,6 +678,40 @@ const form = reactive({
   insurance_end_date: '',
   contact: '',
   address: '',
+  emergency_contact_name: '',
+  emergency_contact_relationship: '',
+  emergency_contact_number: '',
+  marital_status: '',
+  educational_level: '',
+  occupation: '',
+});
+
+// Helper function to calculate age from date of birth
+const calculateAgeFromDateOfBirth = (dateOfBirth) => {
+  if (!dateOfBirth) return null;
+  
+  const birthDate = new Date(dateOfBirth);
+  if (isNaN(birthDate.getTime())) return null;
+  
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  
+  return age >= 0 ? age : null;
+};
+
+// Watch date_of_birth and auto-calculate age
+watch(() => form.date_of_birth, (newDateOfBirth) => {
+  if (newDateOfBirth) {
+    const calculatedAge = calculateAgeFromDateOfBirth(newDateOfBirth);
+    if (calculatedAge !== null) {
+      form.age = calculatedAge;
+    }
+  }
 });
 
 const searchPatient = async () => {
@@ -645,6 +857,8 @@ const submitEncounterCreation = async () => {
       Object.keys(form).forEach((key) => {
         if (key === 'insured') {
           form[key] = false;
+        } else if (key === 'age') {
+          form[key] = null;
         } else {
           form[key] = '';
         }
@@ -687,6 +901,24 @@ const onSubmit = async () => {
     }
     if (patientData.address === '') {
       patientData.address = null;
+    }
+    if (patientData.emergency_contact_name === '') {
+      patientData.emergency_contact_name = null;
+    }
+    if (patientData.emergency_contact_relationship === '') {
+      patientData.emergency_contact_relationship = null;
+    }
+    if (patientData.emergency_contact_number === '') {
+      patientData.emergency_contact_number = null;
+    }
+    if (patientData.marital_status === '') {
+      patientData.marital_status = null;
+    }
+    if (patientData.educational_level === '') {
+      patientData.educational_level = null;
+    }
+    if (patientData.occupation === '') {
+      patientData.occupation = null;
     }
 
     const patient = await patientsStore.createPatient(patientData);

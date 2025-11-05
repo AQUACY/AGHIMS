@@ -20,6 +20,7 @@ class InvestigationStatus(str, enum.Enum):
     REQUESTED = "requested"
     CONFIRMED = "confirmed"
     COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class Investigation(Base):
@@ -31,10 +32,15 @@ class Investigation(Base):
     gdrg_code = Column(String(50), nullable=False)  # GDRG code for the investigation
     procedure_name = Column(String(500), nullable=True)  # Procedure/service name
     investigation_type = Column(String(50), nullable=False)  # lab, scan, xray
+    notes = Column(String(1000), nullable=True)  # Notes/remarks from doctor
+    price = Column(String(50), nullable=True)  # Price of the investigation (auto-fetched from price list)
     status = Column(String(50), default=InvestigationStatus.REQUESTED.value, nullable=False)
     service_date = Column(DateTime, default=datetime.utcnow)
     requested_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancellation_reason = Column(String(1000), nullable=True)  # Reason for cancellation
+    cancelled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships

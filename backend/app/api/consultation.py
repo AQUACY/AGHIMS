@@ -21,6 +21,25 @@ from app.models.admission import AdmissionRecommendation
 
 router = APIRouter(prefix="/consultation", tags=["consultation"])
 
+# Frequency mapping for prescriptions
+FREQUENCY_MAPPING = {
+    "Nocte": 1,
+    "Stat": 1,
+    "OD": 1,
+    "daily": 1,
+    "PRN": 1,
+    "BDS": 2,
+    "BID": 2,
+    "QDS": 4,
+    "QID": 4,
+    "TID": 3,
+    "TDS": 3,
+    "5X": 5,
+    "EVERY OTHER DAY": 1,
+    "AT BED TIME": 1,
+    "6 TIMES": 6
+}
+
 
 def auto_generate_bill_for_chief_diagnosis(
     db: Session,
@@ -29,86 +48,14 @@ def auto_generate_bill_for_chief_diagnosis(
     current_user_id: int
 ) -> bool:
     """
-    Auto-generate bill for a chief diagnosis if it doesn't already exist.
-    Returns True if bill was created, False if it already existed.
+    DISABLED: Auto-generate bill for a chief diagnosis.
+    This function is disabled for OPD consultations since the initial service request already covers the diagnosis billing.
+    Returns False (no bill created).
     """
-    from app.models.bill import Bill, BillItem
-    from app.services.price_list_service_v2 import get_price_from_all_tables
-    import random
-    
-    # Only generate bill if diagnosis has GDRG code
-    if not diagnosis.gdrg_code:
-        return False
-    
-    # Check if bill item already exists for this diagnosis
-    # Match by gdrg_code and diagnosis name pattern
-    existing_item = db.query(BillItem).join(Bill).filter(
-        Bill.encounter_id == encounter.id,
-        BillItem.item_code == diagnosis.gdrg_code,
-        BillItem.item_name.like(f"%{diagnosis.diagnosis}%"),
-        BillItem.category == "drg"
-    ).first()
-    
-    if existing_item:
-        # Bill already exists for this diagnosis
-        return False
-    
-    # Determine if insured based on encounter CCC number
-    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
-    
-    # Get price for the diagnosis (co-pay for insured, base rate for cash)
-    unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
-    
-    if unit_price <= 0:
-        # No price found or price is 0, don't create bill
-        return False
-    
-    # Find or create a bill for this encounter
-    existing_bill = db.query(Bill).filter(
-        Bill.encounter_id == encounter.id,
-        Bill.is_paid == False  # Only use unpaid bills
-    ).first()
-    
-    if existing_bill:
-        # Add bill item to existing bill
-        bill_item = BillItem(
-            bill_id=existing_bill.id,
-            item_code=diagnosis.gdrg_code,
-            item_name=f"Diagnosis: {diagnosis.diagnosis}",
-            category="drg",
-            quantity=1,
-            unit_price=unit_price,
-            total_price=unit_price
-        )
-        db.add(bill_item)
-        existing_bill.total_amount += unit_price
-    else:
-        # Create new bill
-        bill_number = f"BILL-{random.randint(100000, 999999)}"
-        bill = Bill(
-            encounter_id=encounter.id,
-            bill_number=bill_number,
-            is_insured=is_insured_encounter,
-            total_amount=unit_price,
-            created_by=current_user_id
-        )
-        db.add(bill)
-        db.flush()
-        
-        # Create bill item
-        bill_item = BillItem(
-            bill_id=bill.id,
-            item_code=diagnosis.gdrg_code,
-            item_name=f"Diagnosis: {diagnosis.diagnosis}",
-            category="drg",
-            quantity=1,
-            unit_price=unit_price,
-            total_price=unit_price
-        )
-        db.add(bill_item)
-    
-    db.commit()
-    return True
+    # NOTE: Bill generation for diagnoses is disabled for OPD consultations
+    # since the initial service request already covers the diagnosis billing.
+    # This function is kept for backward compatibility but does nothing.
+    return False
 
 
 # Diagnosis schemas
@@ -142,10 +89,13 @@ class PrescriptionCreate(BaseModel):
     encounter_id: int
     medicine_code: str
     medicine_name: str
-    dose: Optional[str] = None
-    frequency: Optional[str] = None
-    duration: Optional[str] = None
-    quantity: int
+    dose: Optional[str] = None  # Numeric dose value (e.g., "500")
+    unit: Optional[str] = None  # Unit of dose (e.g., "MG", "ML", "TAB")
+    frequency: Optional[str] = None  # Frequency label (e.g., "BDS", "TDS", "OD")
+    frequency_value: Optional[int] = None  # Numeric frequency value (e.g., 2 for BDS)
+    duration: Optional[str] = None  # Duration (e.g., "7 DAYS")
+    instructions: Optional[str] = None  # Instructions for the drug
+    quantity: Optional[int] = None  # Auto-calculated: dose * frequency_value * duration
     unparsed: Optional[str] = None
 
 
@@ -156,8 +106,11 @@ class PrescriptionResponse(BaseModel):
     medicine_code: str
     medicine_name: str
     dose: Optional[str]
+    unit: Optional[str] = None
     frequency: Optional[str]
+    frequency_value: Optional[int] = None
     duration: Optional[str]
+    instructions: Optional[str] = None
     quantity: int
     unparsed: Optional[str] = None
     prescribed_by: int
@@ -179,6 +132,9 @@ class PrescriptionResponse(BaseModel):
         confirmed_by = getattr(obj, 'confirmed_by', None)
         confirmed_at = getattr(obj, 'confirmed_at', None)
         dispensed_by = getattr(obj, 'dispensed_by', None)
+        unit = getattr(obj, 'unit', None)
+        frequency_value = getattr(obj, 'frequency_value', None)
+        instructions = getattr(obj, 'instructions', None)
         
         data = {
             "id": obj.id,
@@ -186,8 +142,11 @@ class PrescriptionResponse(BaseModel):
             "medicine_code": obj.medicine_code,
             "medicine_name": obj.medicine_name,
             "dose": obj.dose,
+            "unit": unit,
             "frequency": obj.frequency,
+            "frequency_value": frequency_value,
             "duration": obj.duration,
+            "instructions": instructions,
             "quantity": obj.quantity,
             "unparsed": obj.unparsed,
             "prescribed_by": obj.prescribed_by,
@@ -209,6 +168,8 @@ class InvestigationCreate(BaseModel):
     gdrg_code: str
     procedure_name: Optional[str] = None
     investigation_type: str  # lab, scan, xray
+    notes: Optional[str] = None  # Notes/remarks from doctor
+    price: Optional[str] = None  # Price of the investigation
 
 
 class InvestigationResponse(BaseModel):
@@ -218,7 +179,13 @@ class InvestigationResponse(BaseModel):
     gdrg_code: str
     procedure_name: Optional[str]
     investigation_type: str
+    notes: Optional[str]
+    price: Optional[str] = None
     status: str
+    confirmed_by: Optional[int] = None
+    cancelled_by: Optional[int] = None
+    cancellation_reason: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -264,9 +231,11 @@ def create_diagnosis(
     db.commit()
     db.refresh(diagnosis)
     
+    # NOTE: Bill generation for diagnoses is disabled for OPD consultations
+    # since the initial service request already covers the diagnosis billing.
     # If diagnosis is marked as chief and has GDRG code, auto-generate bill
-    if diagnosis.is_chief and diagnosis.gdrg_code:
-        auto_generate_bill_for_chief_diagnosis(db, diagnosis, encounter, current_user.id)
+    # if diagnosis.is_chief and diagnosis.gdrg_code:
+    #     auto_generate_bill_for_chief_diagnosis(db, diagnosis, encounter, current_user.id)
     
     return diagnosis
 
@@ -311,11 +280,13 @@ def update_diagnosis(
     diagnosis.is_provisional = diagnosis_data.is_provisional
     diagnosis.is_chief = diagnosis_data.is_chief
     
+    # NOTE: Bill generation for diagnoses is disabled for OPD consultations
+    # since the initial service request already covers the diagnosis billing.
     # If diagnosis is marked as chief (and wasn't before), auto-generate bill
-    if is_now_chief and not was_chief and diagnosis.gdrg_code:
-        auto_generate_bill_for_chief_diagnosis(db, diagnosis, encounter, current_user.id)
-    else:
-        db.commit()
+    # if is_now_chief and not was_chief and diagnosis.gdrg_code:
+    #     auto_generate_bill_for_chief_diagnosis(db, diagnosis, encounter, current_user.id)
+    
+    db.commit()
     
     db.refresh(diagnosis)
     return diagnosis
@@ -348,7 +319,65 @@ def create_prescription(
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
     
-    prescription = Prescription(**prescription_data.dict(), prescribed_by=current_user.id)
+    # Get frequency value from mapping if frequency is provided
+    frequency_value = None
+    if prescription_data.frequency:
+        frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
+    
+    # Auto-calculate quantity based on pharmacist logic
+    # For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
+    # Then: (dose_mg / 100) × frequency_value × duration
+    # Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
+    # Only auto-calculate if quantity is not provided or is 0
+    # This allows frontend to override the calculation if needed
+    quantity = prescription_data.quantity
+    if (not quantity or quantity <= 0) and prescription_data.dose and frequency_value and prescription_data.duration:
+        try:
+            dose_num = float(prescription_data.dose)
+            if dose_num > 0:
+                # Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
+                duration_str = prescription_data.duration.strip()
+                duration_num = 1
+                if duration_str:
+                    # First try to parse as a number directly
+                    try:
+                        direct_num = float(duration_str)
+                        if direct_num > 0:
+                            duration_num = int(direct_num)
+                    except ValueError:
+                        # Otherwise, extract number from string (e.g., "7 DAYS" -> 7)
+                        import re
+                        duration_match = re.search(r'\d+', duration_str)
+                        if duration_match:
+                            duration_num = int(duration_match.group())
+                
+                # Convert dose to units based on unit type
+                units_per_dose = dose_num
+                unit = prescription_data.unit.strip().upper() if prescription_data.unit else ""
+                if unit == "MG":
+                    # For MG: 100mg = 1 unit
+                    units_per_dose = dose_num / 100.0
+                elif unit == "MCG":
+                    # For MCG: 1000mcg = 1 unit
+                    units_per_dose = dose_num / 1000.0
+                # For other units (TAB, CAP, ML, etc.), use dose as-is (1 tablet = 1 unit)
+                
+                # Calculate: units per dose × frequency per day × number of days
+                calculated_quantity = int(units_per_dose * frequency_value * duration_num)
+                if calculated_quantity > 0:
+                    quantity = calculated_quantity
+        except (ValueError, TypeError):
+            pass  # If calculation fails, use provided quantity or default below
+    
+    # Ensure quantity is set
+    if not quantity or quantity <= 0:
+        quantity = 1
+    
+    prescription_dict = prescription_data.dict()
+    prescription_dict['frequency_value'] = frequency_value
+    prescription_dict['quantity'] = quantity
+    
+    prescription = Prescription(**prescription_dict, prescribed_by=current_user.id)
     db.add(prescription)
     db.commit()
     db.refresh(prescription)
@@ -395,11 +424,12 @@ def get_prescriptions_by_patient_card(
 
 
 class PrescriptionDispense(BaseModel):
-    """Prescription dispense model - allows updating prescription details during dispense"""
+    """Prescription dispense model - allows updating prescription details during dispense/confirmation"""
     dose: Optional[str] = None
     frequency: Optional[str] = None
     duration: Optional[str] = None
     quantity: Optional[int] = None
+    instructions: Optional[str] = None  # Instructions for the drug
 
 
 @router.put("/prescription/{prescription_id}/dispense", response_model=PrescriptionResponse)
@@ -505,6 +535,8 @@ def confirm_prescription(
             if dispense_data.quantity <= 0:
                 raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
             prescription.quantity = dispense_data.quantity
+        if dispense_data.instructions is not None:
+            prescription.instructions = dispense_data.instructions
     
     # Mark prescription as confirmed
     prescription.confirmed_by = current_user.id
@@ -514,27 +546,70 @@ def confirm_prescription(
     is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
     
     # Get price for the medicine (co-pay for insured, base rate for cash)
+    # If insurance_covered="no", always uses base_rate regardless of insurance status
+    print(f"DEBUG: Calling get_price_from_all_tables with code='{prescription.medicine_code}', is_insured={is_insured_encounter}")
+    print(f"DEBUG: Prescription before price lookup - quantity={prescription.quantity}, medicine_code={prescription.medicine_code}")
     unit_price = get_price_from_all_tables(db, prescription.medicine_code, is_insured_encounter)
+    
+    # Ensure quantity is set (should already be set, but safety check)
+    if not prescription.quantity or prescription.quantity <= 0:
+        print(f"WARNING: Prescription quantity is {prescription.quantity}, setting to 1")
+        prescription.quantity = 1
+    
     total_price = unit_price * prescription.quantity
     
-    # Find or create a bill for this encounter
-    existing_bill = db.query(Bill).filter(
-        Bill.encounter_id == encounter.id,
-        Bill.is_paid == False  # Only use unpaid bills
-    ).first()
+    # Debug: Log pricing information
+    print(f"Prescription confirmation - Medicine: {prescription.medicine_code}, Is Insured: {is_insured_encounter}, Unit Price: {unit_price}, Total Price: {total_price}, Quantity: {prescription.quantity}")
+    print(f"DEBUG: unit_price={unit_price}, quantity={prescription.quantity}, total_price={total_price}")
+    print(f"DEBUG: Will create bill? {total_price > 0}")
     
-    if existing_bill:
-        # Check if this prescription is already in the bill
-        existing_item = db.query(BillItem).filter(
-            BillItem.bill_id == existing_bill.id,
-            BillItem.item_code == prescription.medicine_code,
-            BillItem.item_name.like(f"%{prescription.medicine_name}%")
+    # Always create/add to bill if total_price > 0
+    # This ensures bills are created even when insurance_covered="no" and base_rate is set
+    if total_price > 0:
+        print(f"Creating bill item - Unit Price: {unit_price}, Total Price: {total_price}")
+        # Find or create a bill for this encounter
+        existing_bill = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False  # Only use unpaid bills
         ).first()
         
-        if not existing_item:
-            # Add bill item to existing bill
+        if existing_bill:
+            # Check if this prescription is already in the bill
+            existing_item = db.query(BillItem).filter(
+                BillItem.bill_id == existing_bill.id,
+                BillItem.item_code == prescription.medicine_code,
+                BillItem.item_name.like(f"%{prescription.medicine_name}%")
+            ).first()
+            
+            if not existing_item:
+                # Add bill item to existing bill
+                bill_item = BillItem(
+                    bill_id=existing_bill.id,
+                    item_code=prescription.medicine_code,
+                    item_name=f"Prescription: {prescription.medicine_name}",
+                    category="product",
+                    quantity=prescription.quantity,
+                    unit_price=unit_price,
+                    total_price=total_price
+                )
+                db.add(bill_item)
+                existing_bill.total_amount += total_price
+        else:
+            # Create new bill
+            bill_number = f"BILL-{random.randint(100000, 999999)}"
+            bill = Bill(
+                encounter_id=encounter.id,
+                bill_number=bill_number,
+                is_insured=is_insured_encounter,
+                total_amount=total_price,
+                created_by=current_user.id
+            )
+            db.add(bill)
+            db.flush()
+            
+            # Create bill item
             bill_item = BillItem(
-                bill_id=existing_bill.id,
+                bill_id=bill.id,
                 item_code=prescription.medicine_code,
                 item_name=f"Prescription: {prescription.medicine_name}",
                 category="product",
@@ -543,31 +618,9 @@ def confirm_prescription(
                 total_price=total_price
             )
             db.add(bill_item)
-            existing_bill.total_amount += total_price
+            print(f"Bill and bill item created successfully")
     else:
-        # Create new bill
-        bill_number = f"BILL-{random.randint(100000, 999999)}"
-        bill = Bill(
-            encounter_id=encounter.id,
-            bill_number=bill_number,
-            is_insured=is_insured_encounter,
-            total_amount=total_price,
-            created_by=current_user.id
-        )
-        db.add(bill)
-        db.flush()
-        
-        # Create bill item
-        bill_item = BillItem(
-            bill_id=bill.id,
-            item_code=prescription.medicine_code,
-            item_name=f"Prescription: {prescription.medicine_name}",
-            category="product",
-            quantity=prescription.quantity,
-            unit_price=unit_price,
-            total_price=total_price
-        )
-        db.add(bill_item)
+        print(f"WARNING: Not creating bill - Unit Price: {unit_price}, Total Price: {total_price} (one or both are 0)")
     
     db.commit()
     db.refresh(prescription)
@@ -622,19 +675,84 @@ def update_prescription(
     if not prescription:
         raise HTTPException(status_code=404, detail="Prescription not found")
     
+    # Prevent editing if prescription is confirmed by pharmacy staff
+    # Only Admin can override this restriction
+    if prescription.confirmed_by is not None and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot edit prescription that has been confirmed by pharmacy staff. Contact admin if changes are needed."
+        )
+    
     # Verify encounter exists
     encounter = db.query(Encounter).filter(Encounter.id == prescription_data.encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Get frequency value from mapping if frequency is provided
+    frequency_value = None
+    if prescription_data.frequency:
+        frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
+    
+    # Auto-calculate quantity based on pharmacist logic
+    # For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
+    # Then: (dose_mg / 100) × frequency_value × duration
+    # Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
+    # Only auto-calculate if quantity is not provided or is 0
+    # This allows frontend to override the calculation if needed
+    quantity = prescription_data.quantity
+    if (not quantity or quantity <= 0) and prescription_data.dose and frequency_value and prescription_data.duration:
+        try:
+            dose_num = float(prescription_data.dose)
+            if dose_num > 0:
+                # Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
+                duration_str = prescription_data.duration.strip()
+                duration_num = 1
+                if duration_str:
+                    # First try to parse as a number directly
+                    try:
+                        direct_num = float(duration_str)
+                        if direct_num > 0:
+                            duration_num = int(direct_num)
+                    except ValueError:
+                        # Otherwise, extract number from string (e.g., "7 DAYS" -> 7)
+                        import re
+                        duration_match = re.search(r'\d+', duration_str)
+                        if duration_match:
+                            duration_num = int(duration_match.group())
+                
+                # Convert dose to units based on unit type
+                units_per_dose = dose_num
+                unit = prescription_data.unit.strip().upper() if prescription_data.unit else ""
+                if unit == "MG":
+                    # For MG: 100mg = 1 unit
+                    units_per_dose = dose_num / 100.0
+                elif unit == "MCG":
+                    # For MCG: 1000mcg = 1 unit
+                    units_per_dose = dose_num / 1000.0
+                # For other units (TAB, CAP, ML, etc.), use dose as-is (1 tablet = 1 unit)
+                
+                # Calculate: units per dose × frequency per day × number of days
+                calculated_quantity = int(units_per_dose * frequency_value * duration_num)
+                if calculated_quantity > 0:
+                    quantity = calculated_quantity
+        except (ValueError, TypeError):
+            pass  # If calculation fails, use provided quantity or default below
+    
+    # Ensure quantity is set
+    if not quantity or quantity <= 0:
+        quantity = 1
     
     # Update prescription fields
     prescription.encounter_id = prescription_data.encounter_id
     prescription.medicine_code = prescription_data.medicine_code
     prescription.medicine_name = prescription_data.medicine_name
     prescription.dose = prescription_data.dose
+    prescription.unit = prescription_data.unit
     prescription.frequency = prescription_data.frequency
+    prescription.frequency_value = frequency_value
     prescription.duration = prescription_data.duration
-    prescription.quantity = prescription_data.quantity
+    prescription.instructions = prescription_data.instructions
+    prescription.quantity = quantity
     prescription.unparsed = prescription_data.unparsed
     
     db.commit()
@@ -653,6 +771,14 @@ def delete_prescription(
     if not prescription:
         raise HTTPException(status_code=404, detail="Prescription not found")
     
+    # Prevent deleting if prescription is confirmed by pharmacy staff
+    # Only Admin can override this restriction
+    if prescription.confirmed_by is not None and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete prescription that has been confirmed by pharmacy staff. Contact admin if deletion is needed."
+        )
+    
     db.delete(prescription)
     db.commit()
     return None
@@ -665,15 +791,31 @@ def create_investigation(
     current_user: User = Depends(require_role(["Doctor", "Admin"]))
 ):
     """Request an investigation (lab, scan, x-ray)"""
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    
     encounter = db.query(Encounter).filter(Encounter.id == investigation_data.encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Auto-fetch price from price list if not provided
+    price = investigation_data.price
+    if not price and investigation_data.gdrg_code:
+        # Check if patient is insured (has CCC number)
+        is_insured = bool(encounter.ccc_number)
+        try:
+            price_value = get_price_from_all_tables(db, investigation_data.gdrg_code, is_insured)
+            price = str(price_value) if price_value else None
+        except Exception as e:
+            # If price lookup fails, continue without price
+            price = None
     
     investigation = Investigation(
         encounter_id=investigation_data.encounter_id,
         gdrg_code=investigation_data.gdrg_code,
         procedure_name=investigation_data.procedure_name,
         investigation_type=investigation_data.investigation_type,
+        notes=investigation_data.notes,
+        price=price,
         requested_by=current_user.id,
         status=InvestigationStatus.REQUESTED.value
     )
@@ -694,6 +836,40 @@ def get_investigations(
     return investigations
 
 
+class InvestigationCancel(BaseModel):
+    """Investigation cancellation model"""
+    reason: str  # Reason for cancellation (required)
+
+
+@router.put("/investigation/{investigation_id}/cancel", response_model=InvestigationResponse)
+def cancel_investigation(
+    investigation_id: int,
+    cancel_data: InvestigationCancel,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Cancel an investigation (can cancel confirmed investigations)"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Don't allow cancelling already cancelled or completed investigations
+    if investigation.status == InvestigationStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="Investigation is already cancelled")
+    
+    if investigation.status == InvestigationStatus.COMPLETED.value:
+        raise HTTPException(status_code=400, detail="Cannot cancel a completed investigation")
+    
+    investigation.status = InvestigationStatus.CANCELLED.value
+    investigation.cancelled_by = current_user.id
+    investigation.cancellation_reason = cancel_data.reason
+    investigation.cancelled_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(investigation)
+    return investigation
+
+
 @router.put("/investigation/{investigation_id}", response_model=InvestigationResponse)
 def update_investigation(
     investigation_id: int,
@@ -706,6 +882,14 @@ def update_investigation(
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
     
+    # Prevent editing if investigation is confirmed by staff
+    # Only Admin can override this restriction
+    if investigation.confirmed_by is not None and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot edit investigation that has been confirmed by staff. Contact admin if changes are needed."
+        )
+    
     # Verify encounter exists
     encounter = db.query(Encounter).filter(Encounter.id == investigation_data.encounter_id).first()
     if not encounter:
@@ -716,6 +900,8 @@ def update_investigation(
     investigation.gdrg_code = investigation_data.gdrg_code
     investigation.procedure_name = investigation_data.procedure_name
     investigation.investigation_type = investigation_data.investigation_type
+    investigation.notes = investigation_data.notes
+    investigation.price = investigation_data.price
     
     db.commit()
     db.refresh(investigation)
@@ -732,6 +918,21 @@ def delete_investigation(
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Prevent deleting if investigation is confirmed by staff
+    # Only Admin can override this restriction
+    if investigation.confirmed_by is not None and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete investigation that has been confirmed by staff. Contact admin if deletion is needed."
+        )
+    
+    # Also check status for additional protection
+    if investigation.status == InvestigationStatus.CONFIRMED.value and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete investigation that has been confirmed. Contact admin if deletion is needed."
+        )
     
     db.delete(investigation)
     db.commit()
@@ -778,6 +979,8 @@ class InvestigationUpdateDetails(BaseModel):
     gdrg_code: str
     procedure_name: str
     investigation_type: Optional[str] = None
+    notes: Optional[str] = None
+    price: Optional[str] = None
 
 
 @router.put("/investigation/{investigation_id}/update-details", response_model=InvestigationResponse)
@@ -809,6 +1012,14 @@ def update_investigation_details(
     if update_data.investigation_type is not None:
         investigation.investigation_type = update_data.investigation_type
     
+    # Update notes if provided
+    if update_data.notes is not None:
+        investigation.notes = update_data.notes
+    
+    # Update price if provided
+    if update_data.price is not None:
+        investigation.price = update_data.price
+    
     db.commit()
     db.refresh(investigation)
     return investigation
@@ -820,10 +1031,18 @@ def confirm_investigation(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin"]))
 ):
-    """Confirm an investigation request"""
+    """Confirm an investigation request and automatically generate a bill item"""
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Don't allow confirming cancelled investigations
+    if investigation.status == InvestigationStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="Cannot confirm a cancelled investigation")
     
     # Verify user role matches investigation type (Lab can confirm labs, etc.)
     if current_user.role != "Admin":
@@ -843,8 +1062,86 @@ def confirm_investigation(
                 detail="Only Xray staff can confirm xray investigations"
             )
     
+    # Get encounter to determine insurance status
+    encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
     investigation.status = InvestigationStatus.CONFIRMED.value
     investigation.confirmed_by = current_user.id
+    
+    # Determine if insured based on encounter CCC number
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    # Get price for the investigation (co-pay for insured, base rate for cash)
+    # Use the price stored on the investigation, or look it up from price list
+    unit_price = 0.0
+    if investigation.price:
+        try:
+            unit_price = float(investigation.price)
+        except (ValueError, TypeError):
+            unit_price = 0.0
+    
+    # If no price stored, look it up from price list using gdrg_code
+    if unit_price == 0.0 and investigation.gdrg_code:
+        unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter)
+    
+    total_price = unit_price  # Investigations are typically quantity 1
+    
+    # Always create/add to bill if total_price > 0
+    if total_price > 0:
+        # Find or create a bill for this encounter
+        existing_bill = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False  # Only use unpaid bills
+        ).first()
+        
+        if existing_bill:
+            # Check if this investigation is already in the bill
+            existing_item = db.query(BillItem).filter(
+                BillItem.bill_id == existing_bill.id,
+                BillItem.item_code == investigation.gdrg_code,
+                BillItem.item_name.like(f"%{investigation.procedure_name}%")
+            ).first()
+            
+            if not existing_item:
+                # Add bill item to existing bill
+                bill_item = BillItem(
+                    bill_id=existing_bill.id,
+                    item_code=investigation.gdrg_code or "MISC",
+                    item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                    category=investigation.investigation_type or "procedure",  # Use investigation_type as category
+                    quantity=1,
+                    unit_price=unit_price,
+                    total_price=total_price
+                )
+                db.add(bill_item)
+                existing_bill.total_amount += total_price
+        else:
+            # Create new bill
+            bill_number = f"BILL-{random.randint(100000, 999999)}"
+            bill = Bill(
+                encounter_id=encounter.id,
+                bill_number=bill_number,
+                is_insured=is_insured_encounter,
+                total_amount=total_price,
+                created_by=current_user.id
+            )
+            db.add(bill)
+            db.flush()
+            
+            # Create bill item
+            bill_item = BillItem(
+                bill_id=bill.id,
+                item_code=investigation.gdrg_code or "MISC",
+                item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                category=investigation.investigation_type or "procedure",  # Use investigation_type as category
+                quantity=1,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+            db.add(bill_item)
+    
     db.commit()
     db.refresh(investigation)
     return {"investigation_id": investigation.id, "status": investigation.status}

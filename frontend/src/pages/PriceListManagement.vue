@@ -67,9 +67,10 @@
               • <strong>Base Rate:</strong> What cash patients pay<br/>
               • <strong>NHIA App:</strong> Amount NHIA covers/approves<br/>
               • <strong>Claim Am, NHIA Clain, Bill Effecti:</strong> Additional claim and billing fields<br/>
+              • <strong>Insurance Covered:</strong> "yes" or "no" - If "no", product will always charge base_rate regardless of patient insurance status<br/>
               <br/>
               <strong>Note:</strong> For insured patients on procedures/surgeries, they pay the Co-Payment amount, and NHIA covers the NHIA App amount.<br/>
-              For products (medications), insured patients pay the Base Rate (same as cash patients).<br/>
+              For products (medications) with insurance_covered="yes", insured patients pay the Co-Payment (if available) or 0. Products with insurance_covered="no" always charge base_rate to all patients.<br/>
               • <strong>All other columns:</strong> Will be preserved in the database<br/>
               <br/>
               <strong>File Types:</strong><br/>
@@ -224,6 +225,16 @@
               {{ props.value ? formatCurrency(props.value) : 'N/A' }}
             </q-td>
           </template>
+          <template v-slot:body-cell-insurance_covered="props">
+            <q-td :props="props">
+              <q-badge 
+                v-if="props.row.file_type === 'product'"
+                :color="props.value && props.value.toLowerCase() === 'no' ? 'negative' : 'positive'"
+                :label="props.value && props.value.toLowerCase() === 'no' ? 'No' : 'Yes'"
+              />
+              <span v-else class="text-grey">N/A</span>
+            </q-td>
+          </template>
           <template v-slot:no-data>
             <div class="full-width row justify-center items-center text-grey q-gutter-sm q-pa-md">
               <q-icon name="inbox" size="2em" />
@@ -247,6 +258,14 @@
             <q-input v-model.number="editForm.nhia_app" type="number" filled label="NHIA App" />
             <q-input v-model.number="editForm.nhia_claim_co_payment" type="number" filled label="Co-Payment" hint="For insured patients (with CCC). If null, patient pays 0 (free)." />
             <q-input v-if="editingItem?.file_type === 'product'" v-model.number="editForm.claim_amount" type="number" filled label="Claim Amount (Products)" />
+            <q-select 
+              v-if="editingItem?.file_type === 'product'"
+              v-model="editForm.insurance_covered"
+              :options="insuranceCoveredOptions"
+              filled
+              label="Insurance Covered"
+              hint="If 'No', product will always charge base_rate regardless of patient insurance status"
+            />
             <q-toggle v-model="editForm.is_active" label="Active" />
           </div>
         </q-card-section>
@@ -300,6 +319,7 @@ const priceColumns = [
   { name: 'base_rate', label: 'Base Rate (Cash)', field: 'base_rate', align: 'right', sortable: true },
   { name: 'nhia_app', label: 'NHIA App', field: 'nhia_app', align: 'right', sortable: true },
   { name: 'nhia_claim_co_payment', label: 'Co-Payment', field: 'nhia_claim_co_payment', align: 'right', sortable: true },
+  { name: 'insurance_covered', label: 'Insurance Covered', field: 'insurance_covered', align: 'center', sortable: true },
   { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
 ];
 
@@ -385,6 +405,8 @@ const showEditDialog = ref(false);
 const editingItem = ref(null);
 const editForm = ref({});
 
+const insuranceCoveredOptions = ['yes', 'no'];
+
 const openEditItem = (row) => {
   editingItem.value = row;
   // Prime editForm with allowed fields by type
@@ -395,6 +417,7 @@ const openEditItem = (row) => {
       nhia_app: row.nhia_app,
       nhia_claim_co_payment: row.nhia_claim_co_payment || null,
       claim_amount: row.claim_amount || null,
+      insurance_covered: row.insurance_covered || 'yes',
       is_active: row.is_active ?? true,
     };
   } else {

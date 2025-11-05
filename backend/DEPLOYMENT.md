@@ -26,17 +26,38 @@ This guide covers deploying the HMS backend and frontend to a production server 
 
 ### Software Requirements
 - **Python**: 3.8 or higher (3.10+ recommended)
+- **python3-venv**: Required for creating virtual environments (Debian/Ubuntu)
 - **MySQL**: 5.7+ or MariaDB 10.3+
 - **pip**: Python package manager
-- **virtualenv** (optional but recommended)
 
 ## Prerequisites
 
 1. **Server Access**: SSH access to production server
 2. **MySQL Installed**: MySQL or MariaDB should be installed and running
-3. **Python Installed**: Python 3.8+ with pip
+3. **Python Installed**: Python 3.8+ with pip and python3-venv
 4. **Domain/Server IP**: Frontend URL for CORS configuration
 5. **Firewall**: Ports 8000 (or your chosen port) should be accessible
+
+### Installing Python and Required Packages
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install python3 python3-pip python3-venv python3-dev
+```
+
+**CentOS/RHEL:**
+```bash
+sudo yum install python3 python3-pip python3-devel
+# Note: On CentOS/RHEL, venv is usually included with python3
+```
+
+**Verify Installation:**
+```bash
+python3 --version  # Should show Python 3.8 or higher
+pip3 --version     # Should show pip version
+python3 -m venv --help  # Should show venv help (not error)
+```
 
 ### Installing MySQL (if not already installed)
 
@@ -137,18 +158,151 @@ cp -r repo/backend/* /var/www/html/backend/
 
 ### 3. Create Virtual Environment
 
+**First, ensure python3-venv is installed:**
+```bash
+# Ubuntu/Debian
+sudo apt install python3-venv
+
+# Or for specific Python version (e.g., Python 3.8)
+sudo apt install python3.8-venv
+```
+
+**Then create the virtual environment:**
 ```bash
 cd /var/www/html/backend
 python3 -m venv venv
+
+# If the above fails, try with --without-pip (then install pip manually):
+# python3 -m venv venv --without-pip
+# source venv/bin/activate
+# curl https://bootstrap.pypa.io/get-pip.py | python3
+
+# Activate the virtual environment
+# Note: Do NOT use 'sudo' with 'source' - it's a shell built-in command
+# Just run 'source' directly (as your regular user)
 source venv/bin/activate
+
+# Verify activation (your prompt should show (venv))
+which python  # Should point to /var/www/html/backend/venv/bin/python
 ```
+
+**Important**: The `source` command is a shell built-in and cannot be used with `sudo`. Always activate the virtual environment as your regular user, not with `sudo`.
 
 ### 4. Install Dependencies
 
+**Make sure your virtual environment is activated first:**
 ```bash
-pip install --upgrade pip
+# If not already activated, activate it:
+cd /var/www/html/backend
+source venv/bin/activate  # No sudo here!
+
+# Your prompt should show (venv) at the beginning
+# Upgrade pip to latest version first (important for package compatibility)
+pip install --upgrade pip setuptools wheel
+
+# Check Python version (should be 3.9+ for pandas 2.3.0+)
+python --version
+```
+
+**Install dependencies (excluding pandas first):**
+
+**Option 1: Install all except pandas, then pandas separately (Recommended):**
+```bash
+# Install all requirements except pandas
+pip install fastapi uvicorn[standard] sqlalchemy pydantic pydantic-settings \
+    python-jose[cryptography] passlib[bcrypt] python-multipart \
+    openpyxl python-dotenv pymysql
+
+# Check Python version first
+python --version  # Should be 3.9+ for pandas 2.3.0+
+
+# Then install pandas separately (quote the version to avoid shell errors)
+# If Python 3.9+: pip install "pandas>=2.3.0"
+# If Python 3.8: pip install "pandas>=2.0.0"
+pip install "pandas>=2.0.0"  # Use this if you get version errors
+```
+
+**Option 2: Use requirements.txt with pandas commented out:**
+```bash
+# First, temporarily comment out pandas in requirements.txt:
+# Comment line: pandas>=2.3.0
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Then install pandas separately (quote the version)
+pip install "pandas>=2.3.0"
+
+# Uncomment pandas in requirements.txt for future use
+```
+
+**Option 3: Install all at once (if Python 3.9+):**
+```bash
 pip install -r requirements.txt
 ```
+
+**If you get errors installing pandas:**
+
+**Step 1: Ensure build tools are installed:**
+```bash
+# Install build tools (required for pandas compilation)
+sudo apt install python3-dev python3-pip build-essential
+```
+
+**Step 2: Check Python version:**
+```bash
+# Check which Python version you're using
+python --version
+
+# Pandas 2.3.0+ requires Python 3.9+
+# If you see Python 3.8 or older, use pandas 2.0.0 instead
+```
+
+**Step 3: Install pandas separately (as done during local development):**
+```bash
+# Make sure other dependencies are installed first
+pip install fastapi uvicorn[standard] sqlalchemy pydantic pydantic-settings \
+    python-jose[cryptography] passlib[bcrypt] python-multipart \
+    openpyxl python-dotenv pymysql
+
+# Then install pandas based on your Python version:
+# For Python 3.9+: pip install "pandas>=2.3.0"
+# For Python 3.8: pip install "pandas>=2.0.0"  (use this if you get version errors)
+pip install "pandas>=2.0.0"
+```
+
+**If pandas still fails (Python version too old):**
+
+**Option 1: Upgrade Python (recommended):**
+```bash
+# Install Python 3.10 (Ubuntu/Debian)
+sudo apt update
+sudo apt install python3.10 python3.10-venv python3.10-dev
+
+# Recreate venv with Python 3.10
+cd /var/www/html/backend
+rm -rf venv
+python3.10 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip setuptools wheel
+
+# Install dependencies (excluding pandas)
+pip install fastapi uvicorn[standard] sqlalchemy pydantic pydantic-settings \
+    python-jose[cryptography] passlib[bcrypt] python-multipart \
+    openpyxl python-dotenv pymysql
+
+# Then install pandas (quote the version)
+pip install "pandas>=2.3.0"
+```
+
+**Option 2: Use compatible pandas version (if Python < 3.9):**
+```bash
+# Install compatible pandas version for Python 3.8 (quote the version)
+pip install "pandas>=2.0.0"  # Works with Python 3.8+
+# Or for older Python: pip install "pandas>=1.5.0"
+```
+
+**Note**: If you need to install packages that require system-level access, do it before activating the venv, or use `sudo pip install` (though this is not recommended - better to fix permissions).
 
 **Note**: If you encounter compilation errors (especially with `pandas` or `bcrypt`), you may need to install build tools:
 
@@ -226,8 +380,12 @@ chmod 600 .env
 
 ### 1. Initialize Database Tables
 
-With your virtual environment activated:
+**Activate your virtual environment first (no sudo):**
 ```bash
+cd /var/www/html/backend
+source venv/bin/activate  # Activate as regular user, not with sudo
+
+# Now initialize the database
 python init_db.py
 ```
 
@@ -276,23 +434,30 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 **Basic Production Command:**
 ```bash
 cd /var/www/html/backend
-source venv/bin/activate
+source venv/bin/activate  # Activate as regular user (no sudo)
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4 --no-access-log
+```
+
+**Or use the full path to avoid activating venv:**
+```bash
+cd /var/www/html/backend
+/var/www/html/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4 --no-access-log
 ```
 
 **Recommended Production Command:**
 ```bash
 cd /var/www/html/backend
-source venv/bin/activate
+source venv/bin/activate  # Activate as regular user (no sudo)
 uvicorn app.main:app \
   --host 127.0.0.1 \
   --port 8000 \
   --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker \
   --log-level info \
   --no-access-log \
   --timeout-keep-alive 5
 ```
+
+**Note**: The `--worker-class` option is only used with Gunicorn, not with uvicorn directly. Uvicorn uses its own worker implementation.
 
 **Note**: We use `127.0.0.1` instead of `0.0.0.0` since Apache will proxy requests to this local address.
 
@@ -715,7 +880,49 @@ mysql -u hms_user -p hms < hms_backup_YYYYMMDD_HHMMSS.sql
 
 ### Common Issues
 
-#### 1. Database Connection Error
+#### 1. Virtual Environment Creation Error
+
+**Error**: `The virtual environment was not created successfully because ensurepip is not available`
+
+**Solution**:
+```bash
+# Install python3-venv package
+sudo apt install python3-venv
+
+# Or for specific Python version
+sudo apt install python3.8-venv  # Replace 3.8 with your Python version
+
+# Then recreate the virtual environment
+cd /var/www/html/backend
+rm -rf venv  # Remove old failed venv
+python3 -m venv venv
+
+# Activate the venv (NO sudo - source is a shell built-in)
+source venv/bin/activate
+```
+
+**Alternative (if python3-venv not available):**
+```bash
+# Create venv without pip
+python3 -m venv venv --without-pip
+
+# Activate and install pip manually (NO sudo with source)
+source venv/bin/activate
+curl https://bootstrap.pypa.io/get-pip.py | python3
+```
+
+**Note**: If you need to run commands as a different user (e.g., www-data), you can use:
+```bash
+# Use sudo -u to switch user, then activate venv
+sudo -u www-data bash -c "cd /var/www/html/backend && source venv/bin/activate && python script.py"
+```
+
+Or better yet, use the full path to the Python interpreter:
+```bash
+sudo -u www-data /var/www/html/backend/venv/bin/python script.py
+```
+
+#### 2. Database Connection Error
 
 **Error**: `Can't connect to MySQL server`
 
@@ -726,7 +933,78 @@ mysql -u hms_user -p hms < hms_backup_YYYYMMDD_HHMMSS.sql
 - Check firewall rules
 - Ensure MySQL is listening on the correct port
 
-#### 2. Import Error: pymysql
+#### 3. Pandas Installation Error
+
+**Error**: `ERROR: Could not find a version that satisfies the requirement pandas>=2.3.0`
+
+**Solution** (Following the same approach as local development):
+
+**Step 1: Install all dependencies except pandas:**
+```bash
+cd /var/www/html/backend
+source venv/bin/activate
+
+# Install all requirements except pandas
+pip install fastapi uvicorn[standard] sqlalchemy pydantic pydantic-settings \
+    python-jose[cryptography] passlib[bcrypt] python-multipart \
+    openpyxl python-dotenv pymysql
+```
+
+**Step 2: Ensure build tools are installed:**
+```bash
+# Install build tools (required for pandas)
+sudo apt install python3-dev build-essential
+```
+
+**Step 3: Check Python version and install compatible pandas:**
+```bash
+# Check Python version
+python --version
+
+# Install pandas based on Python version:
+# If Python 3.9+: pip install "pandas>=2.3.0"
+# If Python 3.8: pip install "pandas>=2.0.0"  (use this if you get version errors)
+pip install "pandas>=2.0.0"
+```
+
+**If pandas still fails (Python version too old):**
+
+**Option 1: Upgrade Python (Recommended)**
+```bash
+# Install Python 3.10 (Ubuntu/Debian)
+sudo apt update
+sudo apt install python3.10 python3.10-venv python3.10-dev build-essential
+
+# Recreate venv with Python 3.10
+cd /var/www/html/backend
+rm -rf venv
+python3.10 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip setuptools wheel
+
+# Install all except pandas
+pip install fastapi uvicorn[standard] sqlalchemy pydantic pydantic-settings \
+    python-jose[cryptography] passlib[bcrypt] python-multipart \
+    openpyxl python-dotenv pymysql
+
+# Then install pandas (quote the version)
+pip install "pandas>=2.3.0"
+```
+
+**Option 2: Use Compatible Pandas Version**
+```bash
+# If Python < 3.9, use compatible pandas version (quote the version)
+pip install "pandas>=2.0.0"  # Works with Python 3.8+
+```
+
+**Option 3: Upgrade pip and retry**
+```bash
+# Sometimes pip's index is outdated
+pip install --upgrade pip setuptools wheel
+pip install --upgrade --index-url https://pypi.org/simple pandas
+```
+
+#### 4. Import Error: pymysql
 
 **Error**: `ModuleNotFoundError: No module named 'pymysql'`
 
@@ -735,7 +1013,7 @@ mysql -u hms_user -p hms < hms_backup_YYYYMMDD_HHMMSS.sql
 pip install pymysql
 ```
 
-#### 3. Permission Denied on Uploads Directory
+#### 5. Permission Denied on Uploads Directory
 
 **Error**: `PermissionError: [Errno 13] Permission denied`
 
@@ -745,7 +1023,7 @@ chmod 755 /opt/hms/backend/uploads
 chown -R $USER:$USER /opt/hms/backend/uploads
 ```
 
-#### 4. Port Already in Use
+#### 6. Port Already in Use
 
 **Error**: `Address already in use`
 
@@ -754,7 +1032,7 @@ chown -R $USER:$USER /opt/hms/backend/uploads
 - Kill the process: `sudo kill -9 <PID>`
 - Or change port in uvicorn command
 
-#### 5. CORS Errors from Frontend
+#### 7. CORS Errors from Frontend
 
 **Solution**:
 - Verify frontend URL is in `allow_origins` in `app/main.py`

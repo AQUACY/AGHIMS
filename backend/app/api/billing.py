@@ -857,7 +857,7 @@ def auto_calculate_bill_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Admin"]))
 ):
-    """Auto-calculate bill items from diagnoses only. Other services (prescriptions, investigations) are billed when confirmed by their respective staff."""
+    """Auto-calculate bill items. NOTE: Diagnoses are excluded for OPD consultations since the initial service request already covers the diagnosis billing."""
     from app.models.diagnosis import Diagnosis
     
     encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
@@ -872,41 +872,36 @@ def auto_calculate_bill_items(
     
     bill_items = []
     
-    # Get diagnoses with GDRG codes
-    # Only show diagnoses that haven't been billed yet
-    diagnoses = db.query(Diagnosis).filter(
-        Diagnosis.encounter_id == encounter_id,
-        Diagnosis.gdrg_code.isnot(None),
-        Diagnosis.gdrg_code != ''
-    ).all()
-    
-    for diagnosis in diagnoses:
-        if diagnosis.gdrg_code:
-            # Check if bill item already exists for this diagnosis
-            # Check by item_code and category - this is more reliable than matching item_name
-            # Check all bills (paid or unpaid) for this encounter
-            existing_item = db.query(BillItem).join(Bill).filter(
-                Bill.encounter_id == encounter_id,
-                BillItem.item_code == diagnosis.gdrg_code,
-                BillItem.category == "drg"
-            ).first()
-            
-            # The first check by item_code and category should be sufficient
-            # If we didn't find it, then it's not billed yet
-            
-            # Only include if not already billed (regardless of payment status)
-            if not existing_item:
-                unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
-                if unit_price > 0:
-                    bill_items.append(AutoBillItem(
-                        item_code=diagnosis.gdrg_code,
-                        item_name=f"Diagnosis: {diagnosis.diagnosis}",
-                        category="drg",
-                        quantity=1,
-                        unit_price=unit_price,
-                        total_price=unit_price,
-                        service_group="Diagnose"
-                    ))
+    # NOTE: Diagnoses are excluded from auto-calculation for OPD consultations
+    # since the initial service request already covers the diagnosis billing.
+    # Get diagnoses with GDRG codes - DISABLED FOR OPD
+    # diagnoses = db.query(Diagnosis).filter(
+    #     Diagnosis.encounter_id == encounter_id,
+    #     Diagnosis.gdrg_code.isnot(None),
+    #     Diagnosis.gdrg_code != ''
+    # ).all()
+    # 
+    # for diagnosis in diagnoses:
+    #     if diagnosis.gdrg_code:
+    #         # Check if bill item already exists for this diagnosis
+    #         existing_item = db.query(BillItem).join(Bill).filter(
+    #             Bill.encounter_id == encounter_id,
+    #             BillItem.item_code == diagnosis.gdrg_code,
+    #             BillItem.category == "drg"
+    #         ).first()
+    #         
+    #         if not existing_item:
+    #             unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
+    #             if unit_price > 0:
+    #                 bill_items.append(AutoBillItem(
+    #                     item_code=diagnosis.gdrg_code,
+    #                     item_name=f"Diagnosis: {diagnosis.diagnosis}",
+    #                     category="drg",
+    #                     quantity=1,
+    #                     unit_price=unit_price,
+    #                     total_price=unit_price,
+    #                     service_group="Diagnose"
+    #                 ))
     
     return AutoCalculateResponse(
         encounter_id=encounter_id,
