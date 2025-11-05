@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from typing import Optional
 from app.core.database import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token
 from app.core.config import settings
@@ -25,8 +26,8 @@ class UserResponse(BaseModel):
     """User response model"""
     id: int
     username: str
-    email: str
-    full_name: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
     role: str
     
     class Config:

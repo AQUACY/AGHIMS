@@ -48,7 +48,7 @@ const routes = [
         path: '/encounters/calendar',
         name: 'EncountersCalendar',
         component: () => import('../pages/EncountersCalendar.vue'),
-        meta: { requiresAuth: true },
+        meta: { requiresAuth: true, allowedRoles:['Doctor', 'Admin'] },
       },
       {
         path: '/vitals',

@@ -117,8 +117,8 @@
           <q-banner class="bg-grey-2">
             <div class="text-caption">
               <strong>Excel File Format:</strong><br/>
-              Required columns: <strong>username</strong>, <strong>full_name</strong>, <strong>Email</strong>, <strong>role</strong><br/>
-              Optional column: <strong>is_active</strong> (1 or 0, default: 1)<br/>
+              Required columns: <strong>username</strong>, <strong>full_name</strong>, <strong>role</strong><br/>
+              Optional columns: <strong>Email</strong>, <strong>is_active</strong> (1 or 0, default: 1)<br/>
               <br/>
               <strong>Roles:</strong> Records, Nurse, Doctor, Billing, Pharmacist, Lab, Claims, Admin<br/>
               <br/>

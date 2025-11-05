@@ -4,7 +4,7 @@ Staff management endpoints
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import List, Optional
 import pandas as pd
 from io import BytesIO
@@ -215,7 +215,7 @@ def import_staff_from_excel(
         df = pd.read_excel(BytesIO(contents))
         
         # Validate required columns
-        required_columns = ['username', 'full_name', 'Email', 'role']
+        required_columns = ['username', 'full_name', 'role']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise HTTPException(
@@ -243,7 +243,12 @@ def import_staff_from_excel(
                 
                 # Extract data
                 full_name = str(row['full_name']).strip() if pd.notna(row['full_name']) else None
-                email_raw = str(row['Email']).strip() if pd.notna(row['Email']) and str(row['Email']).strip().lower() != 'nan' else None
+                # Email is optional - only extract if column exists
+                email_raw = None
+                if 'Email' in df.columns and pd.notna(row.get('Email')):
+                    email_val = str(row['Email']).strip()
+                    if email_val.lower() != 'nan':
+                        email_raw = email_val
                 role = str(row['role']).strip() if pd.notna(row['role']) else None
                 
                 if not role:
