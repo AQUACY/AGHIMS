@@ -135,6 +135,26 @@
                 />
               </template>
             </q-input>
+            
+            <!-- Search by Contact Number -->
+            <q-input
+              v-model="searchContactNumber"
+              filled
+              dense
+              label="Contact Number"
+              class="q-mb-xs"
+              @keyup.enter="searchByContact"
+              clearable
+            >
+              <template v-slot:append>
+                <q-icon 
+                  name="search" 
+                  class="cursor-pointer" 
+                  @click="searchByContact"
+                  :class="{ 'text-primary': searchContactNumber }"
+                />
+              </template>
+            </q-input>
           </q-card-section>
         </q-card>
       </q-expansion-item>
@@ -526,9 +546,11 @@ const stopSessionTimer = () => {
 const searchCardNumber = ref('');
 const searchPatientName = ref('');
 const searchCccNumber = ref('');
+const searchContactNumber = ref('');
 const searchingByCard = ref(false);
 const searchingByName = ref(false);
 const searchingByCcc = ref(false);
+const searchingByContact = ref(false);
 const searchExpanded = ref(false);
 
 // Search by card number
@@ -757,6 +779,66 @@ const searchByName = async () => {
     }
   } finally {
     searchingByName.value = false;
+  }
+};
+
+const searchByContact = async () => {
+  if (!searchContactNumber.value || !searchContactNumber.value.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a contact number',
+    });
+    return;
+  }
+
+  searchingByContact.value = true;
+  try {
+    const response = await patientsAPI.searchByContact(searchContactNumber.value.trim());
+    console.log('Contact search response:', response);
+    console.log('Response data:', response.data);
+    
+    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
+    let patients = [];
+    if (Array.isArray(response.data)) {
+      patients = response.data;
+    } else if (response.data && typeof response.data === 'object') {
+      // If it's a single object, wrap it in an array
+      patients = [response.data];
+    }
+    
+    console.log('Parsed patients:', patients);
+    
+    if (patients.length === 0) {
+      $q.notify({
+        type: 'warning',
+        message: 'No patients found with this contact number',
+        position: 'top',
+      });
+      return;
+    }
+    
+    // Navigate to search results page with patient data
+    router.push({
+      name: 'PatientSearchResults',
+      query: {
+        searchTerm: searchContactNumber.value.trim(),
+        patients: JSON.stringify(patients) 
+      }
+    });
+    // Clear search field
+    searchContactNumber.value = '';
+  } catch (error) {
+    console.error('Contact search error:', error);
+    console.error('Error response:', error.response);
+    console.error('Error data:', error.response?.data);
+    
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to search patients',
+      position: 'top',
+    });
+  } finally {
+    searchingByContact.value = false;
   }
 };
 

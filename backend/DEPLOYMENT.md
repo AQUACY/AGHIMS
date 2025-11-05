@@ -378,7 +378,50 @@ chmod 600 .env
 
 ## Database Initialization
 
-### 1. Initialize Database Tables
+### Initial Setup
+
+First, initialize the database and create tables:
+
+```bash
+cd /var/www/html/backend
+source venv/bin/activate
+python init_db.py
+```
+
+### Running Migrations
+
+The system uses a centralized migration runner that automatically detects and runs all new migrations. **Always run this after deploying updates:**
+
+```bash
+cd /var/www/html/backend
+source venv/bin/activate
+python run_migrations.py
+```
+
+This will:
+- Automatically detect all migration files (migrate_*.py)
+- Check which migrations have already been executed
+- Run only new migrations in order
+- Record successful executions in the database
+
+**Options:**
+- `python run_migrations.py` - Run all pending migrations
+- `python run_migrations.py --status` - Show migration status without running
+- `python run_migrations.py --dry-run` - Show what would be run without executing
+
+**Important:** Run `python run_migrations.py` after every deployment to ensure the database schema is up to date.
+
+### First-Time Migration Setup
+
+If this is the first time using the migration runner, you need to create the migration tracker table:
+
+```bash
+python migrate_create_migration_tracker.py
+```
+
+After this, you can use `run_migrations.py` for all future migrations.
+
+### Initialize Database Tables
 
 **Activate your virtual environment first (no sudo):**
 ```bash
@@ -395,7 +438,7 @@ This will:
   - **Username**: `admin`
   - **Password**: `admin123`
 
-### 2. **CRITICAL**: Change Default Admin Password
+### **CRITICAL**: Change Default Admin Password
 
 **IMPORTANT**: Change the default admin password immediately after first login!
 

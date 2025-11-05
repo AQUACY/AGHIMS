@@ -1,7 +1,7 @@
 """
 Price list management endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -49,45 +49,86 @@ def update_price_item(
     """Update a single price list item by type and id (Admin only)"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
     if file_type not in valid_types:
-        raise HTTPException(status_code=400, detail="Invalid file type")
-
-    if file_type == "procedure":
-        from app.models.procedure_price import ProcedurePrice as Model
+        raise HTTPException(status_code=400, detail=f"Invalid file_type. Must be one of: {', '.join(valid_types)}")
+    
+    if file_type == "product":
+        item = db.query(ProductPrice).filter(ProductPrice.id == item_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Product price item not found")
+        
+        # Update fields
+        if update.product_name is not None:
+            item.product_name = update.product_name
+        if update.base_rate is not None:
+            item.base_rate = update.base_rate
+        if update.nhia_app is not None:
+            item.nhia_app = update.nhia_app
+        if update.nhia_claim_co_payment is not None:
+            item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.claim_amount is not None:
+            item.claim_amount = update.claim_amount
+        if update.insurance_covered is not None:
+            item.insurance_covered = update.insurance_covered
+        if update.is_active is not None:
+            item.is_active = update.is_active
+    
+    elif file_type == "procedure":
+        item = db.query(ProcedurePrice).filter(ProcedurePrice.id == item_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Procedure price item not found")
+        
+        if update.service_name is not None:
+            item.service_name = update.service_name
+        if update.service_type is not None:
+            item.service_type = update.service_type
+        if update.base_rate is not None:
+            item.base_rate = update.base_rate
+        if update.nhia_app is not None:
+            item.nhia_app = update.nhia_app
+        if update.nhia_claim_co_payment is not None:
+            item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.is_active is not None:
+            item.is_active = update.is_active
+    
     elif file_type == "surgery":
-        from app.models.surgery_price import SurgeryPrice as Model
-    elif file_type == "product":
-        from app.models.product_price import ProductPrice as Model
-    else:
-        from app.models.unmapped_drg_price import UnmappedDRGPrice as Model
-
-    item = db.query(Model).filter(Model.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    data = update.dict(exclude_unset=True)
-    # Map product_name to appropriate field
-    if file_type == "product" and "service_name" in data:
-        data.pop("service_name")
-    if file_type != "product" and "product_name" in data:
-        data.pop("product_name")
-
-    # Apply updates to existing fields only
-    for key, value in data.items():
-        if hasattr(item, key):
-            # Handle None values explicitly - allow setting to None for nullable fields
-            setattr(item, key, value)
-        else:
-            # Map common names to model columns where they differ
-            if file_type == "product" and key == "product_name" and hasattr(item, "product_name"):
-                setattr(item, "product_name", value)
-            elif key == "service_name" and hasattr(item, "service_name"):
-                setattr(item, "service_name", value)
-            elif key == "service_type" and hasattr(item, "service_type"):
-                setattr(item, "service_type", value)
-
+        item = db.query(SurgeryPrice).filter(SurgeryPrice.id == item_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Surgery price item not found")
+        
+        if update.service_name is not None:
+            item.service_name = update.service_name
+        if update.service_type is not None:
+            item.service_type = update.service_type
+        if update.base_rate is not None:
+            item.base_rate = update.base_rate
+        if update.nhia_app is not None:
+            item.nhia_app = update.nhia_app
+        if update.nhia_claim_co_payment is not None:
+            item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.is_active is not None:
+            item.is_active = update.is_active
+    
+    elif file_type == "unmapped_drg":
+        item = db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.id == item_id).first()
+        if not item:
+            raise HTTPException(status_code=404, detail="Unmapped DRG price item not found")
+        
+        if update.service_name is not None:
+            item.service_name = update.service_name
+        if update.service_type is not None:
+            item.service_type = update.service_type
+        if update.base_rate is not None:
+            item.base_rate = update.base_rate
+        if update.nhia_app is not None:
+            item.nhia_app = update.nhia_app
+        if update.nhia_claim_co_payment is not None:
+            item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.is_active is not None:
+            item.is_active = update.is_active
+    
     db.commit()
     db.refresh(item)
-    return {"message": "Item updated", "id": item.id}
+    return {"message": f"Successfully updated {file_type} item", "item_id": item_id}
 
 
 @router.post("/upload/icd10-mapping", status_code=status.HTTP_200_OK)
@@ -115,7 +156,7 @@ async def upload_icd10_drg_mapping(
     except UnicodeDecodeError:
         try:
             text_content = content.decode('latin-1')
-        except:
+        except UnicodeDecodeError:
             raise HTTPException(status_code=400, detail="Unable to decode CSV file. Please ensure it's UTF-8 or Latin-1 encoded.")
     
     # Parse CSV
@@ -132,34 +173,24 @@ async def upload_icd10_drg_mapping(
         normalized = col.strip().strip('\ufeff')  # Strip BOM if present
         normalized_columns[normalized] = col
     
-    # Debug: Log column names found
     print(f"CSV columns found: {fieldnames}")
     print(f"Normalized columns: {list(normalized_columns.keys())}")
     
     # Helper function to find column by multiple possible names (case-insensitive, handles spaces)
     def find_column_key(row_dict, possible_names):
         """Find the actual key in the row dict that matches one of the possible names"""
-        row_keys = list(row_dict.keys())
-        for possible in possible_names:
-            # Try exact match
-            if possible in row_keys:
-                return possible
-            # Try case-insensitive match
-            for key in row_keys:
-                key_normalized = key.strip().lower()
-                possible_normalized = possible.strip().lower()
-                if key_normalized == possible_normalized:
-                    return key
-        # Fallback: try to find any column containing keywords
-        if 'drg' in str(possible_names).lower():
-            for key in row_keys:
-                if 'drg' in key.lower() and 'code' in key.lower():
-                    return key
+        for possible_name in possible_names:
+            possible_lower = possible_name.lower().strip()
+            for actual_key in row_dict.keys():
+                if actual_key.lower().strip() == possible_lower:
+                    return actual_key
         return None
     
-    # Verify we can find required columns by reading first row
-    first_row_position = text_content.find('\n')
-    if first_row_position == -1:
+    # Validate CSV has data rows
+    csv_reader = csv.DictReader(io.StringIO(text_content))
+    row_count = sum(1 for row in csv_reader)
+    
+    if row_count == 0:
         raise HTTPException(status_code=400, detail="CSV file appears to have no data rows")
     
     # Create a test reader to check first data row
@@ -183,161 +214,95 @@ async def upload_icd10_drg_mapping(
         "success": [],
         "errors": [],
         "total": 0,
-        "imported": 0,
-        "failed": 0,
         "skipped_no_drg": 0,
-        "skipped_no_icd10": 0
+        "summary": ""
     }
     
-    # Get all existing DRG codes from all price tables
-    all_drg_codes = set()
-    
-    # Get DRG codes from procedures
-    procedure_codes = db.query(ProcedurePrice.g_drg_code).filter(
-        ProcedurePrice.is_active == True
-    ).distinct().all()
-    all_drg_codes.update([code[0] for code in procedure_codes if code[0]])
-    
-    # Get DRG codes from surgeries
-    surgery_codes = db.query(SurgeryPrice.g_drg_code).filter(
-        SurgeryPrice.is_active == True
-    ).distinct().all()
-    all_drg_codes.update([code[0] for code in surgery_codes if code[0]])
-    
-    # Get DRG codes from unmapped DRG
-    unmapped_codes = db.query(UnmappedDRGPrice.g_drg_code).filter(
-        UnmappedDRGPrice.is_active == True
-    ).distinct().all()
-    all_drg_codes.update([code[0] for code in unmapped_codes if code[0]])
-    
-    # Get medication codes from products (also considered DRG codes)
-    product_codes = db.query(ProductPrice.medication_code).filter(
-        ProductPrice.is_active == True
-    ).distinct().all()
-    all_drg_codes.update([code[0] for code in product_codes if code[0]])
-    
-    # Helper function to get field value with multiple possible names
-    def get_field(row, possible_names, default=''):
-        # First try to find the actual column key
-        found_key = find_column_key(row, possible_names)
-        if found_key and found_key in row:
-            value = row[found_key]
-            if value is not None and str(value).strip():
-                return str(value).strip()
-        return default
-    
-    # Process each row
-    # Note: row_num starts at 2 because row 1 is the header
-    row_num = 1
+    row_num = 0
     for row in csv_reader:
         row_num += 1
         results["total"] += 1
         
         try:
             # Extract fields with multiple possible column names
-            drg_code = get_field(row, ['DRG Code', 'drg_code', 'DRG_Code', 'drg code', 'DRGCODE', 'd_drg_code', 'D_DRG_Code', 'D_DRG_CODE'])
-            drg_description = get_field(row, ['DRG Description', 'drg_description', 'DRG_Description', 'drg description', 'DRGDESCRIPTION', 'd_drg_description'], default=None)
-            icd10_code = get_field(row, ['ICD-10 Code', 'icd10_code', 'ICD_10_Code', 'icd-10 code', 'ICD10CODE', 'ICD-10', 'ICD10'])
-            icd10_description = get_field(row, ['ICD-10 Description', 'icd10_description', 'ICD_10_Description', 'icd-10 description', 'ICD10DESCRIPTION'], default=None)
-            notes = get_field(row, ['Notes', 'notes', 'NOTES'], default=None)
-            remarks = get_field(row, ['Remarks', 'remarks', 'REMARKS'], default=None)
+            drg_code = find_column_key(row, ['DRG Code', 'drg_code', 'DRG_Code', 'drg code', 'DRGCODE', 'd_drg_code', 'D_DRG_Code', 'D_DRG_CODE'])
+            drg_description = find_column_key(row, ['DRG Description', 'drg_description', 'DRG_Description', 'drg description', 'DRGDESCRIPTION'])
+            icd10_code = find_column_key(row, ['ICD-10 Code', 'ICD10 Code', 'icd10_code', 'ICD10_Code', 'icd-10 code', 'ICD10CODE', 'ICD10'])
+            icd10_description = find_column_key(row, ['ICD-10 Description', 'ICD10 Description', 'icd10_description', 'ICD10_Description', 'icd-10 description', 'ICD10DESCRIPTION'])
+            notes = find_column_key(row, ['Notes', 'notes', 'NOTES', 'Note', 'note'])
+            remarks = find_column_key(row, ['Remarks', 'remarks', 'REMARKS', 'Remark', 'remark'])
             
-            # Clean up None values to empty strings for validation
-            drg_code = drg_code or ''
-            icd10_code = icd10_code or ''
-            
-            # Validate required fields
-            if not drg_code:
+            # Skip rows without DRG code
+            if not drg_code or not row.get(drg_code) or not str(row[drg_code]).strip():
                 results["skipped_no_drg"] += 1
-                # Debug: Log first few rows with missing DRG codes
-                if row_num <= 5:
-                    print(f"Row {row_num} - Column names in row: {list(row.keys())}")
-                    print(f"Row {row_num} - Raw row data: {row}")
-                    # Try to find any column that might be DRG code
-                    for key in row.keys():
-                        if 'drg' in key.lower():
-                            print(f"  Found potential DRG column '{key}' with value: '{row[key]}'")
-                # Only add detailed error for first few rows to avoid huge response
-                if len(results["errors"]) < 10:
-                    results["errors"].append({
-                        "row": row_num,
-                        "error": f"DRG Code is missing or empty. Available columns: {list(row.keys())}",
-                        "data": dict(row)
-                    })
+                results["errors"].append({
+                    "row": row_num,
+                    "error": "Skipped (no DRG code)"
+                })
                 continue
             
-            if not icd10_code:
-                results["skipped_no_icd10"] += 1
-                # Skip rows without ICD-10 codes (as per user request)
+            drg_code_value = str(row[drg_code]).strip()
+            drg_desc_value = row.get(drg_description, '').strip() if drg_description else ''
+            icd10_code_value = row.get(icd10_code, '').strip() if icd10_code else ''
+            icd10_desc_value = row.get(icd10_description, '').strip() if icd10_description else ''
+            notes_value = row.get(notes, '').strip() if notes else ''
+            remarks_value = row.get(remarks, '').strip() if remarks else ''
+            
+            # Skip rows without ICD-10 code
+            if not icd10_code_value:
+                results["skipped_no_drg"] += 1
+                results["errors"].append({
+                    "row": row_num,
+                    "error": "Skipped (no ICD-10 code)"
+                })
                 continue
             
-            # Check if DRG code exists in any price table
-            if drg_code not in all_drg_codes:
-                # DRG code doesn't exist in price tables - create mapping anyway
-                # (might be used later or in claims)
-                pass
-            
-            # Check if this mapping already exists
-            existing_mapping = db.query(ICD10DRGMapping).filter(
-                ICD10DRGMapping.drg_code == drg_code,
-                ICD10DRGMapping.icd10_code == icd10_code
+            # Check if mapping already exists
+            existing = db.query(ICD10DRGMapping).filter(
+                ICD10DRGMapping.drg_code == drg_code_value,
+                ICD10DRGMapping.icd10_code == icd10_code_value
             ).first()
             
-            if existing_mapping:
+            if existing:
                 # Update existing mapping
-                existing_mapping.drg_description = drg_description or existing_mapping.drg_description
-                existing_mapping.icd10_description = icd10_description or existing_mapping.icd10_description
-                existing_mapping.notes = notes or existing_mapping.notes
-                existing_mapping.remarks = remarks or existing_mapping.remarks
-                existing_mapping.is_active = True
-                
-                results["success"].append({
-                    "row": row_num,
-                    "drg_code": drg_code,
-                    "icd10_code": icd10_code,
-                    "action": "updated",
-                    "id": existing_mapping.id
-                })
+                existing.drg_description = drg_desc_value if drg_desc_value else existing.drg_description
+                existing.icd10_description = icd10_desc_value if icd10_desc_value else existing.icd10_description
+                existing.notes = notes_value if notes_value else existing.notes
+                existing.remarks = remarks_value if remarks_value else existing.remarks
+                existing.is_active = True
             else:
                 # Create new mapping
-                mapping = ICD10DRGMapping(
-                    drg_code=drg_code,
-                    drg_description=drg_description,
-                    icd10_code=icd10_code,
-                    icd10_description=icd10_description,
-                    notes=notes,
-                    remarks=remarks,
+                new_mapping = ICD10DRGMapping(
+                    drg_code=drg_code_value,
+                    drg_description=drg_desc_value,
+                    icd10_code=icd10_code_value,
+                    icd10_description=icd10_desc_value,
+                    notes=notes_value,
+                    remarks=remarks_value,
                     is_active=True
                 )
-                
-                db.add(mapping)
-                db.flush()
-                
-                results["success"].append({
-                    "row": row_num,
-                    "drg_code": drg_code,
-                    "icd10_code": icd10_code,
-                    "action": "created",
-                    "id": mapping.id
-                })
+                db.add(new_mapping)
             
-            results["imported"] += 1
+            results["success"].append({
+                "row": row_num,
+                "drg_code": drg_code_value,
+                "icd10_code": icd10_code_value
+            })
             
         except Exception as e:
             results["errors"].append({
                 "row": row_num,
-                "error": str(e),
-                "data": row
+                "error": str(e)
             })
-            results["failed"] += 1
-            continue
     
-    # Commit all successful imports
     try:
         db.commit()
+        results["summary"] = f"Total rows: {results['total']}, Successfully imported: {len(results['success'])}, Failed: {len(results['errors'])}"
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to commit mappings: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to commit mappings: {str(e)}"
+        )
     
     return results
 
@@ -386,7 +351,7 @@ def upload_price_list_file(
         }
     except Exception as e:
         raise HTTPException(
-            status_code=400,
+            status_code=500,
             detail=f"Error processing file: {str(e)}"
         )
 
@@ -446,32 +411,27 @@ def search_price_items_endpoint(
         else:
             # Procedure, Surgery, UnmappedDRG format
             cash_price = float(item.base_rate) if item.base_rate else 0.0
-            # For insured patients: they pay the Co-Payment (top-up amount)
-            # If Co-Payment is not available, fall back to base_rate
-            co_payment = float(item.nhia_claim_co_payment) if item.nhia_claim_co_payment is not None else cash_price
             nhia_app = float(item.nhia_app) if item.nhia_app else None
+            nhia_claim_co_payment = float(item.nhia_claim_co_payment) if item.nhia_claim_co_payment is not None else None
             
             result_item = {
                 "id": item.id,
                 "file_type": type_name,
                 "g_drg_code": item.g_drg_code,
                 "service_name": item.service_name,
-                "service_type": item.service_type,  # Department/Clinic (category)
-                "service_id": item.service_id,
+                "service_type": item.service_type,
                 "base_rate": cash_price,
                 "nhia_app": nhia_app,
-                "nhia_claim_co_payment": float(item.nhia_claim_co_payment) if item.nhia_claim_co_payment else None,
+                "nhia_claim_co_payment": nhia_claim_co_payment,
+                "is_active": item.is_active,
                 # For backward compatibility with billing page
                 "item_code": item.g_drg_code,
                 "item_name": item.service_name,
                 "category": item.service_type or type_name,
-                "cash_price": cash_price,  # Base Rate for cash patients
-                "insured_price": co_payment,  # Co-Payment for insured patients (top-up amount)
-                # Additional fields
-                "service_ty": item.service_ty,
-                "sr_no": item.sr_no,
-                "clinic_bill_effective": item.clinic_bill_effective,
+                "cash_price": cash_price,
+                "insured_price": nhia_claim_co_payment if nhia_claim_co_payment is not None else cash_price,
             }
+        
         formatted_results.append(result_item)
     
     return formatted_results
@@ -479,44 +439,53 @@ def search_price_items_endpoint(
 
 @router.get("/procedures/by-service-type")
 def get_procedures_by_service_type(
-    service_type: str,  # Service Type (department/clinic)
+    service_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin"]))
 ):
-    """Get all procedures for a specific service type (department/clinic)"""
-    from app.models.procedure_price import ProcedurePrice
+    """Get procedures grouped by service type"""
+    from sqlalchemy import func
     
-    procedures = db.query(ProcedurePrice).filter(
-        ProcedurePrice.service_type == service_type,
-        ProcedurePrice.is_active == True
-    ).order_by(ProcedurePrice.service_name).all()
+    if service_type:
+        procedures = db.query(ProcedurePrice).filter(
+            ProcedurePrice.service_type == service_type,
+            ProcedurePrice.is_active == True
+        ).all()
+    else:
+        procedures = db.query(ProcedurePrice).filter(
+            ProcedurePrice.is_active == True
+        ).all()
     
-    return [{
-        "id": item.id,
-        "g_drg_code": item.g_drg_code,
-        "service_name": item.service_name,
-        "service_type": item.service_type,
-        "service_id": item.service_id,
-        "base_rate": float(item.base_rate) if item.base_rate else 0.0,
-        "nhia_app": float(item.nhia_app) if item.nhia_app else None,
-        "nhia_claim_co_payment": float(item.nhia_claim_co_payment) if item.nhia_claim_co_payment else None,
-    } for item in procedures]
+    # Group by service_type
+    grouped = {}
+    for proc in procedures:
+        st = proc.service_type or "Unknown"
+        if st not in grouped:
+            grouped[st] = []
+        grouped[st].append({
+            "id": proc.id,
+            "g_drg_code": proc.g_drg_code,
+            "service_name": proc.service_name,
+            "base_rate": float(proc.base_rate) if proc.base_rate else 0.0,
+            "nhia_app": float(proc.nhia_app) if proc.nhia_app else None,
+            "nhia_claim_co_payment": float(proc.nhia_claim_co_payment) if proc.nhia_claim_co_payment is not None else None,
+        })
+    
+    return grouped
 
 
 @router.get("/service-types")
-def get_all_service_types(
+def get_service_types(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin"]))
 ):
-    """Get all unique service types (departments/clinics) from procedures"""
-    from app.models.procedure_price import ProcedurePrice
+    """Get all unique service types from procedure prices"""
     from sqlalchemy import distinct
     
     service_types = db.query(distinct(ProcedurePrice.service_type)).filter(
         ProcedurePrice.service_type.isnot(None),
-        ProcedurePrice.service_type != '',
         ProcedurePrice.is_active == True
-    ).order_by(ProcedurePrice.service_type).all()
+    ).all()
     
     return [st[0] for st in service_types if st[0]]
 
@@ -528,51 +497,39 @@ def search_icd10_codes(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"]))
 ):
-    """Search ICD-10 codes from the mapping table"""
-    from app.models.icd10_drg_mapping import ICD10DRGMapping
+    """Search ICD-10 codes"""
+    from sqlalchemy import or_
     
-    query = db.query(ICD10DRGMapping).filter(
-        ICD10DRGMapping.is_active == True
-    )
+    query = db.query(ICD10DRGMapping).filter(ICD10DRGMapping.is_active == True)
     
     if search_term:
-        search_term = search_term.strip()
-        query = query.filter(
-            (ICD10DRGMapping.icd10_code.contains(search_term)) |
-            (ICD10DRGMapping.icd10_description.contains(search_term)) |
-            (ICD10DRGMapping.drg_code.contains(search_term))
+        search_filter = or_(
+            ICD10DRGMapping.icd10_code.ilike(f"%{search_term}%"),
+            ICD10DRGMapping.icd10_description.ilike(f"%{search_term}%")
         )
+        query = query.filter(search_filter)
     
-    # Get distinct ICD-10 codes with their descriptions
-    # Group by ICD-10 code to show unique diagnoses
+    mappings = query.distinct(ICD10DRGMapping.icd10_code).limit(limit).all()
+    
     results = []
-    seen_icd10 = set()
-    
-    for mapping in query.order_by(ICD10DRGMapping.icd10_code, ICD10DRGMapping.icd10_description).limit(limit * 2):
-        if mapping.icd10_code and mapping.icd10_code not in seen_icd10:
-            seen_icd10.add(mapping.icd10_code)
+    seen_codes = set()
+    for mapping in mappings:
+        if mapping.icd10_code not in seen_codes:
+            seen_codes.add(mapping.icd10_code)
             results.append({
                 "icd10_code": mapping.icd10_code,
                 "icd10_description": mapping.icd10_description or "",
-                "drg_codes": []  # Will be populated below
+                "drg_codes": []
             })
-            if len(results) >= limit:
-                break
     
-    # Now get all DRG codes for each ICD-10 code
+    # Get DRG codes for each ICD-10 code
     for result in results:
         drg_mappings = db.query(ICD10DRGMapping).filter(
             ICD10DRGMapping.icd10_code == result["icd10_code"],
             ICD10DRGMapping.is_active == True
         ).distinct(ICD10DRGMapping.drg_code).all()
         
-        result["drg_codes"] = [
-            {
-                "drg_code": m.drg_code,
-                "drg_description": m.drg_description or ""
-            }
-            for m in drg_mappings
-        ]
+        result["drg_codes"] = [m.drg_code for m in drg_mappings]
     
     return results
 
@@ -604,4 +561,82 @@ def get_drg_codes_from_icd10(
         })
     
     return results
+
+
+@router.get("/export/product/csv")
+def export_product_price_list_csv(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Billing"]))
+):
+    """Export product price list as CSV file"""
+    # Query all product prices
+    products = db.query(ProductPrice).filter(ProductPrice.is_active == True).order_by(ProductPrice.product_name).all()
+    
+    if not products:
+        raise HTTPException(status_code=404, detail="No product prices found")
+    
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write header row
+    writer.writerow([
+        'Product N',  # Product Name with embedded code
+        'Medication Code',
+        'Product Name',
+        'Sub Category 1',
+        'Sub Category 2',
+        'Product ID',
+        'Formulation',
+        'Strength',
+        'Base Rate',
+        'NHIA App',
+        'NHIA Claim Co-Payment',
+        'Claim Amount',
+        'NHIA Claim',
+        'Bill Effective',
+        'Insurance Covered',
+        'Is Active'
+    ])
+    
+    # Write data rows
+    for product in products:
+        # Reconstruct the Product N format: "Product Name (Code) (CODE | Product Name)"
+        product_n = product.product_name
+        if product.medication_code:
+            # If product_name doesn't already contain the code format, construct it
+            if f"({product.medication_code}" not in product.product_name:
+                product_n = f"{product.product_name} ({product.medication_code} | {product.product_name})"
+        
+        writer.writerow([
+            product_n,
+            product.medication_code or '',
+            product.product_name or '',
+            product.sub_category_1 or '',
+            product.sub_category_2 or '',
+            product.product_id or '',
+            product.formulation or '',
+            product.strength or '',
+            product.base_rate or 0.0,
+            product.nhia_app or '',
+            product.nhia_claim_co_payment or '',
+            product.claim_amount or '',
+            product.nhia_claim or '',
+            product.bill_effective or '',
+            product.insurance_covered or 'yes',  # Default to 'yes' if not set
+            'True' if product.is_active else 'False'
+        ])
+    
+    # Get CSV content
+    csv_content = output.getvalue()
+    output.close()
+    
+    # Return CSV file
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=product_price_list.csv"
+        }
+    )
 

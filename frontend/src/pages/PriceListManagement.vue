@@ -36,6 +36,7 @@
             </template>
           </q-file>
           <q-btn
+            v-if="uploadFileType !== 'product'"
             color="primary"
             label="Upload"
             @click="uploadPriceList"
@@ -44,6 +45,23 @@
             class="col-12 col-md-3"
             icon="upload"
           />
+          <div v-if="uploadFileType === 'product'" class="col-12 col-md-3 q-gutter-sm">
+            <q-btn
+              color="primary"
+              label="Upload"
+              @click="uploadPriceList"
+              :loading="uploading"
+              :disable="!priceListFile || !uploadFileType"
+              icon="upload"
+            />
+            <q-btn
+              color="secondary"
+              label="Download CSV"
+              @click="downloadProductCSV"
+              :loading="downloadingCSV"
+              icon="download"
+            />
+          </div>
         </div>
         <div class="q-mt-md">
           <q-banner class="bg-grey-2">
@@ -393,6 +411,45 @@ const searchItems = async () => {
     priceListItems.value = [];
   } finally {
     loading.value = false;
+  }
+};
+
+const downloadProductCSV = async () => {
+  downloadingCSV.value = true;
+  try {
+    const response = await priceListAPI.exportProductCSV();
+    
+    // Create blob from response
+    const blob = response.data instanceof Blob 
+      ? response.data 
+      : new Blob([response.data], { type: 'text/csv' });
+    
+    // Create download link
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'product_price_list.csv';
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    }, 100);
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Product price list downloaded successfully',
+    });
+  } catch (error) {
+    console.error('Download error:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to download product price list',
+    });
+  } finally {
+    downloadingCSV.value = false;
   }
 };
 

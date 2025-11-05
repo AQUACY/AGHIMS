@@ -134,14 +134,23 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
         elif 'bill_effecti' in col_lower or 'bill_effective' in col_lower:
             bill_effective_col = col
         
-        # Insurance Covered
+        # Insurance Covered - Check multiple variations
         elif 'insurance_covered' in col_lower or 'insurancecovered' in col_lower or \
-             (orig_col_lower.startswith('insurance') and 'covered' in orig_col_lower):
+             'insurance_cover' in col_lower or 'insurance cover' in col_lower or \
+             (orig_col_lower.startswith('insurance') and 'covered' in orig_col_lower) or \
+             (orig_col_lower.startswith('insurance') and 'cover' in orig_col_lower):
             insurance_covered_col = col
     
     # Validate required columns
     if not product_name_col:
         raise ValueError("Missing required column: Product N (Product Name)")
+    
+    # Debug: Print detected columns
+    print(f"DEBUG: Detected columns for product price list:")
+    print(f"  - Product Name: {product_name_col}")
+    print(f"  - Insurance Covered: {insurance_covered_col}")
+    print(f"  - Base Rate: {base_rate_col}")
+    print(f"  - All columns: {list(df.columns)}")
     
     # Process rows
     for idx, row in df.iterrows():
@@ -245,15 +254,30 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
             item['bill_effective'] = None
         
         # Insurance Covered (default to "yes" if not specified)
-        if insurance_covered_col and insurance_covered_col in df.columns and not pd.isna(row[insurance_covered_col]):
-            insurance_val = str(row[insurance_covered_col]).strip().lower()
-            # Normalize to "yes" or "no"
-            if insurance_val in ['no', 'n', 'false', '0']:
-                item['insurance_covered'] = 'no'
+        if insurance_covered_col and insurance_covered_col in df.columns:
+            insurance_val_raw = row[insurance_covered_col]
+            # Check if value is NaN or empty
+            if pd.isna(insurance_val_raw) or (isinstance(insurance_val_raw, str) and insurance_val_raw.strip() == ''):
+                item['insurance_covered'] = 'yes'  # Default to "yes" if empty
             else:
-                item['insurance_covered'] = 'yes'
+                insurance_val = str(insurance_val_raw).strip()
+                insurance_val_lower = insurance_val.lower()
+                # Check for "no" variations (case-insensitive) - be explicit
+                if insurance_val_lower in ['no', 'n', 'false', '0', 'f']:
+                    item['insurance_covered'] = 'no'
+                    print(f"DEBUG: Row {idx+1}: Set insurance_covered='no' from value '{insurance_val}'")
+                elif insurance_val_lower in ['yes', 'y', 'true', '1', 't']:
+                    item['insurance_covered'] = 'yes'
+                    print(f"DEBUG: Row {idx+1}: Set insurance_covered='yes' from value '{insurance_val}'")
+                else:
+                    # If value exists but is not recognized, default to "yes" for backward compatibility
+                    print(f"Warning: Row {idx+1}: Unrecognized insurance_covered value '{insurance_val}' for product {item.get('medication_code', 'N/A')}, defaulting to 'yes'")
+                    item['insurance_covered'] = 'yes'
         else:
-            item['insurance_covered'] = 'yes'  # Default to "yes" if not specified
+            # If column doesn't exist, default to "yes"
+            if idx < 3:  # Only print for first few rows
+                print(f"DEBUG: Row {idx+1}: Insurance Covered column not found, defaulting to 'yes'")
+            item['insurance_covered'] = 'yes'  # Default to "yes" if column not found
         
         items.append(item)
     

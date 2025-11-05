@@ -425,6 +425,43 @@ def search_patient_by_name(
         return []
 
 
+@router.get("/search/contact", response_model=List[PatientResponse])
+def search_patient_by_contact(
+    contact_number: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Pharmacist", "Lab", "Claims", "Admin"]))
+):
+    """Search patients by contact number (case-insensitive, partial match) - returns list of matches"""
+    if not contact_number or not contact_number.strip():
+        return []
+    
+    # Clean the search term - remove spaces and common formatting characters
+    search_term = contact_number.strip().replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    
+    if not search_term:
+        return []
+    
+    try:
+        # Search in both contact and emergency_contact_number fields
+        # Use case-insensitive matching with LIKE
+        patients = db.query(Patient).filter(
+            or_(
+                func.coalesce(Patient.contact, '').like(f"%{search_term}%"),
+                func.coalesce(Patient.emergency_contact_number, '').like(f"%{search_term}%")
+            )
+        ).all()
+        
+        # Debug logging
+        print(f"Contact search term: '{contact_number}', Cleaned: '{search_term}', Found: {len(patients)} patients")
+        
+        # Ensure we always return a list, even if it's empty or has one item
+        return list(patients) if patients else []
+    except Exception as e:
+        # Log the error and return empty list
+        print(f"Error in contact number search: {e}")
+        return []
+
+
 @router.get("/{patient_id}", response_model=PatientResponse)
 def get_patient(
     patient_id: int,

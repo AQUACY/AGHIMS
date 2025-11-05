@@ -236,6 +236,17 @@
               />
             </div>
           </template>
+          <template v-slot:body-cell-prescriber="props">
+            <q-td :props="props">
+              <div v-if="props.row.prescriber_name">
+                <div class="text-weight-medium">{{ props.row.prescriber_name }}</div>
+                <div class="text-caption text-grey-7" v-if="props.row.prescriber_role">
+                  {{ props.row.prescriber_role }}
+                </div>
+              </div>
+              <span v-else class="text-grey-6">N/A</span>
+            </q-td>
+          </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
               <q-badge
@@ -1056,6 +1067,7 @@ const columns = [
   { name: 'frequency', label: 'Frequency', field: 'frequency', align: 'left' },
   { name: 'duration', label: 'Duration', field: 'duration', align: 'left' },
   { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'right' },
+  { name: 'prescriber', label: 'Prescriber', field: 'prescriber_name', align: 'left' },
   { name: 'status', label: 'Status', field: 'is_confirmed', align: 'center' },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];

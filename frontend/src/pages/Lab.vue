@@ -129,20 +129,33 @@
           </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
-              <q-btn
-                v-if="props.row.status !== 'confirmed' && props.row.status !== 'completed'"
-                size="sm"
-                color="primary"
-                label="Confirm"
-                @click="confirmInvestigation(props.row)"
-                :loading="confirmingId === props.row.id"
-                :disable="confirmingId !== null"
-              />
-              <q-badge
-                v-else
-                color="positive"
-                label="Confirmed"
-              />
+              <div class="row q-gutter-xs">
+                <q-btn
+                  v-if="props.row.notes"
+                  size="sm"
+                  color="info"
+                  icon="visibility"
+                  flat
+                  round
+                  @click="viewRemarks(props.row)"
+                >
+                  <q-tooltip>View Remarks/Notes</q-tooltip>
+                </q-btn>
+                <q-btn
+                  v-if="props.row.status !== 'confirmed' && props.row.status !== 'completed'"
+                  size="sm"
+                  color="primary"
+                  label="Confirm"
+                  @click="confirmInvestigation(props.row)"
+                  :loading="confirmingId === props.row.id"
+                  :disable="confirmingId !== null"
+                />
+                <q-badge
+                  v-else
+                  color="positive"
+                  label="Confirmed"
+                />
+              </div>
             </q-td>
           </template>
         </q-table>
@@ -245,6 +258,29 @@
         </q-card-section>
       </q-card>
     </q-dialog>
+
+    <!-- View Remarks Dialog -->
+    <q-dialog v-model="showRemarksDialog">
+      <q-card style="min-width: 400px; max-width: 600px">
+        <q-card-section>
+          <div class="text-h6">Remarks / Notes</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="viewingRemarks">
+            {{ viewingRemarks?.procedure_name || 'Investigation' }} ({{ viewingRemarks?.gdrg_code }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div v-if="viewingRemarks?.notes" class="text-body1 q-pa-md" style="background-color: #f5f5f5; border-radius: 4px; white-space: pre-wrap;">
+            {{ viewingRemarks.notes }}
+          </div>
+          <div v-else class="text-grey-6 text-center q-pa-md">
+            No remarks/notes provided for this investigation
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn label="Close" color="primary" flat v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -280,6 +316,8 @@ const resultForm = ref({
   attachment: null,
   existingAttachment: null,
 });
+const showRemarksDialog = ref(false);
+const viewingRemarks = ref(null);
 
 const investigationColumns = [
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left' },
@@ -610,6 +648,11 @@ const confirmInvestigation = async (investigation) => {
       confirmingId.value = null;
     }
   });
+};
+
+const viewRemarks = (investigation) => {
+  viewingRemarks.value = investigation;
+  showRemarksDialog.value = true;
 };
 
 const openResultDialog = (result) => {

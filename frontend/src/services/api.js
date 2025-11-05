@@ -64,6 +64,7 @@ export const patientsAPI = {
   getByCard: (cardNumber) => api.get(`/patients/card/${encodeURIComponent(cardNumber)}`),
   searchByName: (name) => api.get(`/patients/search/name?name=${encodeURIComponent(name)}`),
   searchByCcc: (cccNumber) => api.get(`/patients/search/ccc?ccc_number=${encodeURIComponent(cccNumber)}`),
+  searchByContact: (contactNumber) => api.get(`/patients/search/contact?contact_number=${encodeURIComponent(contactNumber)}`),
   update: (patientId, data) => api.put(`/patients/${patientId}`, data),
   import: (file) => {
     const formData = new FormData();
@@ -211,6 +212,11 @@ export const priceListAPI = {
     formData.append('file', file);
     return api.post(`/price-list/upload/${fileType}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  exportProductCSV: () => {
+    return api.get('/price-list/export/product/csv', {
+      responseType: 'blob',
     });
   },
   uploadIcd10Mapping: (file) => {

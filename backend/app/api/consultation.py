@@ -114,6 +114,8 @@ class PrescriptionResponse(BaseModel):
     quantity: int
     unparsed: Optional[str] = None
     prescribed_by: int
+    prescriber_name: Optional[str] = None  # Full name of the prescriber
+    prescriber_role: Optional[str] = None  # Role of the prescriber
     confirmed_by: Optional[int] = None
     dispensed_by: Optional[int] = None
     confirmed_at: Optional[datetime] = None
@@ -381,7 +383,21 @@ def create_prescription(
     db.add(prescription)
     db.commit()
     db.refresh(prescription)
-    return PrescriptionResponse.from_orm(prescription)
+    return add_prescriber_info_to_response(prescription, db)
+
+
+def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionResponse:
+    """Helper function to add prescriber information to a prescription response"""
+    # Get prescriber information
+    prescriber = db.query(User).filter(User.id == prescription.prescribed_by).first()
+    prescriber_name = prescriber.full_name if prescriber else None
+    prescriber_role = prescriber.role if prescriber else None
+    
+    # Create response with prescriber details
+    prescription_dict = PrescriptionResponse.from_orm(prescription).dict()
+    prescription_dict['prescriber_name'] = prescriber_name
+    prescription_dict['prescriber_role'] = prescriber_role
+    return PrescriptionResponse(**prescription_dict)
 
 
 @router.get("/prescription/encounter/{encounter_id}", response_model=List[PrescriptionResponse])
@@ -391,8 +407,14 @@ def get_prescriptions(
     current_user: User = Depends(get_current_user)
 ):
     """Get all prescriptions for an encounter"""
+    # Query prescriptions with prescriber information
     prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).all()
-    return [PrescriptionResponse.from_orm(p) for p in prescriptions]
+    
+    result = []
+    for p in prescriptions:
+        result.append(add_prescriber_info_to_response(p, db))
+    
+    return result
 
 
 @router.get("/prescription/patient/{card_number}/encounter/{encounter_id}", response_model=List[PrescriptionResponse])
@@ -418,9 +440,14 @@ def get_prescriptions_by_patient_card(
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found or does not belong to this patient")
     
-    # Get prescriptions for the encounter
+    # Get prescriptions for the encounter with prescriber information
     prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).all()
-    return [PrescriptionResponse.from_orm(p) for p in prescriptions]
+    
+    result = []
+    for p in prescriptions:
+        result.append(add_prescriber_info_to_response(p, db))
+    
+    return result
 
 
 class PrescriptionDispense(BaseModel):
@@ -497,7 +524,7 @@ def dispense_prescription(
     
     db.commit()
     db.refresh(prescription)
-    return PrescriptionResponse.from_orm(prescription)
+    return add_prescriber_info_to_response(prescription, db)
 
 
 @router.put("/prescription/{prescription_id}/confirm", response_model=PrescriptionResponse)
@@ -624,7 +651,7 @@ def confirm_prescription(
     
     db.commit()
     db.refresh(prescription)
-    return PrescriptionResponse.from_orm(prescription)
+    return add_prescriber_info_to_response(prescription, db)
 
 
 @router.put("/prescription/{prescription_id}/return", response_model=PrescriptionResponse)
@@ -646,7 +673,7 @@ def return_prescription(
     
     db.commit()
     db.refresh(prescription)
-    return PrescriptionResponse.from_orm(prescription)
+    return add_prescriber_info_to_response(prescription, db)
 
 
 @router.get("/prescription/encounter/{encounter_id}/dispensed", response_model=List[PrescriptionResponse])
@@ -660,7 +687,7 @@ def get_dispensed_prescriptions(
         Prescription.encounter_id == encounter_id,
         Prescription.dispensed_by.isnot(None)
     ).all()
-    return [PrescriptionResponse.from_orm(p) for p in prescriptions]
+    return [add_prescriber_info_to_response(p, db) for p in prescriptions]
 
 
 @router.put("/prescription/{prescription_id}", response_model=PrescriptionResponse)
@@ -757,7 +784,7 @@ def update_prescription(
     
     db.commit()
     db.refresh(prescription)
-    return PrescriptionResponse.from_orm(prescription)
+    return add_prescriber_info_to_response(prescription, db)
 
 
 @router.delete("/prescription/{prescription_id}", status_code=status.HTTP_204_NO_CONTENT)
