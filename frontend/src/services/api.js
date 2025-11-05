@@ -1,6 +1,31 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.API_BASE_URL || (process.env.NODE_ENV === 'production' ? '/backend/api' : 'http://localhost:8000/api');
+// API_BASE_URL is set in quasar.config.js build.env
+// In production: Use the current hostname (server IP) with port 8000
+// In development: 'http://localhost:8000/api'
+const getApiBaseUrl = () => {
+  // If API_BASE_URL is explicitly set in environment, use it
+  if (process.env.API_BASE_URL && process.env.API_BASE_URL !== 'http://localhost:8000/api') {
+    return process.env.API_BASE_URL;
+  }
+  
+  // Always use the current hostname with port 8000
+  // This works for both localhost and network IP access
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
+  
+  // If accessing from dev server (port 9000 or 3000), use the same hostname with port 8000
+  // This allows network access to work (e.g., 10.10.16.50:9000 -> 10.10.16.50:8000)
+  if (window.location.port === '9000' || window.location.port === '3000') {
+    // Development mode - use same hostname with port 8000
+    return `${protocol}//${hostname}:8000/api`;
+  }
+  
+  // Production mode - use current hostname with port 8000
+  return `${protocol}//${hostname}:8000/api`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Create axios instance
 const api = axios.create({

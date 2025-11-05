@@ -502,7 +502,7 @@ uvicorn app.main:app \
 
 **Note**: The `--worker-class` option is only used with Gunicorn, not with uvicorn directly. Uvicorn uses its own worker implementation.
 
-**Note**: We use `127.0.0.1` instead of `0.0.0.0` since Apache will proxy requests to this local address.
+**Note**: Using `0.0.0.0` allows the backend to be accessible from network IPs (e.g., `10.10.16.50:8000`). If you only want localhost access, use `127.0.0.1`.
 
 ### Option 3: Systemd Service (Recommended for Linux)
 
@@ -526,7 +526,7 @@ WorkingDirectory=/home/administrator/Desktop/AGHIMS/backend
 Environment="PATH=/home/administrator/Desktop/AGHIMS/backend/venv/bin"
 EnvironmentFile=/home/administrator/Desktop/AGHIMS/backend/.env
 ExecStart=/home/administrator/Desktop/AGHIMS/backend/venv/bin/uvicorn app.main:app \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port 8000 \
   --workers 4 \
   --log-level info \
@@ -794,7 +794,7 @@ Environment="SECRET_KEY=${SECRET_KEY}"
 
 ### 1. Build Frontend for Production
 
-**Important**: Make sure you're building in production mode and the output is correct.
+**Important**: Make sure you're building in production mode and the output is correct. The API base URL must be set correctly.
 
 ```bash
 cd /var/www/html/frontend
@@ -804,12 +804,14 @@ cd frontend  # from your local machine
 # Install dependencies first
 npm install
 
-# Build for production (this sets NODE_ENV=production)
+# Build for production (Quasar automatically sets production mode)
 npm run build
 
-# Or explicitly set production mode
-NODE_ENV=production npm run build
+# IMPORTANT: After building, verify the API base URL is correct
+# Check the built files - they should use '/backend/api' not 'http://localhost:8000/api'
 ```
+
+**Critical**: After building, check that the production build uses `/backend/api` and NOT `http://localhost:8000/api`. If you see `localhost:8000` in the built files, the build was not done in production mode or the config is incorrect.
 
 **Verify Build Output:**
 After building, check that the `dist/spa` directory exists and contains:
@@ -1409,12 +1411,146 @@ chown -R $USER:$USER /opt/hms/backend/uploads
     sudo tail -f /var/log/apache2/access.log
     ```
 
-#### 10. CORS Errors from Frontend
+#### 10. Frontend API Connection Refused from Network
+
+**Error**: When accessing frontend from another PC (e.g., `http://10.10.16.50/frontend`), login fails with "connection refused"
+
+**Solutions**:
+
+1. **Verify Backend Service is Running**:
+   ```bash
+   # Check if backend service is running
+   sudo systemctl status hms-backend
+   
+   # Check if it's listening on port 8000
+   sudo netstat -tlnp | grep 8000
+   sudo lsof -i :8000
+   ```
+
+2. **Test Backend Through Apache**:
+   ```bash
+   # Test from the server itself
+   curl http://localhost/backend/health
+   curl http://localhost/backend/api/health
+   
+   # Test from another machine (if possible)
+   curl http://10.10.16.50/backend/health
+   ```
+
+3. **Verify Apache Proxy Configuration**:
+   Check that Apache is configured to proxy `/backend` to the backend service:
+   ```bash
+   # Check Apache configuration
+   sudo apache2ctl configtest
+   
+   # Check if proxy modules are enabled
+   apache2ctl -M | grep proxy
+   # Should show: proxy_module, proxy_http_module
+   
+   # If not enabled, enable them:
+   sudo a2enmod proxy
+   sudo a2enmod proxy_http
+   sudo systemctl restart apache2
+   ```
+
+4. **Check Apache Configuration File**:
+   Verify `/etc/apache2/sites-available/000-default.conf` (or your site config) has:
+   ```apache
+   # Backend API Proxy - /backend -> http://127.0.0.1:8000
+   <LocationMatch "^/backend">
+       ProxyPreserveHost On
+       ProxyPass http://127.0.0.1:8000/
+       ProxyPassReverse http://127.0.0.1:8000/
+       
+       # Timeouts for long-running requests
+       ProxyTimeout 300
+   </LocationMatch>
+   ```
+
+5. **Check Apache Error Logs**:
+   ```bash
+   # Check Apache error logs
+   sudo tail -f /var/log/apache2/error.log
+   
+   # Check Apache access logs
+   sudo tail -f /var/log/apache2/access.log
+   ```
+
+6. **Verify CORS Configuration**:
+   Check that `backend/app/main.py` includes the network IP:
+   ```python
+   allow_origins=[
+       "http://localhost",  # Production (Apache)
+       "http://10.10.16.50",  # Production (Network IP)
+       "http://10.10.16.50/frontend",  # Production (Network IP with path)
+   ],
+   ```
+   
+   **Note**: CORS origins should NOT include paths. Update if needed:
+   ```python
+   allow_origins=[
+       "http://localhost",
+       "http://10.10.16.50",
+       # Remove paths - CORS checks the origin, not the full URL
+   ],
+   ```
+
+7. **Test Backend Direct Access** (if needed for debugging):
+   ```bash
+   # Test direct backend access (should work from server)
+   curl http://127.0.0.1:8000/health
+   curl http://localhost:8000/health
+   ```
+
+8. **Check Firewall**:
+   ```bash
+   # Check firewall status
+   sudo ufw status
+   
+   # If firewall is blocking, allow HTTP/HTTPS
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   ```
+
+9. **Verify Frontend API Configuration**:
+   Check that `frontend/src/services/api.js` uses relative path in production:
+   ```javascript
+   const API_BASE_URL = process.env.API_BASE_URL || '/backend/api';
+   ```
+   
+   **IMPORTANT**: After building, check the built JavaScript files to ensure they contain `/backend/api` and NOT `http://localhost:8000/api`. If you see `localhost:8000` in the built files, rebuild:
+   ```bash
+   cd /var/www/html/frontend
+   rm -rf dist/
+   npm run build
+   sudo cp -r dist/spa/* /var/www/html/frontend/
+   ```
+   
+   This should resolve to `http://10.10.16.50/backend/api` when accessing from `http://10.10.16.50/frontend`.
+
+10. **Debug Steps**:
+    ```bash
+    # From another PC, test the backend directly through Apache
+    curl http://10.10.16.50/backend/health
+    
+    # Check browser Network tab (F12) to see what URL is being called
+    # Should show: http://10.10.16.50/backend/api/auth/login (or similar)
+    ```
+
+11. **Common Issues**:
+    - **Apache proxy not working**: Check proxy modules are enabled and config is correct
+    - **Backend service not running**: Restart the service
+    - **Backend only listening on 127.0.0.1**: This is correct for security, but Apache must proxy to it
+    - **CORS blocking**: Check CORS origins in `main.py` include the network IP
+    - **Firewall blocking**: Allow port 80 (HTTP) through firewall
+
+#### 11. CORS Errors from Frontend
 
 **Solution**:
 - Verify frontend URL is in `allow_origins` in `app/main.py`
 - Check that frontend is making requests to the correct backend URL
 - Ensure credentials are properly configured
+- **Important**: CORS origins should be domain/IP only, not full URLs with paths
 
 ### Viewing Logs
 

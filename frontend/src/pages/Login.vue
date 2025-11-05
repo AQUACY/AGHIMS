@@ -3,10 +3,10 @@
     <div class="login-container">
       <q-card class="login-card glass-card" flat>
         <q-card-section>
-          <div class="text-h5 text-center q-mb-md text-weight-bold" style="color: rgba(255, 255, 255, 0.95);">
+          <div class="text-h5 text-center q-mb-md text-weight-bold" >
             Hospital Management System
           </div>
-          <div class="text-subtitle2 text-center q-mb-lg" style="color: rgba(255, 255, 255, 0.7);">
+          <div class="text-subtitle2 text-center q-mb-lg" >
             Sign in to continue
           </div>
         </q-card-section>

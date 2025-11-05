@@ -40,8 +40,10 @@ app.add_middleware(
         "http://127.0.0.1:9000",  # Development
         "http://127.0.0.1:3000",  # Development
         "http://localhost",  # Production (Apache)
+        "http://localhost:8000",  # Production (direct backend access)
         "http://10.10.16.50",  # Production (Network IP)
-        "http://10.10.16.50/frontend",  # Production (Network IP with path)
+        "http://10.10.16.50:8000",  # Production (Network IP with port)
+        "http://10.10.16.50:9000",  # Development (Network IP dev server)
     ],
     allow_credentials=True,
     allow_methods=["*"],

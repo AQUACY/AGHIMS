@@ -30,7 +30,7 @@ module.exports = configure(function (ctx) {
       env: {
         API_BASE_URL: ctx.dev
           ? 'http://localhost:8000/api'  // Development
-          : '/backend/api'  // Production - relative path
+          : 'http://localhost:8000/api'  // Production - will be overridden by dynamic detection in api.js
       }
     },
     devServer: {
