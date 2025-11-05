@@ -5,9 +5,12 @@
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 glass-text q-mb-md">
-          Found {{ patients.length }} patient(s) matching 
+          <span v-if="patients.length > 0">Found {{ patients.length }} patient(s) matching </span>
+          <span v-else>No patients found matching </span>
           <span v-if="searchType === 'name'">name "{{ searchTerm }}"</span>
           <span v-else-if="searchType === 'card'">card number "{{ searchTerm }}"</span>
+          <span v-else-if="searchType === 'ccc'">Ghana card/insurance number "{{ searchTerm }}"</span>
+          <span v-else-if="searchType === 'contact'">contact number "{{ searchTerm }}"</span>
           <span v-else>"{{ searchTerm }}"</span>
         </div>
 
@@ -69,9 +72,11 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useQuasar } from 'quasar';
 
 const route = useRoute();
 const router = useRouter();
+const $q = useQuasar();
 
 const searchTerm = ref('');
 const searchType = ref('name'); // 'name' or 'card'
@@ -97,8 +102,22 @@ const loadPatientsFromQuery = () => {
   console.log('Loading patients from query, route.query:', route.query);
   
   // Get search parameters from query
-  searchTerm.value = route.query.searchTerm || route.query.name || '';
-  searchType.value = route.query.searchType || 'name';
+  searchTerm.value = route.query.searchTerm || route.query.name || route.query.cardNumber || route.query.contactNumber || '';
+  
+  // Determine search type from query
+  if (route.query.searchType) {
+    searchType.value = route.query.searchType;
+  } else if (route.query.name) {
+    searchType.value = 'name';
+  } else if (route.query.cardNumber || route.query.card_number) {
+    searchType.value = 'card';
+  } else if (route.query.contactNumber || route.query.contact_number) {
+    searchType.value = 'contact';
+  } else if (route.query.cccNumber || route.query.ccc_number) {
+    searchType.value = 'ccc';
+  } else {
+    searchType.value = 'name';
+  }
   
   // Try to get patients from query params
   if (route.query.patients) {
@@ -106,13 +125,32 @@ const loadPatientsFromQuery = () => {
       const parsedPatients = JSON.parse(route.query.patients);
       console.log('Parsed patients:', parsedPatients);
       patients.value = Array.isArray(parsedPatients) ? parsedPatients : [];
+      
+      // Show notification if no patients found
+      if (patients.value.length === 0) {
+        $q.notify({
+          type: 'info',
+          message: `No patients found matching "${searchTerm.value}"`,
+          position: 'top',
+        });
+      }
     } catch (e) {
       console.error('Failed to parse patients from query:', e);
       patients.value = [];
+      $q.notify({
+        type: 'negative',
+        message: 'Failed to load search results',
+        position: 'top',
+      });
     }
   } else {
     console.warn('No patients in query params');
     patients.value = [];
+    $q.notify({
+      type: 'warning',
+      message: 'No search results available',
+      position: 'top',
+    });
   }
   
   console.log('Final patients:', patients.value);

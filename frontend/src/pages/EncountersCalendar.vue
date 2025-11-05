@@ -132,6 +132,7 @@
               :rules="[(val) => !!val || 'Required']"
               emit-value
               map-options
+              @update:model-value="onDepartmentSelected"
             >
               <template v-slot:option="scope">
                 <q-item v-bind="scope.itemProps">
@@ -141,6 +142,34 @@
                 </q-item>
               </template>
             </q-select>
+            
+            <q-select
+              v-model="selectedProcedure"
+              filled
+              :options="procedureOptions"
+              label="Procedure (Service Name)"
+              option-label="service_name"
+              option-value="g_drg_code"
+              :disable="!editForm.department"
+              @update:model-value="onProcedureSelected"
+              hint="Select the procedure - GDRG code and name will be auto-filled"
+              use-input
+              input-debounce="300"
+              @filter="filterProcedures"
+              clearable
+            >
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    {{ editForm.department
+                      ? 'No procedures found. Try a different search term.'
+                      : 'Please select a Department first'
+                    }}
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            
             <q-input
               v-model="editForm.ccc_number"
               filled
@@ -295,12 +324,35 @@ const viewEncounter = (encounter) => {
   }
 };
 
-const editEncounter = (encounter) => {
+const editEncounter = async (encounter) => {
   showEditDialog.value = true;
   currentEncounter.value = encounter;
   editForm.department = encounter.department;
   editForm.ccc_number = encounter.ccc_number || '';
   editForm.status = encounter.status;
+  editForm.procedure_g_drg_code = encounter.procedure_g_drg_code || '';
+  editForm.procedure_name = encounter.procedure_name || '';
+  
+  // Reset procedure selection
+  selectedProcedure.value = null;
+  allProcedures.value = [];
+  procedureOptions.value = [];
+  
+  // Load procedures for the current department
+  if (encounter.department) {
+    await loadProceduresForDepartment(encounter.department);
+    
+    // If encounter has a procedure, find and select it
+    if (encounter.procedure_g_drg_code || encounter.procedure_name) {
+      const matchingProcedure = allProcedures.value.find(p => 
+        p.g_drg_code === encounter.procedure_g_drg_code ||
+        p.service_name === encounter.procedure_name
+      );
+      if (matchingProcedure) {
+        selectedProcedure.value = matchingProcedure;
+      }
+    }
+  }
 };
 
 const deleteEncounterConfirm = (encounter) => {
@@ -329,7 +381,14 @@ const editForm = reactive({
   department: '',
   ccc_number: '',
   status: '',
+  procedure_g_drg_code: '',
+  procedure_name: '',
 });
+
+// Procedure-related state
+const allProcedures = ref([]);
+const procedureOptions = ref([]);
+const selectedProcedure = ref(null);
 
 const statusOptions = ['draft', 'in_consultation', 'awaiting_services', 'finalized'];
 
@@ -376,6 +435,12 @@ const saveEncounterEdit = async () => {
   if (editForm.status !== currentEncounter.value.status) {
     updateData.status = editForm.status;
   }
+  if (editForm.procedure_g_drg_code !== (currentEncounter.value.procedure_g_drg_code || '')) {
+    updateData.procedure_g_drg_code = editForm.procedure_g_drg_code || null;
+  }
+  if (editForm.procedure_name !== (currentEncounter.value.procedure_name || '')) {
+    updateData.procedure_name = editForm.procedure_name || null;
+  }
   
   if (Object.keys(updateData).length === 0) {
     $q.notify({
@@ -392,6 +457,90 @@ const saveEncounterEdit = async () => {
     await loadEncounters(); // Reload list
   } catch (error) {
     // Error handled in store
+  }
+};
+
+// Load procedures when department is selected
+const onDepartmentSelected = async (department) => {
+  if (!department) {
+    allProcedures.value = [];
+    procedureOptions.value = [];
+    selectedProcedure.value = null;
+    editForm.procedure_g_drg_code = '';
+    editForm.procedure_name = '';
+    return;
+  }
+  
+  await loadProceduresForDepartment(department);
+  
+  // Clear procedure selection when department changes
+  selectedProcedure.value = null;
+  editForm.procedure_g_drg_code = '';
+  editForm.procedure_name = '';
+};
+
+// Load procedures for a specific department
+const loadProceduresForDepartment = async (department) => {
+  try {
+    const response = await priceListAPI.getProceduresByServiceType(department);
+    console.log('Procedures response:', response.data);
+    
+    // Handle both array and grouped object formats
+    let procedures = [];
+    if (Array.isArray(response.data)) {
+      procedures = response.data;
+    } else if (response.data && typeof response.data === 'object') {
+      // Old format: grouped object - extract procedures for the selected department
+      procedures = response.data[department] || [];
+    }
+    
+    allProcedures.value = procedures;
+    procedureOptions.value = allProcedures.value;
+    console.log('Loaded procedures:', allProcedures.value.length);
+  } catch (error) {
+    console.error('Failed to load procedures:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load procedures',
+    });
+    allProcedures.value = [];
+    procedureOptions.value = [];
+  }
+};
+
+// Filter procedures for autocomplete
+const filterProcedures = (val, update) => {
+  if (val === '') {
+    update(() => {
+      procedureOptions.value = allProcedures.value;
+    });
+    return;
+  }
+  
+  update(() => {
+    const needle = val.toLowerCase();
+    procedureOptions.value = allProcedures.value.filter(
+      (p) => p.service_name.toLowerCase().indexOf(needle) > -1 ||
+             (p.g_drg_code && p.g_drg_code.toLowerCase().indexOf(needle) > -1)
+    );
+  });
+};
+
+// When procedure is selected, auto-fill GDRG code and procedure name
+const onProcedureSelected = (procedure) => {
+  if (procedure && typeof procedure === 'object') {
+    editForm.procedure_g_drg_code = procedure.g_drg_code || '';
+    editForm.procedure_name = procedure.service_name || '';
+  } else if (procedure) {
+    // If it's just the code, find the procedure object
+    const proc = allProcedures.value.find(p => p.g_drg_code === procedure);
+    if (proc) {
+      editForm.procedure_g_drg_code = proc.g_drg_code || '';
+      editForm.procedure_name = proc.service_name || '';
+    }
+  } else {
+    editForm.procedure_g_drg_code = '';
+    editForm.procedure_name = '';
   }
 };
 

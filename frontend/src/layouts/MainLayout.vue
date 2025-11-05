@@ -821,6 +821,7 @@ const searchByContact = async () => {
     router.push({
       name: 'PatientSearchResults',
       query: {
+        searchType: 'contact',
         searchTerm: searchContactNumber.value.trim(),
         patients: JSON.stringify(patients) 
       }

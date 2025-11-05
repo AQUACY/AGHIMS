@@ -21,6 +21,8 @@ class EncounterResponse(BaseModel):
     ccc_number: Optional[str]
     status: str
     department: str
+    procedure_g_drg_code: Optional[str] = None
+    procedure_name: Optional[str] = None
     created_at: datetime
     archived: bool = False
     
@@ -33,6 +35,8 @@ class EncounterUpdate(BaseModel):
     department: Optional[str] = None
     ccc_number: Optional[str] = None
     status: Optional[str] = None
+    procedure_g_drg_code: Optional[str] = None
+    procedure_name: Optional[str] = None
 
 
 @router.get("/{encounter_id}", response_model=EncounterResponse)
@@ -184,6 +188,10 @@ def update_encounter(
     # Update fields if provided
     if encounter_data.department is not None:
         encounter.department = encounter_data.department
+    if encounter_data.procedure_g_drg_code is not None:
+        encounter.procedure_g_drg_code = encounter_data.procedure_g_drg_code
+    if encounter_data.procedure_name is not None:
+        encounter.procedure_name = encounter_data.procedure_name
     if encounter_data.ccc_number is not None:
         # Enforce single insured encounter per patient per day
         if encounter_data.ccc_number and encounter_data.ccc_number.strip():

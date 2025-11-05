@@ -197,7 +197,7 @@ class InvestigationResponse(BaseModel):
 def create_diagnosis(
     diagnosis_data: DiagnosisCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "Records"]))
 ):
     """Add a diagnosis to an encounter"""
     from app.models.icd10_drg_mapping import ICD10DRGMapping
@@ -258,7 +258,7 @@ def update_diagnosis(
     diagnosis_id: int,
     diagnosis_data: DiagnosisCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Update a diagnosis"""
     diagnosis = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
@@ -298,7 +298,7 @@ def update_diagnosis(
 def delete_diagnosis(
     diagnosis_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Delete a diagnosis"""
     diagnosis = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
@@ -695,7 +695,7 @@ def update_prescription(
     prescription_id: int,
     prescription_data: PrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Update a prescription"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
@@ -791,7 +791,7 @@ def update_prescription(
 def delete_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Delete a prescription"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
@@ -815,7 +815,7 @@ def delete_prescription(
 def create_investigation(
     investigation_data: InvestigationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "Records"]))
 ):
     """Request an investigation (lab, scan, x-ray)"""
     from app.services.price_list_service_v2 import get_price_from_all_tables
@@ -873,7 +873,7 @@ def cancel_investigation(
     investigation_id: int,
     cancel_data: InvestigationCancel,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Cancel an investigation (can cancel confirmed investigations)"""
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
@@ -902,7 +902,7 @@ def update_investigation(
     investigation_id: int,
     investigation_data: InvestigationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Update an investigation"""
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
@@ -939,7 +939,7 @@ def update_investigation(
 def delete_investigation(
     investigation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Delete an investigation"""
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
@@ -1710,7 +1710,7 @@ def get_consultation_notes(
 def create_or_update_consultation_notes(
     notes_data: ConsultationNotesCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
 ):
     """Create or update consultation notes for an encounter"""
     encounter = db.query(Encounter).filter(Encounter.id == notes_data.encounter_id).first()

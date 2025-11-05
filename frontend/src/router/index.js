@@ -42,7 +42,7 @@ const routes = [
         path: '/patients/search/results',
         name: 'PatientSearchResults',
         component: () => import('../pages/PatientSearchResults.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Billing', 'Admin'] },
+        meta: { requiresAuth: true },
       },
       {
         path: '/encounters/calendar',

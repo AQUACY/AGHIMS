@@ -10,7 +10,7 @@ from datetime import date, datetime
 import csv
 import io
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, get_current_user
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.encounter import Encounter, EncounterStatus
@@ -289,7 +289,7 @@ async def import_patients_from_csv(
 def get_patient_by_card(
     card_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Pharmacist", "Lab", "Claims", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
     """Search patients by card number (case-insensitive, partial match) - returns list of matches"""
     if not card_number or not card_number.strip():
@@ -330,7 +330,7 @@ def get_patient_by_card(
 def search_patient_by_ccc(
     ccc_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Pharmacist", "Lab", "Claims", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
     """Search patients by CCC number (Ghana card/insurance number) - returns list of matches"""
     if not ccc_number or not ccc_number.strip():
@@ -365,7 +365,7 @@ def search_patient_by_ccc(
 def search_patient_by_name(
     name: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
     """Search patients by name (case-insensitive, matches first name, surname, or other names)"""
     if not name or not name.strip():
@@ -429,7 +429,7 @@ def search_patient_by_name(
 def search_patient_by_contact(
     contact_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Pharmacist", "Lab", "Claims", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
     """Search patients by contact number (case-insensitive, partial match) - returns list of matches"""
     if not contact_number or not contact_number.strip():
@@ -466,7 +466,7 @@ def search_patient_by_contact(
 def get_patient(
     patient_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Nurse", "Doctor", "Billing", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
     """Get patient by ID"""
     patient = db.query(Patient).filter(Patient.id == patient_id).first()

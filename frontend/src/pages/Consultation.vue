@@ -2667,10 +2667,24 @@ const onServiceTypeSelected = async (serviceType) => {
   
   try {
     const response = await priceListAPI.getProceduresByServiceType(serviceType);
-    allProcedures.value = response.data || [];
+    console.log('Procedures response:', response.data);
+    
+    // Handle both array and grouped object formats
+    let procedures = [];
+    if (Array.isArray(response.data)) {
+      // New format: array
+      procedures = response.data;
+    } else if (response.data && typeof response.data === 'object') {
+      // Old format: grouped object - extract procedures for the selected service type
+      procedures = response.data[serviceType] || [];
+    }
+    
+    allProcedures.value = procedures;
     procedureOptions.value = allProcedures.value;
     selectedProcedure.value = null;
     investigationForm.gdrg_code = '';
+    
+    console.log('Loaded procedures:', allProcedures.value.length);
   } catch (error) {
     console.error('Failed to load procedures:', error);
     $q.notify({

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import csv
 import io
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, get_current_user
 from app.models.user import User
 from app.models.icd10_drg_mapping import ICD10DRGMapping
 from app.models.procedure_price import ProcedurePrice
@@ -442,43 +442,58 @@ def search_price_items_endpoint(
 def get_procedures_by_service_type(
     service_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Lab", "Scan", "Xray", "Claims"]))
 ):
-    """Get procedures grouped by service type"""
+    """Get procedures grouped by service type. If service_type is provided, returns array. Otherwise returns grouped object."""
     from sqlalchemy import func
     
     if service_type:
+        # When a specific service_type is provided, return a simple array
         procedures = db.query(ProcedurePrice).filter(
             ProcedurePrice.service_type == service_type,
             ProcedurePrice.is_active == True
         ).all()
+        
+        # Return as array
+        return [
+            {
+                "id": proc.id,
+                "g_drg_code": proc.g_drg_code,
+                "service_name": proc.service_name,
+                "base_rate": float(proc.base_rate) if proc.base_rate else 0.0,
+                "nhia_app": float(proc.nhia_app) if proc.nhia_app else None,
+                "nhia_claim_co_payment": float(proc.nhia_claim_co_payment) if proc.nhia_claim_co_payment is not None else None,
+            }
+            for proc in procedures
+        ]
     else:
+        # When no service_type is provided, return grouped by service_type
         procedures = db.query(ProcedurePrice).filter(
             ProcedurePrice.is_active == True
         ).all()
-    
-    # Group by service_type
-    grouped = {}
-    for proc in procedures:
-        st = proc.service_type or "Unknown"
-        if st not in grouped:
-            grouped[st] = []
-        grouped[st].append({
-            "id": proc.id,
-            "g_drg_code": proc.g_drg_code,
-            "service_name": proc.service_name,
-            "base_rate": float(proc.base_rate) if proc.base_rate else 0.0,
-            "nhia_app": float(proc.nhia_app) if proc.nhia_app else None,
-            "nhia_claim_co_payment": float(proc.nhia_claim_co_payment) if proc.nhia_claim_co_payment is not None else None,
-        })
-    
-    return grouped
+        
+        # Group by service_type
+        grouped = {}
+        for proc in procedures:
+            st = proc.service_type or "Unknown"
+            if st not in grouped:
+                grouped[st] = []
+            grouped[st].append({
+                "id": proc.id,
+                "g_drg_code": proc.g_drg_code,
+                "service_name": proc.service_name,
+                "base_rate": float(proc.base_rate) if proc.base_rate else 0.0,
+                "nhia_app": float(proc.nhia_app) if proc.nhia_app else None,
+                "nhia_claim_co_payment": float(proc.nhia_claim_co_payment) if proc.nhia_claim_co_payment is not None else None,
+            })
+        
+        return grouped
 
 
 @router.get("/service-types")
 def get_service_types(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
     """Get all unique service types from procedure prices"""
     from sqlalchemy import distinct
@@ -496,7 +511,7 @@ def search_icd10_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Lab", "Scan", "Xray", "Claims"]))
 ):
     """Search ICD-10 codes"""
     from sqlalchemy import or_
