@@ -300,8 +300,12 @@ def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Di
     Expected columns: Sr.No., Sub Categ (twice), Product ID, Product N, Formulati,
     Strength, Base Rate, NHIA App, Claim Am, NHIA Clain, Bill Effecti
     """
-    # Read Excel file
-    df = pd.read_excel(file.file)
+    import io
+    # Read file content into BytesIO to avoid seekable() issues with SpooledTemporaryFile
+    # The file.file is a SpooledTemporaryFile which may not have seekable() in some Python versions
+    file_content = file.file.read()
+    file.file.seek(0)  # Reset file pointer for potential reuse
+    df = pd.read_excel(io.BytesIO(file_content))
     
     # Normalize column names (handle variations)
     original_columns = df.columns.tolist()

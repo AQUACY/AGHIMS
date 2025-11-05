@@ -308,7 +308,7 @@ async def upload_icd10_drg_mapping(
 
 
 @router.post("/upload/{file_type}")
-def upload_price_list_file(
+async def upload_price_list_file(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -332,6 +332,7 @@ def upload_price_list_file(
     
     try:
         # Parse Excel file (extracts all columns, uses Service Type as category)
+        # The parse function handles file reading internally to avoid seekable() issues
         items = parse_excel_price_list_complete(file, file_type)
         
         # Upload to appropriate table based on file type

@@ -504,7 +504,7 @@ uvicorn app.main:app \
 
 **Note**: Using `0.0.0.0` allows the backend to be accessible from network IPs (e.g., `10.10.16.50:8000`). If you only want localhost access, use `127.0.0.1`.
 
-### Option 3: Systemd Service (Recommended for Linux)
+### Option 3: Systemd Service for Backend (Recommended for Linux)
 
 Create a systemd service file for automatic startup:
 
@@ -569,7 +569,75 @@ sudo systemctl restart hms-backend
 sudo systemctl stop hms-backend
 ```
 
-### Option 4: Using Gunicorn with Uvicorn Workers (Advanced)
+### Option 4: Systemd Service for Frontend Dev Server
+
+If you want to run the Quasar development server as a systemd service:
+
+**Create systemd service file:**
+```bash
+sudo nano /etc/systemd/system/frontend.service
+```
+
+**Add the following content:**
+```ini
+[Unit]
+Description=Quasar Development Server
+After=network.target
+
+[Service]
+Type=simple
+User=administrator
+Group=administrator
+WorkingDirectory=/home/administrator/Desktop/AGHIMS/frontend
+Environment="PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/node/bin"
+Environment="NODE_ENV=development"
+ExecStart=/usr/bin/npm run dev -- --host 0.0.0.0 --port 9000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Important Notes:**
+- Replace `administrator` with your actual username
+- Replace `/home/administrator/Desktop/AGHIMS/frontend` with your actual frontend path
+- If `npm` is not in `/usr/bin/npm`, find it with `which npm` and use that path
+- Make sure Node.js and npm are installed and in the PATH
+- The service will run the dev server on `0.0.0.0:9000` so it's accessible from network
+
+**Enable and Start Service:**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable frontend
+sudo systemctl start frontend
+sudo systemctl status frontend
+```
+
+**Troubleshooting:**
+If you get `status=217/USER` error:
+1. Check if the user exists: `id administrator`
+2. Check if the working directory exists: `ls -la /home/administrator/Desktop/AGHIMS/frontend`
+3. Find npm path: `which npm` or `which node`
+4. Check if npm is executable: `npm --version`
+5. Try running manually as the user: `sudo -u administrator bash -c "cd /home/administrator/Desktop/AGHIMS/frontend && npm run dev"`
+
+**Alternative: Use full path to npm/node:**
+```ini
+ExecStart=/usr/local/bin/npm run dev -- --host 0.0.0.0 --port 9000
+# Or if using nvm:
+ExecStart=/home/administrator/.nvm/versions/node/v18.0.0/bin/npm run dev -- --host 0.0.0.0 --port 9000
+```
+
+**View Logs:**
+```bash
+sudo journalctl -u frontend -f
+sudo journalctl -u frontend -n 50 --no-pager
+```
+
+### Option 5: Using Gunicorn with Uvicorn Workers (Advanced)
 
 If you need more control, use Gunicorn:
 
