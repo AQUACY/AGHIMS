@@ -519,12 +519,13 @@ Description=HMS Backend API Service
 After=network.target mysql.service
 
 [Service]
-Type=notify
+Type=simple
 User=www-data
 Group=www-data
-WorkingDirectory=/var/www/html/backend
-Environment="PATH=/var/www/html/backend/venv/bin"
-ExecStart=/var/www/html/backend/venv/bin/uvicorn app.main:app \
+WorkingDirectory=/home/administrator/Desktop/AGHIMS/backend
+Environment="PATH=/home/administrator/Desktop/AGHIMS/backend/venv/bin"
+EnvironmentFile=/home/administrator/Desktop/AGHIMS/backend/.env
+ExecStart=/home/administrator/Desktop/AGHIMS/backend/venv/bin/uvicorn app.main:app \
   --host 127.0.0.1 \
   --port 8000 \
   --workers 4 \
@@ -532,10 +533,21 @@ ExecStart=/var/www/html/backend/venv/bin/uvicorn app.main:app \
   --no-access-log
 Restart=always
 RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+**Important Notes:**
+- Changed `Type=notify` to `Type=simple` - uvicorn doesn't send systemd notify signals properly
+- Added `TimeoutStartSec=60` - gives the service 60 seconds to start (adjust if needed)
+- Added `TimeoutStopSec=30` - gives 30 seconds for graceful shutdown
+- Added `StandardOutput=journal` and `StandardError=journal` - ensures logs go to systemd journal
+- Added `EnvironmentFile` - loads environment variables from `.env` file (make sure the `.env` file exists and is readable by www-data)
 
 **Enable and Start Service:**
 ```bash
@@ -782,12 +794,32 @@ Environment="SECRET_KEY=${SECRET_KEY}"
 
 ### 1. Build Frontend for Production
 
+**Important**: Make sure you're building in production mode and the output is correct.
+
 ```bash
 cd /var/www/html/frontend
 # Or if you're building locally and copying:
 cd frontend  # from your local machine
+
+# Install dependencies first
 npm install
+
+# Build for production (this sets NODE_ENV=production)
 npm run build
+
+# Or explicitly set production mode
+NODE_ENV=production npm run build
+```
+
+**Verify Build Output:**
+After building, check that the `dist/spa` directory exists and contains:
+- `index.html`
+- `assets/` folder with JS/CSS files
+- Other static files
+
+```bash
+ls -la dist/spa/
+# Should show index.html and assets folder
 ```
 
 ### 2. Copy Build Output
@@ -1075,7 +1107,309 @@ chown -R $USER:$USER /opt/hms/backend/uploads
 - Kill the process: `sudo kill -9 <PID>`
 - Or change port in uvicorn command
 
-#### 7. CORS Errors from Frontend
+#### 7. Systemd Service Timeout Error
+
+**Error**: `Job for hms-backend.service failed because a timeout was exceeded`
+
+**Solutions**:
+
+1. **Change Service Type** (most common fix):
+   ```bash
+   sudo nano /etc/systemd/system/hms-backend.service
+   ```
+   
+   Change `Type=notify` to `Type=simple`:
+   ```ini
+   [Service]
+   Type=simple  # Changed from notify
+   # ... rest of configuration
+   ```
+   
+   Then reload and restart:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart hms-backend
+   ```
+
+2. **Increase Timeout**:
+   Add to `[Service]` section:
+   ```ini
+   TimeoutStartSec=120
+   TimeoutStopSec=30
+   ```
+
+3. **Check Service Logs**:
+   ```bash
+   sudo journalctl -u hms-backend -n 50 --no-pager
+   sudo journalctl -u hms-backend -f  # Follow logs in real-time
+   ```
+
+4. **Check for Import Errors**:
+   Try running the command manually to see errors:
+   ```bash
+   cd /var/www/html/backend
+   source venv/bin/activate
+   python -m app.main
+   # Or
+   /var/www/html/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+   ```
+
+5. **Verify Permissions**:
+   ```bash
+   # Ensure www-data can read all files
+   sudo chown -R www-data:www-data /var/www/html/backend
+   sudo chmod -R 755 /var/www/html/backend
+   
+   # Ensure .env file is readable
+   sudo chmod 640 /var/www/html/backend/.env
+   sudo chown www-data:www-data /var/www/html/backend/.env
+   ```
+
+6. **Check Database Connection**:
+   Ensure MySQL is running and accessible:
+   ```bash
+   sudo systemctl status mysql
+   # Test connection
+   mysql -u hms_user -p -h localhost hms
+   ```
+
+#### 8. Cannot Connect to localhost:8000
+
+**Error**: Service is running but cannot connect to `localhost:8000`
+
+**Important**: The backend is configured to be accessed through Apache at `localhost/backend`, not directly at `localhost:8000`.
+
+**Solutions**:
+
+1. **Access via Apache (Correct Method)**:
+   ```bash
+   # Test backend health endpoint
+   curl http://localhost/backend/health
+   
+   # Or in browser
+   http://localhost/backend/docs
+   ```
+
+2. **Test Direct Connection (Server Only)**:
+   If you're on the server itself, test direct connection:
+   ```bash
+   # Check if port 8000 is listening
+   sudo netstat -tlnp | grep 8000
+   # Or
+   sudo ss -tlnp | grep 8000
+   
+   # Test direct connection from server
+   curl http://127.0.0.1:8000/health
+   curl http://localhost:8000/health
+   ```
+
+3. **Check Firewall**:
+   If accessing from another machine, ensure firewall allows port 8000:
+   ```bash
+   # Check firewall status
+   sudo ufw status
+   # Or for firewalld
+   sudo firewall-cmd --list-ports
+   
+   # Allow port 8000 (if needed for direct access)
+   sudo ufw allow 8000
+   ```
+
+4. **Verify Apache Proxy Configuration**:
+   Ensure Apache is configured to proxy `/backend` to `http://127.0.0.1:8000`:
+   ```bash
+   # Check Apache config
+   sudo apache2ctl configtest
+   
+   # Check if proxy modules are enabled
+   sudo a2enmod proxy
+   sudo a2enmod proxy_http
+   sudo systemctl restart apache2
+   
+   # Check Apache error logs
+   sudo tail -f /var/log/apache2/error.log
+   ```
+
+5. **Verify Service is Listening**:
+   ```bash
+   # Check service logs
+   sudo journalctl -u hms-backend -n 50 --no-pager
+   
+   # Check if uvicorn is listening
+   sudo lsof -i :8000
+   # Should show python/uvicorn process
+   ```
+
+6. **Service Running but Connection Refused**:
+   If you get "Connection refused" even though the service shows as "active", the service is likely crashing immediately or has permission issues:
+   
+   ```bash
+   # Check detailed logs
+   sudo journalctl -u hms-backend -n 100 --no-pager
+   sudo journalctl -u hms-backend -f  # Follow logs in real-time
+   
+   # Check if process is actually running
+   ps aux | grep uvicorn
+   sudo lsof -i :8000
+   
+   # If no process is running, check for errors in logs
+   ```
+
+7. **Fix Permissions Issue**:
+   If the service runs as `www-data` but the directory is owned by `administrator`, either:
+   
+   **Option A: Change service to run as administrator** (for testing):
+   ```bash
+   sudo nano /etc/systemd/system/hms-backend.service
+   ```
+   
+   Change these lines:
+   ```ini
+   User=administrator
+   Group=administrator
+   ```
+   
+   Then:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart hms-backend
+   ```
+   
+   **Option B: Fix permissions** (for production):
+   ```bash
+   # Make sure www-data can access the directory
+   sudo chown -R www-data:www-data /home/administrator/Desktop/AGHIMS/backend
+   sudo chmod -R 755 /home/administrator/Desktop/AGHIMS/backend
+   
+   # Ensure .env file is readable
+   sudo chmod 640 /home/administrator/Desktop/AGHIMS/backend/.env
+   sudo chown www-data:www-data /home/administrator/Desktop/AGHIMS/backend/.env
+   
+   # Ensure virtual environment is accessible
+   sudo chown -R www-data:www-data /home/administrator/Desktop/AGHIMS/backend/venv
+   ```
+
+8. **Verify Environment File**:
+   Make sure the `.env` file exists and is readable:
+   ```bash
+   # Check if .env file exists
+   ls -la /home/administrator/Desktop/AGHIMS/backend/.env
+   
+   # Test if www-data can read it
+   sudo -u www-data cat /home/administrator/Desktop/AGHIMS/backend/.env
+   ```
+
+**Note**: Since the backend is configured with `--host 127.0.0.1`, it only listens on localhost for security. Access it through Apache at `localhost/backend` or directly on the server at `127.0.0.1:8000`.
+
+#### 9. Frontend Not Loading in Production
+
+**Error**: Frontend works with `npm run dev` but not in production
+
+**Solutions**:
+
+1. **Verify Build Output**:
+   ```bash
+   # Check if build was created
+   ls -la /var/www/html/frontend/
+   ls -la /var/www/html/frontend/dist/spa/
+   
+   # Should see index.html and assets folder
+   ```
+
+2. **Check Build Was Run in Production Mode**:
+   ```bash
+   cd /var/www/html/frontend
+   # Make sure NODE_ENV is set to production
+   NODE_ENV=production npm run build
+   
+   # Or just use the build script which should set it
+   npm run build
+   ```
+
+3. **Verify Build Output Location**:
+   After building, copy the contents of `dist/spa/` to the frontend directory:
+   ```bash
+   cd /var/www/html/frontend
+   npm run build
+   
+   # Copy build output to frontend directory
+   sudo cp -r dist/spa/* /var/www/html/frontend/
+   
+   # Set proper permissions
+   sudo chown -R www-data:www-data /var/www/html/frontend
+   sudo chmod -R 755 /var/www/html/frontend
+   ```
+
+4. **Check quasar.config.js**:
+   Make sure `publicPath` is set correctly:
+   ```javascript
+   build: {
+     publicPath: ctx.dev ? '/' : '/frontend/',
+     vueRouterMode: 'history',
+     // ... rest of config
+   }
+   ```
+
+5. **Verify Router Base Path**:
+   Check `frontend/src/router/index.js`:
+   ```javascript
+   const base = process.env.NODE_ENV === 'production' ? '/frontend/' : '/';
+   const router = createRouter({
+     history: createWebHistory(base),
+     // ...
+   });
+   ```
+
+6. **Check Apache Configuration**:
+   Verify Apache is configured to serve the frontend:
+   ```bash
+   # Check Apache config
+   sudo apache2ctl configtest
+   
+   # Check Apache error logs
+   sudo tail -f /var/log/apache2/error.log
+   
+   # Test frontend access
+   curl http://localhost/frontend/
+   ```
+
+7. **Check Browser Console**:
+   Open browser developer tools (F12) and check:
+   - Console for JavaScript errors
+   - Network tab for failed requests (404s, CORS errors)
+   - Application tab for localStorage/sessionStorage issues
+
+8. **Verify File Permissions**:
+   ```bash
+   # Check permissions
+   ls -la /var/www/html/frontend/
+   
+   # Fix if needed
+   sudo chown -R www-data:www-data /var/www/html/frontend
+   sudo chmod -R 755 /var/www/html/frontend
+   sudo find /var/www/html/frontend -type f -exec chmod 644 {} \;
+   sudo find /var/www/html/frontend -type d -exec chmod 755 {} \;
+   ```
+
+9. **Common Issues**:
+   - **404 errors**: Router base path mismatch or Apache rewrite rules not working
+   - **Blank page**: JavaScript errors in console, check build output
+   - **API errors**: Check API base URL is correct (`/backend/api` in production)
+   - **CORS errors**: Verify backend CORS configuration includes frontend URL
+
+10. **Debug Steps**:
+    ```bash
+    # Check what's actually being served
+    curl -I http://localhost/frontend/
+    
+    # Check if index.html exists
+    cat /var/www/html/frontend/index.html | head -20
+    
+    # Check Apache access logs
+    sudo tail -f /var/log/apache2/access.log
+    ```
+
+#### 10. CORS Errors from Frontend
 
 **Solution**:
 - Verify frontend URL is in `allow_origins` in `app/main.py`

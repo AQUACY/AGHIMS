@@ -26,6 +26,7 @@ module.exports = configure(function (ctx) {
         node: 'node20'
       },
       vueRouterMode: 'history',
+      publicPath: ctx.dev ? '/' : '/frontend/',
       env: {
         API_BASE_URL: ctx.dev
           ? 'http://localhost:8000/api'  // Development
