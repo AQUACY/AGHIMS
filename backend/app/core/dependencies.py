@@ -1,7 +1,7 @@
 """
 Common dependencies for API routes
 """
-from typing import Generator
+from typing import Generator, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -44,7 +44,7 @@ def get_current_user(
     return user
 
 
-def require_role(allowed_roles: list[str]):
+def require_role(allowed_roles: List[str]):
     """
     Dependency factory to require specific roles
     """
