@@ -774,6 +774,19 @@
               hint="Search by medication name or code - medicine code and name will be auto-filled"
               clearable
             >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.item_name || scope.opt.product_name || scope.opt.service_name }}</q-item-label>
+                    <q-item-label v-if="scope.opt.formulation" caption class="text-grey-7">
+                      Formulation: {{ scope.opt.formulation }}
+                    </q-item-label>
+                    <q-item-label v-if="scope.opt.item_code || scope.opt.medication_code" caption class="text-grey-6">
+                      Code: {{ scope.opt.item_code || scope.opt.medication_code }}
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
               <template v-slot:no-option>
                 <q-item>
                   <q-item-section class="text-grey">
@@ -841,16 +854,6 @@
                 class="col-12 col-md-6"
                 hint="e.g., 7 DAYS, 2 WEEKS"
                 @update:model-value="calculateQuantity"
-              />
-              <q-input
-                v-model.number="prescriptionForm.quantity"
-                filled
-                type="number"
-                label="Quantity *"
-                class="col-12 col-md-6"
-                lazy-rules
-                :rules="[(val) => !!val || 'Required']"
-                hint="Auto-calculated: (dose/100 for MG) × frequency × duration (editable if needed)"
               />
             </div>
             <q-input
@@ -1631,7 +1634,13 @@ const createUnit = (val, done) => {
 // For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
 // Then: (dose_mg / 100) × frequency_value × duration
 // Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
+// Note: Doctors don't calculate quantity - it's set to 0 and pharmacy will set it during confirmation
 const calculateQuantity = () => {
+  // Don't calculate quantity for doctors - pharmacy will set it during confirmation
+  if (authStore.userRole === 'Doctor') {
+    prescriptionForm.quantity = 0;
+    return;
+  }
   if (prescriptionForm.dose && prescriptionForm.frequency && prescriptionForm.duration) {
     try {
       const doseNum = parseFloat(prescriptionForm.dose);
@@ -2513,7 +2522,16 @@ const onMedicationSelected = (medication) => {
   if (medication) {
     // Auto-fill medicine code and name from selected medication
     prescriptionForm.medicine_code = medication.item_code || medication.medication_code || '';
-    prescriptionForm.medicine_name = medication.item_name || medication.product_name || '';
+    // Include formulation in the name if available
+    let medicineName = medication.item_name || medication.product_name || '';
+    if (medication.formulation) {
+      medicineName = `${medicineName} (${medication.formulation})`;
+    }
+    prescriptionForm.medicine_name = medicineName;
+    // Set quantity to 0 for doctors (pharmacy will set it during confirmation)
+    if (authStore.userRole === 'Doctor') {
+      prescriptionForm.quantity = 0;
+    }
   } else {
     prescriptionForm.medicine_code = '';
     prescriptionForm.medicine_name = '';
@@ -2577,22 +2595,28 @@ const resetPrescriptionForm = () => {
       frequency: '',
       duration: '',
       instructions: '',
-      quantity: 1,
+      quantity: authStore.userRole === 'Doctor' ? 0 : 1, // Set to 0 for doctors, 1 for others
     });
 };
 
 const savePrescription = async () => {
   try {
+    // For doctors, set quantity to 0 (pharmacy will set it during confirmation)
+    const prescriptionData = { ...prescriptionForm };
+    if (authStore.userRole === 'Doctor') {
+      prescriptionData.quantity = 0;
+    }
+    
     if (editingPrescriptionId.value) {
       // Update existing prescription
-      await consultationAPI.updatePrescription(editingPrescriptionId.value, prescriptionForm);
+      await consultationAPI.updatePrescription(editingPrescriptionId.value, prescriptionData);
       $q.notify({
         type: 'positive',
         message: 'Prescription updated successfully',
       });
     } else {
       // Create new prescription
-      await consultationAPI.createPrescription(prescriptionForm);
+      await consultationAPI.createPrescription(prescriptionData);
       $q.notify({
         type: 'positive',
         message: 'Prescription added successfully',

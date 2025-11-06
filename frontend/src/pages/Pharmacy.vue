@@ -610,6 +610,19 @@
               hint="Start typing to search for medications"
               :rules="[(val) => !!val || 'Please select a medication']"
             >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.item_name || scope.opt.product_name || scope.opt.service_name }}</q-item-label>
+                    <q-item-label v-if="scope.opt.formulation" caption class="text-grey-7">
+                      Formulation: {{ scope.opt.formulation }}
+                    </q-item-label>
+                    <q-item-label v-if="scope.opt.item_code || scope.opt.medication_code" caption class="text-grey-6">
+                      Code: {{ scope.opt.item_code || scope.opt.medication_code }}
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
               <template v-slot:no-option>
                 <q-item>
                   <q-item-section class="text-grey">
@@ -705,6 +718,19 @@
               hint="Start typing to search for medications"
               :rules="[(val) => !!val || 'Please select a medication']"
             >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.item_name || scope.opt.product_name || scope.opt.service_name }}</q-item-label>
+                    <q-item-label v-if="scope.opt.formulation" caption class="text-grey-7">
+                      Formulation: {{ scope.opt.formulation }}
+                    </q-item-label>
+                    <q-item-label v-if="scope.opt.item_code || scope.opt.medication_code" caption class="text-grey-6">
+                      Code: {{ scope.opt.item_code || scope.opt.medication_code }}
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
               <template v-slot:no-option>
                 <q-item>
                   <q-item-section class="text-grey">
@@ -1767,6 +1793,8 @@ const confirmPrescription = (prescription) => {
   }
   
   // Populate form with current prescription data
+  // If quantity is 0 (from doctor), set to 1 as default for pharmacy to edit
+  const defaultQuantity = prescription.quantity && prescription.quantity > 0 ? prescription.quantity : 1;
   confirmForm.value = {
     id: prescription.id,
     medicine_name: prescription.medicine_name,
@@ -1774,7 +1802,7 @@ const confirmPrescription = (prescription) => {
     dose: prescription.dose || '',
     frequency: prescription.frequency || '',
     duration: prescription.duration || '',
-    quantity: prescription.quantity || 1,
+    quantity: defaultQuantity,
     instructions: prescription.instructions || '',
     is_external: false, // Reset to false when opening dialog
   };
@@ -2082,7 +2110,11 @@ const onMedicationSelected = (medicationCode) => {
   
   if (selected) {
     const code = selected.item_code || selected.medication_code || '';
-    const name = selected.item_name || selected.medication_name || selected.product_name || selected.service_name || '';
+    // Include formulation in the name if available
+    let name = selected.item_name || selected.medication_name || selected.product_name || selected.service_name || '';
+    if (selected.formulation) {
+      name = `${name} (${selected.formulation})`;
+    }
     
     // Update the active form (check which dialog is open)
     if (showAddPrescriptionDialog.value) {
@@ -2528,9 +2560,9 @@ const buildReceiptHtml = async () => {
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
     <title>Pharmacy Bill Card</title>
     <style>
-      /* Force 75mm thermal size for print & PDF */
-      @page { size: 75mm auto; margin: 2mm; }
-      html, body { width: 75mm; margin: 0; padding: 0; }
+      /* Force 70mm thermal size for print & PDF */
+      @page { size: 70mm auto; margin: 2mm; }
+      html, body { width: 70mm; margin: 0; padding: 0; }
       body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .center { text-align: center; }
       .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
@@ -2539,8 +2571,8 @@ const buildReceiptHtml = async () => {
       .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
       .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
       .sec { margin: 6px 0; }
-      .lbl { display: inline-block; min-width: 32mm; }
-      .val { float: right; max-width: 33mm; text-align: right; }
+      .lbl { display: inline-block; min-width: 30mm; }
+      .val { float: right; max-width: 30mm; text-align: right; }
       .clearfix { clear: both; }
       .item { border-top: 1px dashed #000; padding: 4px 0; }
       .i1 { font-weight: bold; }
@@ -2551,7 +2583,7 @@ const buildReceiptHtml = async () => {
       .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
       .dispenser { margin-bottom: 4px; }
       /* On screen, center the receipt for a visual preview */
-      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 75mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 70mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
       @media print { .preview-wrap { box-shadow: none; padding: 0; } }
     </style>
   </head>
@@ -2674,9 +2706,9 @@ const buildExternalPrescriptionHtml = async () => {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>External Prescription</title>
     <style>
-      /* Force 75mm thermal size for print & PDF */
-      @page { size: 75mm auto; margin: 2mm; }
-      html, body { width: 75mm; margin: 0; padding: 0; }
+      /* Force 70mm thermal size for print & PDF */
+      @page { size: 70mm auto; margin: 2mm; }
+      html, body { width: 70mm; margin: 0; padding: 0; }
       body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .center { text-align: center; }
       .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
@@ -2685,8 +2717,8 @@ const buildExternalPrescriptionHtml = async () => {
       .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
       .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
       .sec { margin: 6px 0; }
-      .lbl { display: inline-block; min-width: 32mm; }
-      .val { float: right; max-width: 33mm; text-align: right; }
+      .lbl { display: inline-block; min-width: 30mm; }
+      .val { float: right; max-width: 30mm; text-align: right; }
       .clearfix { clear: both; }
       .item { border-top: 1px dashed #000; padding: 4px 0; }
       .i1 { font-weight: bold; }
@@ -2696,7 +2728,7 @@ const buildExternalPrescriptionHtml = async () => {
       .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
       .external-badge { background: #ff9800; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; }
       /* On screen, center the receipt for a visual preview */
-      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 75mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 70mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
       @media print { .preview-wrap { box-shadow: none; padding: 0; } }
     </style>
   </head>

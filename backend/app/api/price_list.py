@@ -379,6 +379,11 @@ def search_price_items_endpoint(
             # For products: insured patients pay Co-Payment if available, otherwise Base Rate
             co_payment = nhia_claim_co_payment if nhia_claim_co_payment is not None else cash_price
             
+            # Build product name with formulation if available
+            product_name_with_formulation = item.product_name
+            if item.formulation:
+                product_name_with_formulation = f"{item.product_name} ({item.formulation})"
+            
             result_item = {
                 "id": item.id,
                 "file_type": type_name,
@@ -399,10 +404,10 @@ def search_price_items_endpoint(
                 "is_active": item.is_active,  # Include is_active field
                 # For backward compatibility with billing page
                 "g_drg_code": item.medication_code,  # Map medication_code to g_drg_code
-                "service_name": item.product_name,  # Map product_name to service_name
+                "service_name": product_name_with_formulation,  # Map product_name with formulation to service_name
                 "service_type": item.sub_category_1 or item.sub_category_2,  # Use sub_category as service_type
                 "item_code": item.medication_code,
-                "item_name": item.product_name,
+                "item_name": product_name_with_formulation,  # Include formulation in item_name
                 "category": item.sub_category_1 or item.sub_category_2 or type_name,
                 "cash_price": cash_price,
                 "insured_price": co_payment,  # Products: Co-Payment for insured if available, else Base Rate
