@@ -402,7 +402,7 @@
                   :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null"
                 />
               <q-btn
-                  v-else-if="props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
+                  v-if="props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
                   size="sm"
                   color="warning"
                   icon="undo"
@@ -414,7 +414,7 @@
                   <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
                 </q-btn>
                 <q-btn
-                  v-else-if="!props.row.is_dispensed && !props.row.is_external"
+                  v-if="!props.row.is_dispensed && !props.row.is_external"
                   size="sm"
                   color="positive"
                   label="Dispense"
