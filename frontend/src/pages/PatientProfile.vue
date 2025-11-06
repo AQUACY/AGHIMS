@@ -236,7 +236,7 @@
                   />
                   <!-- Pharmacy: Go to Pharmacy -->
                   <q-btn
-                    v-if="canAccess(['Pharmacy', 'Admin'])"
+                    v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Admin'])"
                     size="sm"
                     color="purple"
                     icon="medication"

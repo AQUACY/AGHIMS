@@ -309,8 +309,8 @@ const router = useRouter();
 const billingStore = useBillingStore();
 const authStore = useAuthStore();
 
-// Check if user is admin
-if (authStore.userRole !== 'Admin') {
+// Check if user is admin or pharmacy head
+if (!authStore.canAccess(['Admin', 'Pharmacy Head'])) {
   router.push('/dashboard');
 }
 

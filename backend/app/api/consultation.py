@@ -316,7 +316,7 @@ def delete_diagnosis(
 def create_prescription(
     prescription_data: PrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "Pharmacy Head", "PA"]))
 ):
     """Add a prescription to an encounter"""
     try:
@@ -524,7 +524,7 @@ def dispense_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
 ):
     """Mark a prescription as dispensed - only allowed if bill is paid or bill amount is 0"""
     from app.models.bill import Bill, BillItem, ReceiptItem, Receipt
@@ -592,7 +592,7 @@ def confirm_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
 ):
     """Confirm a prescription (allows pharmacy to update details) and automatically generate a bill item"""
     from app.models.bill import Bill, BillItem
@@ -738,11 +738,99 @@ def confirm_prescription(
     return add_prescriber_info_to_response(prescription, db)
 
 
+@router.put("/prescription/{prescription_id}/unconfirm", response_model=PrescriptionResponse)
+def unconfirm_prescription(
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Revert a confirmed prescription back to pending status (undo confirmation)"""
+    from app.models.bill import Bill, BillItem
+    
+    prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    if prescription.confirmed_by is None:
+        raise HTTPException(status_code=400, detail="Prescription has not been confirmed")
+    
+    # Prevent unconfirming if prescription has been dispensed
+    if prescription.dispensed_by is not None:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot revert a prescription that has already been dispensed. Please return it first."
+        )
+    
+    # Prevent unconfirming external prescriptions
+    is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    if is_external:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot revert external prescriptions. They are automatically confirmed and not billed."
+        )
+    
+    # Find and remove the bill item that was created during confirmation
+    # Find all unpaid bills for this encounter
+    encounter = db.query(Encounter).filter(Encounter.id == prescription.encounter_id).first()
+    if encounter:
+        unpaid_bills = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False
+        ).all()
+        
+        for bill in unpaid_bills:
+            # Find the bill item for this prescription
+            bill_item = db.query(BillItem).filter(
+                BillItem.bill_id == bill.id,
+                BillItem.item_code == prescription.medicine_code,
+                BillItem.item_name.like(f"%{prescription.medicine_name}%")
+            ).first()
+            
+            if bill_item:
+                # Check if this bill item has been paid (has receipts)
+                # If the bill item has any payments, we can't remove it
+                from app.models.bill import Receipt, ReceiptItem
+                receipt_items = db.query(ReceiptItem).join(Receipt).filter(
+                    Receipt.bill_id == bill.id,
+                    ReceiptItem.bill_item_id == bill_item.id
+                ).all()
+                
+                if receipt_items:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot revert prescription. The bill item has already been paid. Please refund the payment first."
+                    )
+                
+                # Remove the bill item and update bill total
+                bill.total_amount -= bill_item.total_price
+                if bill.total_amount < 0:
+                    bill.total_amount = 0
+                
+                db.delete(bill_item)
+                
+                # If bill has no items left and total is 0, we can optionally delete the bill
+                # But for now, we'll just leave it with 0 total
+                remaining_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).count()
+                if remaining_items == 0 and bill.total_amount == 0:
+                    # Optionally delete empty bill, but for now we'll keep it
+                    pass
+                
+                break  # Found and removed the bill item, exit loop
+    
+    # Revert prescription confirmation
+    prescription.confirmed_by = None
+    prescription.confirmed_at = None
+    
+    db.commit()
+    db.refresh(prescription)
+    return add_prescriber_info_to_response(prescription, db)
+
+
 @router.put("/prescription/{prescription_id}/return", response_model=PrescriptionResponse)
 def return_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
 ):
     """Return a dispensed prescription (undo dispense - patient couldn't pay)"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()

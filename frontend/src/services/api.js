@@ -165,6 +165,9 @@ export const consultationAPI = {
     // Send empty object if data is null to ensure request body is sent
     return api.put(`/consultation/prescription/${prescriptionId}/confirm`, data || {});
   },
+  unconfirmPrescription: (prescriptionId) => {
+    return api.put(`/consultation/prescription/${prescriptionId}/unconfirm`);
+  },
   dispensePrescription: (prescriptionId, data = null) => 
     api.put(`/consultation/prescription/${prescriptionId}/dispense`, data),
   returnPrescription: (prescriptionId) => 

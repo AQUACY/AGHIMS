@@ -399,8 +399,20 @@
                   label="Confirm"
                   @click="confirmPrescription(props.row)"
                   :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null"
                 />
+              <q-btn
+                  v-else-if="props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
+                  size="sm"
+                  color="warning"
+                  icon="undo"
+                  label="Revert"
+                  @click="unconfirmPrescription(props.row)"
+                  :loading="unconfirmingId === props.row.id"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null"
+                >
+                  <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
+                </q-btn>
                 <q-btn
                   v-else-if="!props.row.is_dispensed && !props.row.is_external"
                   size="sm"
@@ -1098,6 +1110,7 @@ const loadingPrescriptions = ref(false);
 const dispensingId = ref(null);
 const returningId = ref(null);
 const confirmingId = ref(null);
+const unconfirmingId = ref(null);
 const deletingId = ref(null);
 const confirmingMultiple = ref(false);
 const updatingPrescriptionId = ref(null);
@@ -1950,6 +1963,41 @@ const confirmDispense = async () => {
   }
 };
 
+const unconfirmPrescription = async (prescription) => {
+  $q.dialog({
+    title: 'Revert Prescription',
+    message: `Revert ${prescription.medicine_name} back to pending? This will undo the confirmation and remove it from the bill.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    unconfirmingId.value = prescription.id;
+    try {
+      console.log('Unconfirming prescription:', prescription.id);
+      const response = await consultationAPI.unconfirmPrescription(prescription.id);
+      console.log('Unconfirm response:', response);
+      $q.notify({
+        type: 'positive',
+        message: 'Prescription reverted to pending successfully',
+        position: 'top',
+      });
+      // Reload prescriptions and recalculate costs
+      await loadPrescriptions();
+      await calculateAllPrescriptionPrices();
+      await calculatePrescriptionCosts();
+    } catch (error) {
+      console.error('Unconfirm error:', error);
+      console.error('Error response:', error.response);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || error.message || 'Failed to revert prescription',
+        position: 'top',
+      });
+    } finally {
+      unconfirmingId.value = null;
+    }
+  });
+};
+
 const returnPrescription = async (prescription) => {
   $q.dialog({
     title: 'Return Prescription',
@@ -2307,35 +2355,71 @@ const loadStaff = async () => {
 // Returns co-payment if insured (has CCC), otherwise base_rate
 // If nhia_claim_co_payment is null for insured, returns 0 (free for patient)
 const getMedicationPrice = async (medicineCode, isInsured = false) => {
+  if (!medicineCode) {
+    console.warn('getMedicationPrice: No medicine code provided');
+    return 0;
+  }
+  
   try {
-    const response = await priceListAPI.search(medicineCode, 'Pharmacy', 'product');
+    console.log(`getMedicationPrice: Searching for code="${medicineCode}", isInsured=${isInsured}`);
+    
+    // Search for products without service_type filter (products aren't tied to service types)
+    // Products are filtered by sub_category, but we want to search all products
+    const response = await priceListAPI.search(medicineCode, null, 'product');
     const items = response.data || [];
+    
+    console.log(`getMedicationPrice: Found ${items.length} items for code="${medicineCode}"`);
+    
     if (items.length > 0) {
-      // Get the first matching item
-      const item = items.find(i => 
+      // Try to find exact match first
+      let item = items.find(i => 
         (i.item_code || i.medication_code) === medicineCode ||
         (i.product_code || i.product_id) === medicineCode
-      ) || items[0];
+      );
+      
+      // If no exact match, use first item
+      if (!item) {
+        console.warn(`getMedicationPrice: No exact match for code="${medicineCode}", using first result`);
+        item = items[0];
+      }
+      
+      console.log(`getMedicationPrice: Using item:`, {
+        medication_code: item.medication_code || item.item_code,
+        product_name: item.product_name || item.item_name,
+        base_rate: item.base_rate,
+        nhia_claim_co_payment: item.nhia_claim_co_payment,
+        isInsured
+      });
       
       // If insured (has CCC), return co-payment (null means 0 - free for patient)
       if (isInsured) {
         if (item.nhia_claim_co_payment !== null && item.nhia_claim_co_payment !== undefined) {
-          return item.nhia_claim_co_payment || 0;
+          const price = item.nhia_claim_co_payment || 0;
+          console.log(`getMedicationPrice: Returning co-payment: ${price}`);
+          return price;
         }
         // If co_payment field exists, use it
         if (item.co_payment !== null && item.co_payment !== undefined) {
-          return item.co_payment || 0;
+          const price = item.co_payment || 0;
+          console.log(`getMedicationPrice: Returning co_payment: ${price}`);
+          return price;
         }
         // If null/undefined, patient pays 0
+        console.log('getMedicationPrice: No co-payment found, returning 0 for insured patient');
         return 0;
       } else {
         // Non-insured: use base_rate
-        return item.base_rate || item.unit_cost || 0;
+        const price = item.base_rate || item.unit_cost || item.cash_price || 0;
+        console.log(`getMedicationPrice: Returning base_rate: ${price}`);
+        return price;
       }
     }
+    
+    console.warn(`getMedicationPrice: No items found for code="${medicineCode}"`);
     return 0;
   } catch (error) {
     console.error('Failed to get medication price:', error);
+    console.error('Error details:', error.response?.data || error.message);
     return 0;
   }
 };

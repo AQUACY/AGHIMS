@@ -1490,6 +1490,7 @@ const loadEncountersForDate = async () => {
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || 'Failed to load encounters',
+      position: 'top',
     });
     encountersList.value = [];
   } finally {
@@ -1971,6 +1972,7 @@ const loadEncounter = async () => {
     $q.notify({
       type: 'warning',
       message: 'Please enter an encounter ID',
+      position: 'top',
     });
     return;
   }
@@ -2104,20 +2106,22 @@ const saveConsultationNotes = async () => {
     clearDraft('presenting_complaints');
     clearDraft('doctor_notes');
     
-    $q.notify({
-      type: 'positive',
-      message: 'Consultation notes saved successfully',
-    });
+      $q.notify({
+        type: 'positive',
+        message: 'Consultation notes saved successfully',
+        position: 'top',
+      });
     await loadConsultationNotes();
     editPresentingComplaints.value = false;
     editDoctorNotes.value = false;
     editFollowUpDate.value = false;
   } catch (error) {
     console.error('Error saving consultation notes:', error);
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Failed to save consultation notes',
-    });
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to save consultation notes',
+        position: 'top',
+      });
   }
 };
 
@@ -2443,6 +2447,7 @@ const saveDiagnosis = async () => {
       $q.notify({
         type: 'positive',
         message: 'Diagnosis updated successfully',
+        position: 'top',
       });
     } else {
       // Create new diagnosis
@@ -2450,6 +2455,7 @@ const saveDiagnosis = async () => {
       $q.notify({
         type: 'positive',
         message: 'Diagnosis added successfully',
+        position: 'top',
       });
     }
     
@@ -2460,6 +2466,7 @@ const saveDiagnosis = async () => {
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || (editingDiagnosisId.value ? 'Failed to update diagnosis' : 'Failed to add diagnosis'),
+      position: 'top',
     });
   }
 };
@@ -2476,12 +2483,14 @@ const deleteDiagnosis = (diagnosis) => {
       $q.notify({
         type: 'positive',
         message: 'Diagnosis deleted successfully',
+        position: 'top',
       });
     await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
     } catch (error) {
       $q.notify({
         type: 'negative',
         message: error.response?.data?.detail || 'Failed to delete diagnosis',
+        position: 'top',
       });
     }
   });
@@ -2613,6 +2622,7 @@ const savePrescription = async () => {
       $q.notify({
         type: 'positive',
         message: 'Prescription updated successfully',
+        position: 'top',
       });
     } else {
       // Create new prescription
@@ -2620,6 +2630,7 @@ const savePrescription = async () => {
       $q.notify({
         type: 'positive',
         message: 'Prescription added successfully',
+        position: 'top',
       });
     }
     
@@ -2630,6 +2641,7 @@ const savePrescription = async () => {
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || (editingPrescriptionId.value ? 'Failed to update prescription' : 'Failed to add prescription'),
+      position: 'top',
     });
   }
 };
@@ -2657,12 +2669,14 @@ const deletePrescription = (prescription) => {
       $q.notify({
         type: 'positive',
         message: 'Prescription deleted successfully',
+        position: 'top',
       });
       await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
     } catch (error) {
       $q.notify({
         type: 'negative',
         message: error.response?.data?.detail || 'Failed to delete prescription',
+        position: 'top',
       });
     }
   });
@@ -2714,6 +2728,7 @@ const onServiceTypeSelected = async (serviceType) => {
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || 'Failed to load procedures',
+      position: 'top',
     });
     allProcedures.value = [];
     procedureOptions.value = [];
@@ -2840,6 +2855,7 @@ const saveInvestigation = async () => {
     $q.notify({
       type: 'warning',
       message: 'Please select a procedure',
+      position: 'top',
     });
     return;
   }
@@ -2851,6 +2867,7 @@ const saveInvestigation = async () => {
       $q.notify({
         type: 'positive',
         message: 'Investigation updated successfully',
+        position: 'top',
       });
     } else {
       // Create new investigation
@@ -2858,6 +2875,7 @@ const saveInvestigation = async () => {
       $q.notify({
         type: 'positive',
         message: 'Investigation added successfully',
+        position: 'top',
       });
     }
     
@@ -2869,6 +2887,7 @@ const saveInvestigation = async () => {
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || (editingInvestigationId.value ? 'Failed to update investigation' : 'Failed to add investigation'),
+      position: 'top',
     });
   }
 };
@@ -2911,12 +2930,14 @@ const cancelInvestigation = (investigation) => {
       $q.notify({
         type: 'positive',
         message: 'Investigation cancelled successfully',
+        position: 'top',
       });
       await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
     } catch (error) {
       $q.notify({
         type: 'negative',
         message: error.response?.data?.detail || 'Failed to cancel investigation',
+        position: 'top',
       });
     }
   });
@@ -2944,12 +2965,14 @@ const deleteInvestigation = (investigation) => {
       $q.notify({
         type: 'positive',
         message: 'Investigation deleted successfully',
+        position: 'top',
       });
       await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
     } catch (error) {
       $q.notify({
         type: 'negative',
         message: error.response?.data?.detail || 'Failed to delete investigation',
+        position: 'top',
       });
     }
   });
@@ -2979,6 +3002,7 @@ const viewInvestigationResults = async (investigation) => {
         $q.notify({
           type: 'warning',
           message: 'Unknown investigation type',
+          position: 'top',
         });
         return;
     }
@@ -2992,6 +3016,7 @@ const viewInvestigationResults = async (investigation) => {
       $q.notify({
         type: 'warning',
         message: 'Failed to load results. Results may not be available yet.',
+        position: 'top',
       });
     }
   } finally {
@@ -3004,6 +3029,7 @@ const downloadInvestigationAttachment = async () => {
     $q.notify({
       type: 'warning',
       message: 'No attachment available to download',
+      position: 'top',
     });
     return;
   }
@@ -3026,6 +3052,7 @@ const downloadInvestigationAttachment = async () => {
         $q.notify({
           type: 'warning',
           message: 'Unknown investigation type',
+          position: 'top',
         });
         return;
     }
@@ -3062,12 +3089,14 @@ const downloadInvestigationAttachment = async () => {
     $q.notify({
       type: 'positive',
       message: 'File downloaded successfully',
+      position: 'top',
     });
   } catch (error) {
     console.error('Download error:', error);
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || 'Failed to download attachment',
+      position: 'top',
     });
   }
 };
@@ -3094,7 +3123,8 @@ const finalizeConsultation = () => {
     if (!encounterStore.encounterDiagnoses || encounterStore.encounterDiagnoses.length === 0) {
       $q.notify({ 
         type: 'negative', 
-        message: 'Cannot finalize consultation. At least one diagnosis is required.' 
+        message: 'Cannot finalize consultation. At least one diagnosis is required.',
+        position: 'top',
       });
       return;
     }
@@ -3104,7 +3134,8 @@ const finalizeConsultation = () => {
     if (!outcomeVal) {
       $q.notify({ 
         type: 'negative', 
-        message: 'Cannot finalize consultation. Consultation outcome is required.' 
+        message: 'Cannot finalize consultation. Consultation outcome is required.',
+        position: 'top',
       });
       return;
     }
@@ -3114,7 +3145,8 @@ const finalizeConsultation = () => {
     if (!followUpDate) {
       $q.notify({ 
         type: 'negative', 
-        message: 'Cannot finalize consultation. Follow-up date is required.' 
+        message: 'Cannot finalize consultation. Follow-up date is required.',
+        position: 'top',
       });
       return;
     }
@@ -3177,11 +3209,12 @@ const updateConsultation = async () => {
     $q.notify({
       type: 'positive',
       message: 'Consultation updated successfully',
+      position: 'top',
     });
     await encounterStore.loadEncounter(encounterStore.currentEncounter.id);
   } catch (error) {
     console.error('Failed to update consultation:', error);
-    $q.notify({ type: 'negative', message: error.response?.data?.detail || 'Failed to update consultation' });
+    $q.notify({ type: 'negative', message: error.response?.data?.detail || 'Failed to update consultation', position: 'top' });
   }
 };
 
@@ -3191,11 +3224,11 @@ const saveDraftAndAwaitServices = async () => {
     await saveConsultationNotes();
     // Move encounter to awaiting_services
     await encounterStore.updateStatus(encounterStore.currentEncounter.id, 'awaiting_services');
-    $q.notify({ type: 'positive', message: 'Saved and moved to Awaiting Services' });
+    $q.notify({ type: 'positive', message: 'Saved and moved to Awaiting Services', position: 'top' });
     await encounterStore.loadEncounter(encounterStore.currentEncounter.id);
   } catch (error) {
     console.error('Failed to move to awaiting services:', error);
-    $q.notify({ type: 'negative', message: error.response?.data?.detail || 'Failed to update status' });
+    $q.notify({ type: 'negative', message: error.response?.data?.detail || 'Failed to update status', position: 'top' });
   }
 };
 
@@ -3609,7 +3642,7 @@ watch(showVitalsGraphDialog, (isOpen) => {
 const usePreviousDiagnosis = (previousDiagnosis) => {
   try {
     if (!encounterStore.currentEncounter?.id) {
-      $q.notify({ type: 'warning', message: 'Please load an encounter first' });
+      $q.notify({ type: 'warning', message: 'Please load an encounter first', position: 'top' });
       return;
     }
     
@@ -3631,18 +3664,19 @@ const usePreviousDiagnosis = (previousDiagnosis) => {
     $q.notify({
       type: 'info',
       message: 'Diagnosis form prefilled from previous entry',
-      timeout: 2000
+      timeout: 2000,
+      position: 'top',
     });
   } catch (error) {
     console.error('Error in usePreviousDiagnosis:', error);
-    $q.notify({ type: 'negative', message: 'Failed to prefill diagnosis form' });
+    $q.notify({ type: 'negative', message: 'Failed to prefill diagnosis form', position: 'top' });
   }
 };
 
 const usePreviousPrescription = (previousPrescription) => {
   try {
     if (!encounterStore.currentEncounter?.id) {
-      $q.notify({ type: 'warning', message: 'Please load an encounter first' });
+      $q.notify({ type: 'warning', message: 'Please load an encounter first', position: 'top' });
       return;
     }
     
@@ -3672,18 +3706,19 @@ const usePreviousPrescription = (previousPrescription) => {
     $q.notify({
       type: 'info',
       message: 'Prescription form prefilled from previous entry',
-      timeout: 2000
+      timeout: 2000,
+      position: 'top',
     });
   } catch (error) {
     console.error('Error in usePreviousPrescription:', error);
-    $q.notify({ type: 'negative', message: 'Failed to prefill prescription form' });
+    $q.notify({ type: 'negative', message: 'Failed to prefill prescription form', position: 'top' });
   }
 };
 
 // Functions to load previous data
 const showPreviousVitals = async () => {
   if (!encounterStore.currentEncounter?.patient_id) {
-    $q.notify({ type: 'warning', message: 'Patient information not available' });
+    $q.notify({ type: 'warning', message: 'Patient information not available', position: 'top' });
     return;
   }
   
@@ -3715,7 +3750,7 @@ const showPreviousVitals = async () => {
     previousVitals.value = vitalsResults.filter(v => v !== null).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   } catch (error) {
     console.error('Failed to load previous vitals:', error);
-    $q.notify({ type: 'negative', message: 'Failed to load previous vitals' });
+    $q.notify({ type: 'negative', message: 'Failed to load previous vitals', position: 'top' });
   } finally {
     loadingPreviousVitals.value = false;
   }
@@ -3723,7 +3758,7 @@ const showPreviousVitals = async () => {
 
 const showPreviousComplaints = async () => {
   if (!encounterStore.currentEncounter?.patient_id) {
-    $q.notify({ type: 'warning', message: 'Patient information not available' });
+    $q.notify({ type: 'warning', message: 'Patient information not available', position: 'top' });
     return;
   }
   
@@ -3757,7 +3792,7 @@ const showPreviousComplaints = async () => {
     previousComplaints.value = complaintsResults.filter(c => c !== null).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   } catch (error) {
     console.error('Failed to load previous complaints:', error);
-    $q.notify({ type: 'negative', message: 'Failed to load previous complaints' });
+    $q.notify({ type: 'negative', message: 'Failed to load previous complaints', position: 'top' });
   } finally {
     loadingPreviousComplaints.value = false;
   }
@@ -3765,7 +3800,7 @@ const showPreviousComplaints = async () => {
 
 const showPreviousDiagnoses = async () => {
   if (!encounterStore.currentEncounter?.patient_id) {
-    $q.notify({ type: 'warning', message: 'Patient information not available' });
+    $q.notify({ type: 'warning', message: 'Patient information not available', position: 'top' });
     return;
   }
   
@@ -3799,7 +3834,7 @@ const showPreviousDiagnoses = async () => {
     previousDiagnoses.value = diagnosesResults.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   } catch (error) {
     console.error('Failed to load previous diagnoses:', error);
-    $q.notify({ type: 'negative', message: 'Failed to load previous diagnoses' });
+    $q.notify({ type: 'negative', message: 'Failed to load previous diagnoses', position: 'top' });
   } finally {
     loadingPreviousDiagnoses.value = false;
   }
@@ -3807,7 +3842,7 @@ const showPreviousDiagnoses = async () => {
 
 const showPreviousPrescriptions = async () => {
   if (!encounterStore.currentEncounter?.patient_id) {
-    $q.notify({ type: 'warning', message: 'Patient information not available' });
+    $q.notify({ type: 'warning', message: 'Patient information not available', position: 'top' });
     return;
   }
   
@@ -3841,7 +3876,7 @@ const showPreviousPrescriptions = async () => {
     previousPrescriptions.value = prescriptionsResults.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   } catch (error) {
     console.error('Failed to load previous prescriptions:', error);
-    $q.notify({ type: 'negative', message: 'Failed to load previous prescriptions' });
+    $q.notify({ type: 'negative', message: 'Failed to load previous prescriptions', position: 'top' });
   } finally {
     loadingPreviousPrescriptions.value = false;
   }
@@ -3849,7 +3884,7 @@ const showPreviousPrescriptions = async () => {
 
 const showPreviousInvestigations = async () => {
   if (!encounterStore.currentEncounter?.patient_id) {
-    $q.notify({ type: 'warning', message: 'Patient information not available' });
+    $q.notify({ type: 'warning', message: 'Patient information not available', position: 'top' });
     return;
   }
   
@@ -3883,7 +3918,7 @@ const showPreviousInvestigations = async () => {
     previousInvestigations.value = investigationsResults.flat().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   } catch (error) {
     console.error('Failed to load previous investigations:', error);
-    $q.notify({ type: 'negative', message: 'Failed to load previous investigations' });
+    $q.notify({ type: 'negative', message: 'Failed to load previous investigations', position: 'top' });
   } finally {
     loadingPreviousInvestigations.value = false;
   }

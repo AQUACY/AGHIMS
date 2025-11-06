@@ -261,7 +261,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Pharmacy', 'Admin'])"
+          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Pharmacy' }"
@@ -357,7 +357,7 @@
         </q-item>
 
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin', 'Pharmacy Head'])"
           clickable
           v-ripple
           :to="{ name: 'PriceListManagement' }"

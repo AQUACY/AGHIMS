@@ -6,7 +6,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from fastapi import UploadFile
-from typing import List, Dict
+from typing import List, Dict, Optional
 from app.models.procedure_price import ProcedurePrice
 from app.models.surgery_price import SurgeryPrice
 from app.models.product_price import ProductPrice
@@ -650,7 +650,7 @@ def upload_unmapped_drg_prices(db: Session, items: List[Dict]):
     db.commit()
 
 
-def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = False) -> float:
+def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = False, service_type: Optional[str] = None) -> float:
     """
     Get price for an item code from any price list table based on insurance status
     
@@ -660,20 +660,48 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
     For products (drugs):
     - Insured clients: Returns top-up amount (nhia_claim_co_payment), or 0 if null
     - Non-insured clients: Returns base_rate
+    
+    Args:
+        db: Database session
+        item_code: G-DRG code or medication code
+        is_insured: Whether the patient is insured
+        service_type: Optional service type (department/clinic) to filter by for procedures
     """
-    print(f"DEBUG get_price_from_all_tables: item_code='{item_code}', is_insured={is_insured}")
+    print(f"DEBUG get_price_from_all_tables: item_code='{item_code}', is_insured={is_insured}, service_type='{service_type}'")
     
     # Search in procedure, surgery, and unmapped_drg tables (use g_drg_code)
+    # If service_type is provided, filter by it to get the correct price for that department/clinic
+    procedure_query = db.query(ProcedurePrice).filter(
+        ProcedurePrice.g_drg_code == item_code,
+        ProcedurePrice.is_active == True
+    )
+    if service_type:
+        procedure_query = procedure_query.filter(ProcedurePrice.service_type == service_type)
+    
+    surgery_query = db.query(SurgeryPrice).filter(
+        SurgeryPrice.g_drg_code == item_code,
+        SurgeryPrice.is_active == True
+    )
+    if service_type:
+        surgery_query = surgery_query.filter(SurgeryPrice.service_type == service_type)
+    
+    unmapped_query = db.query(UnmappedDRGPrice).filter(
+        UnmappedDRGPrice.g_drg_code == item_code,
+        UnmappedDRGPrice.is_active == True
+    )
+    if service_type:
+        unmapped_query = unmapped_query.filter(UnmappedDRGPrice.service_type == service_type)
+    
     tables = [
-        ("ProcedurePrice", db.query(ProcedurePrice).filter(ProcedurePrice.g_drg_code == item_code, ProcedurePrice.is_active == True)),
-        ("SurgeryPrice", db.query(SurgeryPrice).filter(SurgeryPrice.g_drg_code == item_code, SurgeryPrice.is_active == True)),
-        ("UnmappedDRGPrice", db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.g_drg_code == item_code, UnmappedDRGPrice.is_active == True)),
+        ("ProcedurePrice", procedure_query),
+        ("SurgeryPrice", surgery_query),
+        ("UnmappedDRGPrice", unmapped_query),
     ]
     
     for table_name, query in tables:
         item = query.first()
         if item:
-            print(f"DEBUG: Found item in {table_name} table")
+            print(f"DEBUG: Found item in {table_name} table with service_type='{service_type}'")
             if is_insured:
                 # For insured patients: use Co-Payment (top-up amount)
                 # If Co-Payment is not available, fall back to Base Rate
@@ -688,6 +716,30 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
                 # For cash patients: use Base Rate
                 print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
                 return float(item.base_rate)
+    
+    # If service_type was provided but no match found, try without service_type filter as fallback
+    if service_type:
+        print(f"DEBUG: No match found with service_type='{service_type}', trying without service_type filter")
+        fallback_tables = [
+            ("ProcedurePrice", db.query(ProcedurePrice).filter(ProcedurePrice.g_drg_code == item_code, ProcedurePrice.is_active == True)),
+            ("SurgeryPrice", db.query(SurgeryPrice).filter(SurgeryPrice.g_drg_code == item_code, SurgeryPrice.is_active == True)),
+            ("UnmappedDRGPrice", db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.g_drg_code == item_code, UnmappedDRGPrice.is_active == True)),
+        ]
+        
+        for table_name, query in fallback_tables:
+            item = query.first()
+            if item:
+                print(f"DEBUG: Found item in {table_name} table (without service_type filter)")
+                if is_insured:
+                    if item.nhia_claim_co_payment is not None:
+                        print(f"DEBUG: Returning co-payment from {table_name}: {item.nhia_claim_co_payment}")
+                        return float(item.nhia_claim_co_payment)
+                    else:
+                        print(f"DEBUG: No co-payment, returning base_rate from {table_name}: {item.base_rate}")
+                        return float(item.base_rate)
+                else:
+                    print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
+                    return float(item.base_rate)
     
     print(f"DEBUG: Item not found in procedure/surgery/unmapped_drg tables, checking ProductPrice table")
     

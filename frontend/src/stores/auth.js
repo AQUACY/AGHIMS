@@ -13,8 +13,27 @@ export const useAuthStore = defineStore('auth', {
     userRole: (state) => state.user?.role || null,
     userName: (state) => state.user?.full_name || state.user?.username || null,
     canAccess: (state) => (roles) => {
-      if (!state.user) return false;
-      return roles.includes(state.user.role) || state.user.role === 'Admin';
+      if (!state.user) {
+        console.warn('canAccess: No user in state');
+        return false;
+      }
+      const userRole = state.user.role;
+      // Trim whitespace and compare (handles any whitespace issues)
+      const normalizedUserRole = userRole ? userRole.trim() : '';
+      const normalizedRoles = roles.map(r => r ? r.trim() : '');
+      const hasAccess = normalizedRoles.includes(normalizedUserRole) || normalizedUserRole === 'Admin';
+      if (!hasAccess) {
+        console.warn('canAccess: Access denied', {
+          userRole,
+          normalizedUserRole,
+          allowedRoles: roles,
+          normalizedRoles,
+          rolesIncludes: normalizedRoles.includes(normalizedUserRole),
+          isAdmin: normalizedUserRole === 'Admin',
+          roleComparison: normalizedRoles.map(r => `"${r}" === "${normalizedUserRole}": ${r === normalizedUserRole}`)
+        });
+      }
+      return hasAccess;
     },
   },
 

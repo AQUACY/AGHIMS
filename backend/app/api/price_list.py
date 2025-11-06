@@ -44,9 +44,9 @@ def update_price_item(
     item_id: int,
     update: PriceItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head"]))
 ):
-    """Update a single price list item by type and id (Admin only)"""
+    """Update a single price list item by type and id (Admin and Pharmacy Head only)"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
     if file_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid file_type. Must be one of: {', '.join(valid_types)}")
@@ -312,7 +312,7 @@ async def upload_price_list_file(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head"]))
 ):
     """Upload Excel price list file by file type"""
     # Validate file type
@@ -363,7 +363,7 @@ def search_price_items_endpoint(
     service_type: Optional[str] = None,  # Service Type (department/clinic) filter
     file_type: Optional[str] = None,  # Filter by file type: procedure, surgery, product, unmapped_drg
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head"]))
 ):
     """Search price list items across all tables"""
     results = search_price_items_all_tables(db, search_term, service_type, file_type)
@@ -447,7 +447,7 @@ def search_price_items_endpoint(
 def get_procedures_by_service_type(
     service_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Lab", "Scan", "Xray", "Claims"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Scan", "Xray", "Claims"]))
 ):
     """Get procedures grouped by service type. If service_type is provided, returns array. Otherwise returns grouped object."""
     from sqlalchemy import func
@@ -516,7 +516,7 @@ def search_icd10_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Lab", "Scan", "Xray", "Claims"]))
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Scan", "Xray", "Claims"]))
 ):
     """Search ICD-10 codes"""
     from sqlalchemy import or_
@@ -587,7 +587,7 @@ def get_drg_codes_from_icd10(
 @router.get("/export/product/csv")
 def export_product_price_list_csv(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head"]))
 ):
     """Export product price list as CSV file"""
     # Query all product prices

@@ -332,7 +332,7 @@ def search_patient_by_ccc(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)  # Allow all authenticated users
 ):
-    """Search patients by CCC number (Ghana card/insurance number) - returns list of matches"""
+    """Search patients by CCC number, Ghana card number, or insurance ID - returns list of matches"""
     if not ccc_number or not ccc_number.strip():
         return []
     
@@ -346,18 +346,25 @@ def search_patient_by_ccc(
     search_term_upper = search_term.upper()
     
     try:
+        # Search in both ccc_number and insurance_id fields
+        # This allows searching by CCC number, Ghana card number, or NHIS insurance ID
         patients = db.query(Patient).filter(
-            func.upper(func.coalesce(Patient.ccc_number, '')).like(f"%{search_term_upper}%")
+            or_(
+                func.upper(func.coalesce(Patient.ccc_number, '')).like(f"%{search_term_upper}%"),
+                func.upper(func.coalesce(Patient.insurance_id, '')).like(f"%{search_term_upper}%")
+            )
         ).all()
         
         # Debug logging (remove in production)
-        print(f"CCC search term: '{search_term}', Upper: '{search_term_upper}', Found: {len(patients)} patients")
+        print(f"CCC/Insurance search term: '{search_term}', Upper: '{search_term_upper}', Found: {len(patients)} patients")
         
         # Ensure we always return a list, even if it's empty or has one item
         return list(patients) if patients else []
     except Exception as e:
         # Log the error and return empty list
-        print(f"Error in CCC number search: {e}")
+        print(f"Error in CCC/Insurance number search: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -594,8 +601,8 @@ def create_encounter(
                     if unmapped:
                         category = "drg"
             
-            # Get price for the procedure
-            unit_price = get_price_from_all_tables(db, procedure_g_drg_code, is_insured_encounter)
+            # Get price for the procedure - pass service_type to get the correct price for this department/clinic
+            unit_price = get_price_from_all_tables(db, procedure_g_drg_code, is_insured_encounter, service_type)
             
             # Always create bill when procedure is provided
             # If price is 0, still create bill with 0 amount (price may be added to price list later)

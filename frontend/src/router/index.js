@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { Notify } from 'quasar';
 
 const routes = [
   {
@@ -72,7 +73,7 @@ const routes = [
         path: '/pharmacy',
         name: 'Pharmacy',
         component: () => import('../pages/Pharmacy.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Admin'] },
       },
       {
         path: '/lab',
@@ -108,7 +109,7 @@ const routes = [
         path: '/admin/price-list',
         name: 'PriceListManagement',
         component: () => import('../pages/PriceListManagement.vue'),
-        meta: { requiresAuth: true, requiresRole: 'Admin' },
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Pharmacy Head'] },
       },
       {
         path: '/admin/staff',
@@ -164,6 +165,18 @@ router.beforeEach((to, from, next) => {
     } else if (to.meta.allowedRoles) {
       const canAccess = authStore.canAccess(to.meta.allowedRoles);
       if (!canAccess) {
+        console.warn('Access denied:', {
+          path: to.path,
+          userRole: authStore.userRole,
+          allowedRoles: to.meta.allowedRoles,
+          user: authStore.user
+        });
+        // Show notification and redirect to dashboard
+        Notify.create({
+          type: 'negative',
+          message: `Access denied. Your role (${authStore.userRole || 'Unknown'}) does not have permission to access this page. Required roles: ${to.meta.allowedRoles.join(', ')}`,
+          position: 'top',
+        });
         next('/');
       } else {
         next();
