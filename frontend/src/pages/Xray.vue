@@ -462,43 +462,109 @@ const isFinalized = computed(() => {
   return currentEncounter.value?.status === 'finalized';
 });
 
-const canAddResults = (investigation) => {
-  // Must be confirmed before adding results
-  if (investigation.status !== 'confirmed' && investigation.status !== 'completed') {
+const canAddResults = (row) => {
+  // Guard clause: check if row exists
+  if (!row) {
+    console.log('canAddResults: Row is undefined');
     return false;
   }
   
-  // Find bill item for this investigation
+  // If results already exist (row.id exists), always allow editing
+  if (row.id) {
+    console.log(`canAddResults: Results exist (id: ${row.id}), allowing edit`);
+    return true;
+  }
+  
+  // Handle both investigation objects (with id) and result objects (with investigation_id)
+  const investigationId = row.id || row.investigation_id;
+  if (!investigationId) {
+    console.log('canAddResults: Row is missing id or investigation_id', row);
+    return false;
+  }
+  
+  // Find the actual investigation object from investigations array
+  const investigation = investigations.value.find(inv => inv.id === investigationId);
+  if (!investigation) {
+    console.log(`canAddResults: Investigation ${investigationId} not found in investigations array`);
+    return false;
+  }
+  
+  // Must be confirmed before adding results
+  if (investigation.status !== 'confirmed' && investigation.status !== 'completed') {
+    console.log(`canAddResults: Investigation ${investigation.id} not confirmed/completed`);
+    return false;
+  }
+  
+  console.log(`canAddResults: Checking investigation ${investigation.id}`, {
+    gdrg_code: investigation.gdrg_code,
+    procedure_name: investigation.procedure_name,
+    total_bills: bills.value.length
+  });
+  
+  // Find bill item for this specific investigation
+  // Check ALL bills (paid or unpaid) to find the specific item for this service
   for (const bill of bills.value) {
-    // Skip paid bills entirely
-    if (bill.is_paid) continue;
-    
+    console.log(`canAddResults: Checking bill ${bill.id}, items: ${bill.bill_items?.length || 0}`);
     for (const billItem of bill.bill_items || []) {
       // Match by gdrg_code or procedure name
+      // Bill items for investigations are named like "Investigation: {procedure_name}"
       const matchesCode = billItem.item_code === investigation.gdrg_code;
+      const investigationName = investigation.procedure_name || '';
+      const investigationCode = investigation.gdrg_code || '';
       const matchesName = billItem.item_name && (
-        billItem.item_name.includes(investigation.procedure_name || '') ||
-        billItem.item_name.includes(investigation.gdrg_code || '')
+        billItem.item_name.includes(investigationName) ||
+        billItem.item_name.includes(investigationCode) ||
+        billItem.item_name.includes(`Investigation: ${investigationName}`) ||
+        billItem.item_name.includes(`Investigation: ${investigationCode}`)
       );
       
+      console.log(`canAddResults: Checking bill item`, {
+        item_code: billItem.item_code,
+        item_name: billItem.item_name,
+        investigation_gdrg: investigation.gdrg_code,
+        investigation_name: investigation.procedure_name,
+        matchesCode,
+        matchesName
+      });
+      
       if (matchesCode || matchesName) {
-        // If there's a bill item with a price > 0, check if it's paid
+        // Found matching bill item - check if THIS SPECIFIC item is paid
         const totalPrice = billItem.total_price || 0;
-        const remainingBalance = billItem.remaining_balance !== undefined 
+        const remainingBalance = billItem.remaining_balance !== undefined && billItem.remaining_balance !== null
           ? billItem.remaining_balance 
           : (totalPrice - (billItem.amount_paid || 0));
+        // Item is paid if is_paid flag is true OR remaining balance is 0 or less (allow small rounding differences)
+        const isPaid = billItem.is_paid !== undefined 
+          ? billItem.is_paid 
+          : (remainingBalance <= 0.01); // Allow 0.01 tolerance for rounding
         
-        // Can only add results if:
+        console.log(`canAddResults: Found matching bill item for investigation ${investigation.id}:`, {
+          totalPrice,
+          amount_paid: billItem.amount_paid,
+          remaining_balance: billItem.remaining_balance,
+          calculated_remaining: remainingBalance,
+          is_paid_flag: billItem.is_paid,
+          calculated_is_paid: isPaid,
+          final_decision: isPaid ? 'PAID' : 'UNPAID'
+        });
+        
+        // Can add results if:
         // 1. Total price is 0 (free), OR
-        // 2. Remaining balance is 0 or less (fully paid)
-        if (totalPrice > 0 && remainingBalance > 0) {
-          return false; // Has unpaid balance
+        // 2. Item is paid (remaining balance <= 0.01 or is_paid flag is true)
+        if (totalPrice > 0 && !isPaid) {
+          console.log(`canAddResults: Returning FALSE - unpaid balance for investigation ${investigation.id}`);
+          return false; // This specific item has unpaid balance
+        } else {
+          console.log(`canAddResults: Returning TRUE - investigation ${investigation.id} is paid or free`);
+          return true; // This specific item is paid or free
         }
       }
     }
   }
   
-  // If no bill found, allow adding results (backend will enforce payment check)
+  console.log(`canAddResults: No bill item found for investigation ${investigation.id}, allowing results`);
+  // If no bill item found for this investigation, allow adding results
+  // (might be free or bill not created yet - backend will enforce)
   return true;
 };
 
@@ -629,19 +695,24 @@ const loadInvestigations = async () => {
             const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data || {};
             
             // Calculate remaining balance for each bill item
+            // Use backend's remaining_balance directly, but also calculate as fallback
             const billItems = (billDetails.bill_items || []).map(item => {
               try {
                 const amountPaid = (item.amount_paid !== undefined && item.amount_paid !== null) ? item.amount_paid : 0;
                 const totalPrice = (item.total_price !== undefined && item.total_price !== null) ? item.total_price : 0;
+                // Use backend's remaining_balance if available, otherwise calculate
                 const remainingBalance = (item.remaining_balance !== undefined && item.remaining_balance !== null)
                   ? item.remaining_balance 
                   : (totalPrice - amountPaid);
+                
+                // Item is paid if remaining balance is 0 or less (allow small rounding differences)
+                const isPaid = remainingBalance <= 0.01; // Allow 0.01 tolerance for rounding
                 
                 return {
                   ...item,
                   amount_paid: amountPaid,
                   remaining_balance: remainingBalance,
-                  is_paid: remainingBalance <= 0,
+                  is_paid: isPaid,
                 };
               } catch (itemError) {
                 console.error(`Error processing bill item:`, item, itemError);

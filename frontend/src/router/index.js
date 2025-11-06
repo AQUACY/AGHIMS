@@ -72,7 +72,7 @@ const routes = [
         path: '/pharmacy',
         name: 'Pharmacy',
         component: () => import('../pages/Pharmacy.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacist', 'Admin'] },
       },
       {
         path: '/lab',

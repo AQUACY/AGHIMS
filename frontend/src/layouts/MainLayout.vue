@@ -261,7 +261,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Pharmacy', 'Admin'])"
+          v-if="canAccess(['Pharmacist', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Pharmacy' }"

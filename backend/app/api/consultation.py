@@ -97,6 +97,7 @@ class PrescriptionCreate(BaseModel):
     instructions: Optional[str] = None  # Instructions for the drug
     quantity: Optional[int] = None  # Auto-calculated: dose * frequency_value * duration
     unparsed: Optional[str] = None
+    is_external: Optional[bool] = False  # True if prescription is to be filled outside (external pharmacy)
 
 
 class PrescriptionResponse(BaseModel):
@@ -114,6 +115,7 @@ class PrescriptionResponse(BaseModel):
     quantity: int
     unparsed: Optional[str] = None
     prescribed_by: int
+    is_external: bool = False
     prescriber_name: Optional[str] = None  # Full name of the prescriber
     prescriber_role: Optional[str] = None  # Role of the prescriber
     confirmed_by: Optional[int] = None
@@ -378,9 +380,23 @@ def create_prescription(
     prescription_dict = prescription_data.dict()
     prescription_dict['frequency_value'] = frequency_value
     prescription_dict['quantity'] = quantity
+    # Convert is_external boolean to integer (0 or 1) for SQLite
+    if 'is_external' in prescription_dict:
+        prescription_dict['is_external'] = 1 if prescription_dict['is_external'] else 0
+    else:
+        prescription_dict['is_external'] = 0
     
     prescription = Prescription(**prescription_dict, prescribed_by=current_user.id)
     db.add(prescription)
+    
+    # Auto-confirm external prescriptions (they don't need pharmacy confirmation)
+    # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
+    is_external = prescription_dict.get('is_external', 0)
+    if is_external:
+        prescription.confirmed_by = current_user.id
+        prescription.confirmed_at = datetime.utcnow()
+        print(f"Auto-confirmed external prescription {prescription.id} - no bill will be created")
+    
     db.commit()
     db.refresh(prescription)
     return add_prescriber_info_to_response(prescription, db)
@@ -394,9 +410,38 @@ def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionRe
     prescriber_role = prescriber.role if prescriber else None
     
     # Create response with prescriber details
-    prescription_dict = PrescriptionResponse.from_orm(prescription).dict()
-    prescription_dict['prescriber_name'] = prescriber_name
-    prescription_dict['prescriber_role'] = prescriber_role
+    # Convert is_external from integer (0/1) to boolean
+    is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    
+    # Compute is_confirmed and is_dispensed from confirmed_by and dispensed_by
+    is_confirmed = prescription.confirmed_by is not None
+    is_dispensed = prescription.dispensed_by is not None
+    
+    prescription_dict = {
+        'id': prescription.id,
+        'encounter_id': prescription.encounter_id,
+        'medicine_code': prescription.medicine_code,
+        'medicine_name': prescription.medicine_name,
+        'dose': prescription.dose,
+        'unit': prescription.unit,
+        'frequency': prescription.frequency,
+        'frequency_value': prescription.frequency_value,
+        'duration': prescription.duration,
+        'instructions': prescription.instructions,
+        'quantity': prescription.quantity,
+        'unparsed': prescription.unparsed,
+        'prescribed_by': prescription.prescribed_by,
+        'is_external': is_external,
+        'prescriber_name': prescriber_name,
+        'prescriber_role': prescriber_role,
+        'confirmed_by': prescription.confirmed_by,
+        'dispensed_by': prescription.dispensed_by,
+        'confirmed_at': prescription.confirmed_at,
+        'service_date': prescription.service_date,
+        'created_at': prescription.created_at,
+        'is_confirmed': is_confirmed,
+        'is_dispensed': is_dispensed,
+    }
     return PrescriptionResponse(**prescription_dict)
 
 
@@ -543,6 +588,15 @@ def confirm_prescription(
     if not prescription:
         raise HTTPException(status_code=404, detail="Prescription not found")
     
+    # Prevent confirming external prescriptions (they're auto-confirmed and not billed)
+    # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
+    is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    if is_external:
+        raise HTTPException(
+            status_code=400, 
+            detail="External prescriptions are automatically confirmed and cannot be confirmed again. They are filled outside and not billed."
+        )
+    
     if prescription.confirmed_by is not None:
         raise HTTPException(status_code=400, detail="Prescription has already been confirmed")
     
@@ -589,6 +643,15 @@ def confirm_prescription(
     print(f"Prescription confirmation - Medicine: {prescription.medicine_code}, Is Insured: {is_insured_encounter}, Unit Price: {unit_price}, Total Price: {total_price}, Quantity: {prescription.quantity}")
     print(f"DEBUG: unit_price={unit_price}, quantity={prescription.quantity}, total_price={total_price}")
     print(f"DEBUG: Will create bill? {total_price > 0}")
+    
+    # Skip billing for external prescriptions (they are filled outside)
+    # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
+    is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    if is_external:
+        print(f"Prescription {prescription_id} is external - skipping bill creation")
+        db.commit()
+        db.refresh(prescription)
+        return add_prescriber_info_to_response(prescription, db)
     
     # Always create/add to bill if total_price > 0
     # This ensures bills are created even when insurance_covered="no" and base_rate is set
@@ -798,9 +861,13 @@ def delete_prescription(
     if not prescription:
         raise HTTPException(status_code=404, detail="Prescription not found")
     
-    # Prevent deleting if prescription is confirmed by pharmacy staff
-    # Only Admin can override this restriction
-    if prescription.confirmed_by is not None and current_user.role != "Admin":
+    # Allow deletion of external prescriptions even if confirmed (they're going outside)
+    # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
+    is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    
+    # Prevent deleting if prescription is confirmed by pharmacy staff (unless it's external)
+    # Only Admin can override this restriction for non-external prescriptions
+    if not is_external and prescription.confirmed_by is not None and current_user.role != "Admin":
         raise HTTPException(
             status_code=400,
             detail="Cannot delete prescription that has been confirmed by pharmacy staff. Contact admin if deletion is needed."

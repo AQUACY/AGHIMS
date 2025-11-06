@@ -207,6 +207,23 @@
             label="Add Prescription"
             @click="openAddPrescriptionDialog"
             :disable="!selectedEncounterId"
+            class="q-mr-sm"
+          />
+          <q-btn
+            color="secondary"
+            icon="local_pharmacy"
+            label="Add External Prescription"
+            @click="openAddExternalPrescriptionDialog"
+            :disable="!selectedEncounterId"
+          />
+          <q-btn
+            v-if="externalPrescriptions.length > 0"
+            color="accent"
+            icon="print"
+            label="Print External Prescriptions"
+            @click="printExternalPrescriptions"
+            :disable="!selectedEncounterId || !patient"
+            class="q-ml-sm"
           />
         </div>
         <q-table
@@ -247,29 +264,39 @@
               <span v-else class="text-grey-6">N/A</span>
             </q-td>
           </template>
+          <template v-slot:body-cell-medicine_name="props">
+            <q-td :props="props">
+              <div class="row items-center q-gutter-xs">
+                <span>{{ props.value }}</span>
+                <q-badge v-if="props.row.is_external" color="orange" label="External" />
+              </div>
+            </q-td>
+          </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
+              <!-- Don't show status badge for external prescriptions (they're going outside) -->
               <q-badge
-                v-if="props.row.is_confirmed && props.row.is_dispensed"
+                v-if="!props.row.is_external && props.row.is_confirmed && props.row.is_dispensed"
                 color="positive"
                 label="Dispensed"
               />
               <q-badge
-                v-else-if="props.row.is_confirmed"
+                v-else-if="!props.row.is_external && props.row.is_confirmed"
                 color="blue"
                 label="Confirmed"
               />
               <q-badge
-                v-else
+                v-else-if="!props.row.is_external"
                 color="orange"
                 label="Pending"
               />
+              <span v-else class="text-grey-6 text-caption">External</span>
             </q-td>
           </template>
           <template v-slot:body-cell-selection="props">
             <q-td :props="props">
               <q-checkbox
-                v-if="!props.row.is_confirmed"
+                v-if="!props.row.is_confirmed && !props.row.is_external"
                 :model-value="isPrescriptionSelected(props.row)"
                 @update:model-value="togglePrescriptionSelection(props.row, $event)"
               />
@@ -289,17 +316,17 @@
                   title="View Instructions"
                 />
               <q-btn
-                  v-if="!props.row.is_confirmed"
+                  v-if="!props.row.is_confirmed && !props.row.is_external && !props.row.is_dispensed"
                   size="sm"
                   color="primary"
                   icon="check_circle"
                   label="Confirm"
                   @click="confirmPrescription(props.row)"
                   :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null"
                 />
                 <q-btn
-                  v-else-if="!props.row.is_dispensed"
+                  v-else-if="!props.row.is_dispensed && !props.row.is_external"
                   size="sm"
                   color="positive"
                   label="Dispense"
@@ -315,7 +342,7 @@
                   </q-tooltip>
                 </q-btn>
                 <q-btn
-                  v-else
+                  v-else-if="props.row.is_dispensed && !props.row.is_external"
                   size="sm"
                   color="negative"
                   icon="undo"
@@ -324,6 +351,20 @@
                   :loading="returningId === props.row.id"
                   :disable="dispensingId !== null || returningId !== null"
                 />
+                <!-- Delete button for external prescriptions -->
+                <q-btn
+                  v-if="props.row.is_external"
+                  size="sm"
+                  color="negative"
+                  icon="delete"
+                  label="Delete"
+                  @click="deleteExternalPrescription(props.row)"
+                  :loading="deletingId === props.row.id"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple"
+                  flat
+                >
+                  <q-tooltip>Delete external prescription</q-tooltip>
+                </q-btn>
               </div>
             </q-td>
           </template>
@@ -465,6 +506,104 @@
         No prescriptions found for this encounter
       </q-card-section>
     </q-card>
+
+    <!-- Add External Prescription Dialog -->
+    <q-dialog v-model="showAddExternalPrescriptionDialog">
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="text-h6">Add External Prescription</div>
+          <div class="text-caption text-info q-mt-xs">
+            External prescriptions are filled outside the hospital and will not be billed.
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="addExternalPrescription" class="q-gutter-md">
+            <q-select
+              v-model="selectedMedication"
+              filled
+              use-input
+              input-debounce="300"
+              label="Search Medication (from Pharmacy)"
+              :options="medicationOptions"
+              @filter="filterMedications"
+              @update:model-value="onMedicationSelected"
+              option-value="item_code"
+              option-label="item_name"
+              emit-value
+              map-options
+              hint="Start typing to search for medications"
+              :rules="[(val) => !!val || 'Please select a medication']"
+            >
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No medications found. Try a different search term.
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            <q-input
+              v-model="externalPrescriptionForm.medicine_code"
+              filled
+              label="Medicine Code"
+              readonly
+              hint="Automatically populated"
+            />
+            <q-input
+              v-model="externalPrescriptionForm.medicine_name"
+              filled
+              label="Medicine Name"
+              readonly
+              hint="Automatically populated"
+            />
+            <q-input
+              v-model="externalPrescriptionForm.dose"
+              filled
+              label="Dose *"
+              hint="e.g., 500 MG"
+              :rules="[(val) => !!val || 'Dose is required']"
+            />
+            <q-input
+              v-model="externalPrescriptionForm.frequency"
+              filled
+              label="Frequency *"
+              hint="e.g., 2 DAILY"
+              :rules="[(val) => !!val || 'Frequency is required']"
+            />
+            <q-input
+              v-model="externalPrescriptionForm.duration"
+              filled
+              label="Duration *"
+              hint="e.g., 7 DAYS"
+              :rules="[(val) => !!val || 'Duration is required']"
+            />
+            <q-input
+              v-model.number="externalPrescriptionForm.quantity"
+              filled
+              type="number"
+              label="Quantity *"
+              hint="Number of units"
+              :rules="[
+                (val) => !!val || 'Quantity is required',
+                (val) => val > 0 || 'Quantity must be greater than 0'
+              ]"
+            />
+            <q-input
+              v-model="externalPrescriptionForm.instructions"
+              filled
+              type="textarea"
+              label="Instructions (Optional)"
+              hint="Special instructions for the patient"
+              rows="3"
+            />
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn label="Cancel" flat v-close-popup class="col" />
+              <q-btn label="Add External Prescription" type="submit" color="secondary" class="col" :loading="addingPrescription" />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
 
     <!-- Add Prescription Dialog -->
     <q-dialog v-model="showAddPrescriptionDialog">
@@ -633,12 +772,12 @@
       <q-card style="min-width: 400px; max-width: 600px">
         <q-card-section>
           <div class="text-h6">Instructions / Remarks</div>
-          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="viewingInstructions">
+          <div class="text-subtitle2  q-mt-xs" v-if="viewingInstructions">
             {{ viewingInstructions?.medicine_name }} ({{ viewingInstructions?.medicine_code }})
           </div>
         </q-card-section>
         <q-card-section>
-          <div v-if="viewingInstructions?.instructions" class="text-body1 q-pa-md" style="background-color: #f5f5f5; border-radius: 4px; white-space: pre-wrap;">
+          <div v-if="viewingInstructions?.instructions" class="text-body1 q-pa-md" style="border-radius: 4px; white-space: pre-wrap;">
             {{ viewingInstructions.instructions }}
           </div>
           <div v-else class="text-grey-6 text-center q-pa-md">
@@ -739,6 +878,7 @@ const loadingPrescriptions = ref(false);
 const dispensingId = ref(null);
 const returningId = ref(null);
 const confirmingId = ref(null);
+const deletingId = ref(null);
 const confirmingMultiple = ref(false);
 const selectedPrescriptions = ref([]);
 const itemizedPrescriptions = ref([]);
@@ -748,6 +888,7 @@ const loadingData = ref(false);
 const showDispenseDialog = ref(false);
 const showConfirmDialog = ref(false);
 const showAddPrescriptionDialog = ref(false);
+const showAddExternalPrescriptionDialog = ref(false);
 const showInstructionsDialog = ref(false);
 const viewingInstructions = ref(null);
 const addingPrescription = ref(false);
@@ -779,6 +920,16 @@ const newPrescriptionForm = ref({
   frequency: '',
   duration: '',
   quantity: 1,
+});
+const externalPrescriptionForm = ref({
+  encounter_id: null,
+  medicine_code: '',
+  medicine_name: '',
+  dose: '',
+  frequency: '',
+  duration: '',
+  quantity: 1,
+  instructions: '',
 });
 const selectedMedication = ref(null);
 const medicationOptions = ref([]);
@@ -822,6 +973,15 @@ const isPrescriptionSelected = (prescription) => {
 
 // Toggle prescription selection
 const togglePrescriptionSelection = (prescription, selected) => {
+  // Prevent selecting external prescriptions for confirmation
+  if (selected && prescription.is_external) {
+    $q.notify({
+      type: 'warning',
+      message: 'External prescriptions cannot be selected for confirmation. They are automatically confirmed and not billed.',
+    });
+    return;
+  }
+  
   if (selected && !isPrescriptionSelected(prescription)) {
     selectedPrescriptions.value.push(prescription);
   } else if (!selected) {
@@ -833,7 +993,8 @@ const togglePrescriptionSelection = (prescription, selected) => {
 
 // Get pending prescriptions
 const pendingPrescriptions = computed(() => {
-  return prescriptions.value.filter(p => !p.is_confirmed);
+  // Exclude external prescriptions from pending (they're auto-confirmed)
+  return prescriptions.value.filter(p => !p.is_confirmed && !p.is_external);
 });
 
 // Check if all pending are selected
@@ -872,16 +1033,22 @@ const viewInstructions = (prescription) => {
 
 // Add selected prescriptions to itemized confirmation
 const addSelectedToConfirmation = () => {
-  const pending = selectedPrescriptions.value.filter(p => !p.is_confirmed);
+  // Filter out external prescriptions and already confirmed ones
+  const pending = selectedPrescriptions.value.filter(p => !p.is_confirmed && !p.is_external);
   if (pending.length === 0) {
     $q.notify({
       type: 'warning',
-      message: 'Please select at least one pending prescription',
+      message: 'Please select at least one pending prescription (external prescriptions cannot be confirmed)',
     });
     return;
   }
   
   pending.forEach(prescription => {
+    // Double check: skip external prescriptions
+    if (prescription.is_external) {
+      return;
+    }
+    
     // Check if already in itemized
     if (!itemizedPrescriptions.value.some(item => item.id === prescription.id)) {
       const newItem = {
@@ -971,10 +1138,26 @@ const confirmMultiplePrescriptions = async () => {
     return;
   }
   
+  // Filter out external prescriptions
+  const nonExternalPrescriptions = itemizedPrescriptions.value.filter(p => !p.is_external);
+  
+  if (nonExternalPrescriptions.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'External prescriptions cannot be confirmed. They are automatically confirmed and not billed.',
+    });
+    return;
+  }
+  
   confirmingMultiple.value = true;
   try {
-    // Confirm each prescription with updated values
-    for (const prescription of itemizedPrescriptions.value) {
+    // Confirm each prescription with updated values (skip external ones)
+    for (const prescription of nonExternalPrescriptions) {
+      // Skip external prescriptions
+      if (prescription.is_external) {
+        continue;
+      }
+      
       const confirmData = {
         dose: prescription.editableDose ? String(prescription.editableDose) : null,
         frequency: prescription.editableFrequency || null,
@@ -988,7 +1171,7 @@ const confirmMultiplePrescriptions = async () => {
     
     $q.notify({
       type: 'positive',
-      message: `Successfully confirmed ${itemizedPrescriptions.value.length} prescription(s) and generated bills`,
+      message: `Successfully confirmed ${nonExternalPrescriptions.length} prescription(s) and generated bills`,
     });
     
     // Clear selections
@@ -1058,6 +1241,41 @@ const openAddPrescriptionDialog = async () => {
   };
   showAddPrescriptionDialog.value = true;
 };
+
+const openAddExternalPrescriptionDialog = async () => {
+  if (!selectedEncounterId.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select an encounter first',
+    });
+    return;
+  }
+  
+  // Load medications if not already loaded
+  if (allMedications.value.length === 0) {
+    await loadPharmacyMedications();
+  } else {
+    medicationOptions.value = allMedications.value;
+  }
+  
+  selectedMedication.value = null;
+  externalPrescriptionForm.value = {
+    encounter_id: selectedEncounterId.value,
+    medicine_code: '',
+    medicine_name: '',
+    dose: '',
+    frequency: '',
+    duration: '',
+    quantity: 1,
+    instructions: '',
+  };
+  showAddExternalPrescriptionDialog.value = true;
+};
+
+// Computed property to get external prescriptions
+const externalPrescriptions = computed(() => {
+  return prescriptions.value.filter(p => p.is_external === true);
+});
 
 const columns = [
   { name: 'selection', label: '', field: 'selection', align: 'left', style: 'width: 50px' },
@@ -1256,11 +1474,14 @@ const loadPrescriptions = async () => {
                   api_amount_paid: item.amount_paid,
                 });
                 
+                // Item is paid if remaining balance is 0 or less (allow small rounding differences)
+                const isPaid = remainingBalance <= 0.01; // Allow 0.01 tolerance for rounding
+                
                 return {
                   ...item,
                   amount_paid: amountPaid,
                   remaining_balance: remainingBalance,
-                  is_paid: remainingBalance <= 0,
+                  is_paid: isPaid,
                 };
               } catch (itemError) {
                 console.error(`Error processing bill item:`, item, itemError);
@@ -1319,6 +1540,15 @@ const loadPrescriptions = async () => {
 };
 
 const confirmPrescription = (prescription) => {
+  // Prevent confirming external prescriptions
+  if (prescription.is_external) {
+    $q.notify({
+      type: 'warning',
+      message: 'External prescriptions are automatically confirmed and cannot be confirmed again. They are filled outside and not billed.',
+    });
+    return;
+  }
+  
   // Populate form with current prescription data
   confirmForm.value = {
     id: prescription.id,
@@ -1371,14 +1601,9 @@ const canDispense = (prescription) => {
     return false;
   }
   
-  // Find bill item for this prescription
+  // Find bill item for this specific prescription
+  // Check ALL bills (paid or unpaid) to find the specific item for this service
   for (const bill of bills.value) {
-    // Skip paid bills entirely
-    if (bill.is_paid) {
-      console.log(`canDispense: Bill ${bill.id} is paid, skipping`);
-      continue;
-    }
-    
     for (const billItem of bill.bill_items || []) {
       // Match by medicine code or name
       const matchesCode = billItem.item_code === prescription.medicine_code;
@@ -1398,22 +1623,27 @@ const canDispense = (prescription) => {
           remainingBalance: billItem.remaining_balance,
         });
         
-        // If there's a bill item with a price > 0, check if it's paid
+        // Found matching bill item - check if THIS SPECIFIC item is paid
         const totalPrice = billItem.total_price || 0;
-        const remainingBalance = billItem.remaining_balance !== undefined 
+        const remainingBalance = billItem.remaining_balance !== undefined && billItem.remaining_balance !== null
           ? billItem.remaining_balance 
           : (totalPrice - (billItem.amount_paid || 0));
+        // Item is paid if is_paid flag is true OR remaining balance is 0 or less (allow small rounding differences)
+        const isPaid = billItem.is_paid !== undefined 
+          ? billItem.is_paid 
+          : (remainingBalance <= 0.01); // Allow 0.01 tolerance for rounding
         
-        console.log(`canDispense: Calculated values - totalPrice=${totalPrice}, remainingBalance=${remainingBalance}`);
+        console.log(`canDispense: Calculated values - totalPrice=${totalPrice}, remainingBalance=${remainingBalance}, is_paid=${isPaid}`);
         
-        // Can only dispense if:
+        // Can dispense if:
         // 1. Total price is 0 (free), OR
-        // 2. Remaining balance is 0 or less (fully paid)
-        if (totalPrice > 0 && remainingBalance > 0) {
-          console.log(`canDispense: Returning FALSE - unpaid balance for prescription ${prescription.id}`);
-          return false; // Has unpaid balance
+        // 2. Item is paid (remaining balance <= 0.01 or is_paid flag is true)
+        if (totalPrice > 0 && !isPaid) {
+          console.log(`canDispense: Returning FALSE - unpaid balance for THIS SPECIFIC prescription ${prescription.id}`);
+          return false; // This specific item has unpaid balance
         } else {
-          console.log(`canDispense: Bill item is paid or free for prescription ${prescription.id}`);
+          console.log(`canDispense: THIS SPECIFIC prescription ${prescription.id} is paid or free, allowing dispense`);
+          return true; // This specific item is paid or free
         }
       } else {
         console.log(`canDispense: No match - prescription code: ${prescription.medicine_code}, bill item code: ${billItem.item_code}, prescription name: ${prescription.medicine_name}, bill item name: ${billItem.item_name}`);
@@ -1421,10 +1651,9 @@ const canDispense = (prescription) => {
     }
   }
   
-  console.log(`canDispense: No unpaid bills found for prescription ${prescription.id}, allowing dispense`);
-  // If no bill found, check if prescription was just confirmed (bill might be created)
-  // In this case, we'll allow dispense only if the bill is paid or doesn't exist yet
-  // The backend will enforce the payment check anyway
+  console.log(`canDispense: No bill item found for prescription ${prescription.id}, allowing dispense`);
+  // If no bill item found for this prescription, allow dispense
+  // (might be free or bill not created yet - backend will enforce)
   return true;
 };
 
@@ -1499,6 +1728,34 @@ const returnPrescription = async (prescription) => {
   });
 };
 
+const deleteExternalPrescription = async (prescription) => {
+  $q.dialog({
+    title: 'Delete External Prescription',
+    message: `Are you sure you want to delete ${prescription.medicine_name}? This action cannot be undone.`,
+    cancel: true,
+    persistent: true,
+    color: 'negative',
+  }).onOk(async () => {
+    deletingId.value = prescription.id;
+    try {
+      await consultationAPI.deletePrescription(prescription.id);
+      $q.notify({
+        type: 'positive',
+        message: 'External prescription deleted successfully',
+      });
+      // Reload prescriptions to update list
+      await loadPrescriptions();
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to delete external prescription',
+      });
+    } finally {
+      deletingId.value = null;
+    }
+  });
+};
+
 const filterMedications = (val, update, abort) => {
   if (val === '') {
     update(() => {
@@ -1526,6 +1783,8 @@ const onMedicationSelected = (medicationCode) => {
   if (!medicationCode) {
     newPrescriptionForm.value.medicine_code = '';
     newPrescriptionForm.value.medicine_name = '';
+    externalPrescriptionForm.value.medicine_code = '';
+    externalPrescriptionForm.value.medicine_name = '';
     return;
   }
 
@@ -1537,8 +1796,18 @@ const onMedicationSelected = (medicationCode) => {
   );
   
   if (selected) {
-    newPrescriptionForm.value.medicine_code = selected.item_code || selected.medication_code || '';
-    newPrescriptionForm.value.medicine_name = selected.item_name || selected.medication_name || selected.product_name || selected.service_name || '';
+    const code = selected.item_code || selected.medication_code || '';
+    const name = selected.item_name || selected.medication_name || selected.product_name || selected.service_name || '';
+    
+    // Update the active form (check which dialog is open)
+    if (showAddPrescriptionDialog.value) {
+      newPrescriptionForm.value.medicine_code = code;
+      newPrescriptionForm.value.medicine_name = name;
+    }
+    if (showAddExternalPrescriptionDialog.value) {
+      externalPrescriptionForm.value.medicine_code = code;
+      externalPrescriptionForm.value.medicine_name = name;
+    }
   }
 };
 
@@ -1575,6 +1844,50 @@ const addPrescription = async () => {
     $q.notify({
       type: 'negative',
       message: error.response?.data?.detail || 'Failed to add prescription',
+    });
+  } finally {
+    addingPrescription.value = false;
+  }
+};
+
+const addExternalPrescription = async () => {
+  if (!selectedMedication.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select a medication',
+    });
+    return;
+  }
+
+  addingPrescription.value = true;
+  try {
+    const prescriptionData = {
+      ...externalPrescriptionForm.value,
+      is_external: true,
+    };
+    await consultationAPI.createPrescription(prescriptionData);
+    $q.notify({
+      type: 'positive',
+      message: 'External prescription added successfully',
+    });
+    showAddExternalPrescriptionDialog.value = false;
+    // Reset form
+    selectedMedication.value = null;
+    Object.assign(externalPrescriptionForm.value, {
+      medicine_code: '',
+      medicine_name: '',
+      dose: '',
+      frequency: '',
+      duration: '',
+      quantity: 1,
+      instructions: '',
+    });
+    // Reload prescriptions
+    await loadPrescriptions();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to add external prescription',
     });
   } finally {
     addingPrescription.value = false;
@@ -1923,6 +2236,146 @@ const printBillCard = async () => {
   }
   
   const receiptHtml = await buildReceiptHtml();
+  const w = window.open('', '_blank', 'width=420,height=800');
+  if (!w) return;
+  w.document.open();
+  w.document.write(receiptHtml);
+  w.document.close();
+  setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
+};
+
+const buildExternalPrescriptionHtml = async () => {
+  const now = new Date();
+  
+  // Get external prescriptions for this encounter
+  const externalPrescs = externalPrescriptions.value;
+  
+  if (externalPrescs.length === 0) {
+    $q.notify({ type: 'warning', message: 'No external prescriptions found' });
+    return null;
+  }
+  
+  // Get prescriber name from first prescription
+  const firstPrescription = externalPrescs[0];
+  const prescriberId = firstPrescription?.prescribed_by;
+  const prescriberName = prescriberId ? (staffMap.value[prescriberId] || 'N/A') : 'N/A';
+  
+  // Build medications list
+  let itemsHtmlStr = '';
+  externalPrescs.forEach((prescription, index) => {
+    const dose = prescription.dose || '';
+    const unit = prescription.unit || '';
+    const frequency = prescription.frequency || '';
+    const duration = prescription.duration || '';
+    const quantity = prescription.quantity || '';
+    const instructions = prescription.instructions || '';
+    
+    itemsHtmlStr += `
+      <div class="item">
+        <div class="i1">${prescription.medicine_name}</div>
+        <div class="i2">Code: ${prescription.medicine_code}</div>
+        <div class="i3">Dose: ${dose} ${unit} | Frequency: ${frequency} | Duration: ${duration}</div>
+        <div class="i3">Quantity: ${quantity}</div>
+        ${instructions ? `<div class="i4">Instructions: ${instructions}</div>` : ''}
+      </div>
+    `;
+  });
+  
+  const formatReceiptLine = (label, value) => {
+    return `<div class="lbl">${label}:</div><div class="val">${value || ''}</div><div class="clearfix"></div>`;
+  };
+  
+  return `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>External Prescription</title>
+    <style>
+      /* Force 80mm thermal size for print & PDF */
+      @page { size: 80mm auto; margin: 2mm; }
+      html, body { width: 80mm; margin: 0; padding: 0; }
+      body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .center { text-align: center; }
+      .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
+      .logo-container { display: flex; justify-content: center; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .logo { max-width: 25mm; max-height: 20mm; object-fit: contain; }
+      .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
+      .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
+      .sec { margin: 6px 0; }
+      .lbl { display: inline-block; min-width: 34mm; }
+      .val { float: right; max-width: 36mm; text-align: right; }
+      .clearfix { clear: both; }
+      .item { border-top: 1px dashed #000; padding: 4px 0; }
+      .i1 { font-weight: bold; }
+      .i2 { }
+      .i3 { }
+      .i4 { color: #333; }
+      .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
+      .external-badge { background: #ff9800; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; }
+      /* On screen, center the receipt for a visual preview */
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 80mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media print { .preview-wrap { box-shadow: none; padding: 0; } }
+    </style>
+  </head>
+  <body>
+    <div class="preview-wrap">
+      <div class="logo-container">
+        <img src="/logos/ministry-of-health-logo.png" alt="Ministry of Health" class="logo" onerror="this.style.display='none'">
+        <img src="/logos/ghana-health-service-logo.png" alt="Ghana Health Service" class="logo" onerror="this.style.display='none'">
+      </div>
+      <div class="center hospital-name">ASESEWA GOVERNMENT HOSPITAL</div>
+      <div class="hdr center">
+        <div class="dept-name">EXTERNAL PRESCRIPTION</div>
+        <div><span class="external-badge">TO BE FILLED OUTSIDE</span></div>
+        <div>${now.toLocaleString()}</div>
+      </div>
+      <div class="sec">
+        ${formatReceiptLine('Encounter ID', selectedEncounterId.value)}
+        ${formatReceiptLine('Patient', `${patient.value?.name || ''} ${patient.value?.surname || ''}`.trim())}
+        ${formatReceiptLine('Card', patient.value?.card_number || '')}
+        ${formatReceiptLine('Insurance', patient.value?.insurance_id || 'N/A')}
+        ${formatReceiptLine('CCC', currentEncounter.value?.ccc_number || '')}
+        <div class="clearfix"></div>
+      </div>
+      <div class="sec">
+        ${formatReceiptLine('Prescriber', prescriberName)}
+        <div class="clearfix"></div>
+      </div>
+      <div class="sec">
+        <div class="center"><strong>Prescribed Medications</strong></div>
+        ${itemsHtmlStr || '<div class="center">No prescriptions</div>'}
+      </div>
+      <div class="footer">
+        <div class="center">
+          <div class="external-badge">This prescription is to be filled at an external pharmacy</div>
+          <div style="margin-top: 6px;">Thank you</div>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>`;
+};
+
+const printExternalPrescriptions = async () => {
+  if (!selectedEncounterId.value || !patient.value) {
+    $q.notify({ type: 'warning', message: 'Select encounter first' });
+    return;
+  }
+  
+  if (externalPrescriptions.value.length === 0) {
+    $q.notify({ type: 'warning', message: 'No external prescriptions found for this encounter' });
+    return;
+  }
+  
+  // Ensure staff is loaded
+  if (Object.keys(staffMap.value).length === 0) {
+    await loadStaff();
+  }
+  
+  const receiptHtml = await buildExternalPrescriptionHtml();
+  if (!receiptHtml) return;
+  
   const w = window.open('', '_blank', 'width=420,height=800');
   if (!w) return;
   w.document.open();

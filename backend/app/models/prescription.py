@@ -27,6 +27,7 @@ class Prescription(Base):
     confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor who confirmed the prescription
     dispensed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     confirmed_at = Column(DateTime, nullable=True)  # When prescription was confirmed
+    is_external = Column(Integer, default=0, nullable=False)  # 0 = internal (dispensed here), 1 = external (filled outside)
     service_date = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     

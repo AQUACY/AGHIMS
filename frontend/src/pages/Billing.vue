@@ -240,8 +240,8 @@
             </template>
             <template v-slot:body-cell-remaining_balance="props">
               <q-td :props="props">
-                <div :class="props.value > 0 ? 'text-negative text-weight-bold' : 'text-positive'" class="glass-text">
-                  {{ props.value > 0 ? `₵${props.value.toFixed(2)}` : '₵0.00' }}
+                <div :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'text-negative text-weight-bold' : 'text-positive'" class="glass-text">
+                  {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
                 </div>
               </q-td>
             </template>

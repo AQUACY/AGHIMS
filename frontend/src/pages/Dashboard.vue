@@ -1,6 +1,6 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold" style="color: rgba(255, 255, 255, 0.9);">
+    <div class="text-h4 q-mb-md text-weight-bold">
       Dashboard
     </div>
 
@@ -8,8 +8,8 @@
       <!-- Today's Patients Card -->
       <q-card class="col-12 col-md-4 glass-card" flat>
         <q-card-section>
-          <div class="text-h6 q-mb-sm" style="color: rgba(255, 255, 255, 0.7);">Today's Patients</div>
-          <div class="text-h3 q-mt-sm" style="color: rgba(255, 255, 255, 0.95); font-weight: 600;">
+          <div class="text-h6 q-mb-sm">Today's Patients</div>
+          <div class="text-h3 q-mt-sm" style="font-weight: 600;">
             {{ dashboardStore.stats.todayPatients }}
           </div>
         </q-card-section>
@@ -18,8 +18,8 @@
       <!-- Pending Encounters Card -->
       <q-card class="col-12 col-md-4 glass-card" flat>
         <q-card-section>
-          <div class="text-h6 q-mb-sm" style="color: rgba(255, 255, 255, 0.7);">Pending Encounters</div>
-          <div class="text-h3 q-mt-sm" style="color: rgba(255, 255, 255, 0.95); font-weight: 600;">
+          <div class="text-h6 q-mb-sm">Pending Encounters</div>
+          <div class="text-h3 q-mt-sm" style=" font-weight: 600;">
             {{ dashboardStore.stats.pendingEncounters }}
           </div>
         </q-card-section>
@@ -28,8 +28,8 @@
       <!-- Unpaid Bills Card -->
       <q-card class="col-12 col-md-4 glass-card" flat>
         <q-card-section>
-          <div class="text-h6 q-mb-sm" style="color: rgba(255, 255, 255, 0.7);">Unpaid Bills</div>
-          <div class="text-h3 q-mt-sm" style="color: rgba(255, 255, 255, 0.95); font-weight: 600;">
+          <div class="text-h6 q-mb-sm">Unpaid Bills</div>
+          <div class="text-h3 q-mt-sm" style=" font-weight: 600;">
             {{ dashboardStore.stats.unpaidBills }}
           </div>
         </q-card-section>
@@ -44,8 +44,8 @@
         flat
       >
         <q-card-section class="text-center">
-          <q-icon name="person_add" size="48px" style="color: rgba(255, 255, 255, 0.9);" />
-          <div class="text-subtitle1 q-mt-md" style="color: rgba(255, 255, 255, 0.9); font-weight: 500;">
+          <q-icon name="person_add" size="48px" />
+          <div class="text-subtitle1 q-mt-md" style=" font-weight: 500;">
             Register Patient
           </div>
           <q-btn
@@ -63,8 +63,8 @@
         flat
       >
         <q-card-section class="text-center">
-          <q-icon name="favorite" size="48px" style="color: rgba(255, 255, 255, 0.9);" />
-          <div class="text-subtitle1 q-mt-md" style="color: rgba(255, 255, 255, 0.9); font-weight: 500;">
+          <q-icon name="favorite" size="48px" />
+          <div class="text-subtitle1 q-mt-md" style=" font-weight: 500;">
             Record Vitals
           </div>
           <q-btn
@@ -82,8 +82,8 @@
         flat
       >
         <q-card-section class="text-center">
-          <q-icon name="medical_services" size="48px" style="color: rgba(255, 255, 255, 0.9);" />
-          <div class="text-subtitle1 q-mt-md" style="color: rgba(255, 255, 255, 0.9); font-weight: 500;">
+          <q-icon name="medical_services" size="48px" />
+          <div class="text-subtitle1 q-mt-md" style=" font-weight: 500;">
             Consultation
           </div>
           <q-btn
@@ -101,8 +101,8 @@
         flat
       >
         <q-card-section class="text-center">
-          <q-icon name="receipt" size="48px" style="color: rgba(255, 255, 255, 0.9);" />
-          <div class="text-subtitle1 q-mt-md" style="color: rgba(255, 255, 255, 0.9); font-weight: 500;">
+          <q-icon name="receipt" size="48px" />
+          <div class="text-subtitle1 q-mt-md" style=" font-weight: 500;">
             Billing
           </div>
           <q-btn

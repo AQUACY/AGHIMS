@@ -125,7 +125,7 @@ def update_price_item(
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
         if update.is_active is not None:
             item.is_active = update.is_active
-    
+
     db.commit()
     db.refresh(item)
     return {"message": f"Successfully updated {file_type} item", "item_id": item_id}
