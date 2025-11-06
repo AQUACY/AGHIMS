@@ -102,8 +102,23 @@
       <q-card style="min-width: 700px; max-width: 900px">
       <q-card-section>
           <div class="text-h6">Record Vitals - Encounter #{{ selectedEncounter?.id }}</div>
-          <div class="text-caption text-grey-7 q-mt-xs">
-            Patient: {{ selectedEncounter?.patient_name }} | Card: {{ selectedEncounter?.patient_card_number }}
+          <div class="row q-gutter-md q-mt-md">
+            <div class="col-12 col-md-6">
+              <div class="text-body2"><strong>Patient:</strong> {{ selectedEncounter?.patient_name || 'N/A' }}</div>
+              <div class="text-body2"><strong>Card Number:</strong> {{ selectedEncounter?.patient_card_number || 'N/A' }}</div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="text-body2"><strong>Age:</strong> {{ selectedEncounter?.patient_age ? `${selectedEncounter.patient_age} years` : 'N/A' }}</div>
+              <div class="text-body2"><strong>Sex:</strong> {{ selectedEncounter?.patient_gender === 'M' ? 'Male' : selectedEncounter?.patient_gender === 'F' ? 'Female' : selectedEncounter?.patient_gender || 'N/A' }}</div>
+            </div>
+          </div>
+          <div class="row q-gutter-md q-mt-xs">
+            <div class="col-12 col-md-6">
+              <div class="text-body2"><strong>Insurance Number:</strong> {{ selectedEncounter?.patient_insurance_id || 'N/A' }}</div>
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="text-body2"><strong>Address:</strong> {{ selectedEncounter?.patient_address || 'N/A' }}</div>
+            </div>
           </div>
         </q-card-section>
 
@@ -260,7 +275,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { vitalsAPI, encountersAPI } from '../services/api';
+import { vitalsAPI, encountersAPI, patientsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 
 const $q = useQuasar();
@@ -384,6 +399,36 @@ const recordVitals = async (encounter) => {
   selectedEncounter.value = encounter;
   
   try {
+    // Always fetch full patient details to ensure we have the latest data
+    if (encounter.patient_card_number) {
+      try {
+        const patientResponse = await patientsAPI.getByCard(encounter.patient_card_number);
+        let patients = [];
+        if (Array.isArray(patientResponse.data)) {
+          patients = patientResponse.data;
+        } else if (patientResponse.data && typeof patientResponse.data === 'object' && !Array.isArray(patientResponse.data)) {
+          patients = [patientResponse.data];
+        }
+        
+        if (patients.length > 0) {
+          const patient = patients[0];
+          // Update encounter with full patient details
+          selectedEncounter.value = {
+            ...encounter,
+            patient_name: patient.name + (patient.surname ? ' ' + patient.surname : ''),
+            patient_card_number: patient.card_number,
+            patient_age: patient.age,
+            patient_gender: patient.gender,
+            patient_insurance_id: patient.insurance_id,
+            patient_address: patient.address,
+          };
+        }
+      } catch (patientError) {
+        console.warn('Failed to fetch patient details:', patientError);
+        // Continue even if patient fetch fails - use data from encounter
+      }
+    }
+    
     // Load existing vitals if available
     if (encounter.has_vitals) {
       const vitalsResponse = await vitalsAPI.getByEncounter(encounter.id);

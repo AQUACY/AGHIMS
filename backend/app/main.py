@@ -2,9 +2,12 @@
 Main FastAPI application
 """
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pathlib import Path
 from app.api import (
     auth,
@@ -18,6 +21,7 @@ from app.api import (
     staff
 )
 from app.core.database import engine, Base
+import traceback
 
 # Import all models to ensure they're registered with Base
 import app.models  # This imports all models from __init__.py
@@ -60,6 +64,93 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Global exception handler to ensure CORS headers are included in error responses
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all exceptions and ensure CORS headers are included"""
+    # Get the origin from the request
+    origin = request.headers.get("origin")
+    
+    # Check if origin is in allowed origins
+    if origin and origin in cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    else:
+        # Default headers if origin not found or not in allowed list
+        headers = {
+            "Access-Control-Allow-Origin": cors_origins[0] if cors_origins else "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    
+    # Log the error for debugging
+    print(f"Unhandled exception: {type(exc).__name__}: {str(exc)}")
+    traceback.print_exc()
+    
+    # Return error response with CORS headers
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": f"Internal server error: {str(exc)}"},
+        headers=headers
+    )
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handle HTTP exceptions and ensure CORS headers are included"""
+    origin = request.headers.get("origin")
+    
+    if origin and origin in cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    else:
+        headers = {
+            "Access-Control-Allow-Origin": cors_origins[0] if cors_origins else "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=headers
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors and ensure CORS headers are included"""
+    origin = request.headers.get("origin")
+    
+    if origin and origin in cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    else:
+        headers = {
+            "Access-Control-Allow-Origin": cors_origins[0] if cors_origins else "*",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "*",
+        }
+    
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors()},
+        headers=headers
+    )
 
 # Include routers
 app.include_router(auth.router, prefix="/api")

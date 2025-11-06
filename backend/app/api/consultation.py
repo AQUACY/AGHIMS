@@ -319,87 +319,101 @@ def create_prescription(
     current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "PA"]))
 ):
     """Add a prescription to an encounter"""
-    encounter = db.query(Encounter).filter(Encounter.id == prescription_data.encounter_id).first()
-    if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter not found")
-    
-    # Get frequency value from mapping if frequency is provided
-    frequency_value = None
-    if prescription_data.frequency:
-        frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
-    
-    # Auto-calculate quantity based on pharmacist logic
-    # For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
-    # Then: (dose_mg / 100) × frequency_value × duration
-    # Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
-    # Only auto-calculate if quantity is not provided or is 0
-    # This allows frontend to override the calculation if needed
-    quantity = prescription_data.quantity
-    if (not quantity or quantity <= 0) and prescription_data.dose and frequency_value and prescription_data.duration:
-        try:
-            dose_num = float(prescription_data.dose)
-            if dose_num > 0:
-                # Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
-                duration_str = prescription_data.duration.strip()
-                duration_num = 1
-                if duration_str:
-                    # First try to parse as a number directly
-                    try:
-                        direct_num = float(duration_str)
-                        if direct_num > 0:
-                            duration_num = int(direct_num)
-                    except ValueError:
-                        # Otherwise, extract number from string (e.g., "7 DAYS" -> 7)
-                        import re
-                        duration_match = re.search(r'\d+', duration_str)
-                        if duration_match:
-                            duration_num = int(duration_match.group())
-                
-                # Convert dose to units based on unit type
-                units_per_dose = dose_num
-                unit = prescription_data.unit.strip().upper() if prescription_data.unit else ""
-                if unit == "MG":
-                    # For MG: 100mg = 1 unit
-                    units_per_dose = dose_num / 100.0
-                elif unit == "MCG":
-                    # For MCG: 1000mcg = 1 unit
-                    units_per_dose = dose_num / 1000.0
-                # For other units (TAB, CAP, ML, etc.), use dose as-is (1 tablet = 1 unit)
-                
-                # Calculate: units per dose × frequency per day × number of days
-                calculated_quantity = int(units_per_dose * frequency_value * duration_num)
-                if calculated_quantity > 0:
-                    quantity = calculated_quantity
-        except (ValueError, TypeError):
-            pass  # If calculation fails, use provided quantity or default below
-    
-    # Ensure quantity is set
-    if not quantity or quantity <= 0:
-        quantity = 1
-    
-    prescription_dict = prescription_data.dict()
-    prescription_dict['frequency_value'] = frequency_value
-    prescription_dict['quantity'] = quantity
-    # Convert is_external boolean to integer (0 or 1) for SQLite
-    if 'is_external' in prescription_dict:
-        prescription_dict['is_external'] = 1 if prescription_dict['is_external'] else 0
-    else:
-        prescription_dict['is_external'] = 0
-    
-    prescription = Prescription(**prescription_dict, prescribed_by=current_user.id)
-    db.add(prescription)
-    
-    # Auto-confirm external prescriptions (they don't need pharmacy confirmation)
-    # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
-    is_external = prescription_dict.get('is_external', 0)
-    if is_external:
-        prescription.confirmed_by = current_user.id
-        prescription.confirmed_at = datetime.utcnow()
-        print(f"Auto-confirmed external prescription {prescription.id} - no bill will be created")
-    
-    db.commit()
-    db.refresh(prescription)
-    return add_prescriber_info_to_response(prescription, db)
+    try:
+        encounter = db.query(Encounter).filter(Encounter.id == prescription_data.encounter_id).first()
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found")
+        
+        # Get frequency value from mapping if frequency is provided
+        frequency_value = None
+        if prescription_data.frequency:
+            frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
+        
+        # Auto-calculate quantity based on pharmacist logic
+        # For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
+        # Then: (dose_mg / 100) × frequency_value × duration
+        # Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
+        # Only auto-calculate if quantity is not provided or is 0
+        # This allows frontend to override the calculation if needed
+        quantity = prescription_data.quantity
+        if (not quantity or quantity <= 0) and prescription_data.dose and frequency_value and prescription_data.duration:
+            try:
+                dose_num = float(prescription_data.dose)
+                if dose_num > 0:
+                    # Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
+                    duration_str = prescription_data.duration.strip() if prescription_data.duration else ""
+                    duration_num = 1
+                    if duration_str:
+                        # First try to parse as a number directly
+                        try:
+                            direct_num = float(duration_str)
+                            if direct_num > 0:
+                                duration_num = int(direct_num)
+                        except ValueError:
+                            # Otherwise, extract number from string (e.g., "7 DAYS" -> 7)
+                            import re
+                            duration_match = re.search(r'\d+', duration_str)
+                            if duration_match:
+                                duration_num = int(duration_match.group())
+                    
+                    # Convert dose to units based on unit type
+                    units_per_dose = dose_num
+                    unit = prescription_data.unit.strip().upper() if prescription_data.unit else ""
+                    if unit == "MG":
+                        # For MG: 100mg = 1 unit
+                        units_per_dose = dose_num / 100.0
+                    elif unit == "MCG":
+                        # For MCG: 1000mcg = 1 unit
+                        units_per_dose = dose_num / 1000.0
+                    # For other units (TAB, CAP, ML, etc.), use dose as-is (1 tablet = 1 unit)
+                    
+                    # Calculate: units per dose × frequency per day × number of days
+                    calculated_quantity = int(units_per_dose * frequency_value * duration_num)
+                    if calculated_quantity > 0:
+                        quantity = calculated_quantity
+            except (ValueError, TypeError) as e:
+                print(f"Error calculating quantity: {e}")
+                pass  # If calculation fails, use provided quantity or default below
+        
+        # Ensure quantity is set
+        if not quantity or quantity <= 0:
+            quantity = 1
+        
+        prescription_dict = prescription_data.dict()
+        prescription_dict['frequency_value'] = frequency_value
+        prescription_dict['quantity'] = quantity
+        # Convert is_external boolean to integer (0 or 1) for SQLite
+        if 'is_external' in prescription_dict:
+            prescription_dict['is_external'] = 1 if prescription_dict['is_external'] else 0
+        else:
+            prescription_dict['is_external'] = 0
+        
+        prescription = Prescription(**prescription_dict, prescribed_by=current_user.id)
+        db.add(prescription)
+        
+        # Auto-confirm external prescriptions (they don't need pharmacy confirmation)
+        # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
+        is_external = prescription_dict.get('is_external', 0)
+        if is_external:
+            prescription.confirmed_by = current_user.id
+            prescription.confirmed_at = datetime.utcnow()
+            print(f"Auto-confirmed external prescription {prescription.id} - no bill will be created")
+        
+        db.commit()
+        db.refresh(prescription)
+        return add_prescriber_info_to_response(prescription, db)
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        # Log the error and re-raise as HTTPException with 500 status
+        import traceback
+        print(f"Error creating prescription: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating prescription: {str(e)}"
+        )
 
 
 def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionResponse:
