@@ -363,7 +363,7 @@ def search_price_items_endpoint(
     service_type: Optional[str] = None,  # Service Type (department/clinic) filter
     file_type: Optional[str] = None,  # Filter by file type: procedure, surgery, product, unmapped_drg
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy"]))
 ):
     """Search price list items across all tables"""
     results = search_price_items_all_tables(db, search_term, service_type, file_type)

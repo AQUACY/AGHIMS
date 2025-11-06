@@ -186,6 +186,56 @@
       </q-card-section>
     </q-card>
 
+    <!-- Payment Information Section -->
+    <q-card v-if="selectedEncounterId && currentEncounter" class="q-mb-md glass-card">
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">Payment Information</div>
+        <div class="row q-gutter-md">
+          <div class="col-12 col-md-6">
+            <div class="text-subtitle2 q-mb-xs text-grey-7">Insurance Status</div>
+            <div class="row items-center q-gutter-sm">
+              <q-badge 
+                :color="isInsuredEncounter ? 'green' : 'orange'" 
+                :label="isInsuredEncounter ? 'Insured (NHIA)' : 'Cash/Carry'"
+                class="text-weight-bold"
+              />
+              <span v-if="isInsuredEncounter && currentEncounter.ccc_number" class="text-body2 text-grey-7">
+                CCC: {{ currentEncounter.ccc_number }}
+              </span>
+            </div>
+          </div>
+          <div class="col-12 col-md-6">
+            <div class="text-subtitle2 q-mb-xs text-grey-7">Confirmed Prescriptions Summary</div>
+            <div class="text-body1">
+              <div v-if="loadingPrescriptionCosts" class="text-grey-6">
+                <q-spinner size="sm" class="q-mr-xs" />
+                Calculating costs...
+              </div>
+              <div v-else>
+                <div class="text-weight-bold text-h6" :class="prescriptionTotalAmount > 0 ? 'text-primary' : 'text-grey-6'">
+                  ₵{{ prescriptionTotalAmount.toFixed(2) }}
+                </div>
+                <div class="text-caption text-grey-7 q-mt-xs">
+                  {{ confirmedPrescriptionsCount }} confirmed prescription(s)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-if="prescriptionTotalAmount > 0" class="q-mt-md q-pt-md" style="border-top: 1px solid rgba(255,255,255,0.1);">
+          <div class="text-subtitle2 q-mb-xs text-grey-7">Payment Note</div>
+          <div class="text-body2">
+            <span v-if="isInsuredEncounter" class="text-info">
+              This is an insured encounter. The patient will pay the co-payment amount shown above.
+            </span>
+            <span v-else class="text-warning">
+              This is a cash/carry encounter. The patient will pay the full amount shown above.
+            </span>
+          </div>
+        </div>
+      </q-card-section>
+    </q-card>
+
     <!-- Prescriptions Table -->
     <q-card v-if="selectedEncounterId">
       <q-card-section>
@@ -1068,6 +1118,8 @@ const selectedMedication = ref(null);
 const medicationOptions = ref([]);
 const allMedications = ref([]);
 const staffMap = ref({}); // Map of user_id -> user info for getting prescriber/dispenser names
+const prescriptionTotalAmount = ref(0);
+const loadingPrescriptionCosts = ref(false);
 
 // Frequency mapping for prescriptions (same as Consultation.vue)
 const frequencyMapping = {
@@ -1660,6 +1712,9 @@ const loadPrescriptions = async () => {
 
     // Set encounter_id for new prescription form
     newPrescriptionForm.value.encounter_id = selectedEncounterId.value;
+    
+    // Calculate prescription costs after loading
+    await calculatePrescriptionCosts();
   } catch (error) {
     prescriptions.value = [];
     $q.notify({
@@ -2268,16 +2323,71 @@ watch(() => route.query.encounterId, (newEncounterId) => {
   }
 });
 
-onMounted(() => {
-  loadPharmacyMedications();
-  loadStaff();
-  autoLoadFromRoute();
-});
-
 const dispensedPrescriptions = computed(() => (prescriptions.value || []).filter(p => p.is_dispensed));
 
 const isFinalized = computed(() => {
   return currentEncounter.value?.status === 'finalized';
+});
+
+// Check if encounter is insured (has CCC number)
+const isInsuredEncounter = computed(() => {
+  return !!(currentEncounter.value?.ccc_number && currentEncounter.value.ccc_number.trim() !== '');
+});
+
+// Get confirmed prescriptions (excluding external ones)
+const confirmedPrescriptions = computed(() => {
+  return (prescriptions.value || []).filter(p => p.is_confirmed && !p.is_external);
+});
+
+// Count of confirmed prescriptions
+const confirmedPrescriptionsCount = computed(() => {
+  return confirmedPrescriptions.value.length;
+});
+
+// Calculate total cost of confirmed prescriptions
+const calculatePrescriptionCosts = async () => {
+  if (!currentEncounter.value || confirmedPrescriptions.value.length === 0) {
+    prescriptionTotalAmount.value = 0;
+    return;
+  }
+
+  loadingPrescriptionCosts.value = true;
+  try {
+    const isInsured = isInsuredEncounter.value;
+    let total = 0;
+
+    // Calculate cost for each confirmed prescription
+    for (const prescription of confirmedPrescriptions.value) {
+      if (prescription.medicine_code) {
+        const unitPrice = await getMedicationPrice(prescription.medicine_code, isInsured);
+        const quantity = prescription.quantity || 1;
+        total += unitPrice * quantity;
+      }
+    }
+
+    prescriptionTotalAmount.value = total;
+  } catch (error) {
+    console.error('Failed to calculate prescription costs:', error);
+    prescriptionTotalAmount.value = 0;
+  } finally {
+    loadingPrescriptionCosts.value = false;
+  }
+};
+
+// Watch for changes in prescriptions or encounter to recalculate costs
+// This must be after all computed properties and functions are defined
+watch([() => prescriptions.value, () => currentEncounter.value], () => {
+  if (currentEncounter.value) {
+    calculatePrescriptionCosts();
+  } else {
+    prescriptionTotalAmount.value = 0;
+  }
+}, { deep: true });
+
+onMounted(() => {
+  loadPharmacyMedications();
+  loadStaff();
+  autoLoadFromRoute();
 });
 
 const formatReceiptLine = (label, value) => {
