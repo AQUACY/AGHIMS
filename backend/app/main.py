@@ -1,6 +1,7 @@
 """
 Main FastAPI application
 """
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -32,9 +33,14 @@ app = FastAPI(
 )
 
 # CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# Get allowed origins from environment or use defaults
+cors_origins = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
+# Filter out empty strings
+cors_origins = [origin.strip() for origin in cors_origins if origin.strip()]
+
+# Default origins if not set via environment
+if not cors_origins:
+    cors_origins = [
         "http://localhost:9000",  # Development
         "http://localhost:3000",  # Development
         "http://127.0.0.1:9000",  # Development
@@ -43,11 +49,16 @@ app.add_middleware(
         "http://localhost:8000",  # Production (direct backend access)
         "http://10.10.16.50",  # Production (Network IP)
         "http://10.10.16.50:8000",  # Production (Network IP with port)
-        "http://10.10.16.50:9000",  # Development (Network IP dev server)
-    ],
+        "http://10.10.16.50:9000",  # Production (Network IP dev server)
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include routers
