@@ -434,6 +434,151 @@ def create_receipt(
     }
 
 
+class BillItemUpdate(BaseModel):
+    """Bill item update model"""
+    item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    category: Optional[str] = None
+    quantity: Optional[int] = None
+    unit_price: Optional[float] = None
+
+
+class BillUpdate(BaseModel):
+    """Bill update model"""
+    items: Optional[List[BillItemUpdate]] = None
+    miscellaneous: Optional[str] = None
+
+
+@router.put("/bill/{bill_id}")
+def update_bill(
+    bill_id: int,
+    bill_data: BillUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update a bill - Admin only"""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Update miscellaneous if provided
+    if bill_data.miscellaneous is not None:
+        bill.miscellaneous = bill_data.miscellaneous
+    
+    # Update bill items if provided
+    if bill_data.items is not None:
+        total_amount = 0.0
+        
+        for item_update in bill_data.items:
+            # Find the bill item to update
+            # If item_code is provided, use it to find the item
+            if item_update.item_code:
+                bill_item = db.query(BillItem).filter(
+                    BillItem.bill_id == bill_id,
+                    BillItem.item_code == item_update.item_code
+                ).first()
+            else:
+                # If no item_code, try to find by name (for miscellaneous items)
+                if item_update.item_name:
+                    bill_item = db.query(BillItem).filter(
+                        BillItem.bill_id == bill_id,
+                        BillItem.item_name == item_update.item_name
+                    ).first()
+                else:
+                    continue  # Skip if no identifier provided
+            
+            if not bill_item:
+                # Item not found - skip or create new item
+                continue
+            
+            # Update fields if provided
+            if item_update.item_name is not None:
+                bill_item.item_name = item_update.item_name
+            if item_update.category is not None:
+                bill_item.category = item_update.category
+            if item_update.quantity is not None and item_update.quantity > 0:
+                bill_item.quantity = item_update.quantity
+            if item_update.unit_price is not None and item_update.unit_price >= 0:
+                bill_item.unit_price = item_update.unit_price
+            
+            # Recalculate total price
+            bill_item.total_price = bill_item.unit_price * bill_item.quantity
+            total_amount += bill_item.total_price
+        
+        # Recalculate bill total from all items
+        all_items = db.query(BillItem).filter(BillItem.bill_id == bill_id).all()
+        bill.total_amount = sum(item.total_price for item in all_items)
+        
+        # Check if bill is still paid (paid_amount should not exceed total_amount)
+        if bill.paid_amount > bill.total_amount:
+            bill.paid_amount = bill.total_amount
+        
+        # Update is_paid status
+        if bill.paid_amount >= bill.total_amount and bill.total_amount > 0:
+            bill.is_paid = True
+            if not bill.paid_at:
+                bill.paid_at = datetime.utcnow()
+        else:
+            bill.is_paid = False
+            bill.paid_at = None
+    
+    db.commit()
+    db.refresh(bill)
+    
+    return bill
+
+
+@router.put("/bill-item/{bill_item_id}")
+def update_bill_item(
+    bill_item_id: int,
+    item_data: BillItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update a specific bill item - Admin only"""
+    bill_item = db.query(BillItem).filter(BillItem.id == bill_item_id).first()
+    if not bill_item:
+        raise HTTPException(status_code=404, detail="Bill item not found")
+    
+    bill = bill_item.bill
+    
+    # Update fields if provided
+    if item_data.item_name is not None:
+        bill_item.item_name = item_data.item_name
+    if item_data.category is not None:
+        bill_item.category = item_data.category
+    if item_data.quantity is not None and item_data.quantity > 0:
+        bill_item.quantity = item_data.quantity
+    if item_data.unit_price is not None and item_data.unit_price >= 0:
+        bill_item.unit_price = item_data.unit_price
+    
+    # Recalculate total price
+    bill_item.total_price = bill_item.unit_price * bill_item.quantity
+    
+    # Recalculate bill total
+    all_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+    bill.total_amount = sum(item.total_price for item in all_items)
+    
+    # Check if bill is still paid
+    if bill.paid_amount > bill.total_amount:
+        bill.paid_amount = bill.total_amount
+    
+    # Update is_paid status
+    if bill.paid_amount >= bill.total_amount and bill.total_amount > 0:
+        bill.is_paid = True
+        if not bill.paid_at:
+            bill.paid_at = datetime.utcnow()
+    else:
+        bill.is_paid = False
+        bill.paid_at = None
+    
+    db.commit()
+    db.refresh(bill_item)
+    db.refresh(bill)
+    
+    return bill_item
+
+
 @router.delete("/bill/{bill_id}")
 def delete_bill(
     bill_id: int,
