@@ -19,7 +19,7 @@
               label="Username"
               lazy-rules
               :rules="[(val) => !!val || 'Please enter username']"
-              class="glass-input"
+              class=""
             />
 
             <q-input
@@ -29,7 +29,7 @@
               label="Password"
               lazy-rules
               :rules="[(val) => !!val || 'Please enter password']"
-              class="glass-input"
+              class=""
             />
 
             <div class="q-mt-lg">
@@ -105,7 +105,7 @@ const onSubmit = async () => {
 }
 
 .glass-input {
-  background: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(107, 17, 17, 0.1) !important;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-radius: 12px;

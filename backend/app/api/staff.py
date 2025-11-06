@@ -255,7 +255,7 @@ def import_staff_from_excel(
                     errors.append(f"Row {index + 2}: Role is required")
                     continue
                 
-                # Handle placeholder/default emails - set to None to avoid unique constraint violations
+                # Handle email - set to None if empty or placeholder
                 email = None
                 if email_raw:
                     email_lower = email_raw.lower().strip()
@@ -269,14 +269,7 @@ def import_staff_from_excel(
                         '',
                     ]
                     if email_lower not in placeholder_emails:
-                        email = email_raw.strip()
-                
-                # Check email uniqueness if provided (and not None)
-                if email:
-                    existing_email = db.query(User).filter(User.email == email).first()
-                    if existing_email:
-                        errors.append(f"Row {index + 2}: Email '{email}' already exists")
-                        continue
+                        email = email_raw.strip() if email_raw.strip() else None
                 
                 # Handle is_active - default to True if not provided or NaN
                 is_active = True
