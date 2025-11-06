@@ -352,6 +352,19 @@
               />
             </q-td>
           </template>
+          <template v-slot:body-cell-amount="props">
+            <q-td :props="props">
+              <div v-if="prescriptionPrices.has(props.row.id)" class="text-weight-medium text-primary">
+                ₵{{ prescriptionPrices.get(props.row.id).toFixed(2) }}
+              </div>
+              <div v-else-if="props.row.is_external" class="text-grey-6 text-caption">
+                External
+              </div>
+              <div v-else class="text-grey-6 text-caption">
+                Calculating...
+              </div>
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <div class="row q-gutter-xs">
@@ -763,8 +776,11 @@
           <div class="text-subtitle2 text-grey-7 q-mt-xs">
             {{ confirmForm.medicine_name }} ({{ confirmForm.medicine_code }})
           </div>
-          <div class="text-caption text-warning q-mt-sm">
+          <div class="text-caption text-warning q-mt-sm" v-if="!confirmForm.is_external">
             Review and update prescription details if needed, then confirm. This will generate a bill for the client.
+          </div>
+          <div class="text-caption text-info q-mt-sm" v-else>
+            This prescription will be marked as external (to be filled outside). No bill will be generated.
           </div>
         </q-card-section>
 
@@ -810,6 +826,15 @@
               rows="3"
               hint="Instructions for taking this medication"
             />
+            <q-checkbox
+              v-model="confirmForm.is_external"
+              label="Mark as External (Drug not in stock - to be filled outside)"
+              color="orange"
+              class="q-mt-md"
+            />
+            <div class="text-caption text-grey-7 q-ml-md" v-if="confirmForm.is_external">
+              External prescriptions are filled outside the hospital and will not be billed.
+            </div>
             <div class="row q-gutter-md q-mt-md">
               <q-btn
                 label="Cancel"
@@ -818,9 +843,9 @@
                 class="col"
               />
               <q-btn
-                label="Confirm & Generate Bill"
+                :label="confirmForm.is_external ? 'Mark as External' : 'Confirm & Generate Bill'"
                 type="submit"
-                color="primary"
+                :color="confirmForm.is_external ? 'orange' : 'primary'"
                 class="col"
                 :loading="confirmingId !== null"
               />
@@ -1093,6 +1118,7 @@ const confirmForm = ref({
   duration: '',
   quantity: 1,
   instructions: '',
+  is_external: false,
 });
 const bills = ref([]);
 const newPrescriptionForm = ref({
@@ -1120,6 +1146,7 @@ const allMedications = ref([]);
 const staffMap = ref({}); // Map of user_id -> user info for getting prescriber/dispenser names
 const prescriptionTotalAmount = ref(0);
 const loadingPrescriptionCosts = ref(false);
+const prescriptionPrices = ref(new Map()); // Map of prescription_id -> price
 
 // Frequency mapping for prescriptions (same as Consultation.vue)
 const frequencyMapping = {
@@ -1470,6 +1497,7 @@ const columns = [
   { name: 'frequency', label: 'Frequency', field: 'frequency', align: 'left' },
   { name: 'duration', label: 'Duration', field: 'duration', align: 'left' },
   { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'right' },
+  { name: 'amount', label: 'Amount', field: 'amount', align: 'right' },
   { name: 'prescriber', label: 'Prescriber', field: 'prescriber_name', align: 'left' },
   { name: 'status', label: 'Status', field: 'is_confirmed', align: 'center' },
   { name: 'actions', label: 'Actions', align: 'center' },
@@ -1713,7 +1741,8 @@ const loadPrescriptions = async () => {
     // Set encounter_id for new prescription form
     newPrescriptionForm.value.encounter_id = selectedEncounterId.value;
     
-    // Calculate prescription costs after loading
+    // Calculate prices for all prescriptions and total for confirmed ones
+    await calculateAllPrescriptionPrices();
     await calculatePrescriptionCosts();
   } catch (error) {
     prescriptions.value = [];
@@ -1747,6 +1776,7 @@ const confirmPrescription = (prescription) => {
     duration: prescription.duration || '',
     quantity: prescription.quantity || 1,
     instructions: prescription.instructions || '',
+    is_external: false, // Reset to false when opening dialog
   };
   showConfirmDialog.value = true;
 };
@@ -1762,12 +1792,15 @@ const confirmPrescriptionSubmit = async () => {
       duration: confirmForm.value.duration,
       quantity: confirmForm.value.quantity,
       instructions: confirmForm.value.instructions || null,
+      is_external: confirmForm.value.is_external || false,
     };
 
     await consultationAPI.confirmPrescription(confirmForm.value.id, confirmData);
     $q.notify({
       type: 'positive',
-      message: 'Prescription confirmed and bill generated successfully',
+      message: confirmForm.value.is_external 
+        ? 'Prescription marked as external successfully' 
+        : 'Prescription confirmed and bill generated successfully',
     });
     showConfirmDialog.value = false;
     // Reload prescriptions and bills to update status
@@ -2344,6 +2377,46 @@ const confirmedPrescriptionsCount = computed(() => {
   return confirmedPrescriptions.value.length;
 });
 
+// Calculate prices for all prescriptions (for display in table)
+const calculateAllPrescriptionPrices = async () => {
+  if (!currentEncounter.value || prescriptions.value.length === 0) {
+    prescriptionPrices.value.clear();
+    return;
+  }
+
+  try {
+    const isInsured = isInsuredEncounter.value;
+    const newPrices = new Map();
+
+    // Calculate price for each prescription (excluding external ones)
+    for (const prescription of prescriptions.value) {
+      if (prescription.is_external) {
+        // External prescriptions don't have prices
+        continue;
+      }
+      
+      if (prescription.medicine_code) {
+        try {
+          const unitPrice = await getMedicationPrice(prescription.medicine_code, isInsured);
+          const quantity = prescription.quantity || 1;
+          const totalPrice = unitPrice * quantity;
+          newPrices.set(prescription.id, totalPrice);
+        } catch (error) {
+          console.error(`Failed to get price for prescription ${prescription.id}:`, error);
+          newPrices.set(prescription.id, 0);
+        }
+      } else {
+        newPrices.set(prescription.id, 0);
+      }
+    }
+
+    prescriptionPrices.value = newPrices;
+  } catch (error) {
+    console.error('Failed to calculate prescription prices:', error);
+    prescriptionPrices.value.clear();
+  }
+};
+
 // Calculate total cost of confirmed prescriptions
 const calculatePrescriptionCosts = async () => {
   if (!currentEncounter.value || confirmedPrescriptions.value.length === 0) {
@@ -2378,9 +2451,11 @@ const calculatePrescriptionCosts = async () => {
 // This must be after all computed properties and functions are defined
 watch([() => prescriptions.value, () => currentEncounter.value], () => {
   if (currentEncounter.value) {
+    calculateAllPrescriptionPrices();
     calculatePrescriptionCosts();
   } else {
     prescriptionTotalAmount.value = 0;
+    prescriptionPrices.value.clear();
   }
 }, { deep: true });
 

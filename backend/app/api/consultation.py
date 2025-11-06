@@ -516,6 +516,7 @@ class PrescriptionDispense(BaseModel):
     duration: Optional[str] = None
     quantity: Optional[int] = None
     instructions: Optional[str] = None  # Instructions for the drug
+    is_external: Optional[bool] = None  # Mark prescription as external (to be filled outside)
 
 
 @router.put("/prescription/{prescription_id}/dispense", response_model=PrescriptionResponse)
@@ -602,10 +603,10 @@ def confirm_prescription(
     if not prescription:
         raise HTTPException(status_code=404, detail="Prescription not found")
     
-    # Prevent confirming external prescriptions (they're auto-confirmed and not billed)
+    # Prevent confirming already external prescriptions (they're auto-confirmed and not billed)
     # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
-    is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
-    if is_external:
+    current_is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    if current_is_external:
         raise HTTPException(
             status_code=400, 
             detail="External prescriptions are automatically confirmed and cannot be confirmed again. They are filled outside and not billed."
@@ -619,6 +620,8 @@ def confirm_prescription(
         raise HTTPException(status_code=404, detail="Encounter not found")
     
     # Allow pharmacy to update prescription details during confirmation
+    # Also allow marking as external if drug is not in stock
+    mark_as_external = False
     if dispense_data:
         if dispense_data.dose is not None:
             prescription.dose = dispense_data.dose
@@ -632,6 +635,10 @@ def confirm_prescription(
             prescription.quantity = dispense_data.quantity
         if dispense_data.instructions is not None:
             prescription.instructions = dispense_data.instructions
+        if dispense_data.is_external is not None:
+            mark_as_external = dispense_data.is_external
+            # Convert boolean to integer (0 or 1) for SQLite
+            prescription.is_external = 1 if mark_as_external else 0
     
     # Mark prescription as confirmed
     prescription.confirmed_by = current_user.id
@@ -661,7 +668,7 @@ def confirm_prescription(
     # Skip billing for external prescriptions (they are filled outside)
     # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
     is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
-    if is_external:
+    if is_external or mark_as_external:
         print(f"Prescription {prescription_id} is external - skipping bill creation")
         db.commit()
         db.refresh(prescription)
