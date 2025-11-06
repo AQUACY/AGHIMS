@@ -309,7 +309,7 @@ export default {
       'Nurse',
       'Doctor',
       'Billing',
-      'Pharmacist',
+      'Pharmacy',
       'Lab',
       'Claims',
       'Admin'
@@ -367,7 +367,7 @@ export default {
         Doctor: 'blue',
         Nurse: 'green',
         Lab: 'orange',
-        Pharmacist: 'purple',
+        Pharmacy: 'purple',
         Billing: 'teal',
         Claims: 'cyan',
         Records: 'grey',
