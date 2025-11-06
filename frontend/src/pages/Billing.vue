@@ -271,6 +271,18 @@
                     label="Pay"
                     @click="openReceiptDialog(props.row)"
                   />
+                  <!-- Edit button for Admin -->
+                  <q-btn
+                    v-if="authStore.userRole === 'Admin'"
+                    size="sm"
+                    color="secondary"
+                    icon="edit"
+                    label="Edit"
+                    @click="editBill(props.row)"
+                    :loading="updatingBillId === props.row.id"
+                  >
+                    <q-tooltip>Edit bill (Admin only)</q-tooltip>
+                  </q-btn>
                   <q-btn
                     v-if="props.row.is_paid && authStore.userRole === 'Admin'"
                     size="sm"
@@ -426,6 +438,23 @@
                 </div>
               </q-td>
             </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  v-if="authStore.userRole === 'Admin'"
+                  size="sm"
+                  color="secondary"
+                  icon="edit"
+                  flat
+                  round
+                  dense
+                  @click="editBillItem(props.row)"
+                  :loading="updatingBillItemId === props.row.id"
+                >
+                  <q-tooltip>Edit bill item (Admin only)</q-tooltip>
+                </q-btn>
+              </q-td>
+            </template>
             </q-table>
             <div class="text-caption text-grey-7 q-mt-xs">
               Subtotal: ₵{{ groupSubtotal(group).toFixed(2) }}
@@ -440,6 +469,191 @@
             <div class="text-subtitle1 text-weight-bold">
               Grand Total: ₵{{ currentBillDetails?.total_amount.toFixed(2) || '0.00' }}
             </div>
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Edit Bill Item Dialog -->
+    <q-dialog v-model="showEditBillItemDialog">
+      <q-card style="min-width: 500px; max-width: 700px">
+        <q-card-section>
+          <div class="row items-center">
+            <div class="text-h6">Edit Bill Item</div>
+            <q-space />
+            <q-btn icon="close" flat round dense v-close-popup />
+          </div>
+          <div class="text-caption text-warning q-mt-sm">
+            Admin: Edit individual bill item. Changes will update the bill total automatically.
+          </div>
+        </q-card-section>
+        <q-card-section v-if="editingBillItem">
+          <q-form @submit="updateBillItemSubmit" class="q-gutter-md">
+            <q-input
+              v-model="editBillItemForm.item_code"
+              filled
+              label="Item Code"
+              readonly
+              hint="Cannot be changed"
+            />
+            <q-input
+              v-model="editBillItemForm.item_name"
+              filled
+              label="Item Name"
+              readonly
+              hint="Cannot be changed"
+            />
+            <q-input
+              v-model="editBillItemForm.category"
+              filled
+              label="Category"
+              readonly
+              hint="Cannot be changed"
+            />
+            <q-input
+              v-model.number="editBillItemForm.quantity"
+              filled
+              type="number"
+              label="Quantity *"
+              :min="1"
+              :rules="[
+                (val) => !!val || 'Quantity is required',
+                (val) => val > 0 || 'Quantity must be greater than 0'
+              ]"
+            />
+            <q-input
+              v-model.number="editBillItemForm.unit_price"
+              filled
+              type="number"
+              step="0.01"
+              label="Unit Price *"
+              :min="0"
+              :rules="[
+                (val) => val !== null && val !== undefined || 'Unit price is required',
+                (val) => val >= 0 || 'Unit price must be greater than or equal to 0'
+              ]"
+            />
+            <div class="q-mt-md" style="border-top: 1px solid #ccc; padding-top: 8px;">
+              <div class="text-subtitle2">
+                Total: ₵{{ ((editBillItemForm.quantity || 0) * (editBillItemForm.unit_price || 0)).toFixed(2) }}
+              </div>
+            </div>
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn
+                label="Cancel"
+                flat
+                v-close-popup
+                class="col"
+              />
+              <q-btn
+                label="Update Item"
+                type="submit"
+                color="primary"
+                class="col"
+                :loading="updatingBillItemId !== null"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Edit Bill Dialog -->
+    <q-dialog v-model="showEditBillDialog">
+      <q-card style="min-width: 800px; max-width: 1000px">
+        <q-card-section>
+          <div class="row items-center">
+            <div class="text-h6">Edit Bill - {{ editingBill?.bill_number }}</div>
+            <q-space />
+            <q-btn icon="close" flat round dense v-close-popup />
+          </div>
+          <div class="text-caption text-warning q-mt-sm">
+            Admin: You can edit bill items. Changes will update the bill total and may affect payments.
+          </div>
+        </q-card-section>
+        <q-card-section v-if="editingBill">
+          <div class="row q-mb-md">
+            <div class="col-6">
+              <div class="text-caption text-grey-7">Bill Number</div>
+              <div class="text-body1">{{ editingBill.bill_number }}</div>
+            </div>
+            <div class="col-6">
+              <div class="text-caption text-grey-7">Encounter ID</div>
+              <div class="text-body1">{{ editingBill.encounter_id }}</div>
+            </div>
+          </div>
+          <div class="text-subtitle1 q-mt-md q-mb-sm">Bill Items</div>
+          
+          <q-table
+            :rows="editingBillItems"
+            :columns="editBillItemColumns"
+            row-key="id"
+            flat
+            dense
+            class="q-mb-md"
+          >
+            <template v-slot:body-cell-quantity="props">
+              <q-td :props="props">
+                <q-input
+                  v-model.number="props.row.editableQuantity"
+                  type="number"
+                  dense
+                  filled
+                  :min="1"
+                  @update:model-value="updateBillItemTotal(props.row)"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-unit_price="props">
+              <q-td :props="props">
+                <q-input
+                  v-model.number="props.row.editableUnitPrice"
+                  type="number"
+                  dense
+                  filled
+                  step="0.01"
+                  :min="0"
+                  @update:model-value="updateBillItemTotal(props.row)"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  size="sm"
+                  color="negative"
+                  icon="delete"
+                  flat
+                  round
+                  @click="removeBillItemFromEdit(props.row)"
+                  :loading="updatingBillItemId === props.row.id"
+                >
+                  <q-tooltip>Remove item</q-tooltip>
+                </q-btn>
+              </q-td>
+            </template>
+          </q-table>
+          
+          <div class="q-mt-md" style="border-top: 2px solid #1976d2; padding-top: 8px;">
+            <div class="text-subtitle1 text-weight-bold">
+              Grand Total: ₵{{ editBillTotal.toFixed(2) }}
+            </div>
+          </div>
+          
+          <div class="row q-gutter-md q-mt-md">
+            <q-btn
+              label="Cancel"
+              flat
+              v-close-popup
+              class="col"
+            />
+            <q-btn
+              label="Update Bill"
+              color="primary"
+              class="col"
+              @click="updateBillSubmit"
+              :loading="updatingBillId !== null"
+            />
           </div>
         </q-card-section>
       </q-card>
@@ -777,6 +991,21 @@ const manualReceiptForm = ref({
   amount_paid: 0,
   payment_method: 'cash',
 });
+const showEditBillDialog = ref(false);
+const editingBill = ref(null);
+const editingBillItems = ref([]);
+const updatingBillId = ref(null);
+const updatingBillItemId = ref(null);
+const showEditBillItemDialog = ref(false);
+const editingBillItem = ref(null);
+const editBillItemForm = ref({
+  id: null,
+  item_code: '',
+  item_name: '',
+  category: '',
+  quantity: 1,
+  unit_price: 0,
+});
 
 const billItemColumns = [
   { name: 'item_code', label: 'Code', field: 'item_code', align: 'left' },
@@ -809,6 +1038,17 @@ const billDetailColumns = [
   { name: 'amount_paid', label: 'Amount Paid', field: 'amount_paid', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
   { name: 'remaining_balance', label: 'Balance', field: 'remaining_balance', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
   { name: 'receipt_numbers', label: 'Receipt Number(s)', field: 'receipt_numbers', align: 'left' },
+  { name: 'actions', label: 'Actions', align: 'center' },
+];
+
+const editBillItemColumns = [
+  { name: 'item_code', label: 'Code', field: 'item_code', align: 'left' },
+  { name: 'item_name', label: 'Name', field: 'item_name', align: 'left' },
+  { name: 'category', label: 'Category', field: 'category', align: 'left' },
+  { name: 'quantity', label: 'Qty', field: 'quantity', align: 'right' },
+  { name: 'unit_price', label: 'Unit Price', field: 'unit_price', align: 'right' },
+  { name: 'total_price', label: 'Total', field: 'total_price', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
+  { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
 const searchResultColumns = [
@@ -1466,6 +1706,221 @@ const viewBillDetails = async (billId) => {
       type: 'negative',
       message: error.response?.data?.detail || 'Failed to load bill details',
     });
+  }
+};
+
+const editBill = async (bill) => {
+  try {
+    const response = await billingAPI.getBillDetails(bill.id);
+    const billData = response.data?.data || response.data;
+    editingBill.value = billData;
+    
+    // Create editable copy of bill items
+    // Ensure each item has an id
+    const items = billData.bill_items || [];
+    console.log('Bill items from API:', items);
+    editingBillItems.value = items.map(item => {
+      if (!item.id) {
+        console.error('Bill item missing id:', item);
+        $q.notify({
+          type: 'warning',
+          message: `Bill item "${item.item_name}" is missing an ID and cannot be edited`,
+        });
+      }
+      const editableItem = {
+        ...item,
+        editableQuantity: item.quantity || 1,
+        editableUnitPrice: item.unit_price || 0,
+        total_price: (item.quantity || 1) * (item.unit_price || 0),
+      };
+      console.log('Created editable item:', editableItem);
+      return editableItem;
+    }).filter(item => item.id); // Only include items with IDs
+    
+    console.log('Final editable bill items:', editingBillItems.value);
+    
+    if (editingBillItems.value.length === 0) {
+      $q.notify({
+        type: 'warning',
+        message: 'No editable bill items found',
+      });
+      return;
+    }
+    
+    showEditBillDialog.value = true;
+  } catch (error) {
+    console.error('Error loading bill details:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load bill details',
+    });
+  }
+};
+
+const updateBillItemTotal = (item) => {
+  item.total_price = (item.editableQuantity || 1) * (item.editableUnitPrice || 0);
+};
+
+const editBillItem = (item) => {
+  if (!item || !item.id) {
+    $q.notify({
+      type: 'warning',
+      message: 'Bill item is missing an ID and cannot be edited',
+    });
+    return;
+  }
+  
+  editingBillItem.value = item;
+  editBillItemForm.value = {
+    id: item.id,
+    item_code: item.item_code || '',
+    item_name: item.item_name || '',
+    category: item.category || '',
+    quantity: item.quantity || 1,
+    unit_price: item.unit_price || 0,
+  };
+  
+  console.log('Editing bill item:', item);
+  console.log('Edit form:', editBillItemForm.value);
+  
+  showEditBillItemDialog.value = true;
+};
+
+const updateBillItemSubmit = async () => {
+  if (!editBillItemForm.value.id) {
+    $q.notify({
+      type: 'warning',
+      message: 'Bill item ID is missing',
+    });
+    return;
+  }
+  
+  updatingBillItemId.value = editBillItemForm.value.id;
+  
+  try {
+    const updateData = {
+      quantity: editBillItemForm.value.quantity,
+      unit_price: editBillItemForm.value.unit_price,
+    };
+    
+    console.log(`Updating bill item ${editBillItemForm.value.id} with data:`, updateData);
+    
+    await billingAPI.updateBillItem(editBillItemForm.value.id, updateData);
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Bill item updated successfully',
+    });
+    
+    showEditBillItemDialog.value = false;
+    
+    // Reload bill details to show updated values
+    if (currentBillDetails.value) {
+      await viewBillDetails(currentBillDetails.value.id);
+    }
+    
+    // Reload bills list if we have an encounter selected
+    if (selectedEncounterId.value) {
+      await loadExistingBills();
+    }
+  } catch (error) {
+    console.error('Failed to update bill item:', error);
+    $q.notify({
+      type: 'negative',
+      message: `Failed to update bill item: ${error.response?.data?.detail || error.message}`,
+    });
+  } finally {
+    updatingBillItemId.value = null;
+  }
+};
+
+const removeBillItemFromEdit = async (item) => {
+  $q.dialog({
+    title: 'Remove Item',
+    message: `Are you sure you want to remove ${item.item_name} from this bill?`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    updatingBillItemId.value = item.id;
+    try {
+      // Remove item from editing list
+      editingBillItems.value = editingBillItems.value.filter(i => i.id !== item.id);
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to remove item',
+      });
+    } finally {
+      updatingBillItemId.value = null;
+    }
+  });
+};
+
+const editBillTotal = computed(() => {
+  return editingBillItems.value.reduce((sum, item) => {
+    return sum + (item.total_price || 0);
+  }, 0);
+});
+
+const updateBillSubmit = async () => {
+  if (!editingBill.value) return;
+  
+  updatingBillId.value = editingBill.value.id;
+  try {
+    // Update each bill item individually
+    // The backend will automatically recalculate the bill total
+    for (const item of editingBillItems.value) {
+      if (!item.id) {
+        console.warn('Bill item missing id:', item);
+        $q.notify({
+          type: 'warning',
+          message: `Bill item "${item.item_name}" is missing an ID and cannot be updated`,
+        });
+        continue;
+      }
+      
+      const updateData = {
+        quantity: item.editableQuantity,
+        unit_price: item.editableUnitPrice,
+      };
+      
+      console.log(`Updating bill item ${item.id} (${item.item_name}) with data:`, updateData);
+      
+      try {
+        await billingAPI.updateBillItem(item.id, updateData);
+        console.log(`Successfully updated bill item ${item.id}`);
+      } catch (itemError) {
+        console.error(`Failed to update bill item ${item.id}:`, itemError);
+        console.error('Item data:', item);
+        console.error('Update data:', updateData);
+        $q.notify({
+          type: 'negative',
+          message: `Failed to update ${item.item_name} (ID: ${item.id}): ${itemError.response?.data?.detail || itemError.message}`,
+        });
+        throw itemError; // Stop processing if one item fails
+      }
+    }
+    
+    // No need to update bill total separately - backend recalculates it automatically
+    // from all bill items when we update each item
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Bill updated successfully',
+    });
+    
+    showEditBillDialog.value = false;
+    // Reload bills
+    if (selectedEncounterId.value) {
+      await loadExistingBills();
+    }
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to update bill',
+    });
+  } finally {
+    updatingBillId.value = null;
   }
 };
 

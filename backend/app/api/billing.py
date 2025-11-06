@@ -538,9 +538,12 @@ def update_bill_item(
     """Update a specific bill item - Admin only"""
     bill_item = db.query(BillItem).filter(BillItem.id == bill_item_id).first()
     if not bill_item:
-        raise HTTPException(status_code=404, detail="Bill item not found")
+        raise HTTPException(status_code=404, detail=f"Bill item with ID {bill_item_id} not found")
     
-    bill = bill_item.bill
+    # Get the bill using bill_id to avoid relationship loading issues
+    bill = db.query(Bill).filter(Bill.id == bill_item.bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail=f"Bill with ID {bill_item.bill_id} not found for bill item {bill_item_id}")
     
     # Update fields if provided
     if item_data.item_name is not None:

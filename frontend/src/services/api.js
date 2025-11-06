@@ -228,6 +228,8 @@ export const billingAPI = {
   addManualReceiptToBillItem: (billItemId, data) => api.post(`/billing/bill-item/${billItemId}/receipt`, data),
   deleteReceiptItem: (receiptItemId) => api.delete(`/billing/receipt-item/${receiptItemId}`),
   deleteBill: (billId) => api.delete(`/billing/bill/${billId}`),
+  updateBill: (billId, data) => api.put(`/billing/bill/${billId}`, data),
+  updateBillItem: (billItemId, data) => api.put(`/billing/bill-item/${billItemId}`, data),
 };
 
 // Price list endpoints

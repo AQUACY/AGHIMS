@@ -315,6 +315,19 @@
                   @click="viewInstructions(props.row)"
                   title="View Instructions"
                 />
+              <!-- Edit button for Admin (even if confirmed) -->
+              <q-btn
+                  v-if="authStore.userRole === 'Admin'"
+                  size="sm"
+                  color="secondary"
+                  icon="edit"
+                  label="Edit"
+                  @click="editPrescription(props.row)"
+                  :loading="updatingPrescriptionId === props.row.id"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null"
+                >
+                  <q-tooltip>Edit prescription (Admin only)</q-tooltip>
+                </q-btn>
               <q-btn
                   v-if="!props.row.is_confirmed && !props.row.is_external && !props.row.is_dispensed"
                   size="sm"
@@ -767,6 +780,110 @@
       </q-card>
     </q-dialog>
 
+    <!-- Edit Prescription Dialog -->
+    <q-dialog v-model="showEditPrescriptionDialog">
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="text-h6">Edit Prescription</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+            {{ editPrescriptionForm.medicine_name }} ({{ editPrescriptionForm.medicine_code }})
+          </div>
+          <div class="text-caption text-warning q-mt-sm">
+            Admin: You can edit confirmed prescriptions. Changes will update the prescription and may affect billing.
+          </div>
+        </q-card-section>
+
+        <q-card-section>
+          <q-form @submit="updatePrescriptionSubmit" class="q-gutter-md">
+            <q-input
+              v-model="editPrescriptionForm.medicine_code"
+              filled
+              label="Medicine Code"
+              readonly
+              hint="Cannot be changed"
+            />
+            <q-input
+              v-model="editPrescriptionForm.medicine_name"
+              filled
+              label="Medicine Name"
+              readonly
+              hint="Cannot be changed"
+            />
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="editPrescriptionForm.dose"
+                filled
+                label="Dose *"
+                hint="e.g., 500"
+                class="col-12 col-md-6"
+                :rules="[(val) => !!val || 'Dose is required']"
+              />
+              <q-select
+                v-model="editPrescriptionForm.unit"
+                filled
+                :options="unitOptions"
+                label="Unit"
+                class="col-12 col-md-6"
+                use-input
+                @filter="filterUnits"
+                @new-value="createUnit"
+                hint="e.g., MG, TAB, ML"
+              />
+            </div>
+            <q-select
+              v-model="editPrescriptionForm.frequency"
+              filled
+              :options="frequencyOptions"
+              label="Frequency *"
+              hint="e.g., BDS, TDS, OD"
+              :rules="[(val) => !!val || 'Frequency is required']"
+            />
+            <q-input
+              v-model="editPrescriptionForm.duration"
+              filled
+              label="Duration *"
+              hint="e.g., 7 DAYS"
+              :rules="[(val) => !!val || 'Duration is required']"
+            />
+            <q-input
+              v-model.number="editPrescriptionForm.quantity"
+              filled
+              type="number"
+              label="Quantity *"
+              hint="Number of units"
+              :rules="[
+                (val) => !!val || 'Quantity is required',
+                (val) => val > 0 || 'Quantity must be greater than 0'
+              ]"
+            />
+            <q-input
+              v-model="editPrescriptionForm.instructions"
+              filled
+              type="textarea"
+              label="Instructions (Optional)"
+              hint="Special instructions for the patient"
+              rows="3"
+            />
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn
+                label="Cancel"
+                flat
+                v-close-popup
+                class="col"
+              />
+              <q-btn
+                label="Update Prescription"
+                type="submit"
+                color="primary"
+                class="col"
+                :loading="updatingPrescriptionId !== null"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
     <!-- View Instructions Dialog -->
     <q-dialog v-model="showInstructionsDialog">
       <q-card style="min-width: 400px; max-width: 600px">
@@ -861,9 +978,11 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, patientsAPI, encountersAPI, vitalsAPI, priceListAPI, staffAPI, billingAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
 const route = useRoute();
+const authStore = useAuthStore();
 const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
@@ -880,6 +999,20 @@ const returningId = ref(null);
 const confirmingId = ref(null);
 const deletingId = ref(null);
 const confirmingMultiple = ref(false);
+const updatingPrescriptionId = ref(null);
+const showEditPrescriptionDialog = ref(false);
+const editPrescriptionForm = ref({
+  id: null,
+  encounter_id: null,
+  medicine_code: '',
+  medicine_name: '',
+  dose: '',
+  unit: '',
+  frequency: '',
+  duration: '',
+  quantity: 1,
+  instructions: '',
+});
 const selectedPrescriptions = ref([]);
 const itemizedPrescriptions = ref([]);
 const diagnoses = ref([]);
@@ -1752,6 +1885,70 @@ const deleteExternalPrescription = async (prescription) => {
       });
     } finally {
       deletingId.value = null;
+    }
+  });
+};
+
+const editPrescription = (prescription) => {
+  // Populate form with current prescription data
+  editPrescriptionForm.value = {
+    id: prescription.id,
+    encounter_id: prescription.encounter_id,
+    medicine_code: prescription.medicine_code,
+    medicine_name: prescription.medicine_name,
+    dose: prescription.dose || '',
+    unit: prescription.unit || '',
+    frequency: prescription.frequency || '',
+    duration: prescription.duration || '',
+    quantity: prescription.quantity || 1,
+    instructions: prescription.instructions || '',
+  };
+  showEditPrescriptionDialog.value = true;
+};
+
+const updatePrescriptionSubmit = async () => {
+  if (!editPrescriptionForm.value.id) return;
+
+  updatingPrescriptionId.value = editPrescriptionForm.value.id;
+  try {
+    const updateData = {
+      encounter_id: editPrescriptionForm.value.encounter_id,
+      medicine_code: editPrescriptionForm.value.medicine_code,
+      medicine_name: editPrescriptionForm.value.medicine_name,
+      dose: editPrescriptionForm.value.dose,
+      unit: editPrescriptionForm.value.unit || null,
+      frequency: editPrescriptionForm.value.frequency,
+      duration: editPrescriptionForm.value.duration,
+      quantity: editPrescriptionForm.value.quantity,
+      instructions: editPrescriptionForm.value.instructions || null,
+    };
+
+    await consultationAPI.updatePrescription(editPrescriptionForm.value.id, updateData);
+    $q.notify({
+      type: 'positive',
+      message: 'Prescription updated successfully',
+    });
+    showEditPrescriptionDialog.value = false;
+    // Reload prescriptions to update status
+    await loadPrescriptions();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to update prescription',
+    });
+  } finally {
+    updatingPrescriptionId.value = null;
+  }
+};
+
+const filterUnits = (val, update, abort) => {
+  update(() => {
+    const needle = val.toLowerCase();
+    // Filter units - show all if empty, otherwise filter
+    if (needle === '') {
+      // Show all units
+    } else {
+      // Filter units that match
     }
   });
 };
