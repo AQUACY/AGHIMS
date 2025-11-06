@@ -2343,9 +2343,9 @@ const buildReceiptHtml = async () => {
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
     <title>Pharmacy Bill Card</title>
     <style>
-      /* Force 80mm thermal size for print & PDF */
-      @page { size: 80mm auto; margin: 2mm; }
-      html, body { width: 80mm; margin: 0; padding: 0; }
+      /* Force 75mm thermal size for print & PDF */
+      @page { size: 75mm auto; margin: 2mm; }
+      html, body { width: 75mm; margin: 0; padding: 0; }
       body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .center { text-align: center; }
       .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
@@ -2354,8 +2354,8 @@ const buildReceiptHtml = async () => {
       .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
       .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
       .sec { margin: 6px 0; }
-      .lbl { display: inline-block; min-width: 34mm; }
-      .val { float: right; max-width: 36mm; text-align: right; }
+      .lbl { display: inline-block; min-width: 32mm; }
+      .val { float: right; max-width: 33mm; text-align: right; }
       .clearfix { clear: both; }
       .item { border-top: 1px dashed #000; padding: 4px 0; }
       .i1 { font-weight: bold; }
@@ -2366,7 +2366,7 @@ const buildReceiptHtml = async () => {
       .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
       .dispenser { margin-bottom: 4px; }
       /* On screen, center the receipt for a visual preview */
-      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 80mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 75mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
       @media print { .preview-wrap { box-shadow: none; padding: 0; } }
     </style>
   </head>
@@ -2489,9 +2489,9 @@ const buildExternalPrescriptionHtml = async () => {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>External Prescription</title>
     <style>
-      /* Force 80mm thermal size for print & PDF */
-      @page { size: 80mm auto; margin: 2mm; }
-      html, body { width: 80mm; margin: 0; padding: 0; }
+      /* Force 75mm thermal size for print & PDF */
+      @page { size: 75mm auto; margin: 2mm; }
+      html, body { width: 75mm; margin: 0; padding: 0; }
       body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .center { text-align: center; }
       .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
@@ -2500,8 +2500,8 @@ const buildExternalPrescriptionHtml = async () => {
       .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
       .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
       .sec { margin: 6px 0; }
-      .lbl { display: inline-block; min-width: 34mm; }
-      .val { float: right; max-width: 36mm; text-align: right; }
+      .lbl { display: inline-block; min-width: 32mm; }
+      .val { float: right; max-width: 33mm; text-align: right; }
       .clearfix { clear: both; }
       .item { border-top: 1px dashed #000; padding: 4px 0; }
       .i1 { font-weight: bold; }
@@ -2511,7 +2511,7 @@ const buildExternalPrescriptionHtml = async () => {
       .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
       .external-badge { background: #ff9800; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; }
       /* On screen, center the receipt for a visual preview */
-      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 80mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 75mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
       @media print { .preview-wrap { box-shadow: none; padding: 0; } }
     </style>
   </head>
