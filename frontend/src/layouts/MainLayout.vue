@@ -472,9 +472,24 @@ const updateSessionTimer = () => {
   const now = Date.now();
   const timeLeft = expiration - now;
   
-  // Add grace period of 5 minutes to account for clock synchronization issues
-  // This prevents immediate logout if PC clock is slightly ahead of server
-  const GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
+  // Check if PC clock is significantly ahead of server (more than 1 hour)
+  // This indicates a clock synchronization issue, not a real token expiration
+  const clockSkew = -timeLeft; // Negative timeLeft means clock is ahead
+  const clockSkewHours = clockSkew / (60 * 60 * 1000);
+  
+  // If clock is more than 1 hour ahead, it's clearly a clock sync issue
+  // Don't logout - just show a warning and use a large grace period
+  if (clockSkewHours > 1) {
+    console.warn('PC clock is significantly ahead of server (', clockSkewHours.toFixed(2), 'hours). This is a clock synchronization issue, not token expiration.');
+    // Set a fake positive time left to prevent logout
+    // Use the token's expected duration (30 minutes) as the time left
+    sessionTimeLeft.value = 30 * 60 * 1000; // 30 minutes in milliseconds
+    return;
+  }
+  
+  // For smaller clock skews, use a dynamic grace period
+  // If clock is ahead by less than 1 hour, use a grace period that accounts for it
+  const GRACE_PERIOD_MS = Math.max(5 * 60 * 1000, Math.min(clockSkew, 60 * 60 * 1000)); // 5 minutes to 1 hour
   const timeLeftWithGrace = timeLeft + GRACE_PERIOD_MS;
   
   // Only log out if token is expired beyond the grace period
@@ -486,7 +501,8 @@ const updateSessionTimer = () => {
       now,
       timeLeft,
       timeLeftWithGrace,
-      gracePeriod: GRACE_PERIOD_MS
+      gracePeriod: GRACE_PERIOD_MS,
+      clockSkewHours: clockSkewHours.toFixed(2)
     });
     sessionTimeLeft.value = 0;
     $q.notify({
