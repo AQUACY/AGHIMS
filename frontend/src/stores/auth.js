@@ -122,8 +122,20 @@ export const useAuthStore = defineStore('auth', {
       if (!this.token) return null;
       
       try {
+        // Validate token format (should have 3 parts separated by dots)
+        const parts = this.token.split('.');
+        if (parts.length !== 3) {
+          console.error('Invalid token format: token should have 3 parts');
+          return null;
+        }
+        
         // Decode JWT token (base64url)
-        const base64Url = this.token.split('.')[1];
+        const base64Url = parts[1];
+        if (!base64Url) {
+          console.error('Invalid token: missing payload');
+          return null;
+        }
+        
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
         const jsonPayload = decodeURIComponent(
           atob(base64)
@@ -137,9 +149,12 @@ export const useAuthStore = defineStore('auth', {
         if (payload.exp) {
           return payload.exp * 1000; // Convert to milliseconds
         }
+        console.warn('Token payload missing exp field');
         return null;
       } catch (error) {
         console.error('Error decoding token:', error);
+        // Don't throw - return null to indicate we couldn't decode
+        // This prevents immediate logout on token decode errors
         return null;
       }
     },

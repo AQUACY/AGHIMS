@@ -55,9 +55,15 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       // Unauthorized - clear token and redirect to login
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+      // Only redirect if not already on login page to avoid redirect loops
+      if (window.location.pathname !== '/login') {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+        // Use a small delay to allow any ongoing operations to complete
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 100);
+      }
     }
     return Promise.reject(error);
   }

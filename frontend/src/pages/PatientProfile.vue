@@ -216,7 +216,7 @@
                 <div class="row q-gutter-xs">
                   <!-- Doctor: Go to Consultation -->
                   <q-btn
-                    v-if="canAccess(['Doctor', 'Admin'])"
+                    v-if="canAccess(['Doctor', 'PA', 'Admin'])"
                     size="sm"
                     color="primary"
                     icon="medical_services"

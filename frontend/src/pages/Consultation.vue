@@ -1635,10 +1635,10 @@ const createUnit = (val, done) => {
 // For MG: 100mg = 1 unit, so dose (in mg) / 100 = units per dose
 // Then: (dose_mg / 100) × frequency_value × duration
 // Example: 500mg, BDS (2), 2 days = (500/100) × 2 × 2 = 5 × 2 × 2 = 20
-// Note: Doctors don't calculate quantity - it's set to 0 and pharmacy will set it during confirmation
+// Note: Doctors and PAs don't calculate quantity - it's set to 0 and pharmacy will set it during confirmation
 const calculateQuantity = () => {
-  // Don't calculate quantity for doctors - pharmacy will set it during confirmation
-  if (authStore.userRole === 'Doctor') {
+  // Don't calculate quantity for doctors/PAs - pharmacy will set it during confirmation
+  if (authStore.userRole === 'Doctor' || authStore.userRole === 'PA') {
     prescriptionForm.quantity = 0;
     return;
   }
@@ -2537,8 +2537,8 @@ const onMedicationSelected = (medication) => {
       medicineName = `${medicineName} (${medication.formulation})`;
     }
     prescriptionForm.medicine_name = medicineName;
-    // Set quantity to 0 for doctors (pharmacy will set it during confirmation)
-    if (authStore.userRole === 'Doctor') {
+    // Set quantity to 0 for doctors/PAs (pharmacy will set it during confirmation)
+    if (authStore.userRole === 'Doctor' || authStore.userRole === 'PA') {
       prescriptionForm.quantity = 0;
     }
   } else {
@@ -2604,15 +2604,15 @@ const resetPrescriptionForm = () => {
       frequency: '',
       duration: '',
       instructions: '',
-      quantity: authStore.userRole === 'Doctor' ? 0 : 1, // Set to 0 for doctors, 1 for others
+      quantity: (authStore.userRole === 'Doctor' || authStore.userRole === 'PA') ? 0 : 1, // Set to 0 for doctors/PAs, 1 for others
     });
 };
 
 const savePrescription = async () => {
   try {
-    // For doctors, set quantity to 0 (pharmacy will set it during confirmation)
+    // For doctors/PAs, set quantity to 0 (pharmacy will set it during confirmation)
     const prescriptionData = { ...prescriptionForm };
-    if (authStore.userRole === 'Doctor') {
+    if (authStore.userRole === 'Doctor' || authStore.userRole === 'PA') {
       prescriptionData.quantity = 0;
     }
     

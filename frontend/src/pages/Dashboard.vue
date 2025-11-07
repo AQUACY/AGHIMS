@@ -39,7 +39,7 @@
     <!-- Quick Actions -->
     <div class="row q-gutter-md q-mt-lg">
       <q-card
-        v-if="canAccess(['Records', 'Admin'])"
+        v-if="canAccess(['Records', 'Admin', 'PA', 'Doctor'])"
         class="col-12 col-sm-6 col-md-3 glass-card"
         flat
       >
@@ -58,7 +58,7 @@
       </q-card>
 
       <q-card
-        v-if="canAccess(['Nurse', 'Doctor', 'Admin'])"
+        v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
         class="col-12 col-sm-6 col-md-3 glass-card"
         flat
       >
@@ -77,7 +77,7 @@
       </q-card>
 
       <q-card
-        v-if="canAccess(['Doctor', 'Admin'])"
+        v-if="canAccess(['Doctor', 'PA', 'Admin'])"
         class="col-12 col-sm-6 col-md-3 glass-card"
         flat
       >

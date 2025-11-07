@@ -62,7 +62,7 @@ class VitalResponse(BaseModel):
 def get_vitals(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records"]))
 ):
     """Get vitals for an encounter"""
     vital = db.query(Vital).filter(Vital.encounter_id == encounter_id).first()
@@ -155,7 +155,7 @@ def get_today_encounters_with_vitals(
 def create_vitals(
     vital_data: VitalCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records"]))
 ):
     """Record patient vitals"""
     # Check encounter exists and is in draft status

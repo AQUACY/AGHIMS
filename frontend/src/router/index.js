@@ -31,7 +31,7 @@ const routes = [
         path: '/patients/register',
         name: 'PatientRegistration',
         component: () => import('../pages/PatientRegistration.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Records', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Records', 'Admin', 'PA', 'Doctor'] },
       },
       {
         path: '/patients/:cardNumber',
@@ -55,13 +55,13 @@ const routes = [
         path: '/vitals',
         name: 'Vitals',
         component: () => import('../pages/Vitals.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
         path: '/consultation/:encounterId?',
         name: 'Consultation',
         component: () => import('../pages/Consultation.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
         path: '/billing/:encounterId?',
@@ -127,7 +127,7 @@ const routes = [
         path: '/ipd',
         name: 'IPD',
         component: () => import('../pages/IPD.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
     ],
   },

@@ -76,7 +76,7 @@ class PatientResponse(BaseModel):
 def create_patient(
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin"]))
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
 ):
     """Register a new patient"""
     # Generate card number
@@ -487,7 +487,7 @@ def update_patient(
     patient_id: int,
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin"]))
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
 ):
     """Update patient information"""
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
@@ -510,7 +510,7 @@ def create_encounter(
     procedure_g_drg_code: Optional[str] = None,  # G-DRG code of selected procedure
     procedure_name: Optional[str] = None,  # Service Name of selected procedure
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin"]))
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
 ):
     """Create a new encounter for a patient with Service Type (Department) and Procedure"""
     patient = db.query(Patient).filter(Patient.id == patient_id).first()

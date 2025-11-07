@@ -120,7 +120,7 @@
               Required columns: <strong>username</strong>, <strong>full_name</strong>, <strong>role</strong><br/>
               Optional columns: <strong>Email</strong>, <strong>is_active</strong> (1 or 0, default: 1)<br/>
               <br/>
-              <strong>Roles:</strong> Records, Nurse, Doctor, Billing, Pharmacist, Lab, Claims, Admin<br/>
+              <strong>Roles:</strong> Records, Nurse, Doctor, PA, Billing, Pharmacist, Lab, Claims, Admin<br/>
               <br/>
               <strong>Note:</strong> All imported staff will have the same default password (changeable after login).
             </div>
@@ -308,6 +308,7 @@ export default {
       'Records',
       'Nurse',
       'Doctor',
+      'PA',
       'Billing',
       'Pharmacy',
       'Pharmacy Head',
@@ -366,6 +367,7 @@ export default {
       const colors = {
         Admin: 'red',
         Doctor: 'blue',
+        PA: 'indigo',
         Nurse: 'green',
         Lab: 'orange',
         Pharmacy: 'pink',

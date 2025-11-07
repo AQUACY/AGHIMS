@@ -199,7 +199,7 @@ class InvestigationResponse(BaseModel):
 def create_diagnosis(
     diagnosis_data: DiagnosisCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records"]))
 ):
     """Add a diagnosis to an encounter"""
     from app.models.icd10_drg_mapping import ICD10DRGMapping
@@ -991,7 +991,7 @@ def delete_prescription(
 def create_investigation(
     investigation_data: InvestigationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records"]))
 ):
     """Request an investigation (lab, scan, x-ray)"""
     from app.services.price_list_service_v2 import get_price_from_all_tables
@@ -2006,7 +2006,7 @@ class AdmissionRecommendationResponse(BaseModel):
 @router.get("/admissions", response_model=List[AdmissionRecommendationResponse])
 def get_admission_recommendations(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
 ):
     """Get all admission recommendations with patient and encounter details"""
     from app.models.patient import Patient

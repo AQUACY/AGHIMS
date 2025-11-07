@@ -182,7 +182,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Records', 'Admin'])"
+          v-if="canAccess(['Records', 'Admin', 'PA', 'Doctor'])"
           clickable
           v-ripple
           :to="{ name: 'PatientRegistration' }"
@@ -213,7 +213,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'Admin'])"
+          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Vitals' }"
@@ -229,7 +229,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Doctor', 'Admin'])"
+          v-if="canAccess(['Doctor', 'PA', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Consultation' }"
@@ -341,7 +341,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'Admin'])"
+          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'IPD' }"
@@ -462,6 +462,9 @@ const updateSessionTimer = () => {
   
   const expiration = authStore.getTokenExpiration();
   if (!expiration) {
+    // If we can't decode expiration, don't log out immediately
+    // This could be due to token format issues, not necessarily expiration
+    console.warn('Could not decode token expiration, but token exists');
     sessionTimeLeft.value = null;
     return;
   }
@@ -469,8 +472,22 @@ const updateSessionTimer = () => {
   const now = Date.now();
   const timeLeft = expiration - now;
   
-  if (timeLeft <= 0) {
-    // Token expired
+  // Add grace period of 5 minutes to account for clock synchronization issues
+  // This prevents immediate logout if PC clock is slightly ahead of server
+  const GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
+  const timeLeftWithGrace = timeLeft + GRACE_PERIOD_MS;
+  
+  // Only log out if token is expired beyond the grace period
+  // This handles cases where PC clock is ahead of server time
+  if (timeLeftWithGrace <= 0) {
+    // Token expired beyond grace period
+    console.warn('Token expired beyond grace period', {
+      expiration,
+      now,
+      timeLeft,
+      timeLeftWithGrace,
+      gracePeriod: GRACE_PERIOD_MS
+    });
     sessionTimeLeft.value = 0;
     $q.notify({
       type: 'warning',
@@ -483,6 +500,7 @@ const updateSessionTimer = () => {
   }
   
   // Always set the time left, even if it's a large value (old 7-day token)
+  // Use the actual timeLeft (without grace period) for display
   sessionTimeLeft.value = timeLeft;
   
   // Auto-refresh token when 5 minutes or less remaining (only if token is actually close to expiring)

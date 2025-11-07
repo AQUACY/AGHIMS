@@ -76,7 +76,7 @@ def update_encounter_status(
     encounter_id: int,
     new_status: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Records", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Records", "Admin"]))
 ):
     """Update encounter status"""
     from app.models.bill import Bill
@@ -175,7 +175,7 @@ def update_encounter(
     encounter_id: int,
     encounter_data: EncounterUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Doctor", "Admin"]))
+    current_user: User = Depends(require_role(["Records", "Doctor", "PA", "Admin"]))
 ):
     """Update encounter details"""
     encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()

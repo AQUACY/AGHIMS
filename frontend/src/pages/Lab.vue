@@ -43,6 +43,22 @@
           />
         </div>
 
+        <!-- Age and Sex Section -->
+        <div class="row q-gutter-md q-mb-md">
+          <div class="col-12 col-md-3">
+            <div class="text-caption text-grey-7">Age</div>
+            <div class="text-body1 text-weight-medium">{{ patient.age || 'N/A' }}</div>
+          </div>
+          <div class="col-12 col-md-3">
+            <div class="text-caption text-grey-7">Sex</div>
+            <div class="text-body1 text-weight-medium">{{ patient.gender || 'N/A' }}</div>
+          </div>
+          <div class="col-12 col-md-3">
+            <div class="text-caption text-grey-7">Date of Birth</div>
+            <div class="text-body1 text-weight-medium">{{ formatDateOnly(patient.date_of_birth) }}</div>
+          </div>
+        </div>
+
         <!-- Today's Encounter -->
         <div v-if="todaysEncounter" class="q-mt-md">
           <div class="text-subtitle1 q-mb-sm glass-text">Today's Encounter:</div>
@@ -909,6 +925,16 @@ const formatDate = (dateString) => {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
+  });
+};
+
+const formatDateOnly = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
   });
 };
 
