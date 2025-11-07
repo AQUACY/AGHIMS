@@ -24,6 +24,10 @@ class EncounterResponse(BaseModel):
     procedure_g_drg_code: Optional[str] = None
     procedure_name: Optional[str] = None
     created_at: datetime
+    finalized_at: Optional[datetime] = None
+    finalized_by: Optional[int] = None
+    finalized_by_name: Optional[str] = None  # Name of doctor/PA who finalized
+    finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
     archived: bool = False
     
     class Config:
@@ -49,7 +53,31 @@ def get_encounter(
     encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
-    return encounter
+    
+    # Get finalized_by user info if exists
+    finalized_by_name = None
+    finalized_by_role = None
+    if encounter.finalized_by:
+        finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
+        if finalized_user:
+            finalized_by_name = finalized_user.full_name
+            finalized_by_role = finalized_user.role
+    
+    return {
+        "id": encounter.id,
+        "patient_id": encounter.patient_id,
+        "ccc_number": encounter.ccc_number,
+        "status": encounter.status,
+        "department": encounter.department,
+        "procedure_g_drg_code": encounter.procedure_g_drg_code,
+        "procedure_name": encounter.procedure_name,
+        "created_at": encounter.created_at,
+        "finalized_at": encounter.finalized_at,
+        "finalized_by": encounter.finalized_by,
+        "finalized_by_name": finalized_by_name,
+        "finalized_by_role": finalized_by_role,
+        "archived": encounter.archived,
+    }
 
 
 @router.get("/{encounter_id}/bill-total")
@@ -149,6 +177,7 @@ def update_encounter_status(
                 )
         
         encounter.finalized_at = datetime.utcnow()
+        encounter.finalized_by = current_user.id
     
     encounter.status = new_status
     db.commit()
@@ -274,6 +303,7 @@ def update_encounter(
                     )
             
             encounter.finalized_at = datetime.utcnow()
+            encounter.finalized_by = current_user.id
         
         encounter.status = encounter_data.status
     

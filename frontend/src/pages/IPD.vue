@@ -93,6 +93,10 @@
           <template v-slot:body-cell-date="props">
             <q-td :props="props">
               <div class="glass-text">{{ formatDateTime(props.value) }}</div>
+              <div v-if="props.row.finalized_by_name" class="text-caption text-secondary q-mt-xs">
+                Finalized by: <strong>{{ props.row.finalized_by_name }}</strong>
+                <span v-if="props.row.finalized_by_role"> ({{ props.row.finalized_by_role }})</span>
+              </div>
             </q-td>
           </template>
 

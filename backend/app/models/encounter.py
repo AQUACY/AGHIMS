@@ -40,6 +40,7 @@ class Encounter(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     finalized_at = Column(DateTime, nullable=True)
+    finalized_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor/PA who finalized
     archived = Column(Boolean, default=False, nullable=False)  # Soft delete flag
     
     # Relationships

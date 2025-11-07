@@ -138,13 +138,19 @@
               <strong>Insurance No:</strong> {{ patientInfo?.insurance_id || 'N/A' }}
             </div>
             <div class="col-12 col-md-3">
+              <strong>Age:</strong> {{ patientInfo?.age || 'N/A' }}
+            </div>
+            <div class="col-12 col-md-3">
+              <strong>Sex:</strong> {{ patientInfo?.gender || 'N/A' }}
+            </div>
+          </div>
+          <div class="row q-gutter-md q-mt-sm">
+            <div class="col-12 col-md-3">
               <strong>DOB:</strong> {{ formatDate(patientInfo?.date_of_birth) || 'N/A' }}
             </div>
             <div class="col-12 col-md-3">
               <strong>Encounter Date:</strong> {{ formatDate(encounterStore.currentEncounter?.created_at) || 'N/A' }}
             </div>
-          </div>
-          <div class="row q-gutter-md q-mt-sm">
             <div class="col-12 col-md-3">
               <strong>CCC Number:</strong> {{ encounterStore.currentEncounter?.ccc_number || 'N/A' }}
             </div>
@@ -273,6 +279,16 @@
             row-key="id"
             flat
           >
+            <template v-slot:body-cell-diagnosis_status="props">
+              <q-td :props="props">
+                <q-badge
+                  v-if="props.value"
+                  :color="props.value === 'new' ? 'blue' : props.value === 'old' ? 'grey' : 'purple'"
+                  :label="props.value === 'new' ? 'New' : props.value === 'old' ? 'Old' : 'Recurring'"
+                />
+                <span v-else class="text-grey-6">-</span>
+              </q-td>
+            </template>
             <template v-slot:body-cell-is_provisional="props">
               <q-td :props="props">
                 <q-badge
@@ -596,14 +612,38 @@
             label="Outcome *"
             hint="Required to finalize consultation"
           />
-          <q-input
+          <q-select
             v-if="notesForm.outcome === 'recommended_for_admission'"
             v-model="notesForm.admission_ward"
             filled
+            :options="[
+              'Accident & Emergency Ward',
+              'Maternity Ward',
+              'Female Ward',
+              'Male Ward',
+              'Kids Ward',
+              'Nicu',
+              'Detention & Observation Ward'
+            ]"
             label="Admission Ward *"
+            hint="Select the ward for admission"
           />
           <div class="row q-mt-md q-gutter-md">
             <q-btn label="Save Outcome" color="primary" @click="saveConsultationNotes" class="glass-button" />
+          </div>
+          
+          <!-- Finalized By Section -->
+          <div v-if="encounterStore.currentEncounter?.status === 'finalized' && encounterStore.currentEncounter?.finalized_by_name" class="q-mt-md q-pt-md" style="border-top: 1px solid rgba(255, 255, 255, 0.1);">
+            <div class="text-caption text-grey-7 q-mb-xs">Finalized By:</div>
+            <div class="text-body1 text-weight-medium glass-text">
+              {{ encounterStore.currentEncounter.finalized_by_name }}
+              <span v-if="encounterStore.currentEncounter.finalized_by_role" class="text-caption text-grey-6">
+                ({{ encounterStore.currentEncounter.finalized_by_role }})
+              </span>
+            </div>
+            <div v-if="encounterStore.currentEncounter.finalized_at" class="text-caption text-grey-6 q-mt-xs">
+              On {{ formatDateTime(encounterStore.currentEncounter.finalized_at) }}
+            </div>
           </div>
         </q-card-section>
       </q-card>
@@ -734,13 +774,26 @@
               readonly
               hint="Automatically populated when you select a diagnosis above"
             />
+            <q-select
+              v-model="diagnosisForm.diagnosis_status"
+              filled
+              :options="[
+                { label: 'New', value: 'new' },
+                { label: 'Old', value: 'old' },
+                { label: 'Recurring', value: 'recurring' }
+              ]"
+              emit-value
+              map-options
+              label="Diagnosis Status"
+              hint="Indicate if this is a new, old, or recurring diagnosis"
+            />
             <q-toggle
               v-model="diagnosisForm.is_provisional"
               label="Provisional Diagnosis"
             />
             <q-toggle
               v-model="diagnosisForm.is_chief"
-              label="Principal Complaint"
+              label="Chief Diagnosis"
             />
             <div>
               <q-btn :label="editingDiagnosisId ? 'Update' : 'Add'" type="submit" color="primary" />
@@ -1033,6 +1086,44 @@
     </q-dialog>
 
     <!-- Doctor Notes Dialog -->
+    <!-- DRG Code Selection Dialog -->
+    <q-dialog v-model="showDrgSelectionDialog">
+      <q-card style="min-width: 500px; max-width: 700px">
+        <q-card-section>
+          <div class="text-h6">Select DRG Code</div>
+          <div class="text-caption text-grey-7 q-mt-sm">
+            This ICD-10 code maps to {{ availableDrgCodes.length }} DRG code(s). Please select one:
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-list>
+            <q-item
+              v-for="(drg, index) in availableDrgCodes"
+              :key="index"
+              clickable
+              v-ripple
+              @click="selectDrgCode(drg)"
+              class="q-mb-sm"
+              style="border: 1px solid rgba(0,0,0,0.12); border-radius: 8px;"
+            >
+              <q-item-section>
+                <q-item-label class="text-weight-bold">{{ drg.drg_code }}</q-item-label>
+                <q-item-label caption v-if="drg.drg_description">
+                  {{ drg.drg_description }}
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-icon name="chevron_right" color="primary" />
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" @click="showDrgSelectionDialog = false" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <q-dialog v-model="editDoctorNotes">
       <q-card style="min-width: 600px; max-width: 800px">
         <q-card-section>
@@ -1435,7 +1526,15 @@ const encounterStore = useEncountersStore();
 const patientsStore = usePatientsStore();
 const authStore = useAuthStore();
 const isAdmin = computed(() => authStore.userRole === 'Admin');
-const readonly = computed(() => !isAdmin.value && encounterStore.currentEncounter?.status === 'finalized');
+const isDoctorOrPA = computed(() => authStore.userRole === 'Doctor' || authStore.userRole === 'PA');
+// Allow Admin, Doctor, and PA to edit finalized consultations
+const readonly = computed(() => {
+  if (encounterStore.currentEncounter?.status !== 'finalized') {
+    return false; // Not finalized, so not readonly
+  }
+  // If finalized, only Admin, Doctor, and PA can edit
+  return !isAdmin.value && !isDoctorOrPA.value;
+});
 
 const searchEncounterId = ref(route.params.encounterId || '');
 const encounterLoaded = ref(false);
@@ -1539,6 +1638,7 @@ const diagnosisColumns = [
   { name: 'icd10', label: 'ICD-10', field: 'icd10', align: 'left' },
   { name: 'diagnosis', label: 'Diagnosis', field: 'diagnosis', align: 'left' },
   { name: 'gdrg_code', label: 'GDRG Code', field: 'gdrg_code', align: 'left' },
+  { name: 'diagnosis_status', label: 'Status', field: 'diagnosis_status', align: 'center' },
   { name: 'is_provisional', label: 'Type', field: 'is_provisional', align: 'center' },
   { name: 'is_chief', label: 'Chief', field: 'is_chief', align: 'center' },
   { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
@@ -1574,6 +1674,9 @@ const editingDiagnosisId = ref(null);
 const selectedIcd10 = ref(null);
 const icd10Options = ref([]);
 const allIcd10Codes = ref([]);
+const showDrgSelectionDialog = ref(false);
+const availableDrgCodes = ref([]);
+const pendingIcd10Selection = ref(null); // Store ICD-10 selection while waiting for DRG selection
 
 const selectedMedication = ref(null);
 const medicationOptions = ref([]);
@@ -1585,6 +1688,7 @@ const diagnosisForm = reactive({
   icd10: '',
   diagnosis: '',
   gdrg_code: '',
+  diagnosis_status: null, // 'new', 'old', or 'recurring'
   is_provisional: false,
   is_chief: false,
 });
@@ -1956,6 +2060,18 @@ const patientInfo = computed(() => {
   }
   return null;
 });
+
+const formatDateTime = (dateString) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 
 const formatDate = (dateString) => {
   if (!dateString) return '';
@@ -2378,14 +2494,14 @@ const onIcd10Selected = async (icd10Item) => {
       const response = await priceListAPI.getDrgCodesFromIcd10(icd10Item.icd10_code);
       const drgCodes = response.data || [];
       if (drgCodes.length > 0) {
-        // Use first DRG code (or you could show a dialog to select if multiple)
-        diagnosisForm.gdrg_code = drgCodes[0].drg_code || '';
-        if (drgCodes.length > 1) {
-          $q.notify({
-            type: 'info',
-            message: `This ICD-10 code maps to ${drgCodes.length} DRG code(s). Using first: ${drgCodes[0].drg_code}`,
-            position: 'top'
-          });
+        if (drgCodes.length === 1) {
+          // Only one DRG code, use it directly
+          diagnosisForm.gdrg_code = drgCodes[0].drg_code || '';
+        } else {
+          // Multiple DRG codes, show selection dialog
+          availableDrgCodes.value = drgCodes;
+          pendingIcd10Selection.value = icd10Item;
+          showDrgSelectionDialog.value = true;
         }
       }
     } catch (error) {
@@ -2399,12 +2515,30 @@ const onIcd10Selected = async (icd10Item) => {
   }
 };
 
+const selectDrgCode = (drg) => {
+  // Set the selected DRG code
+  diagnosisForm.gdrg_code = drg.drg_code || '';
+  
+  // Close the dialog
+  showDrgSelectionDialog.value = false;
+  availableDrgCodes.value = [];
+  pendingIcd10Selection.value = null;
+  
+  $q.notify({
+    type: 'positive',
+    message: `Selected DRG code: ${drg.drg_code}`,
+    position: 'top',
+    timeout: 2000
+  });
+};
+
 const editDiagnosis = (diagnosis) => {
   editingDiagnosisId.value = diagnosis.id;
   diagnosisForm.encounter_id = diagnosis.encounter_id;
   diagnosisForm.icd10 = diagnosis.icd10 || '';
   diagnosisForm.diagnosis = diagnosis.diagnosis || '';
   diagnosisForm.gdrg_code = diagnosis.gdrg_code || '';
+  diagnosisForm.diagnosis_status = diagnosis.diagnosis_status || null;
   diagnosisForm.is_provisional = diagnosis.is_provisional || false;
   diagnosisForm.is_chief = diagnosis.is_chief || false;
   selectedDiagnosis.value = null; // Clear selected diagnosis from search
@@ -2420,6 +2554,7 @@ const resetDiagnosisForm = () => {
       icd10: '',
       diagnosis: '',
       gdrg_code: '',
+      diagnosis_status: null,
       is_provisional: false,
       is_chief: false,
     });
@@ -3203,19 +3338,53 @@ const finalizeConsultation = () => {
 };
 
 const updateConsultation = async () => {
-  try {
-    // Just save consultation notes without changing status
-    await saveConsultationNotes();
-    $q.notify({
-      type: 'positive',
-      message: 'Consultation updated successfully',
-      position: 'top',
-    });
-    await encounterStore.loadEncounter(encounterStore.currentEncounter.id);
-  } catch (error) {
-    console.error('Failed to update consultation:', error);
-    $q.notify({ type: 'negative', message: error.response?.data?.detail || 'Failed to update consultation', position: 'top' });
-  }
+  $q.dialog({
+    title: 'Revert to Draft',
+    message: 'Are you sure you want to revert this consultation back to draft? You will be able to make changes and finalize again.',
+    cancel: true,
+    persistent: true,
+    ok: {
+      label: 'Revert to Draft',
+      color: 'primary',
+      flat: false
+    },
+    cancel: {
+      label: 'Cancel',
+      color: 'grey',
+      flat: true
+    }
+  }).onOk(async () => {
+    try {
+      // Change status back to draft (suppress store notification, we'll show our own)
+      await encounterStore.updateStatus(encounterStore.currentEncounter.id, 'draft', true);
+      
+      // Update status locally
+      if (encounterStore.currentEncounter) {
+        encounterStore.currentEncounter.status = 'draft';
+      }
+      
+      // Try to reload encounter data to get updated status (but don't fail if this errors)
+      try {
+        await encounterStore.getEncounter(encounterStore.currentEncounter.id);
+      } catch (reloadError) {
+        console.warn('Failed to reload encounter data after revert:', reloadError);
+        // Don't show error - status update succeeded
+      }
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Consultation reverted to draft. You can now make changes and finalize again.',
+        position: 'top',
+      });
+    } catch (error) {
+      console.error('Failed to revert consultation:', error);
+      $q.notify({ 
+        type: 'negative', 
+        message: error.response?.data?.detail || 'Failed to revert consultation', 
+        position: 'top' 
+      });
+    }
+  });
 };
 
 const saveDraftAndAwaitServices = async () => {
@@ -3651,6 +3820,7 @@ const usePreviousDiagnosis = (previousDiagnosis) => {
     diagnosisForm.icd10 = previousDiagnosis.icd10 || previousDiagnosis.icd10_code || '';
     diagnosisForm.diagnosis = previousDiagnosis.diagnosis || '';
     diagnosisForm.gdrg_code = previousDiagnosis.gdrg_code || previousDiagnosis.g_drg_code || '';
+    diagnosisForm.diagnosis_status = previousDiagnosis.diagnosis_status || null;
     diagnosisForm.is_provisional = previousDiagnosis.is_provisional || false;
     diagnosisForm.is_chief = previousDiagnosis.is_chief || false;
     

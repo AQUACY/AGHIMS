@@ -65,6 +65,7 @@ class DiagnosisCreate(BaseModel):
     icd10: Optional[str] = None
     diagnosis: str
     gdrg_code: Optional[str] = None
+    diagnosis_status: Optional[str] = None  # 'new', 'old', or 'recurring'
     is_provisional: bool = False
     is_chief: bool = False
 
@@ -76,6 +77,7 @@ class DiagnosisResponse(BaseModel):
     icd10: Optional[str]
     diagnosis: str
     gdrg_code: Optional[str]
+    diagnosis_status: Optional[str]
     is_provisional: bool
     is_chief: bool
     
@@ -2001,6 +2003,9 @@ class AdmissionRecommendationResponse(BaseModel):
     patient_date_of_birth: Optional[str] = None
     encounter_created_at: Optional[datetime] = None
     encounter_service_type: Optional[str] = None
+    finalized_by_name: Optional[str] = None  # Name of doctor/PA who finalized
+    finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
+    finalized_at: Optional[datetime] = None  # When consultation was finalized
 
 
 @router.get("/admissions", response_model=List[AdmissionRecommendationResponse])
@@ -2034,6 +2039,15 @@ def get_admission_recommendations(
                     print(f"Warning: Encounter {encounter.id} has no patient")
                     continue
                 
+                # Get finalized_by user info if encounter is finalized
+                finalized_by_name = None
+                finalized_by_role = None
+                if encounter.finalized_by:
+                    finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
+                    if finalized_user:
+                        finalized_by_name = finalized_user.full_name
+                        finalized_by_role = finalized_user.role
+                
                 result.append({
                     "id": admission.id,
                     "encounter_id": admission.encounter_id,
@@ -2049,6 +2063,9 @@ def get_admission_recommendations(
                     "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
                     "encounter_created_at": encounter.created_at,
                     "encounter_service_type": encounter.department,
+                    "finalized_by_name": finalized_by_name,
+                    "finalized_by_role": finalized_by_role,
+                    "finalized_at": encounter.finalized_at,
                 })
             except Exception as e:
                 print(f"Error processing admission {admission.id}: {str(e)}")

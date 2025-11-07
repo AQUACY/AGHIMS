@@ -16,6 +16,7 @@ class Diagnosis(Base):
     icd10 = Column(String(50), nullable=False)  # ICD-10 code
     diagnosis = Column(Text, nullable=False)  # Diagnosis description
     gdrg_code = Column(String(50))  # GDRG code for NHIA
+    diagnosis_status = Column(String(20))  # 'new', 'old', or 'recurring'
     is_provisional = Column(Boolean, default=False)
     is_chief = Column(Boolean, default=False)  # Chief/final diagnosis
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
