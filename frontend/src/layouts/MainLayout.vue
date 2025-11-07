@@ -543,13 +543,17 @@ const startSessionTimer = () => {
     clearInterval(sessionTimerInterval.value);
   }
   
-  // Update immediately
-  updateSessionTimer();
-  
-  // Update every second
-  sessionTimerInterval.value = setInterval(() => {
+  // Add a small delay before first check to allow token to be fully set
+  // This prevents immediate logout on clock sync issues
+  setTimeout(() => {
+    // Update immediately after delay
     updateSessionTimer();
-  }, 1000);
+    
+    // Update every second
+    sessionTimerInterval.value = setInterval(() => {
+      updateSessionTimer();
+    }, 1000);
+  }, 1000); // 1 second delay to allow token to be properly set
 };
 
 // Stop session timer

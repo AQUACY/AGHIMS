@@ -74,7 +74,48 @@ export const useAuthStore = defineStore('auth', {
         localStorage.setItem('user', JSON.stringify(response.data));
       } catch (error) {
         console.error('Failed to fetch user:', error);
-        this.logout();
+        // Don't logout immediately on fetchUser failure - might be a temporary network issue
+        // Only logout if it's a 401 and token is not very new
+        // This prevents immediate logout on clock sync issues
+        if (error.response?.status === 401) {
+          // Check if token was just issued (within last 10 seconds) - might be clock sync issue
+          if (this.token) {
+            try {
+              const parts = this.token.split('.');
+              if (parts.length === 3) {
+                const base64Url = parts[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const jsonPayload = decodeURIComponent(
+                  atob(base64)
+                    .split('')
+                    .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                    .join('')
+                );
+                const payload = JSON.parse(jsonPayload);
+                
+                // Check if token was issued very recently (within last 10 seconds)
+                if (payload.iat) {
+                  const tokenAge = Date.now() - (payload.iat * 1000);
+                  if (tokenAge < 10000) {
+                    // Token is very new, might be clock sync issue - don't logout
+                    console.warn('401 error on fetchUser but token is very new (age:', tokenAge, 'ms), might be clock sync - not logging out');
+                    return;
+                  }
+                }
+              }
+            } catch (e) {
+              // If we can't decode, proceed with logout
+              console.warn('Could not decode token to check age:', e);
+            }
+          }
+          
+          // Token is old enough or we couldn't check - proceed with logout
+          console.warn('401 error on fetchUser, logging out');
+          this.logout();
+        } else {
+          // For non-401 errors, don't logout - might be network issues
+          console.warn('Non-401 error on fetchUser, not logging out:', error.response?.status || error.message);
+        }
       }
     },
 

@@ -57,6 +57,40 @@ api.interceptors.response.use(
       // Unauthorized - clear token and redirect to login
       // Only redirect if not already on login page to avoid redirect loops
       if (window.location.pathname !== '/login') {
+        // Check if token was just set (within last 5 seconds) - might be clock sync issue
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+          try {
+            // Try to decode token to check age
+            const parts = token.split('.');
+            if (parts.length === 3) {
+              const base64Url = parts[1];
+              const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+              const jsonPayload = decodeURIComponent(
+                atob(base64)
+                  .split('')
+                  .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                  .join('')
+              );
+              const payload = JSON.parse(jsonPayload);
+              
+              // Check if token was issued very recently (within last 5 seconds)
+              if (payload.iat) {
+                const tokenAge = Date.now() - (payload.iat * 1000);
+                if (tokenAge < 5000) {
+                  // Token is very new, might be clock sync issue - don't logout immediately
+                  console.warn('401 error but token is very new (age:', tokenAge, 'ms), might be clock sync - not logging out');
+                  return Promise.reject(error);
+                }
+              }
+            }
+          } catch (e) {
+            // If we can't decode, proceed with logout
+            console.warn('Could not decode token to check age:', e);
+          }
+        }
+        
+        // Token is old enough or we couldn't check - proceed with logout
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
         // Use a small delay to allow any ongoing operations to complete
