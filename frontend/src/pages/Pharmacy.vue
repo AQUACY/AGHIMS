@@ -2371,11 +2371,14 @@ const getMedicationPrice = async (medicineCode, isInsured = false) => {
     console.log(`getMedicationPrice: Found ${items.length} items for code="${medicineCode}"`);
     
     if (items.length > 0) {
-      // Try to find exact match first
-      let item = items.find(i => 
-        (i.item_code || i.medication_code) === medicineCode ||
-        (i.product_code || i.product_id) === medicineCode
-      );
+      // Try to find exact match first (case-insensitive)
+      let item = items.find(i => {
+        const code = (i.item_code || i.medication_code || '').toString().toUpperCase().trim();
+        const searchCode = medicineCode.toString().toUpperCase().trim();
+        return code === searchCode || 
+               (i.product_code && i.product_code.toString().toUpperCase().trim() === searchCode) ||
+               (i.product_id && i.product_id.toString().toUpperCase().trim() === searchCode);
+      });
       
       // If no exact match, use first item
       if (!item) {
@@ -2388,19 +2391,30 @@ const getMedicationPrice = async (medicineCode, isInsured = false) => {
         product_name: item.product_name || item.item_name,
         base_rate: item.base_rate,
         nhia_claim_co_payment: item.nhia_claim_co_payment,
+        insurance_covered: item.insurance_covered,
         isInsured
       });
+      
+      // Check if product is covered by insurance
+      const insuranceCovered = item.insurance_covered && item.insurance_covered.toString().toLowerCase().trim() === 'no' ? false : true;
+      
+      // If product is NOT covered by insurance, always charge base_rate
+      if (!insuranceCovered) {
+        const price = parseFloat(item.base_rate) || parseFloat(item.unit_cost) || parseFloat(item.cash_price) || 0;
+        console.log(`getMedicationPrice: Product not covered by insurance, returning base_rate: ${price}`);
+        return price;
+      }
       
       // If insured (has CCC), return co-payment (null means 0 - free for patient)
       if (isInsured) {
         if (item.nhia_claim_co_payment !== null && item.nhia_claim_co_payment !== undefined) {
-          const price = item.nhia_claim_co_payment || 0;
+          const price = parseFloat(item.nhia_claim_co_payment) || 0;
           console.log(`getMedicationPrice: Returning co-payment: ${price}`);
           return price;
         }
         // If co_payment field exists, use it
         if (item.co_payment !== null && item.co_payment !== undefined) {
-          const price = item.co_payment || 0;
+          const price = parseFloat(item.co_payment) || 0;
           console.log(`getMedicationPrice: Returning co_payment: ${price}`);
           return price;
         }
@@ -2409,7 +2423,7 @@ const getMedicationPrice = async (medicineCode, isInsured = false) => {
         return 0;
       } else {
         // Non-insured: use base_rate
-        const price = item.base_rate || item.unit_cost || item.cash_price || 0;
+        const price = parseFloat(item.base_rate) || parseFloat(item.unit_cost) || parseFloat(item.cash_price) || 0;
         console.log(`getMedicationPrice: Returning base_rate: ${price}`);
         return price;
       }

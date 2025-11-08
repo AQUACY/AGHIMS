@@ -35,17 +35,7 @@
               <q-icon name="attach_file" />
             </template>
           </q-file>
-          <q-btn
-            v-if="uploadFileType !== 'product'"
-            color="primary"
-            label="Upload"
-            @click="uploadPriceList"
-            :loading="uploading"
-            :disable="!priceListFile || !uploadFileType"
-            class="col-12 col-md-3"
-            icon="upload"
-          />
-          <div v-if="uploadFileType === 'product'" class="col-12 col-md-3 q-gutter-sm">
+          <div class="col-12 col-md-3 q-gutter-sm">
             <q-btn
               color="primary"
               label="Upload"
@@ -57,8 +47,9 @@
             <q-btn
               color="secondary"
               label="Download CSV"
-              @click="downloadProductCSV"
+              @click="downloadCSV"
               :loading="downloadingCSV"
+              :disable="!uploadFileType"
               icon="download"
             />
           </div>
@@ -204,6 +195,14 @@
           />
         </div>
 
+        <div class="row q-mb-md q-gutter-sm">
+          <q-btn
+            color="positive"
+            label="Add New Price"
+            icon="add"
+            @click="openAddDialog"
+          />
+        </div>
         <q-table
           :rows="priceListItems"
           :columns="priceColumns"
@@ -240,7 +239,7 @@
           </template>
           <template v-slot:body-cell-nhia_claim_co_payment="props">
             <q-td :props="props">
-              {{ props.value ? formatCurrency(props.value) : 'N/A' }}
+              {{ props.value !== null && props.value !== undefined ? formatCurrency(props.value) : 'N/A' }}
             </q-td>
           </template>
           <template v-slot:body-cell-insurance_covered="props">
@@ -262,6 +261,68 @@
         </q-table>
       </q-card-section>
     </q-card>
+    <!-- Add Price Dialog -->
+    <q-dialog v-model="showAddDialog">
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="text-h6">Add New Price Item</div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="saveAddItem" class="q-gutter-md">
+            <q-select
+              v-model="addForm.file_type"
+              :options="fileTypes"
+              filled
+              label="File Type *"
+              :rules="[(val) => !!val || 'Required']"
+            />
+            
+            <!-- Product fields -->
+            <template v-if="addForm.file_type === 'product'">
+              <q-input v-model="addForm.medication_code" filled label="Medication Code *" :rules="[(val) => !!val || 'Required']" />
+              <q-input v-model="addForm.product_name" filled label="Product Name *" :rules="[(val) => !!val || 'Required']" />
+              <q-input v-model="addForm.sub_category_1" filled label="Sub Category 1" />
+              <q-input v-model="addForm.sub_category_2" filled label="Sub Category 2" />
+              <q-input v-model="addForm.product_id" filled label="Product ID" />
+              <q-input v-model="addForm.formulation" filled label="Formulation" />
+              <q-input v-model="addForm.strength" filled label="Strength" />
+              <q-input v-model.number="addForm.base_rate" type="number" step="0.01" filled label="Base Rate *" :rules="[(val) => val >= 0 || 'Must be >= 0']" />
+              <q-input v-model.number="addForm.nhia_app" type="number" step="0.01" filled label="NHIA App" />
+              <q-input v-model.number="addForm.nhia_claim_co_payment" type="number" step="0.01" filled label="Co-Payment" hint="For insured patients. If null, patient pays 0 (free)." />
+              <q-input v-model.number="addForm.claim_amount" type="number" step="0.01" filled label="Claim Amount" />
+              <q-select 
+                v-model="addForm.insurance_covered"
+                :options="insuranceCoveredOptions"
+                filled
+                label="Insurance Covered"
+                hint="If 'No', product will always charge base_rate regardless of patient insurance status"
+              />
+            </template>
+            
+            <!-- Procedure/Surgery/Unmapped DRG fields -->
+            <template v-else-if="addForm.file_type">
+              <q-input v-model="addForm.g_drg_code" filled label="G-DRG Code *" :rules="[(val) => !!val || 'Required']" />
+              <q-input v-model="addForm.service_name" filled label="Service Name *" :rules="[(val) => !!val || 'Required']" />
+              <q-input v-model="addForm.service_type" filled label="Service Type (Department)" />
+              <q-input v-model="addForm.service_ty" filled label="Service Ty" />
+              <q-input v-model="addForm.service_id" filled label="Service ID" />
+              <q-input v-model.number="addForm.base_rate" type="number" step="0.01" filled label="Base Rate *" :rules="[(val) => val >= 0 || 'Must be >= 0']" />
+              <q-input v-model.number="addForm.nhia_app" type="number" step="0.01" filled label="NHIA App" />
+              <q-input v-model.number="addForm.nhia_claim_co_payment" type="number" step="0.01" filled label="Co-Payment" hint="For insured patients. If null, patient pays 0 (free)." />
+              <q-input v-model="addForm.clinic_bill_effective" filled label="Clinic Bill Effective" />
+            </template>
+            
+            <q-toggle v-model="addForm.is_active" label="Active" />
+          </q-form>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" @click="showAddDialog = false" />
+          <q-btn color="primary" label="Add" @click="saveAddItem" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Edit Price Dialog -->
     <q-dialog v-model="showEditDialog">
       <q-card style="min-width: 500px">
         <q-card-section>
@@ -317,6 +378,7 @@ if (!authStore.canAccess(['Admin', 'Pharmacy Head'])) {
 const uploadFileType = ref('');
 const priceListFile = ref(null);
 const uploading = ref(false);
+const downloadingCSV = ref(false);
 const icd10MappingFile = ref(null);
 const uploadingIcd10 = ref(false);
 const icd10UploadResults = ref(null);
@@ -414,6 +476,54 @@ const searchItems = async () => {
   }
 };
 
+const downloadCSV = async () => {
+  if (!uploadFileType.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select a file type first',
+    });
+    return;
+  }
+  
+  downloadingCSV.value = true;
+  try {
+    const response = await priceListAPI.exportCSV(uploadFileType.value);
+    
+    // Create blob from response
+    const blob = response.data instanceof Blob 
+      ? response.data 
+      : new Blob([response.data], { type: 'text/csv' });
+    
+    // Create download link
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const filename = `${uploadFileType.value}_price_list.csv`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up
+    setTimeout(() => {
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    }, 100);
+    
+    $q.notify({
+      type: 'positive',
+      message: `${uploadFileType.value} price list downloaded successfully`,
+    });
+  } catch (error) {
+    console.error('Download error:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || `Failed to download ${uploadFileType.value} price list`,
+    });
+  } finally {
+    downloadingCSV.value = false;
+  }
+};
+
 const downloadProductCSV = async () => {
   downloadingCSV.value = true;
   try {
@@ -457,6 +567,112 @@ onMounted(() => {
   searchItems(); // Load all items initially
 });
 
+// Add dialog
+const showAddDialog = ref(false);
+const addForm = ref({
+  file_type: null,
+  g_drg_code: '',
+  medication_code: '',
+  service_name: '',
+  product_name: '',
+  service_type: '',
+  service_ty: '',
+  service_id: '',
+  sub_category_1: '',
+  sub_category_2: '',
+  product_id: '',
+  formulation: '',
+  strength: '',
+  base_rate: 0.0,
+  nhia_app: null,
+  nhia_claim_co_payment: null,
+  claim_amount: null,
+  insurance_covered: 'yes',
+  clinic_bill_effective: '',
+  is_active: true
+});
+
+const openAddDialog = () => {
+  // Reset form
+  addForm.value = {
+    file_type: null,
+    g_drg_code: '',
+    medication_code: '',
+    service_name: '',
+    product_name: '',
+    service_type: '',
+    service_ty: '',
+    service_id: '',
+    sub_category_1: '',
+    sub_category_2: '',
+    product_id: '',
+    formulation: '',
+    strength: '',
+    base_rate: 0.0,
+    nhia_app: null,
+    nhia_claim_co_payment: 0.0,  // Default to 0.0 instead of null
+    claim_amount: null,
+    insurance_covered: 'yes',
+    clinic_bill_effective: '',
+    is_active: true
+  };
+  showAddDialog.value = true;
+};
+
+const saveAddItem = async () => {
+  try {
+    // Validate required fields
+    if (!addForm.value.file_type) {
+      $q.notify({
+        type: 'negative',
+        message: 'Please select a file type',
+      });
+      return;
+    }
+    
+    if (addForm.value.file_type === 'product') {
+      if (!addForm.value.medication_code || !addForm.value.product_name) {
+        $q.notify({
+          type: 'negative',
+          message: 'Medication Code and Product Name are required',
+        });
+        return;
+      }
+    } else {
+      if (!addForm.value.g_drg_code || !addForm.value.service_name) {
+        $q.notify({
+          type: 'negative',
+          message: 'G-DRG Code and Service Name are required',
+        });
+        return;
+      }
+    }
+    
+    // Ensure nhia_claim_co_payment is 0.0 if not set (preserve 0.0, don't convert to null)
+    const itemData = { ...addForm.value };
+    if (itemData.nhia_claim_co_payment === null || itemData.nhia_claim_co_payment === undefined) {
+      itemData.nhia_claim_co_payment = 0.0;
+    }
+    
+    await priceListAPI.createItem(itemData.file_type, itemData);
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Price item added successfully',
+    });
+    
+    showAddDialog.value = false;
+    // Reload items
+    await searchItems();
+  } catch (error) {
+    console.error('Failed to add price item:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to add price item',
+    });
+  }
+};
+
 // Edit dialog
 const showEditDialog = ref(false);
 const editingItem = ref(null);
@@ -472,7 +688,7 @@ const openEditItem = (row) => {
       product_name: row.service_name,
       base_rate: row.base_rate,
       nhia_app: row.nhia_app,
-      nhia_claim_co_payment: row.nhia_claim_co_payment || null,
+      nhia_claim_co_payment: row.nhia_claim_co_payment !== null && row.nhia_claim_co_payment !== undefined ? row.nhia_claim_co_payment : 0.0,
       claim_amount: row.claim_amount || null,
       insurance_covered: row.insurance_covered || 'yes',
       is_active: row.is_active ?? true,
@@ -483,7 +699,7 @@ const openEditItem = (row) => {
       service_type: row.service_type,
       base_rate: row.base_rate,
       nhia_app: row.nhia_app,
-      nhia_claim_co_payment: row.nhia_claim_co_payment || null,
+      nhia_claim_co_payment: row.nhia_claim_co_payment !== null && row.nhia_claim_co_payment !== undefined ? row.nhia_claim_co_payment : 0.0,
       is_active: row.is_active ?? true,
     };
   }
@@ -492,7 +708,13 @@ const openEditItem = (row) => {
 
 const saveEditItem = async () => {
   try {
-    await billingStore.updatePriceItem(editingItem.value.file_type, editingItem.value.id, editForm.value);
+    // Ensure nhia_claim_co_payment is 0.0 if not set (preserve 0.0, don't convert to null)
+    const updateData = { ...editForm.value };
+    if (updateData.nhia_claim_co_payment === null || updateData.nhia_claim_co_payment === undefined) {
+      updateData.nhia_claim_co_payment = 0.0;
+    }
+    
+    await billingStore.updatePriceItem(editingItem.value.file_type, editingItem.value.id, updateData);
     showEditDialog.value = false;
     await searchItems();
   } catch (e) {}

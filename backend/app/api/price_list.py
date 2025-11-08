@@ -25,6 +25,32 @@ from app.services.price_list_service_v2 import (
 )
 
 router = APIRouter(prefix="/price-list", tags=["price-list"])
+class PriceItemCreate(BaseModel):
+    """Price item creation model"""
+    # Common fields
+    g_drg_code: Optional[str] = None  # For procedure, surgery, unmapped_drg
+    medication_code: Optional[str] = None  # For product
+    service_name: Optional[str] = None
+    service_type: Optional[str] = None
+    base_rate: float = 0.0
+    nhia_app: Optional[float] = None
+    nhia_claim_co_payment: Optional[float] = None
+    is_active: bool = True
+    # Product-specific
+    product_name: Optional[str] = None
+    sub_category_1: Optional[str] = None
+    sub_category_2: Optional[str] = None
+    product_id: Optional[str] = None
+    formulation: Optional[str] = None
+    strength: Optional[str] = None
+    claim_amount: Optional[float] = None
+    insurance_covered: Optional[str] = "yes"  # "yes" or "no"
+    # Optional fields
+    sr_no: Optional[str] = None
+    service_ty: Optional[str] = None
+    service_id: Optional[str] = None
+    clinic_bill_effective: Optional[str] = None
+
 class PriceItemUpdate(BaseModel):
     # Common
     service_name: Optional[str] = None
@@ -37,6 +63,125 @@ class PriceItemUpdate(BaseModel):
     product_name: Optional[str] = None
     claim_amount: Optional[float] = None
     insurance_covered: Optional[str] = None  # "yes" or "no"
+
+@router.post("/item/{file_type}")
+def create_price_item(
+    file_type: str,  # procedure, surgery, product, unmapped_drg
+    item_data: PriceItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head"]))
+):
+    """Create a new price list item by type (Admin and Pharmacy Head only)"""
+    valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
+    if file_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid file_type. Must be one of: {', '.join(valid_types)}")
+    
+    if file_type == "product":
+        if not item_data.medication_code:
+            raise HTTPException(status_code=400, detail="medication_code is required for products")
+        if not item_data.product_name:
+            raise HTTPException(status_code=400, detail="product_name is required for products")
+        
+        # Check if product with same medication_code already exists
+        existing = db.query(ProductPrice).filter(ProductPrice.medication_code == item_data.medication_code).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Product with medication_code '{item_data.medication_code}' already exists")
+        
+        item = ProductPrice(
+            medication_code=item_data.medication_code,
+            product_name=item_data.product_name,
+            sub_category_1=item_data.sub_category_1,
+            sub_category_2=item_data.sub_category_2,
+            product_id=item_data.product_id,
+            formulation=item_data.formulation,
+            strength=item_data.strength,
+            base_rate=item_data.base_rate,
+            nhia_app=item_data.nhia_app,
+            nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+            claim_amount=item_data.claim_amount,
+            insurance_covered=item_data.insurance_covered or "yes",
+            is_active=item_data.is_active
+        )
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        return {"message": "Product price item created successfully", "item_id": item.id}
+    
+    elif file_type in ["procedure", "surgery", "unmapped_drg"]:
+        if not item_data.g_drg_code:
+            raise HTTPException(status_code=400, detail="g_drg_code is required")
+        if not item_data.service_name:
+            raise HTTPException(status_code=400, detail="service_name is required")
+        
+        # Check if item with same g_drg_code and service_type already exists
+        if file_type == "procedure":
+            existing = db.query(ProcedurePrice).filter(
+                ProcedurePrice.g_drg_code == item_data.g_drg_code,
+                ProcedurePrice.service_type == item_data.service_type
+            ).first()
+            if existing:
+                raise HTTPException(status_code=400, detail=f"Procedure with g_drg_code '{item_data.g_drg_code}' and service_type '{item_data.service_type}' already exists")
+            
+            item = ProcedurePrice(
+                g_drg_code=item_data.g_drg_code,
+                service_type=item_data.service_type,
+                service_ty=item_data.service_ty,
+                service_id=item_data.service_id,
+                service_name=item_data.service_name,
+                base_rate=item_data.base_rate,
+                nhia_app=item_data.nhia_app,
+                nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                clinic_bill_effective=item_data.clinic_bill_effective,
+                is_active=item_data.is_active,
+                sr_no=item_data.sr_no
+            )
+        elif file_type == "surgery":
+            existing = db.query(SurgeryPrice).filter(
+                SurgeryPrice.g_drg_code == item_data.g_drg_code,
+                SurgeryPrice.service_type == item_data.service_type
+            ).first()
+            if existing:
+                raise HTTPException(status_code=400, detail=f"Surgery with g_drg_code '{item_data.g_drg_code}' and service_type '{item_data.service_type}' already exists")
+            
+            item = SurgeryPrice(
+                g_drg_code=item_data.g_drg_code,
+                service_type=item_data.service_type,
+                service_ty=item_data.service_ty,
+                service_id=item_data.service_id,
+                service_name=item_data.service_name,
+                base_rate=item_data.base_rate,
+                nhia_app=item_data.nhia_app,
+                nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                clinic_bill_effective=item_data.clinic_bill_effective,
+                is_active=item_data.is_active,
+                sr_no=item_data.sr_no
+            )
+        elif file_type == "unmapped_drg":
+            existing = db.query(UnmappedDRGPrice).filter(
+                UnmappedDRGPrice.g_drg_code == item_data.g_drg_code,
+                UnmappedDRGPrice.service_type == item_data.service_type
+            ).first()
+            if existing:
+                raise HTTPException(status_code=400, detail=f"Unmapped DRG with g_drg_code '{item_data.g_drg_code}' and service_type '{item_data.service_type}' already exists")
+            
+            item = UnmappedDRGPrice(
+                g_drg_code=item_data.g_drg_code,
+                service_type=item_data.service_type,
+                service_ty=item_data.service_ty,
+                service_id=item_data.service_id,
+                service_name=item_data.service_name,
+                base_rate=item_data.base_rate,
+                nhia_app=item_data.nhia_app,
+                nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                clinic_bill_effective=item_data.clinic_bill_effective,
+                is_active=item_data.is_active,
+                sr_no=item_data.sr_no
+            )
+        
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        return {"message": f"{file_type} price item created successfully", "item_id": item.id}
 
 @router.put("/item/{file_type}/{item_id}")
 def update_price_item(
@@ -584,69 +729,191 @@ def get_drg_codes_from_icd10(
     return results
 
 
-@router.get("/export/product/csv")
-def export_product_price_list_csv(
+@router.get("/export/{file_type}/csv")
+def export_price_list_csv(
+    file_type: str,  # procedure, surgery, product, unmapped_drg
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head"]))
 ):
-    """Export product price list as CSV file"""
-    # Query all product prices
-    products = db.query(ProductPrice).filter(ProductPrice.is_active == True).order_by(ProductPrice.product_name).all()
-    
-    if not products:
-        raise HTTPException(status_code=404, detail="No product prices found")
+    """Export price list as CSV file by type"""
+    valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
+    if file_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Must be one of: {', '.join(valid_types)}"
+        )
     
     # Create CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Write header row
-    writer.writerow([
-        'Product N',  # Product Name with embedded code
-        'Medication Code',
-        'Product Name',
-        'Sub Category 1',
-        'Sub Category 2',
-        'Product ID',
-        'Formulation',
-        'Strength',
-        'Base Rate',
-        'NHIA App',
-        'NHIA Claim Co-Payment',
-        'Claim Amount',
-        'NHIA Claim',
-        'Bill Effective',
-        'Insurance Covered',
-        'Is Active'
-    ])
+    if file_type == "product":
+        # Query all product prices
+        items = db.query(ProductPrice).filter(ProductPrice.is_active == True).order_by(ProductPrice.product_name).all()
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No product prices found")
+        
+        # Write header row
+        writer.writerow([
+            'Product N',  # Product Name with embedded code
+            'Medication Code',
+            'Product Name',
+            'Sub Category 1',
+            'Sub Category 2',
+            'Product ID',
+            'Formulation',
+            'Strength',
+            'Base Rate',
+            'NHIA App',
+            'NHIA Claim Co-Payment',
+            'Claim Amount',
+            'NHIA Claim',
+            'Bill Effective',
+            'Insurance Covered',
+            'Is Active'
+        ])
+        
+        # Write data rows
+        for item in items:
+            # Reconstruct the Product N format: "Product Name (Code) (CODE | Product Name)"
+            product_n = item.product_name
+            if item.medication_code:
+                # If product_name doesn't already contain the code format, construct it
+                if f"({item.medication_code}" not in item.product_name:
+                    product_n = f"{item.product_name} ({item.medication_code} | {item.product_name})"
+            
+            writer.writerow([
+                product_n,
+                item.medication_code or '',
+                item.product_name or '',
+                item.sub_category_1 or '',
+                item.sub_category_2 or '',
+                item.product_id or '',
+                item.formulation or '',
+                item.strength or '',
+                item.base_rate or 0.0,
+                item.nhia_app or '',
+                item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                item.claim_amount or '',
+                item.nhia_claim or '',
+                item.bill_effective or '',
+                item.insurance_covered or 'yes',  # Default to 'yes' if not set
+                'True' if item.is_active else 'False'
+            ])
+        
+        filename = "product_price_list.csv"
     
-    # Write data rows
-    for product in products:
-        # Reconstruct the Product N format: "Product Name (Code) (CODE | Product Name)"
-        product_n = product.product_name
-        if product.medication_code:
-            # If product_name doesn't already contain the code format, construct it
-            if f"({product.medication_code}" not in product.product_name:
-                product_n = f"{product.product_name} ({product.medication_code} | {product.product_name})"
+    elif file_type == "procedure":
+        items = db.query(ProcedurePrice).filter(ProcedurePrice.is_active == True).order_by(ProcedurePrice.service_name).all()
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No procedure prices found")
         
         writer.writerow([
-            product_n,
-            product.medication_code or '',
-            product.product_name or '',
-            product.sub_category_1 or '',
-            product.sub_category_2 or '',
-            product.product_id or '',
-            product.formulation or '',
-            product.strength or '',
-            product.base_rate or 0.0,
-            product.nhia_app or '',
-            product.nhia_claim_co_payment or '',
-            product.claim_amount or '',
-            product.nhia_claim or '',
-            product.bill_effective or '',
-            product.insurance_covered or 'yes',  # Default to 'yes' if not set
-            'True' if product.is_active else 'False'
+            'Sr.No.',
+            'G-DRG Code',
+            'Service Ty',
+            'Service Type',
+            'Service ID',
+            'Service Name',
+            'Base Rate',
+            'NHIA App',
+            'NHIA Claim Co-Payment',
+            'Clinic Bill Effective',
+            'Is Active'
         ])
+        
+        for item in items:
+            writer.writerow([
+                item.sr_no or '',
+                item.g_drg_code or '',
+                item.service_ty or '',
+                item.service_type or '',
+                item.service_id or '',
+                item.service_name or '',
+                item.base_rate or 0.0,
+                item.nhia_app or '',
+                item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                item.clinic_bill_effective or '',
+                'True' if item.is_active else 'False'
+            ])
+        
+        filename = "procedure_price_list.csv"
+    
+    elif file_type == "surgery":
+        items = db.query(SurgeryPrice).filter(SurgeryPrice.is_active == True).order_by(SurgeryPrice.service_name).all()
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No surgery prices found")
+        
+        writer.writerow([
+            'Sr.No.',
+            'G-DRG Code',
+            'Service Ty',
+            'Service Type',
+            'Service ID',
+            'Service Name',
+            'Base Rate',
+            'NHIA App',
+            'NHIA Claim Co-Payment',
+            'Clinic Bill Effective',
+            'Is Active'
+        ])
+        
+        for item in items:
+            writer.writerow([
+                item.sr_no or '',
+                item.g_drg_code or '',
+                item.service_ty or '',
+                item.service_type or '',
+                item.service_id or '',
+                item.service_name or '',
+                item.base_rate or 0.0,
+                item.nhia_app or '',
+                item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                item.clinic_bill_effective or '',
+                'True' if item.is_active else 'False'
+            ])
+        
+        filename = "surgery_price_list.csv"
+    
+    elif file_type == "unmapped_drg":
+        items = db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.is_active == True).order_by(UnmappedDRGPrice.service_name).all()
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No unmapped DRG prices found")
+        
+        writer.writerow([
+            'Sr.No.',
+            'G-DRG Code',
+            'Service Ty',
+            'Service Type',
+            'Service ID',
+            'Service Name',
+            'Base Rate',
+            'NHIA App',
+            'NHIA Claim Co-Payment',
+            'Clinic Bill Effective',
+            'Is Active'
+        ])
+        
+        for item in items:
+            writer.writerow([
+                item.sr_no or '',
+                item.g_drg_code or '',
+                item.service_ty or '',
+                item.service_type or '',
+                item.service_id or '',
+                item.service_name or '',
+                item.base_rate or 0.0,
+                item.nhia_app or '',
+                item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
+                item.clinic_bill_effective or '',
+                'True' if item.is_active else 'False'
+            ])
+        
+        filename = "unmapped_drg_price_list.csv"
     
     # Get CSV content
     csv_content = output.getvalue()
@@ -657,7 +924,7 @@ def export_product_price_list_csv(
         content=csv_content,
         media_type="text/csv",
         headers={
-            "Content-Disposition": "attachment; filename=product_price_list.csv"
+            "Content-Disposition": f"attachment; filename={filename}"
         }
     )
 

@@ -284,11 +284,15 @@ export const priceListAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  exportCSV: (fileType) => {
+    return api.get(`/price-list/export/${fileType}/csv`, { responseType: 'blob' });
+  },
   exportProductCSV: () => {
     return api.get('/price-list/export/product/csv', {
       responseType: 'blob',
     });
   },
+  createItem: (fileType, data) => api.post(`/price-list/item/${fileType}`, data),
   uploadIcd10Mapping: (file) => {
     const formData = new FormData();
     formData.append('file', file);

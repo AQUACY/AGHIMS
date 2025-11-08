@@ -75,6 +75,7 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
     nhia_app_col = None
     claim_amount_col = None
     nhia_claim_col = None
+    nhia_co_pay_col = None  # NHIA Claim Co-Payment column
     bill_effective_col = None
     insurance_covered_col = None
     
@@ -126,9 +127,15 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
              (orig_col_lower.startswith('claim') and 'am' in orig_col_lower):
             claim_amount_col = col
         
-        # NHIA Claim
-        elif 'nhia_clain' in col_lower or ('nhia' in orig_col_lower and 'clain' in orig_col_lower):
+        # NHIA Claim (string field)
+        elif 'nhia_clain' in col_lower or ('nhia' in orig_col_lower and 'clain' in orig_col_lower and 'co' not in orig_col_lower and 'pay' not in orig_col_lower):
             nhia_claim_col = col
+        
+        # NHIA Claim Co-Payment (numeric field)
+        elif ('nhia_claim' in col_lower or 'nhia_co' in col_lower or 
+              'co_payment' in col_lower or 'copayment' in col_lower or
+              ('nhia' in orig_col_lower and ('claim' in orig_col_lower or 'co' in orig_col_lower or 'pay' in orig_col_lower))):
+            nhia_co_pay_col = col
         
         # Bill Effective
         elif 'bill_effecti' in col_lower or 'bill_effective' in col_lower:
@@ -241,11 +248,25 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
             except (ValueError, TypeError):
                 item['claim_amount'] = None
         
-        # NHIA Claim
+        # NHIA Claim (string field)
         if nhia_claim_col and nhia_claim_col in df.columns and not pd.isna(row[nhia_claim_col]):
             item['nhia_claim'] = str(row[nhia_claim_col]).strip()
         else:
             item['nhia_claim'] = None
+        
+        # NHIA Claim Co-Payment (numeric field - preserve 0 as 0.0, not None)
+        item['nhia_claim_co_payment'] = 0.0  # Default to 0.0 instead of None
+        if nhia_co_pay_col and nhia_co_pay_col in df.columns:
+            try:
+                val = row[nhia_co_pay_col]
+                if pd.notna(val):
+                    # Convert to float and preserve 0 as 0.0
+                    co_payment_val = float(val)
+                    item['nhia_claim_co_payment'] = co_payment_val  # This will be 0.0 if value is 0
+                # If pd.isna(val), keep default 0.0
+            except (ValueError, TypeError):
+                # If conversion fails, keep default 0.0
+                item['nhia_claim_co_payment'] = 0.0
         
         # Bill Effective
         if bill_effective_col and bill_effective_col in df.columns and not pd.isna(row[bill_effective_col]):
@@ -481,15 +502,19 @@ def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Di
             except (ValueError, TypeError):
                 item['nhia_app'] = None
         
-        # NHIA Claim Co-Payment
-        item['nhia_claim_co_payment'] = None
+        # NHIA Claim Co-Payment (preserve 0 as 0.0, not None)
+        item['nhia_claim_co_payment'] = 0.0  # Default to 0.0 instead of None
         if nhia_co_pay_col and nhia_co_pay_col in df.columns:
             try:
                 val = row[nhia_co_pay_col]
                 if pd.notna(val):
-                    item['nhia_claim_co_payment'] = float(val)
+                    # Convert to float and preserve 0 as 0.0
+                    co_payment_val = float(val)
+                    item['nhia_claim_co_payment'] = co_payment_val  # This will be 0.0 if value is 0
+                # If pd.isna(val), keep default 0.0
             except (ValueError, TypeError):
-                item['nhia_claim_co_payment'] = None
+                # If conversion fails, keep default 0.0
+                item['nhia_claim_co_payment'] = 0.0
         
         # Clinic Bill Effective
         if clinic_col and clinic_col in df.columns and not pd.isna(row[clinic_col]):
@@ -580,7 +605,9 @@ def upload_product_prices(db: Session, items: List[Dict]):
             item_data['service_type'] = None
             item_data['service_id'] = None
             item_data['service_ty'] = None
-            item_data['nhia_claim_co_payment'] = None  # Products don't have co-payment
+            # Preserve nhia_claim_co_payment from item_data if it exists, otherwise default to 0.0
+            if 'nhia_claim_co_payment' not in item_data or item_data['nhia_claim_co_payment'] is None:
+                item_data['nhia_claim_co_payment'] = 0.0
             item_data['clinic_bill_effective'] = None
                 
             existing = (
