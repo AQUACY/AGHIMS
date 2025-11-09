@@ -170,12 +170,16 @@ class PrescriptionResponse(BaseModel):
 # Investigation schemas
 class InvestigationCreate(BaseModel):
     """Investigation creation model"""
-    encounter_id: int
+    encounter_id: Optional[int] = None  # Optional for direct walk-in services
+    patient_id: Optional[int] = None  # Required if encounter_id is not provided (for direct services)
+    patient_card_number: Optional[str] = None  # Alternative to patient_id for direct services
     gdrg_code: str
     procedure_name: Optional[str] = None
     investigation_type: str  # lab, scan, xray
     notes: Optional[str] = None  # Notes/remarks from doctor
     price: Optional[str] = None  # Price of the investigation
+    is_insured: Optional[bool] = False  # For direct services without encounter
+    ccc_number: Optional[str] = None  # For direct services without encounter
 
 
 class InvestigationResponse(BaseModel):
@@ -189,9 +193,18 @@ class InvestigationResponse(BaseModel):
     price: Optional[str] = None
     status: str
     confirmed_by: Optional[int] = None
+    completed_by: Optional[int] = None
     cancelled_by: Optional[int] = None
     cancellation_reason: Optional[str] = None
     cancelled_at: Optional[datetime] = None
+    created_at: datetime
+    # Patient and encounter info for list view
+    patient_name: Optional[str] = None
+    patient_card_number: Optional[str] = None
+    encounter_date: Optional[datetime] = None
+    # User names for display
+    confirmed_by_name: Optional[str] = None
+    completed_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -989,24 +1002,117 @@ def delete_prescription(
     return None
 
 
+class BulkConfirmInvestigations(BaseModel):
+    """Model for bulk confirming multiple investigations"""
+    investigation_ids: List[int]  # List of investigation IDs to confirm
+
+
+@router.put("/investigations/bulk-confirm")
+def bulk_confirm_investigations(
+    bulk_data: BulkConfirmInvestigations,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+):
+    """Bulk confirm multiple investigation requests"""
+    if not bulk_data.investigation_ids:
+        raise HTTPException(status_code=400, detail="No investigation IDs provided")
+    
+    investigations = db.query(Investigation).filter(
+        Investigation.id.in_(bulk_data.investigation_ids)
+    ).all()
+    
+    if len(investigations) != len(bulk_data.investigation_ids):
+        raise HTTPException(status_code=404, detail="Some investigations not found")
+    
+    confirmed_count = 0
+    errors = []
+    
+    for investigation in investigations:
+        try:
+            # Don't allow confirming cancelled investigations
+            if investigation.status == InvestigationStatus.CANCELLED.value:
+                errors.append(f"Investigation {investigation.id} is cancelled")
+                continue
+            
+            # Don't allow confirming already confirmed or completed investigations
+            if investigation.status in [InvestigationStatus.CONFIRMED.value, InvestigationStatus.COMPLETED.value]:
+                errors.append(f"Investigation {investigation.id} is already {investigation.status}")
+                continue
+            
+            # Verify user role matches investigation type
+            if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head"]:
+                if investigation.investigation_type == "lab" and current_user.role != "Lab":
+                    errors.append(f"Only Lab staff can confirm investigation {investigation.id}")
+                    continue
+                elif investigation.investigation_type == "scan" and current_user.role != "Scan":
+                    errors.append(f"Only Scan staff can confirm investigation {investigation.id}")
+                    continue
+                elif investigation.investigation_type == "xray" and current_user.role != "Xray":
+                    errors.append(f"Only Xray staff can confirm investigation {investigation.id}")
+                    continue
+            
+            # Confirm the investigation (only if it has an encounter, bill generation happens in single confirm)
+            investigation.status = InvestigationStatus.CONFIRMED.value
+            investigation.confirmed_by = current_user.id
+            confirmed_count += 1
+            
+        except Exception as e:
+            errors.append(f"Error confirming investigation {investigation.id}: {str(e)}")
+    
+    db.commit()
+    
+    return {
+        "confirmed_count": confirmed_count,
+        "total_requested": len(bulk_data.investigation_ids),
+        "errors": errors if errors else None
+    }
+
+
 @router.post("/investigation", response_model=InvestigationResponse, status_code=status.HTTP_201_CREATED)
 def create_investigation(
     investigation_data: InvestigationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records", "Scan", "Scan Head", "Xray", "Xray Head", "Lab", "Lab Head"]))
 ):
-    """Request an investigation (lab, scan, x-ray)"""
+    """Request an investigation (lab, scan, x-ray). Can be from consultation (with encounter_id) or direct walk-in (without encounter_id)"""
     from app.services.price_list_service_v2 import get_price_from_all_tables
+    from app.models.patient import Patient
     
-    encounter = db.query(Encounter).filter(Encounter.id == investigation_data.encounter_id).first()
-    if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter not found")
+    encounter = None
+    is_insured = False
+    
+    # Handle investigation with encounter (from consultation)
+    if investigation_data.encounter_id:
+        encounter = db.query(Encounter).filter(Encounter.id == investigation_data.encounter_id).first()
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found")
+        is_insured = bool(encounter.ccc_number)
+    # Handle direct walk-in service (without encounter)
+    else:
+        # Must provide either patient_id or patient_card_number
+        patient = None
+        if investigation_data.patient_id:
+            patient = db.query(Patient).filter(Patient.id == investigation_data.patient_id).first()
+        elif investigation_data.patient_card_number:
+            patient = db.query(Patient).filter(Patient.card_number == investigation_data.patient_card_number).first()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="For direct services, either patient_id or patient_card_number must be provided"
+            )
+        
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        
+        # Use provided insurance info or patient's insurance status
+        if investigation_data.is_insured is not None:
+            is_insured = investigation_data.is_insured
+        else:
+            is_insured = patient.insured or bool(investigation_data.ccc_number)
     
     # Auto-fetch price from price list if not provided
     price = investigation_data.price
     if not price and investigation_data.gdrg_code:
-        # Check if patient is insured (has CCC number)
-        is_insured = bool(encounter.ccc_number)
         try:
             price_value = get_price_from_all_tables(db, investigation_data.gdrg_code, is_insured)
             price = str(price_value) if price_value else None
@@ -1028,6 +1134,61 @@ def create_investigation(
     db.commit()
     db.refresh(investigation)
     return investigation
+
+
+@router.get("/investigation/{investigation_id}", response_model=InvestigationResponse)
+def get_investigation(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a single investigation by ID with patient and encounter info"""
+    from app.models.patient import Patient
+    
+    investigation = (
+        db.query(Investigation)
+        .join(Encounter, Investigation.encounter_id == Encounter.id)
+        .join(Patient, Encounter.patient_id == Patient.id)
+        .filter(Investigation.id == investigation_id)
+        .first()
+    )
+    
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Get user names
+    confirmed_by_name = None
+    if investigation.confirmed_by:
+        confirmed_user = db.query(User).filter(User.id == investigation.confirmed_by).first()
+        confirmed_by_name = confirmed_user.full_name if confirmed_user else None
+    
+    completed_by_name = None
+    if investigation.completed_by:
+        completed_user = db.query(User).filter(User.id == investigation.completed_by).first()
+        completed_by_name = completed_user.full_name if completed_user else None
+    
+    inv_dict = {
+        "id": investigation.id,
+        "encounter_id": investigation.encounter_id,
+        "gdrg_code": investigation.gdrg_code,
+        "procedure_name": investigation.procedure_name,
+        "investigation_type": investigation.investigation_type,
+        "notes": investigation.notes,
+        "price": investigation.price,
+        "status": investigation.status,
+        "confirmed_by": investigation.confirmed_by,
+        "completed_by": investigation.completed_by,
+        "cancelled_by": investigation.cancelled_by,
+        "cancellation_reason": investigation.cancellation_reason,
+        "cancelled_at": investigation.cancelled_at,
+        "created_at": investigation.created_at,
+        "patient_name": f"{investigation.encounter.patient.name} {investigation.encounter.patient.surname or ''}".strip(),
+        "patient_card_number": investigation.encounter.patient.card_number,
+        "encounter_date": investigation.encounter.created_at,
+        "confirmed_by_name": confirmed_by_name,
+        "completed_by_name": completed_by_name,
+    }
+    return InvestigationResponse(**inv_dict)
 
 
 @router.get("/investigation/encounter/{encounter_id}", response_model=List[InvestigationResponse])
@@ -1179,6 +1340,117 @@ def get_investigations_by_patient_card(
     return investigations
 
 
+@router.get("/investigation/list/{investigation_type}", response_model=List[InvestigationResponse])
+def get_investigations_by_type(
+    investigation_type: str,  # lab, scan, xray
+    status: Optional[str] = None,  # requested, confirmed, completed, cancelled
+    search: Optional[str] = None,  # Search by card number or patient name
+    date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get investigations by type with filters
+    Used by Lab, Scan, and X-ray pages to show service requests
+    """
+    from app.models.patient import Patient
+    from datetime import datetime, date as date_class, timedelta
+    
+    # Validate investigation type
+    valid_types = ["lab", "scan", "xray"]
+    if investigation_type.lower() not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid investigation_type. Must be one of: {', '.join(valid_types)}")
+    
+    # Build base query with joins
+    query = (
+        db.query(Investigation)
+        .join(Encounter, Investigation.encounter_id == Encounter.id)
+        .join(Patient, Encounter.patient_id == Patient.id)
+    )
+    
+    # Filter by investigation type
+    query = query.filter(Investigation.investigation_type == investigation_type.lower())
+    
+    # Filter by status
+    if status:
+        valid_statuses = ["requested", "confirmed", "completed", "cancelled"]
+        if status.lower() not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+        query = query.filter(Investigation.status == status.lower())
+    
+    # Filter by date (default to today)
+    if date:
+        try:
+            filter_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}")
+    else:
+        filter_date = date_class.today()
+    
+    # Filter by date (using encounter created_at date)
+    start_of_day = datetime.combine(filter_date, datetime.min.time())
+    end_of_day = datetime.combine(filter_date, datetime.max.time())
+    query = query.filter(Encounter.created_at >= start_of_day, Encounter.created_at <= end_of_day)
+    
+    # Search by card number or patient name
+    if search:
+        search_term = f"%{search.strip()}%"
+        from sqlalchemy import or_
+        # Search in card number, name, or surname
+        # For full name search, we'll check if search term matches name or surname separately
+        query = query.filter(
+            or_(
+                Patient.card_number.ilike(search_term),
+                Patient.name.ilike(search_term),
+                Patient.surname.ilike(search_term)
+            )
+        )
+    
+    # Order by created_at descending (newest first)
+    query = query.order_by(Investigation.created_at.desc())
+    
+    investigations = query.all()
+    
+    # Build response with patient info and user names
+    result = []
+    for inv in investigations:
+        # Get user names
+        confirmed_by_name = None
+        if inv.confirmed_by:
+            confirmed_user = db.query(User).filter(User.id == inv.confirmed_by).first()
+            confirmed_by_name = confirmed_user.full_name if confirmed_user else None
+        
+        completed_by_name = None
+        if inv.completed_by:
+            completed_user = db.query(User).filter(User.id == inv.completed_by).first()
+            completed_by_name = completed_user.full_name if completed_user else None
+        
+        inv_dict = {
+            "id": inv.id,
+            "encounter_id": inv.encounter_id,
+            "gdrg_code": inv.gdrg_code,
+            "procedure_name": inv.procedure_name,
+            "investigation_type": inv.investigation_type,
+            "notes": inv.notes,
+            "price": inv.price,
+            "status": inv.status,
+            "confirmed_by": inv.confirmed_by,
+            "completed_by": inv.completed_by,
+            "cancelled_by": inv.cancelled_by,
+            "cancellation_reason": inv.cancellation_reason,
+            "cancelled_at": inv.cancelled_at,
+            "created_at": inv.created_at,
+            "patient_name": f"{inv.encounter.patient.name} {inv.encounter.patient.surname or ''}".strip(),
+            "patient_card_number": inv.encounter.patient.card_number,
+            "encounter_date": inv.encounter.created_at,
+            "confirmed_by_name": confirmed_by_name,
+            "completed_by_name": completed_by_name,
+        }
+        result.append(InvestigationResponse(**inv_dict))
+    
+    return result
+
+
 class InvestigationUpdateDetails(BaseModel):
     """Investigation update details model"""
     gdrg_code: str
@@ -1193,15 +1465,15 @@ def update_investigation_details(
     investigation_id: int,
     update_data: InvestigationUpdateDetails,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
 ):
     """Update investigation details (gdrg_code, procedure_name, investigation_type) - allows staff to change service"""
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
     
-    # Check permissions - only staff matching investigation type or Admin can update
-    if current_user.role != "Admin":
+    # Check permissions - only staff matching investigation type or Admin/Head can update
+    if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head"]:
         if investigation.investigation_type == "lab" and current_user.role != "Lab":
             raise HTTPException(status_code=403, detail="Only Lab staff can update lab investigations")
         elif investigation.investigation_type == "scan" and current_user.role != "Scan":
@@ -1230,11 +1502,96 @@ def update_investigation_details(
     return investigation
 
 
+@router.put("/investigation/{investigation_id}/revert-status")
+def revert_investigation_status(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab Head", "Scan Head", "Xray Head", "Admin"]))
+):
+    """Revert investigation status from completed to confirmed (to allow editing results) - Admin and Head roles only"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Only allow reverting from completed to confirmed
+    if investigation.status != InvestigationStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot revert status. Current status is '{investigation.status}'. Only completed investigations can be reverted."
+        )
+    
+    # Verify investigation type matches (each Head can only revert their own investigation type)
+    if current_user.role == "Lab Head" and investigation.investigation_type != "lab":
+        raise HTTPException(
+            status_code=403,
+            detail="Lab Head can only revert lab investigations"
+        )
+    elif current_user.role == "Scan Head" and investigation.investigation_type != "scan":
+        raise HTTPException(
+            status_code=403,
+            detail="Scan Head can only revert scan investigations"
+        )
+    elif current_user.role == "Xray Head" and investigation.investigation_type != "xray":
+        raise HTTPException(
+            status_code=403,
+            detail="Xray Head can only revert xray investigations"
+        )
+    
+    # Revert status to confirmed
+    investigation.status = InvestigationStatus.CONFIRMED.value
+    # Clear completed_by when reverting
+    investigation.completed_by = None
+    
+    db.commit()
+    db.refresh(investigation)
+    
+    return {"investigation_id": investigation.id, "status": investigation.status, "message": "Status reverted to confirmed"}
+
+
+class InvestigationRevertToRequested(BaseModel):
+    """Model for reverting investigation from confirmed to requested"""
+    reason: str  # Reason for reverting (required)
+
+
+@router.put("/investigation/{investigation_id}/revert-to-requested")
+def revert_investigation_to_requested(
+    investigation_id: int,
+    revert_data: InvestigationRevertToRequested,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Revert investigation status from confirmed to requested - Admin only"""
+    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Only allow reverting from confirmed to requested
+    if investigation.status != InvestigationStatus.CONFIRMED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot revert status. Current status is '{investigation.status}'. Only confirmed investigations can be reverted to requested."
+        )
+    
+    # Revert status to requested
+    investigation.status = InvestigationStatus.REQUESTED.value
+    # Clear confirmed_by when reverting
+    investigation.confirmed_by = None
+    # Store revert reason in cancellation_reason field (reusing existing field)
+    investigation.cancellation_reason = f"Reverted to requested by Admin: {revert_data.reason}"
+    investigation.cancelled_by = current_user.id
+    investigation.cancelled_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(investigation)
+    
+    return {"investigation_id": investigation.id, "status": investigation.status, "message": "Status reverted to requested"}
+
+
 @router.put("/investigation/{investigation_id}/confirm")
 def confirm_investigation(
     investigation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
 ):
     """Confirm an investigation request and automatically generate a bill item"""
     from app.models.bill import Bill, BillItem
@@ -1250,7 +1607,7 @@ def confirm_investigation(
         raise HTTPException(status_code=400, detail="Cannot confirm a cancelled investigation")
     
     # Verify user role matches investigation type (Lab can confirm labs, etc.)
-    if current_user.role != "Admin":
+    if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head"]:
         if investigation.investigation_type == "lab" and current_user.role != "Lab":
             raise HTTPException(
                 status_code=403,
@@ -1267,16 +1624,27 @@ def confirm_investigation(
                 detail="Only Xray staff can confirm xray investigations"
             )
     
-    # Get encounter to determine insurance status
-    encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
-    if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter not found")
+    # Get encounter to determine insurance status (if exists)
+    encounter = None
+    is_insured_encounter = False
+    
+    if investigation.encounter_id:
+        encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found")
+        # Determine if insured based on encounter CCC number
+        is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    else:
+        # Direct service without encounter - cannot auto-generate bill item
+        # Just confirm the investigation
+        investigation.status = InvestigationStatus.CONFIRMED.value
+        investigation.confirmed_by = current_user.id
+        db.commit()
+        db.refresh(investigation)
+        return {"investigation_id": investigation.id, "status": investigation.status}
     
     investigation.status = InvestigationStatus.CONFIRMED.value
     investigation.confirmed_by = current_user.id
-    
-    # Determine if insured based on encounter CCC number
-    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
     
     # Get price for the investigation (co-pay for insured, base rate for cash)
     # Use the price stored on the investigation, or look it up from price list
@@ -1366,8 +1734,12 @@ class LabResultResponse(BaseModel):
     results_text: Optional[str]
     attachment_path: Optional[str]
     entered_by: int
+    updated_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    # User names for display
+    entered_by_name: Optional[str] = None
+    updated_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -1379,7 +1751,7 @@ async def create_lab_result(
     results_text: Optional[str] = Form(None),
     attachment: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
 ):
     """Create or update lab result with optional file attachment"""
     # Verify investigation exists and is a lab investigation
@@ -1389,6 +1761,14 @@ async def create_lab_result(
     
     if investigation.investigation_type != "lab":
         raise HTTPException(status_code=400, detail="This endpoint is only for lab investigations")
+    
+    # If investigation is completed, only Admin and Lab Head can edit
+    if investigation.status == InvestigationStatus.COMPLETED.value:
+        if current_user.role not in ["Admin", "Lab Head"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Admin and Lab Head can edit completed investigations. Please contact Lab Head to revert the status."
+            )
     
     # Handle file upload
     attachment_path = None
@@ -1426,11 +1806,13 @@ async def create_lab_result(
             if existing_result.attachment_path and old_path.exists():
                 old_path.unlink()
             existing_result.attachment_path = attachment_path
+        existing_result.updated_by = current_user.id  # Track who updated
         existing_result.updated_at = datetime.utcnow()
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
             investigation.status = InvestigationStatus.COMPLETED.value
+            investigation.completed_by = current_user.id  # Track who completed
     else:
         # Create new result
         lab_result = LabResult(
@@ -1444,14 +1826,44 @@ async def create_lab_result(
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
             investigation.status = InvestigationStatus.COMPLETED.value
+            investigation.completed_by = current_user.id  # Track who completed
     
     db.commit()
     if existing_result:
         db.refresh(existing_result)
-        return existing_result
+        # Get user names for response
+        entered_user = db.query(User).filter(User.id == existing_result.entered_by).first()
+        updated_user = db.query(User).filter(User.id == existing_result.updated_by).first() if existing_result.updated_by else None
+        result_dict = {
+            "id": existing_result.id,
+            "investigation_id": existing_result.investigation_id,
+            "results_text": existing_result.results_text,
+            "attachment_path": existing_result.attachment_path,
+            "entered_by": existing_result.entered_by,
+            "updated_by": existing_result.updated_by,
+            "created_at": existing_result.created_at,
+            "updated_at": existing_result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": updated_user.full_name if updated_user else None,
+        }
+        return LabResultResponse(**result_dict)
     else:
         db.refresh(lab_result)
-        return lab_result
+        # Get user names for response
+        entered_user = db.query(User).filter(User.id == lab_result.entered_by).first()
+        result_dict = {
+            "id": lab_result.id,
+            "investigation_id": lab_result.investigation_id,
+            "results_text": lab_result.results_text,
+            "attachment_path": lab_result.attachment_path,
+            "entered_by": lab_result.entered_by,
+            "updated_by": lab_result.updated_by,
+            "created_at": lab_result.created_at,
+            "updated_at": lab_result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": None,
+        }
+        return LabResultResponse(**result_dict)
 
 
 @router.get("/lab-result/investigation/{investigation_id}", response_model=Optional[LabResultResponse])
@@ -1462,7 +1874,26 @@ def get_lab_result(
 ):
     """Get lab result for an investigation"""
     result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
-    return result
+    if not result:
+        return None
+    
+    # Get user names
+    entered_user = db.query(User).filter(User.id == result.entered_by).first()
+    updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+    
+    result_dict = {
+        "id": result.id,
+        "investigation_id": result.investigation_id,
+        "results_text": result.results_text,
+        "attachment_path": result.attachment_path,
+        "entered_by": result.entered_by,
+        "updated_by": result.updated_by,
+        "created_at": result.created_at,
+        "updated_at": result.updated_at,
+        "entered_by_name": entered_user.full_name if entered_user else None,
+        "updated_by_name": updated_user.full_name if updated_user else None,
+    }
+    return LabResultResponse(**result_dict)
 
 
 @router.get("/lab-result/{investigation_id}/download")
@@ -1527,8 +1958,12 @@ class ScanResultResponse(BaseModel):
     results_text: Optional[str]
     attachment_path: Optional[str]
     entered_by: int
+    updated_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    # User names for display
+    entered_by_name: Optional[str] = None
+    updated_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -1540,7 +1975,7 @@ async def create_scan_result(
     results_text: Optional[str] = Form(None),
     attachment: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Scan", "Admin"]))
+    current_user: User = Depends(require_role(["Scan", "Scan Head", "Admin"]))
 ):
     """Create or update scan result with optional file attachment"""
     # Verify investigation exists and is a scan investigation
@@ -1550,6 +1985,14 @@ async def create_scan_result(
     
     if investigation.investigation_type != "scan":
         raise HTTPException(status_code=400, detail="This endpoint is only for scan investigations")
+    
+    # If investigation is completed, only Admin and Scan Head can edit
+    if investigation.status == InvestigationStatus.COMPLETED.value:
+        if current_user.role not in ["Admin", "Scan Head"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Admin and Scan Head can edit completed investigations. Please contact Scan Head to revert the status."
+            )
     
     # Handle file upload
     attachment_path = None
@@ -1587,11 +2030,15 @@ async def create_scan_result(
             if existing_result.attachment_path and old_path.exists():
                 old_path.unlink()
             existing_result.attachment_path = attachment_path
+        existing_result.updated_by = current_user.id  # Track who updated
         existing_result.updated_at = datetime.utcnow()
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
             investigation.status = InvestigationStatus.COMPLETED.value
+            investigation.completed_by = current_user.id  # Track who completed
+            # Ensure investigation is in session
+            db.add(investigation)
     else:
         # Create new result
         scan_result = ScanResult(
@@ -1605,14 +2052,48 @@ async def create_scan_result(
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
             investigation.status = InvestigationStatus.COMPLETED.value
+            investigation.completed_by = current_user.id  # Track who completed
+            # Ensure investigation is in session
+            db.add(investigation)
     
     db.commit()
+    # Refresh investigation to ensure completed_by is updated
+    db.refresh(investigation)
     if existing_result:
         db.refresh(existing_result)
-        return existing_result
+        # Get user names for response
+        entered_user = db.query(User).filter(User.id == existing_result.entered_by).first()
+        updated_user = db.query(User).filter(User.id == existing_result.updated_by).first() if existing_result.updated_by else None
+        result_dict = {
+            "id": existing_result.id,
+            "investigation_id": existing_result.investigation_id,
+            "results_text": existing_result.results_text,
+            "attachment_path": existing_result.attachment_path,
+            "entered_by": existing_result.entered_by,
+            "updated_by": existing_result.updated_by,
+            "created_at": existing_result.created_at,
+            "updated_at": existing_result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": updated_user.full_name if updated_user else None,
+        }
+        return ScanResultResponse(**result_dict)
     else:
         db.refresh(scan_result)
-        return scan_result
+        # Get user names for response
+        entered_user = db.query(User).filter(User.id == scan_result.entered_by).first()
+        result_dict = {
+            "id": scan_result.id,
+            "investigation_id": scan_result.investigation_id,
+            "results_text": scan_result.results_text,
+            "attachment_path": scan_result.attachment_path,
+            "entered_by": scan_result.entered_by,
+            "updated_by": scan_result.updated_by,
+            "created_at": scan_result.created_at,
+            "updated_at": scan_result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": None,
+        }
+        return ScanResultResponse(**result_dict)
 
 
 @router.get("/scan-result/investigation/{investigation_id}", response_model=Optional[ScanResultResponse])
@@ -1686,8 +2167,12 @@ class XrayResultResponse(BaseModel):
     results_text: Optional[str]
     attachment_path: Optional[str]
     entered_by: int
+    updated_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    # User names for display
+    entered_by_name: Optional[str] = None
+    updated_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -1699,7 +2184,7 @@ async def create_xray_result(
     results_text: Optional[str] = Form(None),
     attachment: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Xray", "Admin"]))
+    current_user: User = Depends(require_role(["Xray", "Xray Head", "Admin"]))
 ):
     """Create or update x-ray result with optional file attachment"""
     # Verify investigation exists and is an xray investigation
@@ -1709,6 +2194,14 @@ async def create_xray_result(
     
     if investigation.investigation_type != "xray":
         raise HTTPException(status_code=400, detail="This endpoint is only for x-ray investigations")
+    
+    # If investigation is completed, only Admin and Xray Head can edit
+    if investigation.status == InvestigationStatus.COMPLETED.value:
+        if current_user.role not in ["Admin", "Xray Head"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Admin and Xray Head can edit completed investigations. Please contact Xray Head to revert the status."
+            )
     
     # Handle file upload
     attachment_path = None
@@ -1746,11 +2239,15 @@ async def create_xray_result(
             if existing_result.attachment_path and old_path.exists():
                 old_path.unlink()
             existing_result.attachment_path = attachment_path
+        existing_result.updated_by = current_user.id  # Track who updated
         existing_result.updated_at = datetime.utcnow()
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
             investigation.status = InvestigationStatus.COMPLETED.value
+            investigation.completed_by = current_user.id  # Track who completed
+            # Ensure investigation is in session
+            db.add(investigation)
     else:
         # Create new result
         xray_result = XrayResult(
@@ -1764,14 +2261,48 @@ async def create_xray_result(
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
             investigation.status = InvestigationStatus.COMPLETED.value
+            investigation.completed_by = current_user.id  # Track who completed
+            # Ensure investigation is in session
+            db.add(investigation)
     
     db.commit()
+    # Refresh investigation to ensure completed_by is updated
+    db.refresh(investigation)
     if existing_result:
         db.refresh(existing_result)
-        return existing_result
+        # Get user names for response
+        entered_user = db.query(User).filter(User.id == existing_result.entered_by).first()
+        updated_user = db.query(User).filter(User.id == existing_result.updated_by).first() if existing_result.updated_by else None
+        result_dict = {
+            "id": existing_result.id,
+            "investigation_id": existing_result.investigation_id,
+            "results_text": existing_result.results_text,
+            "attachment_path": existing_result.attachment_path,
+            "entered_by": existing_result.entered_by,
+            "updated_by": existing_result.updated_by,
+            "created_at": existing_result.created_at,
+            "updated_at": existing_result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": updated_user.full_name if updated_user else None,
+        }
+        return XrayResultResponse(**result_dict)
     else:
         db.refresh(xray_result)
-        return xray_result
+        # Get user names for response
+        entered_user = db.query(User).filter(User.id == xray_result.entered_by).first()
+        result_dict = {
+            "id": xray_result.id,
+            "investigation_id": xray_result.investigation_id,
+            "results_text": xray_result.results_text,
+            "attachment_path": xray_result.attachment_path,
+            "entered_by": xray_result.entered_by,
+            "updated_by": xray_result.updated_by,
+            "created_at": xray_result.created_at,
+            "updated_at": xray_result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": None,
+        }
+        return XrayResultResponse(**result_dict)
 
 
 @router.get("/xray-result/investigation/{investigation_id}", response_model=Optional[XrayResultResponse])

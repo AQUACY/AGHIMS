@@ -57,6 +57,7 @@ class PatientResponse(BaseModel):
     insurance_id: Optional[str]
     insurance_start_date: Optional[date] = None
     insurance_end_date: Optional[date] = None
+    ccc_number: Optional[str] = None  # CCC number for NHIA
     contact: Optional[str]
     address: Optional[str] = None
     # Emergency contact details

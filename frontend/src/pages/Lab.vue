@@ -2,170 +2,130 @@
   <q-page class="q-pa-md">
     <div class="text-h4 q-mb-md text-weight-bold glass-text">Lab Services</div>
 
-    <!-- Patient Search -->
+    <!-- Filters and Search -->
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Search Patient</div>
-        <div class="row q-gutter-md">
+        <div class="row q-gutter-md q-mb-md">
+          <!-- Search by Card Number or Name -->
           <q-input
-            v-model="cardNumber"
+            v-model="searchTerm"
             filled
-            label="Patient Card Number"
-            class="col-12 col-md-8"
-            @keyup.enter="searchPatient"
-            :disable="loadingPatient"
-          />
+            label="Search by Card Number or Patient Name"
+            class="col-12 col-md-4"
+            @keyup.enter="loadRequests"
+            clearable
+            @clear="loadRequests"
+          >
+            <template v-slot:prepend>
+              <q-icon name="search" />
+            </template>
+          </q-input>
+
+          <!-- Date Filter -->
+          <q-input
+            v-model="filterDate"
+            filled
+            label="Date"
+            type="date"
+            class="col-12 col-md-3"
+            @update:model-value="loadRequests"
+          >
+            <template v-slot:prepend>
+              <q-icon name="event" />
+            </template>
+          </q-input>
+
+          <!-- Status Filter -->
+          <q-select
+            v-model="statusFilter"
+            filled
+            :options="statusOptions"
+            label="Status"
+            class="col-12 col-md-3"
+            @update:model-value="loadRequests"
+            clearable
+          >
+            <template v-slot:prepend>
+              <q-icon name="filter_list" />
+            </template>
+          </q-select>
+
+          <!-- Refresh Button -->
           <q-btn
             color="primary"
-            label="Search"
-            @click="searchPatient"
-            class="col-12 col-md-4 glass-button"
-            :loading="loadingPatient"
+            icon="refresh"
+            label="Refresh"
+            @click="loadRequests"
+            :loading="loadingRequests"
+            class="col-12 col-md-2"
           />
         </div>
       </q-card-section>
     </q-card>
 
-    <!-- Patient Info & Encounter Selection -->
-    <q-card v-if="patient" class="q-mb-md glass-card" flat>
+    <!-- Lab Requests Table -->
+    <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="row items-center q-mb-md">
-          <div>
-            <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}</div>
-            <div class="text-grey-7">Card: {{ patient.card_number }}</div>
-          </div>
+          <div class="text-h6 glass-text">Lab Requests</div>
           <q-space />
           <q-btn
-            flat
-            icon="refresh"
-            label="Clear"
-            @click="clearSearch"
+            v-if="selectedInvestigations.length > 0 && (authStore.userRole === 'Lab' || authStore.userRole === 'Lab Head' || authStore.userRole === 'Admin')"
+            color="positive"
+            icon="check"
+            :label="`Confirm Selected (${selectedInvestigations.length})`"
+            @click="bulkConfirmInvestigations"
+            :loading="bulkConfirming"
+            class="q-mr-md"
           />
-        </div>
-
-        <!-- Age and Sex Section -->
-        <div class="row q-gutter-md q-mb-md">
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Age</div>
-            <div class="text-body1 text-weight-medium">{{ patient.age || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Sex</div>
-            <div class="text-body1 text-weight-medium">{{ patient.gender || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Date of Birth</div>
-            <div class="text-body1 text-weight-medium">{{ formatDateOnly(patient.date_of_birth) }}</div>
-          </div>
-        </div>
-
-        <!-- Today's Encounter -->
-        <div v-if="todaysEncounter" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm glass-text">Today's Encounter:</div>
-          <q-card class="q-mb-md" flat bordered style="background-color: rgba(46, 139, 87, 0.1);">
-            <q-card-section>
-              <div class="row items-center">
-                <div class="col">
-                  <div class="text-weight-bold">Encounter #{{ todaysEncounter.id }} - {{ getEncounterProcedures(todaysEncounter) }}</div>
-                  <div class="text-caption text-grey-7 q-mt-xs">
-                    {{ formatDate(todaysEncounter.created_at) }} - Status: {{ todaysEncounter.status }}
-                  </div>
-                </div>
-                <q-badge color="green" label="Today" />
-              </div>
-            </q-card-section>
-          </q-card>
-        </div>
-
-        <!-- Old Encounters - Collapsible -->
-        <div v-if="oldEncounters.length > 0" class="q-mt-md">
-          <q-expansion-item
-            v-model="oldEncountersExpanded"
-            icon="history"
-            :label="`Previous Services (${oldEncounters.length})`"
-            header-class="text-subtitle1 glass-text"
-            class="q-mb-sm"
-          >
-            <div class="q-gutter-sm q-pa-sm">
-              <q-card
-                v-for="encounter in oldEncounters"
-                :key="encounter.id"
-                flat
-                bordered
-                clickable
-                :class="{ 'bg-blue-1': selectedEncounterId === encounter.id }"
-                @click="selectOldEncounter(encounter.id)"
-                style="cursor: pointer;"
-              >
-                <q-card-section class="q-pa-sm">
-                  <div class="row items-center">
-                    <div class="col">
-                      <div class="text-weight-medium">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
-                      <div class="text-caption text-grey-7 q-mt-xs">
-                        {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
-                      </div>
-                    </div>
-                    <q-icon name="chevron_right" color="grey-6" />
-                  </div>
-                </q-card-section>
-              </q-card>
-            </div>
-          </q-expansion-item>
-        </div>
-
-        <div v-if="!todaysEncounter && oldEncounters.length === 0" class="text-grey-7 q-mt-md">
-          No active encounters found for this patient
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Consultation Diagnoses -->
-    <q-card v-if="selectedEncounterId && diagnoses.length > 0" class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Consultation Diagnoses</div>
-        <div class="q-gutter-sm">
-          <q-chip
-            v-for="diagnosis in diagnoses"
-            :key="diagnosis.id"
-            :color="diagnosis.is_chief ? 'primary' : 'secondary'"
-            text-color="white"
-            :label="diagnosis.is_chief ? `${diagnosis.icd10 || diagnosis.diagnosis} (Chief)` : (diagnosis.icd10 || diagnosis.diagnosis)"
-            size="md"
-          >
-            <q-tooltip v-if="diagnosis.icd10">
-              ICD-10: {{ diagnosis.icd10 }} - {{ diagnosis.diagnosis }}
-            </q-tooltip>
-            <q-tooltip v-else>
-              {{ diagnosis.diagnosis }}
-              {{ diagnosis }}
-            </q-tooltip>
-          </q-chip>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Investigations Table -->
-    <q-card v-if="selectedEncounterId" class="q-mb-md">
-          <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6">Lab Investigations</div>
-          <q-space />
-          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized" />
+          <q-badge color="primary" :label="`${requests.length} request(s)`" />
         </div>
         <q-table
-          v-if="investigations.length > 0"
-          :rows="investigations"
-          :columns="investigationColumns"
+          :rows="requests"
+          :columns="requestColumns"
           row-key="id"
           flat
-          :loading="loadingInvestigations"
+          :loading="loadingRequests"
+          :pagination="{ rowsPerPage: 20 }"
+          v-model:selected="selectedInvestigations"
+          selection="multiple"
         >
+          <template v-slot:top-row>
+            <q-tr>
+              <q-td auto-width>
+                <q-checkbox
+                  :model-value="allSelected"
+                  @update:model-value="selectAll"
+                  indeterminate-icon="remove"
+                />
+              </q-td>
+              <q-td colspan="100%">
+                <div class="text-caption text-grey-7">
+                  Select investigations to confirm multiple at once
+                </div>
+              </q-td>
+            </q-tr>
+          </template>
+          <template v-slot:body-cell-selection="props">
+            <q-td :props="props">
+              <q-checkbox
+                v-if="props.row.status === 'requested'"
+                :model-value="props.selected"
+                @update:model-value="props.select"
+              />
+            </q-td>
+          </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
               <q-badge
                 :color="getStatusColor(props.value)"
                 :label="props.value"
               />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-encounter_date="props">
+            <q-td :props="props">
+              {{ formatDate(props.value) }}
             </q-td>
           </template>
           <template v-slot:body-cell-actions="props">
@@ -182,7 +142,7 @@
                   <q-tooltip>View Remarks/Notes</q-tooltip>
                 </q-btn>
                 <q-btn
-                  v-if="props.row.status !== 'confirmed' && props.row.status !== 'completed'"
+                  v-if="props.row.status === 'requested'"
                   size="sm"
                   color="primary"
                   label="Confirm"
@@ -190,17 +150,42 @@
                   :loading="confirmingId === props.row.id"
                   :disable="confirmingId !== null"
                 />
-                <q-badge
-                  v-else
+                <q-btn
+                  v-if="props.row.status === 'confirmed'"
+                  size="sm"
                   color="positive"
-                  label="Confirmed"
+                  label="Add Results"
+                  @click="navigateToResultPage(props.row)"
+                />
+                <q-btn
+                  v-if="props.row.status === 'completed'"
+                  size="sm"
+                  color="info"
+                  label="View Results"
+                  @click="navigateToResultPage(props.row)"
+                />
+                <q-btn
+                  v-if="props.row.status === 'confirmed' && authStore.userRole === 'Admin'"
+                  size="sm"
+                  color="orange"
+                  label="Revert to Requested"
+                  @click="revertToRequested(props.row)"
+                  :loading="revertingToRequestedId === props.row.id"
+                />
+                <q-btn
+                  v-if="props.row.status === 'completed' && (authStore.userRole === 'Admin' || authStore.userRole === 'Lab Head')"
+                  size="sm"
+                  color="warning"
+                  label="Revert to Confirmed"
+                  @click="revertInvestigationStatus(props.row)"
+                  :loading="revertingId === props.row.id"
                 />
               </div>
             </q-td>
           </template>
         </q-table>
-        <div v-else-if="!loadingInvestigations" class="text-center text-grey-7 q-pa-md">
-          No lab investigations found for this encounter
+        <div v-if="!loadingRequests && requests.length === 0" class="text-center text-grey-7 q-pa-md">
+          No lab requests found for the selected filters
         </div>
       </q-card-section>
     </q-card>
@@ -339,13 +324,31 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, patientsAPI, encountersAPI, billingAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
 const route = useRoute();
+const router = useRouter();
+const authStore = useAuthStore();
+
+// New request list functionality
+const requests = ref([]);
+const loadingRequests = ref(false);
+const searchTerm = ref('');
+const filterDate = ref('');
+const statusFilter = ref(null);
+const statusOptions = [
+  { label: 'Requested', value: 'requested' },
+  { label: 'Confirmed', value: 'confirmed' },
+  { label: 'Completed', value: 'completed' },
+  { label: 'Cancelled', value: 'cancelled' }
+];
+
+// Legacy variables (kept for result functionality)
 const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
@@ -359,6 +362,10 @@ const investigations = ref([]);
 const diagnoses = ref([]);
 const loadingInvestigations = ref(false);
 const confirmingId = ref(null);
+const revertingId = ref(null);
+const revertingToRequestedId = ref(null);
+const selectedInvestigations = ref([]);
+const bulkConfirming = ref(false);
 const labResults = ref([]);
 const loadingResults = ref(false);
 const showResultDialog = ref(false);
@@ -373,6 +380,18 @@ const resultForm = ref({
 });
 const showRemarksDialog = ref(false);
 const viewingRemarks = ref(null);
+
+const requestColumns = [
+  { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left', sortable: true },
+  { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left', sortable: true },
+  { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left', sortable: true },
+  { name: 'gdrg_code', label: 'G-DRG Code', field: 'gdrg_code', align: 'left', sortable: true },
+  { name: 'encounter_date', label: 'Request Date', field: 'encounter_date', align: 'left', sortable: true },
+  { name: 'status', label: 'Status', field: 'status', align: 'center', sortable: true },
+  { name: 'confirmed_by_name', label: 'Confirmed By', field: 'confirmed_by_name', align: 'left', sortable: true },
+  { name: 'completed_by_name', label: 'Completed By', field: 'completed_by_name', align: 'left', sortable: true },
+  { name: 'actions', label: 'Actions', align: 'center' },
+];
 
 const investigationColumns = [
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left' },
@@ -760,6 +779,49 @@ const loadLabResults = async () => {
   }
 };
 
+// Load requests with filters
+const loadRequests = async () => {
+  loadingRequests.value = true;
+  try {
+    const filters = {
+      investigation_type: 'lab',
+    };
+    
+    if (statusFilter.value) {
+      filters.status = statusFilter.value.value || statusFilter.value;
+    }
+    
+    if (searchTerm.value && searchTerm.value.trim()) {
+      filters.search = searchTerm.value.trim();
+    }
+    
+    if (filterDate.value) {
+      filters.date = filterDate.value;
+    }
+    
+    const response = await consultationAPI.getInvestigationsByType('lab', filters);
+    requests.value = response.data || [];
+  } catch (error) {
+    console.error('Failed to load requests:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load lab requests',
+    });
+    requests.value = [];
+  } finally {
+    loadingRequests.value = false;
+  }
+};
+
+// Initialize date to today
+const initializeDate = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  filterDate.value = `${year}-${month}-${day}`;
+};
+
 const confirmInvestigation = async (investigation) => {
   $q.dialog({
     title: 'Confirm Investigation',
@@ -774,7 +836,12 @@ const confirmInvestigation = async (investigation) => {
         type: 'positive',
         message: 'Investigation confirmed',
       });
-      await loadInvestigations();
+      // Reload requests list
+      await loadRequests();
+      // Also reload investigations if in legacy view
+      if (selectedEncounterId.value) {
+        await loadInvestigations();
+      }
     } catch (error) {
       $q.notify({
         type: 'negative',
@@ -835,14 +902,18 @@ const saveLabResult = async () => {
       formData.append('attachment', resultForm.value.attachment);
     }
 
-    await consultationAPI.createLabResult(formData);
-    $q.notify({
-      type: 'positive',
-      message: 'Lab result saved successfully',
-    });
-    showResultDialog.value = false;
-    // Reload investigations and results
-    await loadInvestigations();
+      await consultationAPI.createLabResult(formData);
+      $q.notify({
+        type: 'positive',
+        message: 'Lab result saved successfully',
+      });
+      showResultDialog.value = false;
+      // Reload requests list
+      await loadRequests();
+      // Reload investigations and results if in legacy view
+      if (selectedEncounterId.value) {
+        await loadInvestigations();
+      }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -1066,8 +1137,141 @@ watch(() => route.query.encounterId, (newEncounterId) => {
   }
 });
 
-// Auto-load on mount
+// Navigate to result page
+const navigateToResultPage = (request) => {
+  router.push(`/lab/result/${request.id}`);
+};
+
+const revertToRequested = async (investigation) => {
+  $q.dialog({
+    title: 'Revert to Requested',
+    message: 'Please provide a reason for reverting this investigation from "confirmed" to "requested":',
+    prompt: {
+      model: '',
+      type: 'text',
+      placeholder: 'Enter reason for revert...',
+      isValid: (val) => val && val.trim().length > 0,
+      attrs: {
+        maxlength: 500,
+      },
+    },
+    cancel: true,
+    persistent: true,
+  }).onOk(async (reason) => {
+    revertingToRequestedId.value = investigation.id;
+    try {
+      await consultationAPI.revertInvestigationToRequested(investigation.id, reason);
+      $q.notify({
+        type: 'positive',
+        message: 'Status reverted to requested successfully',
+      });
+      await loadRequests();
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to revert status',
+      });
+    } finally {
+      revertingToRequestedId.value = null;
+    }
+  });
+};
+
+const revertInvestigationStatus = async (investigation) => {
+  $q.dialog({
+    title: 'Revert Status',
+    message: `Are you sure you want to revert this investigation from "completed" to "confirmed"? This will allow editing the results.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    revertingId.value = investigation.id;
+    try {
+      await consultationAPI.revertInvestigationStatus(investigation.id);
+      $q.notify({
+        type: 'positive',
+        message: 'Status reverted to confirmed successfully',
+      });
+      await loadRequests();
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to revert status',
+      });
+    } finally {
+      revertingId.value = null;
+    }
+  });
+};
+
+// Bulk confirm functions
+// Note: We use v-model:selected instead of @selection to avoid conflicts
+// Quasar will automatically sync selectedInvestigations with the table's selection state
+
+const allSelected = computed(() => {
+  const requestedRows = requests.value.filter(r => r.status === 'requested');
+  if (requestedRows.length === 0) return false;
+  return requestedRows.every(row => selectedInvestigations.value.find(r => r.id === row.id));
+});
+
+const selectAll = (value) => {
+  if (value) {
+    // Select all requested rows only (not confirmed or completed)
+    const requestedRows = requests.value.filter(r => r.status === 'requested');
+    selectedInvestigations.value = [...requestedRows];
+  } else {
+    // Deselect all requested rows
+    const requestedIds = new Set(requests.value.filter(r => r.status === 'requested').map(r => r.id));
+    selectedInvestigations.value = selectedInvestigations.value.filter(r => !requestedIds.has(r.id));
+  }
+};
+
+const bulkConfirmInvestigations = async () => {
+  // Filter to only requested investigations
+  const requestedInvestigations = selectedInvestigations.value.filter(inv => inv.status === 'requested');
+  
+  if (requestedInvestigations.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select at least one investigation with "requested" status to confirm',
+    });
+    return;
+  }
+
+  bulkConfirming.value = true;
+  try {
+    const investigationIds = requestedInvestigations.map(inv => inv.id);
+    const response = await consultationAPI.bulkConfirmInvestigations(investigationIds);
+    
+    if (response.data.errors && response.data.errors.length > 0) {
+      $q.notify({
+        type: 'warning',
+        message: `Confirmed ${response.data.confirmed_count} of ${response.data.total_requested} investigations. Some errors occurred.`,
+        caption: response.data.errors.join('; '),
+        timeout: 5000,
+      });
+    } else {
+      $q.notify({
+        type: 'positive',
+        message: `Successfully confirmed ${response.data.confirmed_count} investigation(s)`,
+      });
+    }
+    
+    // Clear selection and reload
+    selectedInvestigations.value = [];
+    await loadRequests();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm investigations',
+    });
+  } finally {
+    bulkConfirming.value = false;
+  }
+};
+
 onMounted(() => {
+  initializeDate();
+  loadRequests();
   autoLoadFromRoute();
 });
 </script>

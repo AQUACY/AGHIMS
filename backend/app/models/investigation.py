@@ -28,7 +28,7 @@ class Investigation(Base):
     __tablename__ = "investigations"
     
     id = Column(Integer, primary_key=True, index=True)
-    encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=False)
+    encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=True)  # Optional for direct walk-in services
     gdrg_code = Column(String(50), nullable=False)  # GDRG code for the investigation
     procedure_name = Column(String(500), nullable=True)  # Procedure/service name
     investigation_type = Column(String(50), nullable=False)  # lab, scan, xray
@@ -38,6 +38,7 @@ class Investigation(Base):
     service_date = Column(DateTime, default=datetime.utcnow)
     requested_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who completed the investigation
     cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     cancellation_reason = Column(String(1000), nullable=True)  # Reason for cancellation
     cancelled_at = Column(DateTime, nullable=True)

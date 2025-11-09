@@ -305,6 +305,9 @@ export default {
     const createForm = ref(null);
 
     const roleOptions = [
+      'Lab Head',
+      'Scan Head',
+      'Xray Head',
       'Records',
       'Nurse',
       'Doctor',
@@ -313,6 +316,8 @@ export default {
       'Pharmacy',
       'Pharmacy Head',
       'Lab',
+      'Scan',
+      'Xray',
       'Claims',
       'Admin'
     ];
@@ -370,6 +375,11 @@ export default {
         PA: 'indigo',
         Nurse: 'green',
         Lab: 'orange',
+        'Lab Head': 'deep-orange',
+        Scan: 'amber',
+        'Scan Head': 'orange',
+        Xray: 'lime',
+        'Xray Head': 'light-green',
         Pharmacy: 'pink',
         'Pharmacy Head': 'purple',
         Billing: 'teal',

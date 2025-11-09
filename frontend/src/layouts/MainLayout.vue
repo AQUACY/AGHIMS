@@ -277,7 +277,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Lab', 'Admin'])"
+          v-if="canAccess(['Lab', 'Admin', 'Lab Head'])"
           clickable
           v-ripple
           :to="{ name: 'Lab' }"
@@ -293,7 +293,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Scan', 'Admin'])"
+          v-if="canAccess(['Scan', 'Scan Head', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Scan' }"
@@ -309,7 +309,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Xray', 'Admin'])"
+          v-if="canAccess(['Xray', 'Xray Head', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Xray' }"

@@ -2,123 +2,127 @@
   <q-page class="q-pa-md">
     <div class="text-h4 q-mb-md text-weight-bold glass-text">Scan/Imaging Services</div>
 
-    <!-- Patient Search -->
+    <!-- Filters and Search -->
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Search Patient</div>
-        <div class="row q-gutter-md">
+        <div class="row q-gutter-md q-mb-md">
+          <!-- Search by Card Number or Name -->
           <q-input
-            v-model="cardNumber"
+            v-model="searchTerm"
             filled
-            label="Patient Card Number"
-            class="col-12 col-md-8"
-            @keyup.enter="searchPatient"
-            :disable="loadingPatient"
-          />
+            label="Search by Card Number or Patient Name"
+            class="col-12 col-md-4"
+            @keyup.enter="loadRequests"
+            clearable
+            @clear="loadRequests"
+          >
+            <template v-slot:prepend>
+              <q-icon name="search" />
+            </template>
+          </q-input>
+
+          <!-- Date Filter -->
+          <q-input
+            v-model="filterDate"
+            filled
+            label="Date"
+            type="date"
+            class="col-12 col-md-3"
+            @update:model-value="loadRequests"
+          >
+            <template v-slot:prepend>
+              <q-icon name="event" />
+            </template>
+          </q-input>
+
+          <!-- Status Filter -->
+          <q-select
+            v-model="statusFilter"
+            filled
+            :options="statusOptions"
+            label="Status"
+            class="col-12 col-md-3"
+            @update:model-value="loadRequests"
+            clearable
+          >
+            <template v-slot:prepend>
+              <q-icon name="filter_list" />
+            </template>
+          </q-select>
+
+          <!-- Refresh Button -->
           <q-btn
             color="primary"
-            label="Search"
-            @click="searchPatient"
-            class="col-12 col-md-4 glass-button"
-            :loading="loadingPatient"
+            icon="refresh"
+            label="Refresh"
+            @click="loadRequests"
+            :loading="loadingRequests"
+            class="col-12 col-md-2"
           />
         </div>
       </q-card-section>
     </q-card>
 
-    <!-- Patient Info & Encounter Selection -->
-    <q-card v-if="patient" class="q-mb-md glass-card" flat>
+    <!-- Scan Requests Table -->
+    <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="row items-center q-mb-md">
-          <div>
-            <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}</div>
-            <div class="text-grey-7">Card: {{ patient.card_number }}</div>
-          </div>
+          <div class="text-h6 glass-text">Scan Requests</div>
           <q-space />
           <q-btn
-            flat
-            icon="refresh"
-            label="Clear"
-            @click="clearSearch"
+            v-if="selectedInvestigations.length > 0 && (authStore.userRole === 'Scan' || authStore.userRole === 'Scan Head' || authStore.userRole === 'Admin')"
+            color="positive"
+            icon="check"
+            :label="`Confirm Selected (${selectedInvestigations.length})`"
+            @click="bulkConfirmInvestigations"
+            :loading="bulkConfirming"
+            class="q-mr-md"
           />
-        </div>
-
-        <!-- Today's Encounter -->
-        <div v-if="todaysEncounter" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm glass-text">Today's Encounter:</div>
-          <q-card class="q-mb-md" flat bordered style="background-color: rgba(46, 139, 87, 0.1);">
-            <q-card-section>
-              <div class="row items-center">
-                <div class="col">
-                  <div class="text-weight-bold">Encounter #{{ todaysEncounter.id }} - {{ getEncounterProcedures(todaysEncounter) }}</div>
-                  <div class="text-caption text-grey-7 q-mt-xs">
-                    {{ formatDate(todaysEncounter.created_at) }} - Status: {{ todaysEncounter.status }}
-        </div>
-                </div>
-                <q-badge color="green" label="Today" />
-              </div>
-            </q-card-section>
-          </q-card>
-        </div>
-
-        <!-- Old Encounters - Collapsible -->
-        <div v-if="oldEncounters.length > 0" class="q-mt-md">
-          <q-expansion-item
-            v-model="oldEncountersExpanded"
-            icon="history"
-            :label="`Previous Services (${oldEncounters.length})`"
-            header-class="text-subtitle1 glass-text"
-            class="q-mb-sm"
-          >
-            <div class="q-gutter-sm q-pa-sm">
-              <q-card
-                v-for="encounter in oldEncounters"
-                :key="encounter.id"
-                flat
-                bordered
-                clickable
-                :class="{ 'bg-blue-1': selectedEncounterId === encounter.id }"
-                @click="selectOldEncounter(encounter.id)"
-                style="cursor: pointer;"
-              >
-                <q-card-section class="q-pa-sm">
-                  <div class="row items-center">
-                    <div class="col">
-                      <div class="text-weight-medium">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
-                      <div class="text-caption text-grey-7 q-mt-xs">
-                        {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
-                      </div>
-                    </div>
-                    <q-icon name="chevron_right" color="grey-6" />
-                  </div>
-                </q-card-section>
-              </q-card>
-            </div>
-          </q-expansion-item>
-        </div>
-
-        <div v-if="!todaysEncounter && oldEncounters.length === 0" class="text-grey-7 q-mt-md">
-          No active encounters found for this patient
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Investigations Table -->
-    <q-card v-if="selectedEncounterId" class="q-mb-md">
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6">Scan Investigations</div>
-          <q-space />
-          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized" />
+          <q-btn
+            v-if="authStore.userRole === 'Scan' || authStore.userRole === 'Scan Head' || authStore.userRole === 'Admin'"
+            color="primary"
+            icon="add"
+            label="Add Service"
+            @click="openAddServiceDialogForNew"
+            class="q-mr-md"
+          />
+          <q-badge color="primary" :label="`${requests.length} request(s)`" />
         </div>
         <q-table
-          v-if="investigations.length > 0"
-          :rows="investigations"
-          :columns="investigationColumns"
+          :rows="requests"
+          :columns="requestColumns"
           row-key="id"
           flat
-          :loading="loadingInvestigations"
+          :loading="loadingRequests"
+          :pagination="{ rowsPerPage: 20 }"
+          v-model:selected="selectedInvestigations"
+          selection="multiple"
         >
+          <template v-slot:top-row>
+            <q-tr>
+              <q-td auto-width>
+                <q-checkbox
+                  :model-value="allSelected"
+                  @update:model-value="selectAll"
+                  indeterminate-icon="remove"
+                />
+              </q-td>
+              <q-td colspan="100%">
+                <div class="text-caption text-grey-7">
+                  Select investigations to confirm multiple at once
+                </div>
+              </q-td>
+            </q-tr>
+          </template>
+          <template v-slot:body-cell-selection="props">
+            <q-td :props="props">
+              <q-checkbox
+                v-if="props.row.status === 'requested'"
+                :model-value="props.selected"
+                @update:model-value="props.select"
+              />
+            </q-td>
+          </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
               <q-badge
@@ -127,11 +131,15 @@
               />
             </q-td>
           </template>
+          <template v-slot:body-cell-encounter_date="props">
+            <q-td :props="props">
+              {{ formatDate(props.value) }}
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <div class="row q-gutter-xs">
                 <q-btn
-                  v-if="props.row.notes"
                   size="sm"
                   color="info"
                   icon="visibility"
@@ -142,216 +150,67 @@
                   <q-tooltip>View Remarks/Notes</q-tooltip>
                 </q-btn>
                 <q-btn
-                  v-if="props.row.status !== 'confirmed' && props.row.status !== 'completed'"
+                  v-if="(props.row.status === 'requested' || props.row.status === 'confirmed') && (authStore.userRole === 'Scan' || authStore.userRole === 'Scan Head' || authStore.userRole === 'Admin')"
                   size="sm"
                   color="secondary"
-                  icon="edit"
-                  label="Edit"
-                  @click="openEditInvestigationDialog(props.row)"
-                  :loading="updatingId === props.row.id"
-                  :disable="confirmingId !== null"
+                  label="Update Service"
+                  @click="openUpdateServiceDialog(props.row)"
                 />
                 <q-btn
-                  v-if="props.row.status !== 'confirmed' && props.row.status !== 'completed'"
+                  v-if="(props.row.status === 'requested' || props.row.status === 'confirmed') && (authStore.userRole === 'Scan' || authStore.userRole === 'Scan Head' || authStore.userRole === 'Admin')"
+                  size="sm"
+                  color="accent"
+                  label="Add Service"
+                  @click="openAddServiceDialog(props.row)"
+                />
+                <q-btn
+                  v-if="props.row.status === 'requested'"
                   size="sm"
                   color="primary"
                   label="Confirm"
                   @click="confirmInvestigation(props.row)"
                   :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null || updatingId !== null"
+                  :disable="confirmingId !== null"
                 />
-                <q-badge
-                  v-else
+                <q-btn
+                  v-if="props.row.status === 'confirmed'"
+                  size="sm"
                   color="positive"
-                  label="Confirmed"
+                  label="Add Results"
+                  @click="navigateToResultPage(props.row)"
+                />
+                <q-btn
+                  v-if="props.row.status === 'completed'"
+                  size="sm"
+                  color="info"
+                  label="View Results"
+                  @click="navigateToResultPage(props.row)"
+                />
+                <q-btn
+                  v-if="props.row.status === 'confirmed' && authStore.userRole === 'Admin'"
+                  size="sm"
+                  color="orange"
+                  label="Revert to Requested"
+                  @click="revertToRequested(props.row)"
+                  :loading="revertingToRequestedId === props.row.id"
+                />
+                <q-btn
+                  v-if="props.row.status === 'completed' && (authStore.userRole === 'Admin' || authStore.userRole === 'Scan Head')"
+                  size="sm"
+                  color="warning"
+                  label="Revert to Confirmed"
+                  @click="revertInvestigationStatus(props.row)"
+                  :loading="revertingId === props.row.id"
                 />
               </div>
             </q-td>
           </template>
         </q-table>
-        <div v-else-if="!loadingInvestigations" class="text-center text-grey-7 q-pa-md">
-          No scan investigations found for this encounter
+        <div v-if="!loadingRequests && requests.length === 0" class="text-center text-grey-7 q-pa-md">
+          No scan requests found for the selected filters
         </div>
       </q-card-section>
     </q-card>
-
-    <!-- Scan Results Table -->
-    <q-card v-if="selectedEncounterId && confirmedInvestigations.length > 0" class="q-mb-md">
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Scan Results</div>
-        <q-table
-          :rows="scanResults"
-          :columns="scanResultColumns"
-          row-key="investigation_id"
-          flat
-          :loading="loadingResults"
-        >
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <q-btn
-                size="sm"
-                color="primary"
-                :label="props.row.id ? 'Edit' : 'Add Results'"
-                @click="openResultDialog(props.row)"
-                :disable="!canAddResults(props.row)"
-              >
-                <q-tooltip v-if="!canAddResults(props.row)">
-                  Bill must be paid before adding results
-                </q-tooltip>
-                <q-tooltip v-else>
-                  {{ props.row.id ? 'Edit results' : 'Add results' }}
-                </q-tooltip>
-              </q-btn>
-              <q-btn
-                v-if="props.row.attachment_path"
-                size="sm"
-                color="secondary"
-                icon="download"
-                flat
-                @click="downloadAttachment(props.row)"
-                class="q-ml-xs"
-              />
-            </q-td>
-          </template>
-        </q-table>
-      </q-card-section>
-    </q-card>
-
-    <!-- Edit Investigation Dialog -->
-    <q-dialog v-model="showEditInvestigationDialog">
-      <q-card style="min-width: 600px; max-width: 800px">
-        <q-card-section>
-          <div class="text-h6">Edit Investigation Details</div>
-          <div class="text-subtitle2 text-grey-7 q-mt-xs">
-            You can change the procedure/service based on patient condition
-          </div>
-        </q-card-section>
-
-        <q-card-section>
-          <q-form @submit="updateInvestigation" class="q-gutter-md">
-            <q-select
-              v-model="editInvestigationForm.service_type"
-              filled
-              :options="serviceTypeOptions"
-              label="Service Type (Department/Clinic) *"
-              @update:model-value="onServiceTypeSelected"
-              hint="Select the department/clinic"
-              :loading="loadingServiceTypes"
-            >
-              <template v-slot:no-option>
-                <q-item>
-                  <q-item-section class="text-grey">
-                    No service types found
-                  </q-item-section>
-                </q-item>
-              </template>
-            </q-select>
-            
-            <q-select
-              v-model="selectedProcedure"
-              filled
-              :options="procedureOptions"
-              label="Procedure (Service Name) *"
-              option-label="service_name"
-              option-value="g_drg_code"
-              :disable="!editInvestigationForm.service_type"
-              @update:model-value="onProcedureSelected"
-              hint="Select the procedure - GDRG code and name will be auto-filled"
-              use-input
-              input-debounce="300"
-              @filter="filterProcedures"
-            >
-              <template v-slot:no-option>
-                <q-item>
-                  <q-item-section class="text-grey">
-                    {{ editInvestigationForm.service_type
-                      ? 'No procedures found. Try a different search term.'
-                      : 'Please select a Service Type first'
-                    }}
-                  </q-item-section>
-                </q-item>
-              </template>
-            </q-select>
-            
-            <q-input
-              v-model="editInvestigationForm.gdrg_code"
-              filled
-              label="G-DRG Code *"
-              :rules="[(val) => !!val || 'G-DRG Code is required']"
-            />
-            <q-input
-              v-model="editInvestigationForm.procedure_name"
-              filled
-              label="Procedure Name *"
-              :rules="[(val) => !!val || 'Procedure name is required']"
-            />
-            
-            <div class="row q-gutter-md q-mt-md">
-              <q-btn label="Cancel" flat v-close-popup class="col" />
-              <q-btn
-                label="Update"
-                type="submit"
-                color="primary"
-                class="col"
-                :loading="updatingInvestigation"
-              />
-            </div>
-          </q-form>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
-
-    <!-- Scan Result Dialog -->
-    <q-dialog v-model="showResultDialog">
-      <q-card style="min-width: 600px; max-width: 800px">
-        <q-card-section>
-          <div class="text-h6">
-            {{ editingResult ? 'Edit Scan Result' : 'Add Scan Result' }}
-          </div>
-          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="selectedInvestigation">
-            {{ selectedInvestigation.procedure_name || 'Scan Investigation' }} ({{ selectedInvestigation.gdrg_code }})
-          </div>
-        </q-card-section>
-
-        <q-card-section>
-          <q-form @submit="saveScanResult" class="q-gutter-md">
-            <q-input
-              v-model="resultForm.results_text"
-              filled
-              type="textarea"
-              rows="6"
-              label="Results/Findings Text"
-              hint="Enter scan results and findings"
-            />
-            <q-file
-              v-model="resultForm.attachment"
-              filled
-              label="Upload PDF/Image Attachment"
-              accept=".pdf,.jpg,.jpeg,.png"
-              hint="Upload PDF or image file"
-              @update:model-value="onFileSelected"
-            >
-              <template v-slot:prepend>
-                <q-icon name="attach_file" />
-              </template>
-            </q-file>
-            <div v-if="resultForm.existingAttachment" class="text-caption text-grey-7">
-              Current attachment: {{ resultForm.existingAttachment.split('/').pop() }}
-            </div>
-            <div class="row q-gutter-md q-mt-md">
-              <q-btn label="Cancel" flat v-close-popup class="col" />
-              <q-btn
-                label="Save"
-                type="submit"
-                color="primary"
-                class="col"
-                :loading="savingResult"
-              />
-            </div>
-          </q-form>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
 
     <!-- View Remarks Dialog -->
     <q-dialog v-model="showRemarksDialog">
@@ -375,73 +234,309 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Update Service Dialog -->
+    <q-dialog v-model="showUpdateServiceDialog">
+      <q-card style="min-width: 500px; max-width: 700px">
+        <q-card-section>
+          <div class="text-h6">Update Service</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="selectedInvestigation">
+            Patient: {{ selectedInvestigation.patient_name }} ({{ selectedInvestigation.patient_card_number }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="updateService" class="q-gutter-md">
+            <q-select
+              v-model="serviceForm.gdrg_code"
+              filled
+              :options="availableServices"
+              option-label="service_name"
+              option-value="g_drg_code"
+              label="Select Service"
+              :loading="loadingServices"
+              @update:model-value="onServiceSelected"
+              :rules="[(val) => !!val || 'Service is required']"
+              use-input
+              input-debounce="300"
+              @filter="filterServices"
+            >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.service_name }}</q-item-label>
+                    <q-item-label caption>G-DRG: {{ scope.opt.g_drg_code }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            <q-input
+              v-model="serviceForm.procedure_name"
+              filled
+              label="Procedure Name"
+              :rules="[(val) => !!val || 'Procedure name is required']"
+            />
+            <q-input
+              v-model="serviceForm.notes"
+              filled
+              type="textarea"
+              rows="3"
+              label="Notes (Optional)"
+            />
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn label="Cancel" flat v-close-popup class="col" />
+              <q-btn
+                label="Update Service"
+                type="submit"
+                color="primary"
+                class="col"
+                :loading="updatingService"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Add Service Dialog -->
+    <q-dialog v-model="showAddServiceDialog">
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="text-h6">Add New Service</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="selectedInvestigation && !addServiceForm.isDirectService">
+            Patient: {{ selectedInvestigation.patient_name }} ({{ selectedInvestigation.patient_card_number }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="addService" class="q-gutter-md">
+            <!-- Direct Service Toggle -->
+            <q-toggle
+              v-model="addServiceForm.isDirectService"
+              label="Direct Service (Walk-in, no consultation)"
+              @update:model-value="onDirectServiceToggle"
+            />
+            
+            <!-- Patient Selection for Direct Services -->
+            <div v-if="addServiceForm.isDirectService" class="q-gutter-md">
+              <q-input
+                v-model="addServiceForm.patientCardNumber"
+                filled
+                label="Patient Card Number"
+                @blur="loadPatientByCard"
+                :loading="loadingPatients"
+                :rules="[(val) => !!val || 'Card number is required for direct services']"
+              >
+                <template v-slot:append>
+                  <q-icon name="search" />
+                </template>
+              </q-input>
+              <div v-if="availablePatients.length > 0" class="q-mt-md">
+                <div class="text-subtitle2 q-mb-sm">Select Patient(s):</div>
+                <q-list bordered separator>
+                  <q-item
+                    v-for="patient in availablePatients"
+                    :key="patient.id"
+                    tag="label"
+                    v-ripple
+                  >
+                    <q-item-section avatar>
+                      <q-checkbox
+                        v-model="selectedPatients"
+                        :val="patient.id"
+                        @update:model-value="onPatientSelected"
+                      />
+                    </q-item-section>
+                    <q-item-section>
+                      <q-item-label>{{ patient.name }} {{ patient.surname || '' }}</q-item-label>
+                      <q-item-label caption>Card: {{ patient.card_number }}</q-item-label>
+                    </q-item-section>
+                  </q-item>
+                </q-list>
+                <q-banner
+                  v-if="selectedPatients.length > 1"
+                  class="bg-warning text-dark q-mt-md"
+                  rounded
+                >
+                  <template v-slot:avatar>
+                    <q-icon name="warning" color="dark" />
+                  </template>
+                  You can only add service for one patient at a time. Please select only one patient.
+                </q-banner>
+              </div>
+              <q-toggle
+                v-model="addServiceForm.isInsured"
+                label="Patient is Insured"
+              />
+              <q-input
+                v-if="addServiceForm.isInsured"
+                v-model="addServiceForm.cccNumber"
+                filled
+                label="CCC Number (Optional)"
+              />
+            </div>
+            
+            <!-- Patient Selection for Services with Encounter -->
+            <div v-else-if="requests.length > 0" class="q-mt-md">
+              <div class="text-subtitle2 q-mb-sm">Select Patient(s) from existing requests:</div>
+              <q-list bordered separator>
+                <q-item
+                  v-for="request in uniquePatients"
+                  :key="request.patient_card_number"
+                  tag="label"
+                  v-ripple
+                >
+                  <q-item-section avatar>
+                    <q-checkbox
+                      v-model="selectedPatients"
+                      :val="request.encounter_id"
+                      @update:model-value="onPatientSelected"
+                    />
+                  </q-item-section>
+                  <q-item-section>
+                    <q-item-label>{{ request.patient_name }}</q-item-label>
+                    <q-item-label caption>Card: {{ request.patient_card_number }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+              <q-banner
+                v-if="selectedPatients.length > 1"
+                class="bg-warning text-dark q-mt-md"
+                rounded
+              >
+                <template v-slot:avatar>
+                  <q-icon name="warning" color="dark" />
+                </template>
+                You can only add service for one patient at a time. Please select only one patient.
+              </q-banner>
+            </div>
+            
+            <q-select
+              v-model="addServiceForm.gdrg_code"
+              filled
+              :options="availableServices"
+              option-label="service_name"
+              option-value="g_drg_code"
+              label="Select Service"
+              :loading="loadingServices"
+              @update:model-value="onAddServiceSelected"
+              :rules="[(val) => !!val || 'Service is required']"
+              use-input
+              input-debounce="300"
+              @filter="filterServices"
+            >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.service_name }}</q-item-label>
+                    <q-item-label caption>G-DRG: {{ scope.opt.g_drg_code }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No services found
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            <q-input
+              v-model="addServiceForm.procedure_name"
+              filled
+              label="Procedure Name"
+              :rules="[(val) => !!val || 'Procedure name is required']"
+            />
+            <q-input
+              v-model="addServiceForm.notes"
+              filled
+              type="textarea"
+              rows="3"
+              label="Notes (Optional)"
+            />
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn label="Cancel" flat v-close-popup class="col" />
+              <q-btn
+                label="Add Service"
+                type="submit"
+                color="primary"
+                class="col"
+                :loading="addingService"
+                :disable="selectedPatients.length !== 1 && !addServiceForm.isDirectService"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, computed, onMounted, nextTick } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, patientsAPI, encountersAPI, priceListAPI, billingAPI } from '../services/api';
+import { consultationAPI, priceListAPI, patientsAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
 const route = useRoute();
-const cardNumber = ref('');
-const loadingPatient = ref(false);
-const patient = ref(null);
-const activeEncounters = ref([]);
-const todaysEncounter = ref(null);
-const oldEncounters = ref([]);
-const oldEncountersExpanded = ref(false);
-const selectedEncounterId = ref(null);
-const currentEncounter = ref(null);
-const investigations = ref([]);
-const loadingInvestigations = ref(false);
-const confirmingId = ref(null);
-const updatingId = ref(null);
-const scanResults = ref([]);
-const loadingResults = ref(false);
-const showResultDialog = ref(false);
-const savingResult = ref(false);
-const editingResult = ref(false);
-const selectedInvestigation = ref(null);
-const showEditInvestigationDialog = ref(false);
-const updatingInvestigation = ref(false);
-const loadingServiceTypes = ref(false);
-const serviceTypeOptions = ref([]);
-const procedureOptions = ref([]);
-const allProcedures = ref([]);
-const selectedProcedure = ref(null);
+const router = useRouter();
+const authStore = useAuthStore();
 
-const resultForm = ref({
-  investigation_id: null,
-  results_text: '',
-  attachment: null,
-  existingAttachment: null,
-});
-const showRemarksDialog = ref(false);
-const viewingRemarks = ref(null);
-
-const editInvestigationForm = ref({
-  investigation_id: null,
-  gdrg_code: '',
-  procedure_name: '',
-  service_type: '',
-});
-
-const investigationColumns = [
-  { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left' },
-  { name: 'gdrg_code', label: 'G-DRG Code', field: 'gdrg_code', align: 'left' },
-  { name: 'investigation_type', label: 'Type', field: 'investigation_type', align: 'left' },
-  { name: 'status', label: 'Status', field: 'status', align: 'center' },
-  { name: 'actions', label: 'Actions', align: 'center' },
+// Request list functionality
+const requests = ref([]);
+const loadingRequests = ref(false);
+const searchTerm = ref('');
+const filterDate = ref('');
+const statusFilter = ref(null);
+const statusOptions = [
+  { label: 'Requested', value: 'requested' },
+  { label: 'Confirmed', value: 'confirmed' },
+  { label: 'Completed', value: 'completed' },
+  { label: 'Cancelled', value: 'cancelled' }
 ];
 
-const scanResultColumns = [
-  { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left' },
-  { name: 'gdrg_code', label: 'G-DRG Code', field: 'gdrg_code', align: 'left' },
-  { name: 'has_result', label: 'Has Results', field: 'has_result', align: 'center' },
-  { name: 'has_attachment', label: 'Has Attachment', field: 'has_attachment', align: 'center' },
+const confirmingId = ref(null);
+const revertingId = ref(null);
+const revertingToRequestedId = ref(null);
+const showRemarksDialog = ref(false);
+const viewingRemarks = ref(null);
+const showUpdateServiceDialog = ref(false);
+const showAddServiceDialog = ref(false);
+const selectedInvestigation = ref(null);
+const availableServices = ref([]);
+const loadingServices = ref(false);
+const updatingService = ref(false);
+const addingService = ref(false);
+const selectedInvestigations = ref([]);
+const bulkConfirming = ref(false);
+const serviceForm = ref({
+  gdrg_code: '',
+  procedure_name: '',
+  notes: '',
+});
+const addServiceForm = ref({
+  gdrg_code: '',
+  procedure_name: '',
+  notes: '',
+  isDirectService: false,
+  patientCardNumber: '',
+  patientId: null,
+  isInsured: false,
+  cccNumber: '',
+});
+const selectedPatients = ref([]);
+const availablePatients = ref([]);
+const loadingPatients = ref(false);
+
+const requestColumns = [
+  { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left', sortable: true },
+  { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left', sortable: true },
+  { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left', sortable: true },
+  { name: 'gdrg_code', label: 'G-DRG Code', field: 'gdrg_code', align: 'left', sortable: true },
+  { name: 'encounter_date', label: 'Request Date', field: 'encounter_date', align: 'left', sortable: true },
+  { name: 'status', label: 'Status', field: 'status', align: 'center', sortable: true },
+  { name: 'confirmed_by_name', label: 'Confirmed By', field: 'confirmed_by_name', align: 'left', sortable: true },
+  { name: 'completed_by_name', label: 'Completed By', field: 'completed_by_name', align: 'left', sortable: true },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
@@ -454,464 +549,47 @@ const getStatusColor = (status) => {
   return colors[status] || 'grey';
 };
 
-const confirmedInvestigations = computed(() => {
-  return investigations.value.filter(inv => inv.status === 'confirmed' || inv.status === 'completed');
-});
-
-const isFinalized = computed(() => {
-  return currentEncounter.value?.status === 'finalized';
-});
-
-const canAddResults = (row) => {
-  // Guard clause: check if row exists
-  if (!row) {
-    console.log('canAddResults: Row is undefined');
-    return false;
-  }
-  
-  // If results already exist (row.id exists), always allow editing
-  if (row.id) {
-    console.log(`canAddResults: Results exist (id: ${row.id}), allowing edit`);
-    return true;
-  }
-  
-  // Handle both investigation objects (with id) and result objects (with investigation_id)
-  const investigationId = row.id || row.investigation_id;
-  if (!investigationId) {
-    console.log('canAddResults: Row is missing id or investigation_id', row);
-    return false;
-  }
-  
-  // Find the actual investigation object from investigations array
-  const investigation = investigations.value.find(inv => inv.id === investigationId);
-  if (!investigation) {
-    console.log(`canAddResults: Investigation ${investigationId} not found in investigations array`);
-    return false;
-  }
-  
-  // Must be confirmed before adding results
-  if (investigation.status !== 'confirmed' && investigation.status !== 'completed') {
-    console.log(`canAddResults: Investigation ${investigation.id} not confirmed/completed`);
-    return false;
-  }
-  
-  console.log(`canAddResults: Checking investigation ${investigation.id}`, {
-    gdrg_code: investigation.gdrg_code,
-    procedure_name: investigation.procedure_name,
-    total_bills: bills.value.length
-  });
-  
-  // Find bill item for this specific investigation
-  // Check ALL bills (paid or unpaid) to find the specific item for this service
-  for (const bill of bills.value) {
-    console.log(`canAddResults: Checking bill ${bill.id}, items: ${bill.bill_items?.length || 0}`);
-    for (const billItem of bill.bill_items || []) {
-      // Match by gdrg_code or procedure name
-      // Bill items for investigations are named like "Investigation: {procedure_name}"
-      const matchesCode = billItem.item_code === investigation.gdrg_code;
-      const investigationName = investigation.procedure_name || '';
-      const investigationCode = investigation.gdrg_code || '';
-      const matchesName = billItem.item_name && (
-        billItem.item_name.includes(investigationName) ||
-        billItem.item_name.includes(investigationCode) ||
-        billItem.item_name.includes(`Investigation: ${investigationName}`) ||
-        billItem.item_name.includes(`Investigation: ${investigationCode}`)
-      );
-      
-      console.log(`canAddResults: Checking bill item`, {
-        item_code: billItem.item_code,
-        item_name: billItem.item_name,
-        investigation_gdrg: investigation.gdrg_code,
-        investigation_name: investigation.procedure_name,
-        matchesCode,
-        matchesName
-      });
-      
-      if (matchesCode || matchesName) {
-        // Found matching bill item - check if THIS SPECIFIC item is paid
-        const totalPrice = billItem.total_price || 0;
-        const remainingBalance = billItem.remaining_balance !== undefined && billItem.remaining_balance !== null
-          ? billItem.remaining_balance 
-          : (totalPrice - (billItem.amount_paid || 0));
-        // Item is paid if is_paid flag is true OR remaining balance is 0 or less (allow small rounding differences)
-        const isPaid = billItem.is_paid !== undefined 
-          ? billItem.is_paid 
-          : (remainingBalance <= 0.01); // Allow 0.01 tolerance for rounding
-        
-        console.log(`canAddResults: Found matching bill item for investigation ${investigation.id}:`, {
-          totalPrice,
-          amount_paid: billItem.amount_paid,
-          remaining_balance: billItem.remaining_balance,
-          calculated_remaining: remainingBalance,
-          is_paid_flag: billItem.is_paid,
-          calculated_is_paid: isPaid,
-          final_decision: isPaid ? 'PAID' : 'UNPAID'
-        });
-        
-        // Can add results if:
-        // 1. Total price is 0 (free), OR
-        // 2. Item is paid (remaining balance <= 0.01 or is_paid flag is true)
-        if (totalPrice > 0 && !isPaid) {
-          console.log(`canAddResults: Returning FALSE - unpaid balance for investigation ${investigation.id}`);
-          return false; // This specific item has unpaid balance
-        } else {
-          console.log(`canAddResults: Returning TRUE - investigation ${investigation.id} is paid or free`);
-          return true; // This specific item is paid or free
-        }
-      }
-    }
-  }
-  
-  console.log(`canAddResults: No bill item found for investigation ${investigation.id}, allowing results`);
-  // If no bill item found for this investigation, allow adding results
-  // (might be free or bill not created yet - backend will enforce)
-  return true;
-};
-
-const searchPatient = async () => {
-  if (!cardNumber.value || !cardNumber.value.trim()) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please enter a card number',
-    });
-    return;
-  }
-
-  loadingPatient.value = true;
+// Load requests with filters
+const loadRequests = async () => {
+  loadingRequests.value = true;
   try {
-    const patientResponse = await patientsAPI.getByCard(cardNumber.value.trim());
+    const filters = {
+      investigation_type: 'scan',
+    };
     
-    // getByCard returns a list of patients
-    let patients = [];
-    if (Array.isArray(patientResponse.data)) {
-      patients = patientResponse.data;
-    } else if (patientResponse.data && typeof patientResponse.data === 'object' && !Array.isArray(patientResponse.data)) {
-      patients = [patientResponse.data];
+    if (statusFilter.value) {
+      filters.status = statusFilter.value.value || statusFilter.value;
     }
     
-    if (patients.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that card number',
-      });
-      return;
+    if (searchTerm.value && searchTerm.value.trim()) {
+      filters.search = searchTerm.value.trim();
     }
     
-    // Use the first patient (or exact match if available)
-    patient.value = patients[0];
-
-    const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
-    const allEncounters = encountersResponse.data.filter(e => !e.archived);
-    
-    // Separate today's encounter from old encounters
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const todaysEncounters = allEncounters.filter(e => {
-      const encounterDate = new Date(e.created_at);
-      encounterDate.setHours(0, 0, 0, 0);
-      return encounterDate.getTime() === today.getTime();
-    });
-    
-    const oldEncs = allEncounters.filter(e => {
-      const encounterDate = new Date(e.created_at);
-      encounterDate.setHours(0, 0, 0, 0);
-      return encounterDate.getTime() !== today.getTime();
-    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
-    
-    // Set today's encounter (use the most recent one if multiple)
-    if (todaysEncounters.length > 0) {
-      todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-      selectedEncounterId.value = todaysEncounter.value.id;
-      // Pre-fetch procedure names for today's encounter
-      getEncounterProcedures(todaysEncounter.value);
-      await loadInvestigations();
-    } else {
-      todaysEncounter.value = null;
+    if (filterDate.value) {
+      filters.date = filterDate.value;
     }
     
-    // Set old encounters and pre-fetch their procedure names
-    oldEncounters.value = oldEncs;
-    oldEncounters.value.forEach(encounter => {
-      getEncounterProcedures(encounter);
-    });
-    
-    // Keep for backward compatibility
-    activeEncounters.value = allEncounters.map(e => ({
-        id: e.id,
-        label: `Encounter #${e.id} - ${e.department} (${new Date(e.created_at).toLocaleDateString()})`,
-        value: e.id,
-      }));
-
-    if (allEncounters.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No active encounters found for this patient',
-      });
-    }
+    const response = await consultationAPI.getInvestigationsByType('scan', filters);
+    requests.value = response.data || [];
   } catch (error) {
-    patient.value = null;
-    activeEncounters.value = [];
-    todaysEncounter.value = null;
-    oldEncounters.value = [];
-    selectedEncounterId.value = null;
-    investigations.value = [];
+    console.error('Failed to load requests:', error);
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Patient not found',
+      message: error.response?.data?.detail || 'Failed to load scan requests',
     });
+    requests.value = [];
   } finally {
-    loadingPatient.value = false;
+    loadingRequests.value = false;
   }
 };
 
-const loadInvestigations = async () => {
-  if (!selectedEncounterId.value || !patient.value) return;
-
-  loadingInvestigations.value = true;
-  try {
-    // Load encounter details to check status
-    const encounterResponse = await encountersAPI.get(selectedEncounterId.value);
-    currentEncounter.value = encounterResponse.data;
-    
-    // Load investigations (filter by scan type)
-    const response = await consultationAPI.getInvestigationsByPatientCard(
-      patient.value.card_number,
-      selectedEncounterId.value,
-      'scan'
-    );
-    investigations.value = response.data || [];
-
-    // Load bills for this encounter to check payment status
-    try {
-      const billsResponse = await billingAPI.getEncounterBills(selectedEncounterId.value);
-      const billsList = billsResponse.data || [];
-      
-      // Load detailed bill information including bill items and payment status
-      const detailedBills = await Promise.all(
-        billsList.map(async (bill) => {
-          try {
-            const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
-            const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data || {};
-            
-            // Calculate remaining balance for each bill item
-            // Use backend's remaining_balance directly, but also calculate as fallback
-            const billItems = (billDetails.bill_items || []).map(item => {
-              try {
-                const amountPaid = (item.amount_paid !== undefined && item.amount_paid !== null) ? item.amount_paid : 0;
-                const totalPrice = (item.total_price !== undefined && item.total_price !== null) ? item.total_price : 0;
-                // Use backend's remaining_balance if available, otherwise calculate
-                const remainingBalance = (item.remaining_balance !== undefined && item.remaining_balance !== null)
-                  ? item.remaining_balance 
-                  : (totalPrice - amountPaid);
-                
-                // Item is paid if remaining balance is 0 or less (allow small rounding differences)
-                const isPaid = remainingBalance <= 0.01; // Allow 0.01 tolerance for rounding
-                
-                return {
-                  ...item,
-                  amount_paid: amountPaid,
-                  remaining_balance: remainingBalance,
-                  is_paid: isPaid,
-                };
-              } catch (itemError) {
-                console.error(`Error processing bill item:`, item, itemError);
-                return {
-                  ...item,
-                  amount_paid: 0,
-                  remaining_balance: item.total_price || 0,
-                  is_paid: false,
-                };
-              }
-            });
-            
-            return {
-              ...bill,
-              bill_items: billItems,
-              is_paid: bill.is_paid || false,
-              paid_amount: bill.paid_amount || 0,
-              total_amount: bill.total_amount || 0,
-            };
-          } catch (error) {
-            console.error(`Failed to load details for bill ${bill.id}:`, error);
-            return {
-              ...bill,
-              bill_items: [],
-              is_paid: bill.is_paid || false,
-              paid_amount: bill.paid_amount || 0,
-              total_amount: bill.total_amount || 0,
-            };
-          }
-        })
-      );
-      
-      bills.value = detailedBills;
-    } catch (error) {
-      console.error('Failed to load bills:', error);
-      bills.value = [];
-    }
-
-    // Load scan results for confirmed investigations
-    await loadScanResults();
-  } catch (error) {
-    investigations.value = [];
-    scanResults.value = [];
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Failed to load investigations',
-    });
-  } finally {
-    loadingInvestigations.value = false;
-  }
-};
-
-const loadScanResults = async () => {
-  if (!selectedEncounterId.value || confirmedInvestigations.value.length === 0) {
-    scanResults.value = [];
-    return;
-  }
-
-  loadingResults.value = true;
-  try {
-    scanResults.value = await Promise.all(
-      confirmedInvestigations.value.map(async (inv) => {
-        try {
-          const resultResponse = await consultationAPI.getScanResult(inv.id);
-          const result = resultResponse.data || null;
-          
-          return {
-            investigation_id: inv.id,
-            procedure_name: inv.procedure_name,
-            gdrg_code: inv.gdrg_code,
-            has_result: result ? 'Yes' : 'No',
-            has_attachment: result?.attachment_path ? 'Yes' : 'No',
-            ...result,
-          };
-        } catch (error) {
-          return {
-            investigation_id: inv.id,
-            procedure_name: inv.procedure_name,
-            gdrg_code: inv.gdrg_code,
-            has_result: 'No',
-            has_attachment: 'No',
-          };
-        }
-      })
-    );
-  } catch (error) {
-    scanResults.value = [];
-    console.error('Failed to load scan results:', error);
-  } finally {
-    loadingResults.value = false;
-  }
-};
-
-const loadServiceTypes = async () => {
-  loadingServiceTypes.value = true;
-  try {
-    const response = await priceListAPI.getServiceTypes();
-    serviceTypeOptions.value = response.data || [];
-  } catch (error) {
-    console.error('Failed to load service types:', error);
-    serviceTypeOptions.value = [];
-  } finally {
-    loadingServiceTypes.value = false;
-  }
-};
-
-const onServiceTypeSelected = async (serviceType) => {
-  if (!serviceType) {
-    procedureOptions.value = [];
-    allProcedures.value = [];
-    return;
-  }
-
-  try {
-    const response = await priceListAPI.getProceduresByServiceType(serviceType);
-    allProcedures.value = response.data || [];
-    procedureOptions.value = allProcedures.value;
-  } catch (error) {
-    console.error('Failed to load procedures:', error);
-    allProcedures.value = [];
-    procedureOptions.value = [];
-  }
-};
-
-const filterProcedures = (val, update) => {
-  if (val === '') {
-    update(() => {
-      procedureOptions.value = allProcedures.value;
-    });
-    return;
-  }
-  update(() => {
-    const needle = val.toLowerCase();
-    procedureOptions.value = allProcedures.value.filter(
-      (p) =>
-        (p.service_name && p.service_name.toLowerCase().indexOf(needle) > -1) ||
-        (p.g_drg_code && p.g_drg_code.toLowerCase().indexOf(needle) > -1)
-    );
-  });
-};
-
-const onProcedureSelected = (gdrgCode) => {
-  if (!gdrgCode) {
-    editInvestigationForm.value.gdrg_code = '';
-    editInvestigationForm.value.procedure_name = '';
-    return;
-  }
-  const selected = allProcedures.value.find(p => p.g_drg_code === gdrgCode);
-  if (selected) {
-    editInvestigationForm.value.gdrg_code = selected.g_drg_code;
-    editInvestigationForm.value.procedure_name = selected.service_name;
-  }
-};
-
-const openEditInvestigationDialog = async (investigation) => {
-  editInvestigationForm.value = {
-    investigation_id: investigation.id,
-    gdrg_code: investigation.gdrg_code,
-    procedure_name: investigation.procedure_name,
-    service_type: '',
-  };
-  selectedProcedure.value = null;
-  
-  // Load service types if not loaded
-  if (serviceTypeOptions.value.length === 0) {
-    await loadServiceTypes();
-  }
-  
-  showEditInvestigationDialog.value = true;
-};
-
-const updateInvestigation = async () => {
-  if (!editInvestigationForm.value.investigation_id) return;
-
-  updatingInvestigation.value = true;
-  updatingId.value = editInvestigationForm.value.investigation_id;
-  try {
-    await consultationAPI.updateInvestigationDetails(
-      editInvestigationForm.value.investigation_id,
-      {
-        gdrg_code: editInvestigationForm.value.gdrg_code,
-        procedure_name: editInvestigationForm.value.procedure_name,
-      }
-    );
-    $q.notify({
-      type: 'positive',
-      message: 'Investigation updated successfully',
-    });
-    showEditInvestigationDialog.value = false;
-    await loadInvestigations();
-  } catch (error) {
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Failed to update investigation',
-    });
-  } finally {
-    updatingInvestigation.value = false;
-    updatingId.value = null;
-  }
+// Initialize date to today
+const initializeDate = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  filterDate.value = `${year}-${month}-${day}`;
 };
 
 const confirmInvestigation = async (investigation) => {
@@ -928,7 +606,7 @@ const confirmInvestigation = async (investigation) => {
         type: 'positive',
         message: 'Investigation confirmed',
       });
-      await loadInvestigations();
+      await loadRequests();
     } catch (error) {
       $q.notify({
         type: 'negative',
@@ -945,110 +623,69 @@ const viewRemarks = (investigation) => {
   showRemarksDialog.value = true;
 };
 
-const openResultDialog = (result) => {
-  selectedInvestigation.value = investigations.value.find(inv => inv.id === result.investigation_id);
-  editingResult.value = !!result.id;
-  resultForm.value = {
-    investigation_id: result.investigation_id,
-    results_text: result.results_text || '',
-    attachment: null,
-    existingAttachment: result.attachment_path || null,
-  };
-  showResultDialog.value = true;
+const navigateToResultPage = (request) => {
+  router.push(`/scan/result/${request.id}`);
 };
 
-const onFileSelected = (file) => {
-  // File is automatically set in resultForm.attachment
-};
-
-const saveScanResult = async () => {
-  if (!resultForm.value.investigation_id) return;
-
-  savingResult.value = true;
-  try {
-    const formData = new FormData();
-    formData.append('investigation_id', resultForm.value.investigation_id);
-    if (resultForm.value.results_text) {
-      formData.append('results_text', resultForm.value.results_text);
-    }
-    if (resultForm.value.attachment) {
-      formData.append('attachment', resultForm.value.attachment);
-    }
-
-    await consultationAPI.createScanResult(formData);
+const revertToRequested = async (investigation) => {
+  $q.dialog({
+    title: 'Revert to Requested',
+    message: 'Please provide a reason for reverting this investigation from "confirmed" to "requested":',
+    prompt: {
+      model: '',
+      type: 'text',
+      placeholder: 'Enter reason for revert...',
+      isValid: (val) => val && val.trim().length > 0,
+      attrs: {
+        maxlength: 500,
+      },
+    },
+    cancel: true,
+    persistent: true,
+  }).onOk(async (reason) => {
+    revertingToRequestedId.value = investigation.id;
+    try {
+      await consultationAPI.revertInvestigationToRequested(investigation.id, reason);
     $q.notify({
       type: 'positive',
-      message: 'Scan result saved successfully',
+        message: 'Status reverted to requested successfully',
     });
-    showResultDialog.value = false;
-    await loadInvestigations();
+      await loadRequests();
   } catch (error) {
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to save scan result',
+        message: error.response?.data?.detail || 'Failed to revert status',
     });
   } finally {
-    savingResult.value = false;
-  }
+      revertingToRequestedId.value = null;
+    }
+  });
 };
 
-const downloadAttachment = async (result) => {
-  if (!result.attachment_path || !result.investigation_id) {
-    $q.notify({
-      type: 'warning',
-      message: 'No attachment available to download',
-    });
-    return;
-  }
-
-  try {
-    const response = await consultationAPI.downloadScanResultAttachment(result.investigation_id);
-    
-    const blob = response.data instanceof Blob 
-      ? response.data 
-      : new Blob([response.data], { 
-          type: response.headers['content-type'] || 'application/pdf' 
-        });
-    
-    const contentDisposition = response.headers['content-disposition'] || 
-                                response.headers['Content-Disposition'];
-    let filename = result.attachment_path.split('/').pop() || 'scan_result.pdf';
-    
-    if (contentDisposition) {
-      const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-      if (filenameMatch && filenameMatch[1]) {
-        filename = filenameMatch[1].replace(/['"]/g, '');
-      }
-    }
-    
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    
-    setTimeout(() => {
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    }, 100);
-    
+const revertInvestigationStatus = async (investigation) => {
+  $q.dialog({
+    title: 'Revert Status',
+    message: `Are you sure you want to revert this investigation from "completed" to "confirmed"? This will allow editing the results.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    revertingId.value = investigation.id;
+    try {
+      await consultationAPI.revertInvestigationStatus(investigation.id);
     $q.notify({
       type: 'positive',
-      message: 'File downloaded successfully',
+        message: 'Status reverted to confirmed successfully',
     });
+      await loadRequests();
   } catch (error) {
-    console.error('Download error:', error);
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to download attachment',
-    });
-  }
-};
-
-const selectOldEncounter = async (encounterId) => {
-  selectedEncounterId.value = encounterId;
-  await loadInvestigations();
+        message: error.response?.data?.detail || 'Failed to revert status',
+      });
+    } finally {
+      revertingId.value = null;
+    }
+  });
 };
 
 const formatDate = (dateString) => {
@@ -1063,136 +700,398 @@ const formatDate = (dateString) => {
   });
 };
 
-const encounterProceduresCache = ref(new Map());
-const bills = ref([]);
-
-const getEncounterProcedures = (encounter) => {
-  if (!encounter || !encounter.id) return encounter?.department || 'N/A';
-  
-  // Check cache first
-  if (encounterProceduresCache.value.has(encounter.id)) {
-    const cached = encounterProceduresCache.value.get(encounter.id);
-    return cached || encounter.department || 'N/A';
-  }
-  
-  // Set loading placeholder
-  encounterProceduresCache.value.set(encounter.id, 'Loading...');
-  
-  // Fetch scan investigations asynchronously
-  consultationAPI.getInvestigations(encounter.id)
-    .then(response => {
-      const investigations = response.data || [];
-      const scanInvestigations = investigations.filter(inv => inv.investigation_type === 'scan');
-      const procedureNames = scanInvestigations
-        .filter(inv => inv.procedure_name)
-        .map(inv => inv.procedure_name)
-        .filter((name, index, self) => self.indexOf(name) === index); // Remove duplicates
-      
-      const displayText = procedureNames.length > 0 
-        ? (procedureNames.length > 3 
-          ? `${procedureNames.slice(0, 3).join(', ')}... (+${procedureNames.length - 3} more)`
-          : procedureNames.join(', '))
-        : (encounter.department || 'N/A');
-      
-      encounterProceduresCache.value.set(encounter.id, displayText);
-    })
-    .catch(error => {
-      console.error('Failed to fetch procedures for encounter:', error);
-      encounterProceduresCache.value.set(encounter.id, encounter.department || 'N/A');
-    });
-  
-  // Return department as fallback while loading
-  return encounter.department || 'N/A';
-};
-
-const clearSearch = () => {
-  cardNumber.value = '';
-  patient.value = null;
-  activeEncounters.value = [];
-  todaysEncounter.value = null;
-  oldEncounters.value = [];
-  oldEncountersExpanded.value = false;
-  selectedEncounterId.value = null;
-  encounterProceduresCache.value.clear();
-  currentEncounter.value = null;
-  investigations.value = [];
-  scanResults.value = [];
-};
-
-// Auto-load from route query parameter
-const autoLoadFromRoute = async () => {
-  if (route.query.encounterId) {
-    const encounterId = parseInt(route.query.encounterId);
-    selectedEncounterId.value = encounterId;
+const loadAvailableServices = async () => {
+  loadingServices.value = true;
+  try {
+    // Try different service type names for Scan/Imaging
+    // Common names: Scan, Imaging, Scan/Imaging, Radiology
+    const possibleTypes = ['Scan', 'Imaging', 'Scan/Imaging', 'Radiology'];
+    let services = [];
     
-    try {
-      // Get encounter details to get patient info
-      const encounterResponse = await encountersAPI.get(encounterId);
-      const encounter = encounterResponse.data;
-      currentEncounter.value = encounter;
-      
-      if (encounter && encounter.patient_id) {
-        // Get patient info
-        const patientResponse = await patientsAPI.get(encounter.patient_id);
-        patient.value = patientResponse.data;
-        cardNumber.value = patient.value.card_number;
-        
-        // Load all encounters for this patient
-        const encountersResponse = await encountersAPI.getPatientEncounters(encounter.patient_id);
-        const allEncounters = encountersResponse.data.filter(e => !e.archived);
-        
-        // Separate today's encounter from old encounters
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const todaysEncounters = allEncounters.filter(e => {
-          const encounterDate = new Date(e.created_at);
-          encounterDate.setHours(0, 0, 0, 0);
-          return encounterDate.getTime() === today.getTime();
-        });
-        
-        const oldEncs = allEncounters.filter(e => {
-          const encounterDate = new Date(e.created_at);
-          encounterDate.setHours(0, 0, 0, 0);
-          return encounterDate.getTime() !== today.getTime();
-        }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        
-        if (todaysEncounters.length > 0) {
-          todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-        } else {
-          todaysEncounter.value = null;
+    for (const serviceType of possibleTypes) {
+      try {
+        const response = await priceListAPI.getProceduresByServiceType(serviceType);
+        if (response.data && response.data.length > 0) {
+          services = response.data;
+          break;
         }
-        
-        oldEncounters.value = oldEncs;
-        
-        activeEncounters.value = allEncounters.map(e => ({
-          id: e.id,
-          label: `Encounter #${e.id} - ${e.department} (${new Date(e.created_at).toLocaleDateString()})`,
-          value: e.id,
-        }));
-        
-        // Load investigations for this encounter
-        await loadInvestigations();
+      } catch (e) {
+        // Try next service type
+        continue;
       }
-    } catch (error) {
-      console.error('Failed to auto-load from route:', error);
-      $q.notify({
-        type: 'warning',
-        message: 'Failed to load encounter details',
-      });
     }
+    
+    // If no services found with specific types, try without filter to get all procedures
+    if (services.length === 0) {
+      const response = await priceListAPI.getProceduresByServiceType();
+      // Response will be grouped object, extract all procedures
+      if (response.data && typeof response.data === 'object') {
+        for (const key in response.data) {
+          if (Array.isArray(response.data[key])) {
+            services = services.concat(response.data[key]);
+          }
+        }
+      }
+    }
+    
+    availableServices.value = services;
+  } catch (error) {
+    console.error('Failed to load services:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load available services',
+    });
+    availableServices.value = [];
+  } finally {
+    loadingServices.value = false;
   }
 };
 
-// Watch for route query changes
-watch(() => route.query.encounterId, (newEncounterId) => {
-  if (newEncounterId) {
-    autoLoadFromRoute();
+const openUpdateServiceDialog = async (investigation) => {
+  selectedInvestigation.value = investigation;
+  serviceForm.value = {
+    gdrg_code: investigation.gdrg_code || '',
+    procedure_name: investigation.procedure_name || '',
+    notes: investigation.notes || '',
+  };
+  
+  // Load available services if not already loaded
+  if (availableServices.value.length === 0) {
+    await loadAvailableServices();
   }
+  
+  // Find and set the selected service
+  const selectedService = availableServices.value.find(
+    s => s.g_drg_code === investigation.gdrg_code
+  );
+  if (selectedService) {
+    serviceForm.value.gdrg_code = selectedService;
+  }
+  
+  showUpdateServiceDialog.value = true;
+};
+
+const onServiceSelected = (service) => {
+  if (service && typeof service === 'object') {
+    serviceForm.value.procedure_name = service.service_name || '';
+    serviceForm.value.gdrg_code = service.g_drg_code || '';
+  }
+};
+
+const updateService = async () => {
+  if (!selectedInvestigation.value) return;
+  
+  updatingService.value = true;
+  try {
+    const updateData = {
+      gdrg_code: typeof serviceForm.value.gdrg_code === 'object' 
+        ? serviceForm.value.gdrg_code.g_drg_code 
+        : serviceForm.value.gdrg_code,
+      procedure_name: serviceForm.value.procedure_name,
+      investigation_type: 'scan',
+      notes: serviceForm.value.notes || null,
+    };
+    
+    await consultationAPI.updateInvestigationDetails(selectedInvestigation.value.id, updateData);
+    $q.notify({
+      type: 'positive',
+      message: 'Service updated successfully',
+    });
+    showUpdateServiceDialog.value = false;
+    await loadRequests();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to update service',
+    });
+  } finally {
+    updatingService.value = false;
+  }
+};
+
+const openAddServiceDialog = async (investigation) => {
+  selectedInvestigation.value = investigation;
+  addServiceForm.value = {
+    gdrg_code: '',
+    procedure_name: '',
+    notes: '',
+    isDirectService: false,
+    patientCardNumber: '',
+    patientId: null,
+    isInsured: false,
+    cccNumber: '',
+  };
+  selectedPatients.value = [investigation.encounter_id];
+  availablePatients.value = [];
+  
+  // Load available services if not already loaded
+  if (availableServices.value.length === 0) {
+    await loadAvailableServices();
+  }
+  
+  showAddServiceDialog.value = true;
+};
+
+const onAddServiceSelected = (service) => {
+  if (service && typeof service === 'object') {
+    addServiceForm.value.procedure_name = service.service_name || '';
+    addServiceForm.value.gdrg_code = service.g_drg_code || '';
+  }
+};
+
+const filterServices = (val, update) => {
+  if (val === '') {
+    update(() => {
+      // Show all services when search is empty
+    });
+    return;
+  }
+  update(() => {
+    const needle = val.toLowerCase();
+    // Filter is handled by Quasar's use-input
+  });
+};
+
+// Computed properties
+const uniquePatients = computed(() => {
+  const seen = new Set();
+  return requests.value.filter(request => {
+    const key = request.patient_card_number;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 });
 
+const allSelected = computed(() => {
+  const requestedInvestigations = requests.value.filter(r => r.status === 'requested');
+  return requestedInvestigations.length > 0 && 
+         selectedInvestigations.value.length === requestedInvestigations.length;
+});
+
+// Selection handlers
+// Note: We use v-model:selected instead of @selection to avoid conflicts
+// Quasar will automatically sync selectedInvestigations with the table's selection state
+
+const selectAll = (value) => {
+  if (value) {
+    // Select all requested rows only (not confirmed or completed)
+    const requestedRows = requests.value.filter(r => r.status === 'requested');
+    selectedInvestigations.value = [...requestedRows];
+  } else {
+    // Deselect all requested rows
+    const requestedIds = new Set(requests.value.filter(r => r.status === 'requested').map(r => r.id));
+    selectedInvestigations.value = selectedInvestigations.value.filter(r => !requestedIds.has(r.id));
+  }
+};
+
+// Bulk confirm
+const bulkConfirmInvestigations = async () => {
+  // Filter to only requested investigations
+  const requestedInvestigations = selectedInvestigations.value.filter(inv => inv.status === 'requested');
+  
+  if (requestedInvestigations.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select at least one investigation with "requested" status to confirm',
+    });
+    return;
+  }
+  
+  const investigationIds = requestedInvestigations.map(inv => inv.id);
+  
+  $q.dialog({
+    title: 'Confirm Selected Investigations',
+    message: `Are you sure you want to confirm ${investigationIds.length} investigation(s)?`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    bulkConfirming.value = true;
+    try {
+      const response = await consultationAPI.bulkConfirmInvestigations(investigationIds);
+      $q.notify({
+        type: 'positive',
+        message: `Successfully confirmed ${response.data.confirmed_count} investigation(s)`,
+      });
+      if (response.data.errors && response.data.errors.length > 0) {
+        $q.notify({
+          type: 'warning',
+          message: `Some investigations could not be confirmed. Check console for details.`,
+        });
+        console.warn('Bulk confirm errors:', response.data.errors);
+      }
+      selectedInvestigations.value = [];
+      await loadRequests();
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to confirm investigations',
+      });
+    } finally {
+      bulkConfirming.value = false;
+    }
+  });
+};
+
+// Patient selection handlers
+const onPatientSelected = (value) => {
+  if (value.length > 1) {
+    $q.notify({
+      type: 'warning',
+      message: 'You can only add service for one patient at a time. Please select only one patient.',
+    });
+    // Keep only the last selected
+    selectedPatients.value = [value[value.length - 1]];
+  }
+};
+
+const onDirectServiceToggle = (value) => {
+  if (value) {
+    selectedPatients.value = [];
+    availablePatients.value = [];
+  }
+};
+
+const loadPatientByCard = async () => {
+  if (!addServiceForm.value.patientCardNumber || !addServiceForm.value.isDirectService) {
+    return;
+  }
+  
+  loadingPatients.value = true;
+  try {
+    const response = await patientsAPI.getByCard(addServiceForm.value.patientCardNumber);
+    if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+      availablePatients.value = response.data;
+      // Auto-select if only one patient found
+      if (response.data.length === 1) {
+        selectedPatients.value = [response.data[0].id];
+        addServiceForm.value.isInsured = response.data[0].insured || false;
+        addServiceForm.value.cccNumber = response.data[0].ccc_number || '';
+      }
+    } else {
+      availablePatients.value = [];
+      $q.notify({
+        type: 'warning',
+        message: 'No patient found with this card number',
+      });
+    }
+  } catch (error) {
+    console.error('Failed to load patient:', error);
+    availablePatients.value = [];
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load patient',
+    });
+  } finally {
+    loadingPatients.value = false;
+  }
+};
+
+// Update addService function
+const addService = async () => {
+  // Validate patient selection
+  if (!addServiceForm.value.isDirectService && selectedPatients.value.length !== 1) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select exactly one patient',
+    });
+    return;
+  }
+  
+  if (addServiceForm.value.isDirectService && selectedPatients.value.length !== 1) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select exactly one patient for direct service',
+    });
+    return;
+  }
+  
+  addingService.value = true;
+  try {
+    const newServiceData = {
+      gdrg_code: typeof addServiceForm.value.gdrg_code === 'object' 
+        ? addServiceForm.value.gdrg_code.g_drg_code 
+        : addServiceForm.value.gdrg_code,
+      procedure_name: addServiceForm.value.procedure_name,
+      investigation_type: 'scan',
+      notes: addServiceForm.value.notes || null,
+    };
+    
+    if (addServiceForm.value.isDirectService) {
+      // Direct service without encounter
+      const selectedPatient = availablePatients.value.find(p => p.id === selectedPatients.value[0]);
+      if (!selectedPatient) {
+        throw new Error('Selected patient not found');
+      }
+      newServiceData.patient_id = selectedPatient.id;
+      newServiceData.patient_card_number = selectedPatient.card_number;
+      newServiceData.is_insured = addServiceForm.value.isInsured;
+      newServiceData.ccc_number = addServiceForm.value.cccNumber || null;
+    } else {
+      // Service with encounter
+      const selectedRequest = requests.value.find(r => r.encounter_id === selectedPatients.value[0]);
+      if (!selectedRequest) {
+        throw new Error('Selected request not found');
+      }
+      newServiceData.encounter_id = selectedRequest.encounter_id;
+    }
+    
+    await consultationAPI.createInvestigation(newServiceData);
+    $q.notify({
+      type: 'positive',
+      message: 'Service added successfully',
+    });
+    showAddServiceDialog.value = false;
+    // Reset form
+    addServiceForm.value = {
+      gdrg_code: '',
+      procedure_name: '',
+      notes: '',
+      isDirectService: false,
+      patientCardNumber: '',
+      patientId: null,
+      isInsured: false,
+      cccNumber: '',
+    };
+    selectedPatients.value = [];
+    availablePatients.value = [];
+    await loadRequests();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to add service',
+    });
+  } finally {
+    addingService.value = false;
+  }
+};
+
+// Update openAddServiceDialogForNew
+const openAddServiceDialogForNew = async () => {
+  selectedInvestigation.value = null;
+  addServiceForm.value = {
+    gdrg_code: '',
+    procedure_name: '',
+    notes: '',
+    isDirectService: false,
+    patientCardNumber: '',
+    patientId: null,
+    isInsured: false,
+    cccNumber: '',
+  };
+  selectedPatients.value = [];
+  availablePatients.value = [];
+  
+  // Load available services if not already loaded
+  if (availableServices.value.length === 0) {
+    await loadAvailableServices();
+  }
+  
+  showAddServiceDialog.value = true;
+};
+
 onMounted(() => {
-  loadServiceTypes();
-  autoLoadFromRoute();
+  initializeDate();
+  loadRequests();
 });
 </script>

@@ -195,6 +195,8 @@ export const consultationAPI = {
   getInvestigations: (encounterId) => api.get(`/consultation/investigation/encounter/${encounterId}`),
   confirmInvestigation: (investigationId) => 
     api.put(`/consultation/investigation/${investigationId}/confirm`),
+  bulkConfirmInvestigations: (investigationIds) => 
+    api.put('/consultation/investigations/bulk-confirm', { investigation_ids: investigationIds }),
   cancelInvestigation: (investigationId, data) => 
     api.put(`/consultation/investigation/${investigationId}/cancel`, data),
   getConsultationNotes: (encounterId) => api.get(`/consultation/notes/encounter/${encounterId}`),
@@ -219,8 +221,19 @@ export const consultationAPI = {
     const params = investigationType ? { investigation_type: investigationType } : {};
     return api.get(url, { params });
   },
+  getInvestigationsByType: (investigationType, filters = {}) => {
+    const url = `/consultation/investigation/list/${investigationType}`;
+    return api.get(url, { params: filters });
+  },
+  getInvestigation: (investigationId) => {
+    return api.get(`/consultation/investigation/${investigationId}`);
+  },
   updateInvestigationDetails: (investigationId, data) => 
     api.put(`/consultation/investigation/${investigationId}/update-details`, data),
+  revertInvestigationStatus: (investigationId) => 
+    api.put(`/consultation/investigation/${investigationId}/revert-status`),
+  revertInvestigationToRequested: (investigationId, reason) => 
+    api.put(`/consultation/investigation/${investigationId}/revert-to-requested`, { reason }),
   getLabResult: (investigationId) => 
     api.get(`/consultation/lab-result/investigation/${investigationId}`),
   createLabResult: (formData) => 
