@@ -271,6 +271,14 @@ export const consultationAPI = {
       responseType: 'blob',
     }),
   getAdmissionRecommendations: () => api.get('/consultation/admissions'),
+  confirmAdmission: (admissionId) => api.put(`/consultation/admissions/${admissionId}/confirm`),
+  revertAdmissionConfirmation: (admissionId) => api.put(`/consultation/admissions/${admissionId}/revert-confirmation`),
+  cancelAdmission: (admissionId, reason) => api.put(`/consultation/admissions/${admissionId}/cancel`, { reason }),
+  getWardAdmissions: (ward) => {
+    const params = ward ? { ward } : {};
+    return api.get('/consultation/ward-admissions', { params });
+  },
+  dischargePatient: (wardAdmissionId) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/discharge`),
 };
 
 // Billing endpoints

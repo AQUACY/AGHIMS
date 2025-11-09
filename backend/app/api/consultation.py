@@ -2522,6 +2522,8 @@ class AdmissionRecommendationResponse(BaseModel):
     encounter_id: int
     ward: str
     recommended_by: int
+    confirmed_by: Optional[int] = None
+    confirmed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     
@@ -2537,6 +2539,10 @@ class AdmissionRecommendationResponse(BaseModel):
     finalized_by_name: Optional[str] = None  # Name of doctor/PA who finalized
     finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
     finalized_at: Optional[datetime] = None  # When consultation was finalized
+    cancelled: Optional[int] = None  # 0 = not cancelled, 1 = cancelled
+    cancelled_by: Optional[int] = None
+    cancelled_at: Optional[datetime] = None
+    cancellation_reason: Optional[str] = None
 
 
 @router.get("/admissions", response_model=List[AdmissionRecommendationResponse])
@@ -2584,6 +2590,8 @@ def get_admission_recommendations(
                     "encounter_id": admission.encounter_id,
                     "ward": admission.ward,
                     "recommended_by": admission.recommended_by,
+                    "confirmed_by": admission.confirmed_by,
+                    "confirmed_at": admission.confirmed_at,
                     "created_at": admission.created_at,
                     "updated_at": admission.updated_at,
                     "patient_name": patient.name,
@@ -2597,6 +2605,10 @@ def get_admission_recommendations(
                     "finalized_by_name": finalized_by_name,
                     "finalized_by_role": finalized_by_role,
                     "finalized_at": encounter.finalized_at,
+                    "cancelled": admission.cancelled,
+                    "cancelled_by": admission.cancelled_by,
+                    "cancelled_at": admission.cancelled_at,
+                    "cancellation_reason": admission.cancellation_reason,
                 })
             except Exception as e:
                 print(f"Error processing admission {admission.id}: {str(e)}")
@@ -2611,3 +2623,294 @@ def get_admission_recommendations(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error fetching admission recommendations: {str(e)}")
+
+
+@router.put("/admissions/{admission_id}/confirm")
+def confirm_admission(
+    admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Confirm an admission recommendation - indicates the patient has been admitted to the ward"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    
+    admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.id == admission_id).first()
+    if not admission:
+        raise HTTPException(status_code=404, detail="Admission recommendation not found")
+    
+    if admission.confirmed_by is not None:
+        raise HTTPException(status_code=400, detail="Admission has already been confirmed")
+    
+    # Check if ward admission already exists
+    existing_ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.encounter_id == admission.encounter_id,
+        WardAdmission.discharged_at.is_(None)
+    ).first()
+    
+    if existing_ward_admission:
+        raise HTTPException(status_code=400, detail="Patient is already admitted to a ward")
+    
+    # Mark admission as confirmed
+    admission.confirmed_by = current_user.id
+    admission.confirmed_at = datetime.utcnow()
+    admission.updated_at = datetime.utcnow()
+    
+    # Create ward admission record
+    ward_admission = WardAdmission(
+        admission_recommendation_id=admission.id,
+        encounter_id=admission.encounter_id,
+        ward=admission.ward,
+        admitted_by=current_user.id,
+        admitted_at=datetime.utcnow()
+    )
+    db.add(ward_admission)
+    
+    db.commit()
+    db.refresh(admission)
+    db.refresh(ward_admission)
+    
+    return {
+        "id": admission.id,
+        "encounter_id": admission.encounter_id,
+        "ward": admission.ward,
+        "confirmed_by": admission.confirmed_by,
+        "confirmed_at": admission.confirmed_at,
+        "ward_admission_id": ward_admission.id,
+        "message": "Admission confirmed successfully"
+    }
+
+
+@router.put("/admissions/{admission_id}/revert-confirmation")
+def revert_admission_confirmation(
+    admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Revert admission confirmation - removes from ward and returns to recommendation state"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    
+    admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.id == admission_id).first()
+    if not admission:
+        raise HTTPException(status_code=404, detail="Admission recommendation not found")
+    
+    if admission.confirmed_by is None:
+        raise HTTPException(status_code=400, detail="Admission is not confirmed")
+    
+    # Check if patient is still in ward (not discharged)
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.admission_recommendation_id == admission.id,
+        WardAdmission.discharged_at.is_(None)
+    ).first()
+    
+    if ward_admission:
+        # Delete the ward admission record
+        db.delete(ward_admission)
+    
+    # Revert confirmation status
+    admission.confirmed_by = None
+    admission.confirmed_at = None
+    admission.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(admission)
+    
+    return {
+        "id": admission.id,
+        "encounter_id": admission.encounter_id,
+        "ward": admission.ward,
+        "message": "Admission confirmation reverted successfully"
+    }
+
+
+# Ward admissions endpoints
+class WardAdmissionResponse(BaseModel):
+    """Ward admission response model"""
+    id: int
+    encounter_id: int
+    ward: str
+    admitted_by: int
+    admitted_at: datetime
+    discharged_at: Optional[datetime] = None
+    discharged_by: Optional[int] = None
+    
+    # Patient and encounter details
+    patient_name: Optional[str] = None
+    patient_surname: Optional[str] = None
+    patient_other_names: Optional[str] = None
+    patient_card_number: Optional[str] = None
+    patient_gender: Optional[str] = None
+    patient_date_of_birth: Optional[str] = None
+    encounter_created_at: Optional[datetime] = None
+    encounter_service_type: Optional[str] = None
+    admitted_by_name: Optional[str] = None
+    admitted_by_role: Optional[str] = None
+
+
+@router.get("/ward-admissions", response_model=List[WardAdmissionResponse])
+def get_ward_admissions(
+    ward: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get ward admissions - only shows active (non-discharged) patients"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.patient import Patient
+    
+    try:
+        query = db.query(WardAdmission).filter(
+            WardAdmission.discharged_at.is_(None)  # Only active admissions
+        )
+        
+        # Filter by ward if provided
+        if ward:
+            query = query.filter(WardAdmission.ward == ward)
+        
+        ward_admissions = query.options(
+            joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+        ).order_by(WardAdmission.admitted_at.desc()).all()
+        
+        result = []
+        for ward_admission in ward_admissions:
+            try:
+                encounter = ward_admission.encounter
+                if not encounter:
+                    continue
+                
+                patient = encounter.patient
+                if not patient:
+                    continue
+                
+                # Get admitted_by user info
+                admitted_by_name = None
+                admitted_by_role = None
+                if ward_admission.admitted_by:
+                    admitted_user = db.query(User).filter(User.id == ward_admission.admitted_by).first()
+                    if admitted_user:
+                        admitted_by_name = admitted_user.full_name
+                        admitted_by_role = admitted_user.role
+                
+                result.append({
+                    "id": ward_admission.id,
+                    "encounter_id": ward_admission.encounter_id,
+                    "ward": ward_admission.ward,
+                    "admitted_by": ward_admission.admitted_by,
+                    "admitted_at": ward_admission.admitted_at,
+                    "discharged_at": ward_admission.discharged_at,
+                    "discharged_by": ward_admission.discharged_by,
+                    "patient_name": patient.name,
+                    "patient_surname": patient.surname,
+                    "patient_other_names": patient.other_names,
+                    "patient_card_number": patient.card_number,
+                    "patient_gender": patient.gender,
+                    "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
+                    "encounter_created_at": encounter.created_at,
+                    "encounter_service_type": encounter.department,
+                    "admitted_by_name": admitted_by_name,
+                    "admitted_by_role": admitted_by_role,
+                })
+            except Exception as e:
+                print(f"Error processing ward admission {ward_admission.id}: {str(e)}")
+                continue
+        
+        return result
+    except Exception as e:
+        print(f"Error in get_ward_admissions: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching ward admissions: {str(e)}")
+
+
+@router.put("/ward-admissions/{ward_admission_id}/discharge")
+def discharge_patient(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Discharge a patient from the ward"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Patient has already been discharged")
+    
+    # Mark as discharged
+    ward_admission.discharged_at = datetime.utcnow()
+    ward_admission.discharged_by = current_user.id
+    ward_admission.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(ward_admission)
+    
+    return {
+        "id": ward_admission.id,
+        "encounter_id": ward_admission.encounter_id,
+        "ward": ward_admission.ward,
+        "discharged_at": ward_admission.discharged_at,
+        "discharged_by": ward_admission.discharged_by,
+        "message": "Patient discharged successfully"
+    }
+
+
+class CancelAdmissionRequest(BaseModel):
+    reason: str
+
+
+@router.put("/admissions/{admission_id}/cancel")
+def cancel_admission(
+    admission_id: int,
+    cancel_data: CancelAdmissionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Cancel an admission recommendation with a reason"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    
+    admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.id == admission_id).first()
+    if not admission:
+        raise HTTPException(status_code=404, detail="Admission recommendation not found")
+    
+    if admission.cancelled == 1:
+        raise HTTPException(status_code=400, detail="Admission has already been cancelled")
+    
+    # If confirmed, revert confirmation first (remove from ward)
+    if admission.confirmed_by is not None:
+        ward_admission = db.query(WardAdmission).filter(
+            WardAdmission.admission_recommendation_id == admission.id,
+            WardAdmission.discharged_at.is_(None)
+        ).first()
+        
+        if ward_admission:
+            # Delete the ward admission record
+            db.delete(ward_admission)
+        
+        # Revert confirmation status
+        admission.confirmed_by = None
+        admission.confirmed_at = None
+    
+    # Mark as cancelled
+    admission.cancelled = 1
+    admission.cancelled_by = current_user.id
+    admission.cancelled_at = datetime.utcnow()
+    admission.cancellation_reason = cancel_data.reason
+    admission.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(admission)
+    
+    return {
+        "id": admission.id,
+        "encounter_id": admission.encounter_id,
+        "ward": admission.ward,
+        "cancelled": admission.cancelled,
+        "cancelled_by": admission.cancelled_by,
+        "cancelled_at": admission.cancelled_at,
+        "cancellation_reason": admission.cancellation_reason,
+        "message": "Admission cancelled successfully"
+    }

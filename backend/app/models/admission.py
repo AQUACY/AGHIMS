@@ -15,6 +15,12 @@ class AdmissionRecommendation(Base):
     encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=False, unique=True)
     ward = Column(String(100), nullable=False)
     recommended_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    cancelled = Column(Integer, default=0, nullable=False)  # 0 = not cancelled, 1 = cancelled
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

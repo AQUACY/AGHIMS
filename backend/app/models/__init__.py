@@ -19,6 +19,7 @@ from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
 from app.models.consultation_notes import ConsultationNotes
 from app.models.admission import AdmissionRecommendation
+from app.models.ward_admission import WardAdmission
 from app.models.lab_result import LabResult
 from app.models.scan_result import ScanResult
 from app.models.xray_result import XrayResult
@@ -53,6 +54,7 @@ __all__ = [
     "ClaimProcedure",
     "ConsultationNotes",
     "AdmissionRecommendation",
+    "WardAdmission",
     "LabResult",
     "ScanResult",
     "XrayResult",

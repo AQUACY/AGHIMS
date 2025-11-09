@@ -147,6 +147,30 @@ const routes = [
         component: () => import('../pages/IPD.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
+      {
+        path: '/ipd/admission-recommendations',
+        name: 'AdmissionRecommendations',
+        component: () => import('../pages/AdmissionRecommendations.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/admit-patient',
+        name: 'AdmitPatient',
+        component: () => import('../pages/AdmitPatient.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/doctor-nursing-station',
+        name: 'DoctorNursingStation',
+        component: () => import('../pages/DoctorNursingStation.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/admission-manager/:id',
+        name: 'AdmissionManager',
+        component: () => import('../pages/AdmissionManager.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
     ],
   },
 ];
