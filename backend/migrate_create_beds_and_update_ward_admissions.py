@@ -39,7 +39,14 @@ def upgrade():
         else:
             print("✓ beds table already exists")
         
-        # 2. Update ward_admissions table with new columns
+        # 2. Check if ward_admissions table exists before updating
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ward_admissions'")
+        if not cursor.fetchone():
+            print("Table ward_admissions does not exist. Skipping column additions.")
+            print("Migration completed successfully")
+            return
+        
+        # Update ward_admissions table with new columns
         cursor.execute("PRAGMA table_info(ward_admissions)")
         existing_cols = {row[1] for row in cursor.fetchall()}
         
@@ -98,6 +105,11 @@ def upgrade():
         raise
     finally:
         conn.close()
+
+
+def migrate():
+    """Migration entry point called by run_migrations.py"""
+    upgrade()
 
 
 def downgrade():
