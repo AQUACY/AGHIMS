@@ -56,6 +56,11 @@ def upgrade():
         conn.close()
 
 
+def migrate():
+    """Migration entry point called by run_migrations.py"""
+    upgrade()
+
+
 def downgrade():
     # SQLite doesn't support dropping columns easily
     print("Downgrade not implemented for SQLite")
