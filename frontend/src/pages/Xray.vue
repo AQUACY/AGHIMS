@@ -213,16 +213,18 @@
             <q-select
               v-model="serviceForm.gdrg_code"
               filled
-              :options="availableServices"
+              :options="filteredServiceOptions"
               option-label="service_name"
               option-value="g_drg_code"
-              label="Select Service"
+              label="Search Service (start typing)"
               :loading="loadingServices"
               @update:model-value="onServiceSelected"
               :rules="[(val) => !!val || 'Service is required']"
               use-input
               input-debounce="300"
               @filter="filterServices"
+              clearable
+              hint="Start typing to search for services"
             >
               <template v-slot:option="scope">
                 <q-item v-bind="scope.itemProps">
@@ -275,16 +277,18 @@
             <q-select
               v-model="addServiceForm.gdrg_code"
               filled
-              :options="availableServices"
+              :options="filteredServiceOptions"
               option-label="service_name"
               option-value="g_drg_code"
-              label="Select Service"
+              label="Search Service (start typing)"
               :loading="loadingServices"
               @update:model-value="onAddServiceSelected"
               :rules="[(val) => !!val || 'Service is required']"
               use-input
               input-debounce="300"
               @filter="filterServices"
+              clearable
+              hint="Start typing to search for services"
             >
               <template v-slot:option="scope">
                 <q-item v-bind="scope.itemProps">
@@ -555,38 +559,103 @@ const formatDate = (dateString) => {
 const loadAvailableServices = async () => {
   loadingServices.value = true;
   try {
-    // Try different service type names for X-ray
-    // Common names: X-ray, Xray, Radiology
-    const possibleTypes = ['X-ray', 'Xray', 'Radiology'];
+    const userRole = authStore.userRole;
     let services = [];
     
-    for (const serviceType of possibleTypes) {
-      try {
-        const response = await priceListAPI.getProceduresByServiceType(serviceType);
-        if (response.data && response.data.length > 0) {
-          services = response.data;
-          break;
+    // First, get all available service types
+    let allServiceTypes = [];
+    try {
+      const serviceTypesResponse = await priceListAPI.getServiceTypes();
+      allServiceTypes = serviceTypesResponse.data || [];
+    } catch (e) {
+      console.warn('Failed to get service types, will try direct approach:', e);
+    }
+    
+    // Keywords to match for Xray services
+    const xrayKeywords = ['xray', 'x-ray', 'radiology', 'chest x-ray', 'bone x-ray'];
+    
+    // Find matching service types (case-insensitive)
+    let matchingServiceTypes = [];
+    if (allServiceTypes.length > 0) {
+      matchingServiceTypes = allServiceTypes.filter(st => {
+        const stLower = (st || '').toLowerCase();
+        return xrayKeywords.some(keyword => stLower.includes(keyword));
+      });
+    }
+    
+    // If we found matching service types, load procedures for each
+    if (matchingServiceTypes.length > 0) {
+      for (const serviceType of matchingServiceTypes) {
+        try {
+          const response = await priceListAPI.getProceduresByServiceType(serviceType);
+          if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+            services = services.concat(response.data);
+          }
+        } catch (e) {
+          console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
+          continue;
         }
-      } catch (e) {
-        // Try next service type
-        continue;
       }
     }
     
-    // If no services found with specific types, try without filter to get all procedures
+    // If still no services found, try getting all procedures and filter client-side
     if (services.length === 0) {
-      const response = await priceListAPI.getProceduresByServiceType();
-      // Response will be grouped object, extract all procedures
-      if (response.data && typeof response.data === 'object') {
-        for (const key in response.data) {
-          if (Array.isArray(response.data[key])) {
-            services = services.concat(response.data[key]);
+      try {
+        const response = await priceListAPI.getProceduresByServiceType();
+        // Response will be grouped object
+        if (response.data && typeof response.data === 'object') {
+          // Filter service types that match Xray keywords
+          const xrayKeys = Object.keys(response.data).filter(key => {
+            if (!key) return false;
+            const keyLower = key.toLowerCase();
+            return xrayKeywords.some(keyword => keyLower.includes(keyword));
+          });
+          
+          // Also check if service names contain xray keywords (for cases where service_type might be generic)
+          for (const key in response.data) {
+            if (Array.isArray(response.data[key])) {
+              const matchingServices = response.data[key].filter(service => {
+                const serviceName = (service.service_name || '').toLowerCase();
+                return xrayKeywords.some(keyword => serviceName.includes(keyword));
+              });
+              if (matchingServices.length > 0) {
+                services = services.concat(matchingServices);
+              }
+            }
           }
+          
+          // Also add services from explicitly matching service types
+          for (const key of xrayKeys) {
+            if (Array.isArray(response.data[key])) {
+              services = services.concat(response.data[key]);
+            }
+          }
+          
+          // Remove duplicates based on g_drg_code
+          const seen = new Set();
+          services = services.filter(service => {
+            const code = service.g_drg_code;
+            if (seen.has(code)) return false;
+            seen.add(code);
+            return true;
+          });
         }
+      } catch (e) {
+        console.error('Failed to load all procedures:', e);
       }
     }
     
     availableServices.value = services;
+    
+    if (services.length === 0) {
+      $q.notify({
+        type: 'warning',
+        message: 'No Xray services found. Please contact admin to add Xray service types.',
+        timeout: 5000,
+      });
+    } else {
+      console.log(`Loaded ${services.length} Xray services`);
+    }
   } catch (error) {
     console.error('Failed to load services:', error);
     $q.notify({
@@ -611,6 +680,9 @@ const openUpdateServiceDialog = async (investigation) => {
   if (availableServices.value.length === 0) {
     await loadAvailableServices();
   }
+  
+  // Initialize filtered options
+  filteredServiceOptions.value = availableServices.value;
   
   // Find and set the selected service
   const selectedService = availableServices.value.find(
@@ -674,6 +746,9 @@ const openAddServiceDialog = async (investigation) => {
     await loadAvailableServices();
   }
   
+  // Initialize filtered options
+  filteredServiceOptions.value = availableServices.value;
+  
   showAddServiceDialog.value = true;
 };
 
@@ -706,6 +781,9 @@ const openAddServiceDialogForNew = async () => {
     await loadAvailableServices();
   }
   
+  // Initialize filtered options
+  filteredServiceOptions.value = availableServices.value;
+  
   showAddServiceDialog.value = true;
 };
 
@@ -716,16 +794,23 @@ const onAddServiceSelected = (service) => {
   }
 };
 
+const filteredServiceOptions = ref([]);
+
 const filterServices = (val, update) => {
   if (val === '') {
     update(() => {
-      // Show all services when search is empty
+      filteredServiceOptions.value = availableServices.value;
     });
     return;
   }
+  
   update(() => {
     const needle = val.toLowerCase();
-    // Filter is handled by Quasar's use-input
+    filteredServiceOptions.value = availableServices.value.filter(
+      (service) =>
+        (service.service_name && service.service_name.toLowerCase().includes(needle)) ||
+        (service.g_drg_code && service.g_drg_code.toLowerCase().includes(needle))
+    );
   });
 };
 

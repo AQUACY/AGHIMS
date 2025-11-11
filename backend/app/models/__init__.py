@@ -20,6 +20,12 @@ from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPre
 from app.models.consultation_notes import ConsultationNotes
 from app.models.admission import AdmissionRecommendation
 from app.models.ward_admission import WardAdmission
+from app.models.bed import Bed
+from app.models.nurse_note import NurseNote
+from app.models.nurse_mid_documentation import NurseMidDocumentation
+from app.models.inpatient_vital import InpatientVital
+from app.models.inpatient_clinical_review import InpatientClinicalReview
+from app.models.ward_transfer import WardTransfer
 from app.models.lab_result import LabResult
 from app.models.scan_result import ScanResult
 from app.models.xray_result import XrayResult
@@ -55,6 +61,12 @@ __all__ = [
     "ConsultationNotes",
     "AdmissionRecommendation",
     "WardAdmission",
+    "Bed",
+    "NurseNote",
+    "NurseMidDocumentation",
+    "InpatientVital",
+    "InpatientClinicalReview",
+    "WardTransfer",
     "LabResult",
     "ScanResult",
     "XrayResult",

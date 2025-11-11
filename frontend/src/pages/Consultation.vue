@@ -758,7 +758,8 @@
               v-model="diagnosisForm.icd10"
               filled
               label="ICD-10 Code"
-              hint="Auto-filled when ICD-10 is selected, or enter manually"
+              hint="Auto-filled when ICD-10 is selected, or enter manually (will be added to system if new)"
+              @update:model-value="checkDiagnosisInput"
             />
             <q-input
               v-model="diagnosisForm.diagnosis"
@@ -766,7 +767,22 @@
               label="Diagnosis *"
               lazy-rules
               :rules="[(val) => !!val || 'Required']"
+              @update:model-value="checkDiagnosisInput"
             />
+            <q-banner
+              v-if="showIcd10Warning"
+              class="bg-warning text-dark q-mb-md"
+              rounded
+            >
+              <template v-slot:avatar>
+                <q-icon name="warning" color="dark" />
+              </template>
+              <strong>ICD-10 Code Required</strong>
+              <div class="text-caption q-mt-xs">
+                You have entered a diagnosis manually. Please enter an ICD-10 code to save this diagnosis. 
+                If the ICD-10 code doesn't exist in the system, it will be automatically added.
+              </div>
+            </q-banner>
             <q-input
               v-model="diagnosisForm.gdrg_code"
               filled
@@ -2409,10 +2425,14 @@ const onDiagnosisSelected = (diagnosis) => {
     
     // Clear ICD-10 selection when DRG diagnosis is selected
     selectedIcd10.value = null;
+    
+    // Clear warning when diagnosis is selected from list
+    showIcd10Warning.value = false;
   } else {
     diagnosisForm.gdrg_code = '';
     diagnosisForm.diagnosis = '';
     // Don't clear ICD-10 if manually entered
+    showIcd10Warning.value = false;
   }
 };
 
@@ -2482,15 +2502,25 @@ const filterIcd10Codes = async (val, update, abort) => {
 };
 
 const onIcd10Selected = async (icd10Item) => {
-  if (icd10Item) {
-    // Auto-fill ICD-10 code and description
-    diagnosisForm.icd10 = icd10Item.icd10_code || '';
-    if (icd10Item.icd10_description && !diagnosisForm.diagnosis) {
-      diagnosisForm.diagnosis = icd10Item.icd10_description;
-    }
-    
-    // Get DRG codes for this ICD-10 code
-    try {
+  if (!icd10Item) {
+    diagnosisForm.icd10 = '';
+    diagnosisForm.gdrg_code = '';
+    diagnosisForm.diagnosis = '';
+    showIcd10Warning.value = false;
+    return;
+  }
+  
+  // Auto-fill ICD-10 code and description
+  diagnosisForm.icd10 = icd10Item.icd10_code || '';
+  if (icd10Item.icd10_description && !diagnosisForm.diagnosis) {
+    diagnosisForm.diagnosis = icd10Item.icd10_description;
+  }
+  
+  // Clear warning when ICD-10 is selected
+  showIcd10Warning.value = false;
+  
+  // Get DRG codes for this ICD-10 code
+  try {
       const response = await priceListAPI.getDrgCodesFromIcd10(icd10Item.icd10_code);
       const drgCodes = response.data || [];
       if (drgCodes.length > 0) {
@@ -2510,9 +2540,6 @@ const onIcd10Selected = async (icd10Item) => {
     
     // Clear DRG diagnosis selection when ICD-10 is selected
     selectedDiagnosis.value = null;
-  } else {
-    // Don't clear form fields if ICD-10 is deselected, allow manual entry
-  }
 };
 
 const selectDrgCode = (drg) => {
@@ -2549,6 +2576,7 @@ const resetDiagnosisForm = () => {
   editingDiagnosisId.value = null;
     selectedDiagnosis.value = null;
   selectedIcd10.value = null;
+  showIcd10Warning.value = false;
     Object.assign(diagnosisForm, {
     encounter_id: encounterStore.currentEncounter?.id || null,
       icd10: '',
@@ -2574,7 +2602,35 @@ watch(showDiagnosisDialog, (isOpen) => {
   }
 });
 
+const showIcd10Warning = ref(false);
+
+const checkDiagnosisInput = () => {
+  // Check if diagnosis is manually typed (not from search) and has no ICD-10 code
+  const isManuallyTyped = diagnosisForm.diagnosis && 
+                          !selectedIcd10.value && 
+                          !selectedDiagnosis.value;
+  const hasNoIcd10 = !diagnosisForm.icd10 || diagnosisForm.icd10.trim() === '';
+  
+  showIcd10Warning.value = isManuallyTyped && hasNoIcd10;
+};
+
 const saveDiagnosis = async () => {
+  // Validate: if diagnosis is manually typed, require ICD-10 code
+  const isManuallyTyped = diagnosisForm.diagnosis && 
+                          !selectedIcd10.value && 
+                          !selectedDiagnosis.value;
+  const hasNoIcd10 = !diagnosisForm.icd10 || diagnosisForm.icd10.trim() === '';
+  
+  if (isManuallyTyped && hasNoIcd10) {
+    $q.notify({
+      type: 'negative',
+      message: 'ICD-10 code is required when entering a diagnosis manually. Please enter an ICD-10 code to save.',
+      position: 'top',
+      timeout: 5000,
+    });
+    return;
+  }
+  
   try {
     if (editingDiagnosisId.value) {
       // Update existing diagnosis

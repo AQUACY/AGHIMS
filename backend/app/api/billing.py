@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Union
 from datetime import datetime
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, get_current_user
 from app.models.user import User
 from app.models.encounter import Encounter
 from app.models.patient import Patient
@@ -615,9 +615,9 @@ def delete_bill(
 def get_encounter_bills(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(get_current_user)  # Allow all authenticated users to view bills
 ):
-    """Get all bills for an encounter"""
+    """Get all bills for an encounter - visible to all users so they can see what patient owes"""
     # Query bills and explicitly refresh to ensure we get the latest data
     bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).order_by(Bill.created_at.desc()).all()
     # Refresh each bill to ensure all attributes are loaded

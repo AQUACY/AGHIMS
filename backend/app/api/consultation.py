@@ -3,6 +3,7 @@ Consultation endpoints (diagnoses, prescriptions, investigations)
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form, Response
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -122,6 +123,7 @@ class PrescriptionResponse(BaseModel):
     prescriber_role: Optional[str] = None  # Role of the prescriber
     confirmed_by: Optional[int] = None
     dispensed_by: Optional[int] = None
+    dispenser_name: Optional[str] = None  # Full name of the dispenser
     confirmed_at: Optional[datetime] = None
     service_date: datetime
     created_at: datetime
@@ -228,22 +230,44 @@ def create_diagnosis(
     if diagnosis_dict.get('icd10') is None:
         diagnosis_dict['icd10'] = ''
     
+    # Auto-add ICD-10 code to system if it doesn't exist
+    icd10_code = diagnosis_dict.get('icd10', '').strip()
+    if icd10_code:
+        # Check if ICD-10 code exists in mappings
+        existing_mapping = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.icd10_code == icd10_code
+        ).first()
+        
+        if not existing_mapping:
+            # Add new ICD-10 code to system (without DRG mapping - unmapped)
+            new_icd10 = ICD10DRGMapping(
+                drg_code='',  # Empty DRG code means unmapped
+                drg_description='',
+                icd10_code=icd10_code,
+                icd10_description=diagnosis_dict.get('diagnosis', '').strip() or '',
+                notes='Auto-added from diagnosis entry',
+                remarks='',
+                is_active=True
+            )
+            db.add(new_icd10)
+            db.flush()  # Flush to get the ID but don't commit yet
+    
     # Auto-map ICD-10 to DRG code if ICD-10 is provided but DRG is not
-    if diagnosis_dict.get('icd10') and not diagnosis_dict.get('gdrg_code'):
-        icd10_code = diagnosis_dict['icd10'].strip()
-        if icd10_code:
-            # Find first DRG code mapped to this ICD-10 code
-            mapping = db.query(ICD10DRGMapping).filter(
-                ICD10DRGMapping.icd10_code == icd10_code,
-                ICD10DRGMapping.is_active == True
-            ).first()
-            
-            if mapping:
-                diagnosis_dict['gdrg_code'] = mapping.drg_code
-                # Optionally update diagnosis description if it's empty
-                if not diagnosis_dict.get('diagnosis') or not diagnosis_dict['diagnosis'].strip():
-                    if mapping.icd10_description:
-                        diagnosis_dict['diagnosis'] = mapping.icd10_description
+    if icd10_code and not diagnosis_dict.get('gdrg_code'):
+        # Find first DRG code mapped to this ICD-10 code (with non-empty DRG code)
+        mapping = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.icd10_code == icd10_code,
+            ICD10DRGMapping.is_active == True,
+            ICD10DRGMapping.drg_code != '',
+            ICD10DRGMapping.drg_code.isnot(None)
+        ).first()
+        
+        if mapping:
+            diagnosis_dict['gdrg_code'] = mapping.drg_code
+            # Optionally update diagnosis description if it's empty
+            if not diagnosis_dict.get('diagnosis') or not diagnosis_dict['diagnosis'].strip():
+                if mapping.icd10_description:
+                    diagnosis_dict['diagnosis'] = mapping.icd10_description
     
     diagnosis = Diagnosis(**diagnosis_dict, created_by=current_user.id)
     db.add(diagnosis)
@@ -432,11 +456,15 @@ def create_prescription(
 
 
 def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionResponse:
-    """Helper function to add prescriber information to a prescription response"""
+    """Helper function to add prescriber and dispenser information to a prescription response"""
     # Get prescriber information
     prescriber = db.query(User).filter(User.id == prescription.prescribed_by).first()
     prescriber_name = prescriber.full_name if prescriber else None
     prescriber_role = prescriber.role if prescriber else None
+    
+    # Get dispenser information
+    dispenser = db.query(User).filter(User.id == prescription.dispensed_by).first() if prescription.dispensed_by else None
+    dispenser_name = dispenser.full_name if dispenser else None
     
     # Create response with prescriber details
     # Convert is_external from integer (0/1) to boolean
@@ -465,6 +493,7 @@ def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionRe
         'prescriber_role': prescriber_role,
         'confirmed_by': prescription.confirmed_by,
         'dispensed_by': prescription.dispensed_by,
+        'dispenser_name': dispenser_name,
         'confirmed_at': prescription.confirmed_at,
         'service_date': prescription.service_date,
         'created_at': prescription.created_at,
@@ -1051,9 +1080,103 @@ def bulk_confirm_investigations(
                     errors.append(f"Only Xray staff can confirm investigation {investigation.id}")
                     continue
             
-            # Confirm the investigation (only if it has an encounter, bill generation happens in single confirm)
+            # Confirm the investigation and generate bill (same logic as single confirm)
             investigation.status = InvestigationStatus.CONFIRMED.value
             investigation.confirmed_by = current_user.id
+            
+            # Generate bill if investigation has an encounter
+            if investigation.encounter_id:
+                from app.models.bill import Bill, BillItem
+                from app.services.price_list_service_v2 import get_price_from_all_tables
+                import random
+                
+                encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
+                if encounter:
+                    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+                    
+                    # Get price for the investigation
+                    unit_price = 0.0
+                    if investigation.gdrg_code:
+                        # Determine service type based on investigation type
+                        service_type = None
+                        if investigation.investigation_type == "lab":
+                            service_type = "Lab"
+                        elif investigation.investigation_type == "scan":
+                            service_type = "Scan"
+                        elif investigation.investigation_type == "xray":
+                            service_type = "X-ray"
+                        
+                        try:
+                            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type)
+                        except Exception as e:
+                            print(f"ERROR bulk_confirm: Failed to get price for investigation {investigation.id}: {e}")
+                            # Fallback to stored price
+                            if investigation.price:
+                                try:
+                                    unit_price = float(investigation.price)
+                                except (ValueError, TypeError):
+                                    unit_price = 0.0
+                    else:
+                        # No gdrg_code, try stored price
+                        if investigation.price:
+                            try:
+                                unit_price = float(investigation.price)
+                            except (ValueError, TypeError):
+                                unit_price = 0.0
+                    
+                    total_price = unit_price
+                    
+                    # Create/add to bill if price > 0
+                    if total_price > 0:
+                        existing_bill = db.query(Bill).filter(
+                            Bill.encounter_id == encounter.id,
+                            Bill.is_paid == False
+                        ).first()
+                        
+                        if existing_bill:
+                            # Check if already in bill
+                            existing_item = db.query(BillItem).filter(
+                                BillItem.bill_id == existing_bill.id,
+                                BillItem.item_code == investigation.gdrg_code,
+                                BillItem.item_name.like(f"%{investigation.procedure_name}%")
+                            ).first()
+                            
+                            if not existing_item:
+                                bill_item = BillItem(
+                                    bill_id=existing_bill.id,
+                                    item_code=investigation.gdrg_code or "MISC",
+                                    item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                                    category=investigation.investigation_type or "procedure",
+                                    quantity=1,
+                                    unit_price=unit_price,
+                                    total_price=total_price
+                                )
+                                db.add(bill_item)
+                                existing_bill.total_amount += total_price
+                        else:
+                            # Create new bill
+                            bill_number = f"BILL-{random.randint(100000, 999999)}"
+                            bill = Bill(
+                                encounter_id=encounter.id,
+                                bill_number=bill_number,
+                                is_insured=is_insured_encounter,
+                                total_amount=total_price,
+                                created_by=current_user.id
+                            )
+                            db.add(bill)
+                            db.flush()
+                            
+                            bill_item = BillItem(
+                                bill_id=bill.id,
+                                item_code=investigation.gdrg_code or "MISC",
+                                item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                                category=investigation.investigation_type or "procedure",
+                                quantity=1,
+                                unit_price=unit_price,
+                                total_price=total_price
+                            )
+                            db.add(bill_item)
+            
             confirmed_count += 1
             
         except Exception as e:
@@ -1647,17 +1770,44 @@ def confirm_investigation(
     investigation.confirmed_by = current_user.id
     
     # Get price for the investigation (co-pay for insured, base rate for cash)
-    # Use the price stored on the investigation, or look it up from price list
+    # Always look up price from price list to ensure correct pricing based on current insurance status
     unit_price = 0.0
-    if investigation.price:
-        try:
-            unit_price = float(investigation.price)
-        except (ValueError, TypeError):
-            unit_price = 0.0
     
-    # If no price stored, look it up from price list using gdrg_code
-    if unit_price == 0.0 and investigation.gdrg_code:
-        unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter)
+    if investigation.gdrg_code:
+        # Determine service type based on investigation type for better price lookup
+        service_type = None
+        if investigation.investigation_type == "lab":
+            service_type = "Lab"
+        elif investigation.investigation_type == "scan":
+            service_type = "Scan"
+        elif investigation.investigation_type == "xray":
+            service_type = "X-ray"
+        
+        # Always look up price from price list to get correct price based on insurance status
+        try:
+            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type)
+            print(f"DEBUG confirm_investigation: Looked up price for gdrg_code='{investigation.gdrg_code}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
+        except Exception as e:
+            print(f"ERROR confirm_investigation: Failed to get price from price list: {e}")
+            # If lookup fails, try using stored price as fallback
+            if investigation.price:
+                try:
+                    unit_price = float(investigation.price)
+                    print(f"DEBUG confirm_investigation: Using stored price as fallback: {unit_price}")
+                except (ValueError, TypeError):
+                    unit_price = 0.0
+    else:
+        # No gdrg_code, try using stored price
+        if investigation.price:
+            try:
+                unit_price = float(investigation.price)
+                print(f"DEBUG confirm_investigation: Using stored price (no gdrg_code): {unit_price}")
+            except (ValueError, TypeError):
+                unit_price = 0.0
+    
+    # If still no price, log warning but continue (bill won't be created)
+    if unit_price == 0.0:
+        print(f"WARNING confirm_investigation: No price found for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}'")
     
     total_price = unit_price  # Investigations are typically quantity 1
     
@@ -2534,8 +2684,12 @@ class AdmissionRecommendationResponse(BaseModel):
     patient_card_number: Optional[str] = None
     patient_gender: Optional[str] = None
     patient_date_of_birth: Optional[str] = None
+    patient_emergency_contact_name: Optional[str] = None
+    patient_emergency_contact_relationship: Optional[str] = None
+    patient_emergency_contact_number: Optional[str] = None
     encounter_created_at: Optional[datetime] = None
     encounter_service_type: Optional[str] = None
+    encounter_ccc_number: Optional[str] = None
     finalized_by_name: Optional[str] = None  # Name of doctor/PA who finalized
     finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
     finalized_at: Optional[datetime] = None  # When consultation was finalized
@@ -2585,6 +2739,9 @@ def get_admission_recommendations(
                         finalized_by_name = finalized_user.full_name
                         finalized_by_role = finalized_user.role
                 
+                # Debug log for emergency contact
+                print(f"Patient {patient.card_number} emergency contact: name={patient.emergency_contact_name}, relationship={patient.emergency_contact_relationship}, number={patient.emergency_contact_number}")
+                
                 result.append({
                     "id": admission.id,
                     "encounter_id": admission.encounter_id,
@@ -2600,15 +2757,19 @@ def get_admission_recommendations(
                     "patient_card_number": patient.card_number,
                     "patient_gender": patient.gender,
                     "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
+                    "patient_emergency_contact_name": patient.emergency_contact_name if patient.emergency_contact_name else None,
+                    "patient_emergency_contact_relationship": patient.emergency_contact_relationship if patient.emergency_contact_relationship else None,
+                    "patient_emergency_contact_number": patient.emergency_contact_number if patient.emergency_contact_number else None,
                     "encounter_created_at": encounter.created_at,
                     "encounter_service_type": encounter.department,
+                    "encounter_ccc_number": encounter.ccc_number if encounter.ccc_number else None,
                     "finalized_by_name": finalized_by_name,
                     "finalized_by_role": finalized_by_role,
                     "finalized_at": encounter.finalized_at,
                     "cancelled": admission.cancelled,
                     "cancelled_by": admission.cancelled_by,
                     "cancelled_at": admission.cancelled_at,
-                    "cancellation_reason": admission.cancellation_reason,
+                    "cancellation_reason": admission.cancellation_reason if admission.cancellation_reason else None,
                 })
             except Exception as e:
                 print(f"Error processing admission {admission.id}: {str(e)}")
@@ -2617,6 +2778,12 @@ def get_admission_recommendations(
                 continue
         
         print(f"Returning {len(result)} admission recommendations")  # Debug log
+        
+        # Debug: Log first admission to check emergency contact fields
+        if result:
+            first_admission = result[0]
+            print(f"First admission emergency contact: name={first_admission.get('patient_emergency_contact_name')}, relationship={first_admission.get('patient_emergency_contact_relationship')}, number={first_admission.get('patient_emergency_contact_number')}")
+        
         return result
     except Exception as e:
         print(f"Error in get_admission_recommendations: {str(e)}")
@@ -2625,15 +2792,27 @@ def get_admission_recommendations(
         raise HTTPException(status_code=500, detail=f"Error fetching admission recommendations: {str(e)}")
 
 
+class ConfirmAdmissionRequest(BaseModel):
+    ccc_number: Optional[str] = None
+    emergency_contact_name: str
+    emergency_contact_relationship: str
+    emergency_contact_number: str
+    bed_id: int
+    doctor_id: int
+
+
 @router.put("/admissions/{admission_id}/confirm")
 def confirm_admission(
     admission_id: int,
+    form_data: ConfirmAdmissionRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
 ):
-    """Confirm an admission recommendation - indicates the patient has been admitted to the ward"""
+    """Confirm an admission recommendation with complete form data"""
     from datetime import datetime
     from app.models.ward_admission import WardAdmission
+    from app.models.bed import Bed
+    from app.models.patient import Patient
     
     admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.id == admission_id).first()
     if not admission:
@@ -2651,16 +2830,62 @@ def confirm_admission(
     if existing_ward_admission:
         raise HTTPException(status_code=400, detail="Patient is already admitted to a ward")
     
+    # Verify bed exists and is available
+    bed = db.query(Bed).filter(Bed.id == form_data.bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    if bed.ward != admission.ward:
+        raise HTTPException(status_code=400, detail=f"Bed does not belong to ward {admission.ward}")
+    
+    if bed.is_occupied:
+        raise HTTPException(status_code=400, detail="Bed is already occupied")
+    
+    # Verify doctor exists
+    doctor = db.query(User).filter(User.id == form_data.doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    # Get encounter to check for existing CCC
+    encounter = db.query(Encounter).filter(Encounter.id == admission.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Use CCC from form or from encounter
+    ccc_to_use = form_data.ccc_number or encounter.ccc_number
+    
+    # Update encounter CCC if provided in form
+    if form_data.ccc_number and not encounter.ccc_number:
+        encounter.ccc_number = form_data.ccc_number
+    
+    # Update patient emergency contact if not already set
+    patient = encounter.patient
+    if patient:
+        if not patient.emergency_contact_name:
+            patient.emergency_contact_name = form_data.emergency_contact_name
+            patient.emergency_contact_relationship = form_data.emergency_contact_relationship
+            patient.emergency_contact_number = form_data.emergency_contact_number
+    
     # Mark admission as confirmed
     admission.confirmed_by = current_user.id
     admission.confirmed_at = datetime.utcnow()
     admission.updated_at = datetime.utcnow()
+    
+    # Mark bed as occupied
+    bed.is_occupied = True
+    bed.updated_at = datetime.utcnow()
     
     # Create ward admission record
     ward_admission = WardAdmission(
         admission_recommendation_id=admission.id,
         encounter_id=admission.encounter_id,
         ward=admission.ward,
+        bed_id=form_data.bed_id,
+        ccc_number=ccc_to_use,
+        emergency_contact_name=form_data.emergency_contact_name,
+        emergency_contact_relationship=form_data.emergency_contact_relationship,
+        emergency_contact_number=form_data.emergency_contact_number,
+        doctor_id=form_data.doctor_id,
         admitted_by=current_user.id,
         admitted_at=datetime.utcnow()
     )
@@ -2669,11 +2894,14 @@ def confirm_admission(
     db.commit()
     db.refresh(admission)
     db.refresh(ward_admission)
+    db.refresh(bed)
     
     return {
         "id": admission.id,
         "encounter_id": admission.encounter_id,
         "ward": admission.ward,
+        "bed_id": ward_admission.bed_id,
+        "doctor_id": ward_admission.doctor_id,
         "confirmed_by": admission.confirmed_by,
         "confirmed_at": admission.confirmed_at,
         "ward_admission_id": ward_admission.id,
@@ -2705,6 +2933,14 @@ def revert_admission_confirmation(
     ).first()
     
     if ward_admission:
+        # Free up the bed
+        if ward_admission.bed_id:
+            from app.models.bed import Bed
+            bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
+            if bed:
+                bed.is_occupied = False
+                bed.updated_at = datetime.utcnow()
+        
         # Delete the ward admission record
         db.delete(ward_admission)
     
@@ -2746,29 +2982,43 @@ class WardAdmissionResponse(BaseModel):
     encounter_service_type: Optional[str] = None
     admitted_by_name: Optional[str] = None
     admitted_by_role: Optional[str] = None
+    
+    # Emergency contact details (from ward_admission or patient)
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = None
+    emergency_contact_number: Optional[str] = None
+    
+    # Admission documentation
+    admission_notes: Optional[str] = None
+    # Note: clinical_review, nurses_notes, nurses_mid_documentation, and vitals are now in separate tables
+    # They will be loaded separately via their respective endpoints
 
 
 @router.get("/ward-admissions", response_model=List[WardAdmissionResponse])
 def get_ward_admissions(
     ward: Optional[str] = None,
+    include_discharged: Optional[bool] = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
 ):
-    """Get ward admissions - only shows active (non-discharged) patients"""
+    """Get ward admissions - by default only shows active (non-discharged) patients"""
     from app.models.ward_admission import WardAdmission
     from app.models.patient import Patient
     
     try:
-        query = db.query(WardAdmission).filter(
-            WardAdmission.discharged_at.is_(None)  # Only active admissions
-        )
+        query = db.query(WardAdmission)
+        
+        # Filter by discharged status
+        if not include_discharged:
+            query = query.filter(WardAdmission.discharged_at.is_(None))  # Only active admissions
         
         # Filter by ward if provided
         if ward:
             query = query.filter(WardAdmission.ward == ward)
         
         ward_admissions = query.options(
-            joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+            joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+            joinedload(WardAdmission.bed)
         ).order_by(WardAdmission.admitted_at.desc()).all()
         
         result = []
@@ -2791,10 +3041,35 @@ def get_ward_admissions(
                         admitted_by_name = admitted_user.full_name
                         admitted_by_role = admitted_user.role
                 
+                # Get discharged_by user info if discharged
+                discharged_by_name = None
+                discharged_by_role = None
+                if ward_admission.discharged_by:
+                    discharged_user = db.query(User).filter(User.id == ward_admission.discharged_by).first()
+                    if discharged_user:
+                        discharged_by_name = discharged_user.full_name
+                        discharged_by_role = discharged_user.role
+                
+                # Get emergency contact directly from patient table
+                # Emergency contact is stored in patient registration, not in ward_admission
+                emergency_contact_name = patient.emergency_contact_name
+                emergency_contact_relationship = patient.emergency_contact_relationship
+                emergency_contact_number = patient.emergency_contact_number
+                
+                # Get bed information
+                bed_number = None
+                if ward_admission.bed_id and ward_admission.bed:
+                    bed_number = ward_admission.bed.bed_number
+                
+                # Debug log for emergency contact
+                print(f"Ward admission {ward_admission.id} - Patient {patient.card_number}: emergency_contact_name={emergency_contact_name}, relationship={emergency_contact_relationship}, number={emergency_contact_number}")
+                
                 result.append({
                     "id": ward_admission.id,
                     "encounter_id": ward_admission.encounter_id,
                     "ward": ward_admission.ward,
+                    "bed_id": ward_admission.bed_id,
+                    "bed_number": bed_number,
                     "admitted_by": ward_admission.admitted_by,
                     "admitted_at": ward_admission.admitted_at,
                     "discharged_at": ward_admission.discharged_at,
@@ -2809,10 +3084,23 @@ def get_ward_admissions(
                     "encounter_service_type": encounter.department,
                     "admitted_by_name": admitted_by_name,
                     "admitted_by_role": admitted_by_role,
+                    "discharged_by_name": discharged_by_name,
+                    "discharged_by_role": discharged_by_role,
+                    "emergency_contact_name": emergency_contact_name,
+                    "emergency_contact_relationship": emergency_contact_relationship,
+                    "emergency_contact_number": emergency_contact_number,
+                    "admission_notes": ward_admission.admission_notes,
+                    # Note: clinical_review, nurses_notes, nurses_mid_documentation, and vitals are now in separate tables
                 })
             except Exception as e:
                 print(f"Error processing ward admission {ward_admission.id}: {str(e)}")
                 continue
+        
+        # Debug: Log first result to check emergency contact fields
+        if result:
+            first_result = result[0]
+            print(f"First ward admission result - emergency contact: name={first_result.get('emergency_contact_name')}, relationship={first_result.get('emergency_contact_relationship')}, number={first_result.get('emergency_contact_number')}")
+            print(f"First result keys: {list(first_result.keys())}")
         
         return result
     except Exception as e:
@@ -2831,6 +3119,7 @@ def discharge_patient(
     """Discharge a patient from the ward"""
     from datetime import datetime
     from app.models.ward_admission import WardAdmission
+    from app.models.bed import Bed
     
     ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
     if not ward_admission:
@@ -2838,6 +3127,13 @@ def discharge_patient(
     
     if ward_admission.discharged_at is not None:
         raise HTTPException(status_code=400, detail="Patient has already been discharged")
+    
+    # Free up the bed
+    if ward_admission.bed_id:
+        bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
+        if bed:
+            bed.is_occupied = False
+            bed.updated_at = datetime.utcnow()
     
     # Mark as discharged
     ward_admission.discharged_at = datetime.utcnow()
@@ -2855,6 +3151,1263 @@ def discharge_patient(
         "discharged_by": ward_admission.discharged_by,
         "message": "Patient discharged successfully"
     }
+
+
+class UpdateAdmissionNotesRequest(BaseModel):
+    notes: Optional[str] = None
+
+
+@router.put("/ward-admissions/{ward_admission_id}/admission-notes")
+def update_admission_notes(
+    ward_admission_id: int,
+    request: UpdateAdmissionNotesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Update admission notes"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot update notes for discharged patient")
+    
+    ward_admission.admission_notes = request.notes
+    ward_admission.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(ward_admission)
+    
+    return {
+        "id": ward_admission.id,
+        "admission_notes": ward_admission.admission_notes,
+        "message": "Admission notes updated successfully"
+    }
+
+
+# Nurse Notes endpoints
+class CreateNurseNoteRequest(BaseModel):
+    notes: str
+
+
+@router.post("/ward-admissions/{ward_admission_id}/nurse-notes")
+def create_nurse_note(
+    ward_admission_id: int,
+    request: CreateNurseNoteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Create a new nurse note"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.nurse_note import NurseNote
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot add notes for discharged patient")
+    
+    nurse_note = NurseNote(
+        ward_admission_id=ward_admission_id,
+        notes=request.notes,
+        created_by=current_user.id
+    )
+    
+    db.add(nurse_note)
+    db.commit()
+    db.refresh(nurse_note)
+    
+    return {
+        "id": nurse_note.id,
+        "ward_admission_id": nurse_note.ward_admission_id,
+        "notes": nurse_note.notes,
+        "created_by": nurse_note.created_by,
+        "created_at": nurse_note.created_at,
+        "message": "Nurse note created successfully"
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/nurse-notes")
+def get_nurse_notes(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all nurse notes for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.nurse_note import NurseNote
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    nurse_notes = db.query(NurseNote).filter(
+        NurseNote.ward_admission_id == ward_admission_id
+    ).order_by(NurseNote.created_at.desc()).all()
+    
+    result = []
+    for note in nurse_notes:
+        creator = db.query(User).filter(User.id == note.created_by).first()
+        strikethrough_by_user = None
+        if note.strikethrough_by:
+            strikethrough_by_user = db.query(User).filter(User.id == note.strikethrough_by).first()
+        
+        result.append({
+            "id": note.id,
+            "notes": note.notes,
+            "created_by": note.created_by,
+            "created_by_name": creator.full_name if creator else None,
+            "created_at": note.created_at,
+            "strikethrough": note.strikethrough,
+            "strikethrough_by": note.strikethrough_by,
+            "strikethrough_by_name": strikethrough_by_user.full_name if strikethrough_by_user else None,
+            "strikethrough_at": note.strikethrough_at,
+        })
+    
+    return result
+
+
+# Nurse Mid Documentation endpoints
+class CreateNurseMidDocumentationRequest(BaseModel):
+    patient_problems_diagnosis: Optional[str] = None
+    aim_of_care: Optional[str] = None
+    nursing_assessment: Optional[str] = None
+    nursing_orders: Optional[str] = None
+    nursing_intervention: Optional[str] = None
+    evaluation: Optional[str] = None
+    documentation: Optional[str] = None  # Keep for backward compatibility
+
+
+@router.post("/ward-admissions/{ward_admission_id}/nurse-mid-documentations")
+def create_nurse_mid_documentation(
+    ward_admission_id: int,
+    request: CreateNurseMidDocumentationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Create a new nurse mid documentation"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.nurse_mid_documentation import NurseMidDocumentation
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot add documentation for discharged patient")
+    
+    nurse_mid_doc = NurseMidDocumentation(
+        ward_admission_id=ward_admission_id,
+        patient_problems_diagnosis=request.patient_problems_diagnosis,
+        aim_of_care=request.aim_of_care,
+        nursing_assessment=request.nursing_assessment,
+        nursing_orders=request.nursing_orders,
+        nursing_intervention=request.nursing_intervention,
+        evaluation=request.evaluation,
+        documentation=request.documentation,  # For backward compatibility
+        created_by=current_user.id
+    )
+    
+    db.add(nurse_mid_doc)
+    db.commit()
+    db.refresh(nurse_mid_doc)
+    
+    return {
+        "id": nurse_mid_doc.id,
+        "ward_admission_id": nurse_mid_doc.ward_admission_id,
+        "patient_problems_diagnosis": nurse_mid_doc.patient_problems_diagnosis,
+        "aim_of_care": nurse_mid_doc.aim_of_care,
+        "nursing_assessment": nurse_mid_doc.nursing_assessment,
+        "nursing_orders": nurse_mid_doc.nursing_orders,
+        "nursing_intervention": nurse_mid_doc.nursing_intervention,
+        "evaluation": nurse_mid_doc.evaluation,
+        "documentation": nurse_mid_doc.documentation,  # For backward compatibility
+        "created_by": nurse_mid_doc.created_by,
+        "created_at": nurse_mid_doc.created_at,
+        "message": "Nurse mid documentation created successfully"
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/nurse-mid-documentations")
+def get_nurse_mid_documentations(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all nurse mid documentations for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.nurse_mid_documentation import NurseMidDocumentation
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    nurse_mid_docs = db.query(NurseMidDocumentation).filter(
+        NurseMidDocumentation.ward_admission_id == ward_admission_id
+    ).order_by(NurseMidDocumentation.created_at.desc()).all()
+    
+    result = []
+    for doc in nurse_mid_docs:
+        creator = db.query(User).filter(User.id == doc.created_by).first()
+        result.append({
+            "id": doc.id,
+            "patient_problems_diagnosis": doc.patient_problems_diagnosis,
+            "aim_of_care": doc.aim_of_care,
+            "nursing_assessment": doc.nursing_assessment,
+            "nursing_orders": doc.nursing_orders,
+            "nursing_intervention": doc.nursing_intervention,
+            "evaluation": doc.evaluation,
+            "documentation": doc.documentation,  # For backward compatibility
+            "created_by": doc.created_by,
+            "created_by_name": creator.full_name if creator else None,
+            "created_at": doc.created_at,
+        })
+    
+    return result
+
+
+@router.put("/ward-admissions/{ward_admission_id}/nurse-mid-documentations/{documentation_id}")
+def update_nurse_mid_documentation(
+    ward_admission_id: int,
+    documentation_id: int,
+    request: CreateNurseMidDocumentationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Update a nurse mid documentation"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.nurse_mid_documentation import NurseMidDocumentation
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    nurse_mid_doc = db.query(NurseMidDocumentation).filter(
+        NurseMidDocumentation.id == documentation_id,
+        NurseMidDocumentation.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not nurse_mid_doc:
+        raise HTTPException(status_code=404, detail="Nurse mid documentation not found")
+    
+    # Check permissions: user can edit their own documentation, admin can edit any
+    if current_user.role != "Admin" and nurse_mid_doc.created_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own documentation. Admin can edit any documentation."
+        )
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot edit documentation for discharged patient")
+    
+    # Update fields
+    nurse_mid_doc.patient_problems_diagnosis = request.patient_problems_diagnosis
+    nurse_mid_doc.aim_of_care = request.aim_of_care
+    nurse_mid_doc.nursing_assessment = request.nursing_assessment
+    nurse_mid_doc.nursing_orders = request.nursing_orders
+    nurse_mid_doc.nursing_intervention = request.nursing_intervention
+    nurse_mid_doc.evaluation = request.evaluation
+    nurse_mid_doc.documentation = request.documentation  # For backward compatibility
+    
+    db.commit()
+    db.refresh(nurse_mid_doc)
+    
+    return {
+        "id": nurse_mid_doc.id,
+        "ward_admission_id": nurse_mid_doc.ward_admission_id,
+        "patient_problems_diagnosis": nurse_mid_doc.patient_problems_diagnosis,
+        "aim_of_care": nurse_mid_doc.aim_of_care,
+        "nursing_assessment": nurse_mid_doc.nursing_assessment,
+        "nursing_orders": nurse_mid_doc.nursing_orders,
+        "nursing_intervention": nurse_mid_doc.nursing_intervention,
+        "evaluation": nurse_mid_doc.evaluation,
+        "documentation": nurse_mid_doc.documentation,  # For backward compatibility
+        "created_by": nurse_mid_doc.created_by,
+        "created_at": nurse_mid_doc.created_at,
+        "message": "Nurse mid documentation updated successfully"
+    }
+
+
+# Inpatient Vitals endpoints
+class CreateInpatientVitalRequest(BaseModel):
+    temperature: Optional[float] = None
+    blood_pressure_systolic: Optional[int] = None
+    blood_pressure_diastolic: Optional[int] = None
+    pulse: Optional[int] = None
+    respiratory_rate: Optional[int] = None
+    oxygen_saturation: Optional[float] = None
+    weight: Optional[float] = None
+    height: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@router.post("/ward-admissions/{ward_admission_id}/vitals")
+def create_inpatient_vital(
+    ward_admission_id: int,
+    request: CreateInpatientVitalRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Create a new vital record for an inpatient"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_vital import InpatientVital
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot add vitals for discharged patient")
+    
+    # Calculate BMI if weight and height are provided
+    bmi = None
+    if request.weight and request.height and request.height > 0:
+        bmi = request.weight / ((request.height / 100) ** 2)
+    
+    vital = InpatientVital(
+        ward_admission_id=ward_admission_id,
+        temperature=request.temperature,
+        blood_pressure_systolic=request.blood_pressure_systolic,
+        blood_pressure_diastolic=request.blood_pressure_diastolic,
+        pulse=request.pulse,
+        respiratory_rate=request.respiratory_rate,
+        oxygen_saturation=request.oxygen_saturation,
+        weight=request.weight,
+        height=request.height,
+        bmi=bmi,
+        notes=request.notes,
+        recorded_by=current_user.id
+    )
+    
+    db.add(vital)
+    db.commit()
+    db.refresh(vital)
+    
+    return {
+        "id": vital.id,
+        "ward_admission_id": vital.ward_admission_id,
+        "temperature": vital.temperature,
+        "blood_pressure_systolic": vital.blood_pressure_systolic,
+        "blood_pressure_diastolic": vital.blood_pressure_diastolic,
+        "pulse": vital.pulse,
+        "respiratory_rate": vital.respiratory_rate,
+        "oxygen_saturation": vital.oxygen_saturation,
+        "weight": vital.weight,
+        "height": vital.height,
+        "bmi": vital.bmi,
+        "notes": vital.notes,
+        "recorded_by": vital.recorded_by,
+        "recorded_at": vital.recorded_at,
+        "message": "Vital record created successfully"
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/vitals")
+def get_inpatient_vitals(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all vital records for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_vital import InpatientVital
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    vitals = db.query(InpatientVital).filter(
+        InpatientVital.ward_admission_id == ward_admission_id
+    ).order_by(InpatientVital.recorded_at.desc()).all()
+    
+    result = []
+    for vital in vitals:
+        recorder = db.query(User).filter(User.id == vital.recorded_by).first()
+        result.append({
+            "id": vital.id,
+            "temperature": vital.temperature,
+            "blood_pressure_systolic": vital.blood_pressure_systolic,
+            "blood_pressure_diastolic": vital.blood_pressure_diastolic,
+            "pulse": vital.pulse,
+            "respiratory_rate": vital.respiratory_rate,
+            "oxygen_saturation": vital.oxygen_saturation,
+            "weight": vital.weight,
+            "height": vital.height,
+            "bmi": vital.bmi,
+            "notes": vital.notes,
+            "recorded_by": vital.recorded_by,
+            "recorded_by_name": recorder.full_name if recorder else None,
+            "recorded_at": vital.recorded_at,
+        })
+    
+    return result
+
+
+@router.put("/ward-admissions/{ward_admission_id}/nurse-notes/{note_id}/strikethrough")
+def toggle_nurse_note_strikethrough(
+    ward_admission_id: int,
+    note_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Toggle strikethrough status of a nurse note"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    from app.models.nurse_note import NurseNote
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    nurse_note = db.query(NurseNote).filter(
+        NurseNote.id == note_id,
+        NurseNote.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not nurse_note:
+        raise HTTPException(status_code=404, detail="Nurse note not found")
+    
+    # Check permissions: user can strikethrough their own notes, admin can strikethrough any
+    if current_user.role != "Admin" and nurse_note.created_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only strikethrough your own notes. Admin can strikethrough any note."
+        )
+    
+    # Toggle strikethrough status
+    if nurse_note.strikethrough == 0:
+        nurse_note.strikethrough = 1
+        nurse_note.strikethrough_by = current_user.id
+        nurse_note.strikethrough_at = datetime.utcnow()
+    else:
+        nurse_note.strikethrough = 0
+        nurse_note.strikethrough_by = None
+        nurse_note.strikethrough_at = None
+    
+    nurse_note.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(nurse_note)
+    
+    return {
+        "id": nurse_note.id,
+        "strikethrough": nurse_note.strikethrough,
+        "message": "Nurse note strikethrough status updated successfully"
+    }
+
+
+# Inpatient Clinical Review endpoints
+class CreateInpatientClinicalReviewRequest(BaseModel):
+    review_notes: Optional[str] = None
+
+
+@router.post("/ward-admissions/{ward_admission_id}/clinical-reviews")
+def create_inpatient_clinical_review(
+    ward_admission_id: int,
+    request: CreateInpatientClinicalReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Create a new clinical review for an inpatient"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot add clinical review for discharged patient")
+    
+    clinical_review = InpatientClinicalReview(
+        ward_admission_id=ward_admission_id,
+        review_notes=request.review_notes,
+        reviewed_by=current_user.id
+    )
+    
+    db.add(clinical_review)
+    db.commit()
+    db.refresh(clinical_review)
+    
+    reviewer = db.query(User).filter(User.id == clinical_review.reviewed_by).first()
+    
+    return {
+        "id": clinical_review.id,
+        "ward_admission_id": clinical_review.ward_admission_id,
+        "review_notes": clinical_review.review_notes,
+        "reviewed_by": clinical_review.reviewed_by,
+        "reviewed_by_name": reviewer.full_name if reviewer else None,
+        "reviewed_at": clinical_review.reviewed_at,
+        "message": "Clinical review created successfully"
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/clinical-reviews")
+def get_inpatient_clinical_reviews(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all clinical reviews for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_reviews = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).order_by(InpatientClinicalReview.reviewed_at.desc()).all()
+    
+    result = []
+    for review in clinical_reviews:
+        reviewer = db.query(User).filter(User.id == review.reviewed_by).first()
+        result.append({
+            "id": review.id,
+            "review_notes": review.review_notes,
+            "reviewed_by": review.reviewed_by,
+            "reviewed_by_name": reviewer.full_name if reviewer else None,
+            "reviewed_at": review.reviewed_at,
+        })
+    
+    return result
+
+
+class DirectAdmissionRequest(BaseModel):
+    """Request for direct admission (without recommendation)"""
+    patient_id: Optional[int] = None
+    patient_card_number: Optional[str] = None
+    ward: str
+    ccc_number: Optional[str] = None
+    emergency_contact_name: str
+    emergency_contact_relationship: str
+    emergency_contact_number: str
+    bed_id: int
+    doctor_id: int
+    admission_notes: Optional[str] = None
+
+
+@router.post("/admissions/direct")
+def create_direct_admission(
+    form_data: DirectAdmissionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Create a direct admission without a recommendation"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    from app.models.bed import Bed
+    from app.models.patient import Patient
+    from app.models.encounter import Encounter, EncounterStatus, Department
+    
+    # Get patient
+    patient = None
+    if form_data.patient_id:
+        patient = db.query(Patient).filter(Patient.id == form_data.patient_id).first()
+    elif form_data.patient_card_number:
+        patient = db.query(Patient).filter(Patient.card_number == form_data.patient_card_number).first()
+    else:
+        raise HTTPException(status_code=400, detail="Either patient_id or patient_card_number must be provided")
+    
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Check if patient is already admitted
+    existing_ward_admission = db.query(WardAdmission).join(Encounter).filter(
+        Encounter.patient_id == patient.id,
+        WardAdmission.discharged_at.is_(None)
+    ).first()
+    
+    if existing_ward_admission:
+        raise HTTPException(status_code=400, detail="Patient is already admitted to a ward")
+    
+    # Verify bed exists and is available
+    bed = db.query(Bed).filter(Bed.id == form_data.bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    if bed.ward != form_data.ward:
+        raise HTTPException(status_code=400, detail=f"Bed does not belong to ward {form_data.ward}")
+    
+    if bed.is_occupied:
+        raise HTTPException(status_code=400, detail="Bed is already occupied")
+    
+    # Verify doctor exists
+    doctor = db.query(User).filter(User.id == form_data.doctor_id).first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    
+    # Create or get existing encounter for this admission
+    # Check for existing non-finalized encounter first
+    encounter = db.query(Encounter).filter(
+        Encounter.patient_id == patient.id,
+        Encounter.status != EncounterStatus.FINALIZED.value
+    ).order_by(Encounter.created_at.desc()).first()
+    
+    if not encounter:
+        # Create new encounter for admission
+        # Use IN_CONSULTATION status for inpatient encounters
+        encounter = Encounter(
+            patient_id=patient.id,
+            department=form_data.ward,  # Use ward as department for inpatient
+            status=EncounterStatus.IN_CONSULTATION.value,
+            ccc_number=form_data.ccc_number,
+            created_by=current_user.id
+        )
+        db.add(encounter)
+        db.flush()  # Get encounter ID
+    
+    # Update encounter CCC if provided
+    if form_data.ccc_number and not encounter.ccc_number:
+        encounter.ccc_number = form_data.ccc_number
+    
+    # Update patient emergency contact if not already set
+    if not patient.emergency_contact_name:
+        patient.emergency_contact_name = form_data.emergency_contact_name
+        patient.emergency_contact_relationship = form_data.emergency_contact_relationship
+        patient.emergency_contact_number = form_data.emergency_contact_number
+    
+    # Create admission recommendation
+    admission_recommendation = AdmissionRecommendation(
+        encounter_id=encounter.id,
+        ward=form_data.ward,
+        recommended_by=current_user.id,
+        confirmed_by=current_user.id,  # Auto-confirm for direct admission
+        confirmed_at=datetime.utcnow()
+    )
+    db.add(admission_recommendation)
+    db.flush()  # Get admission_recommendation ID
+    
+    # Mark bed as occupied
+    bed.is_occupied = True
+    bed.updated_at = datetime.utcnow()
+    
+    # Create ward admission record
+    ward_admission = WardAdmission(
+        admission_recommendation_id=admission_recommendation.id,
+        encounter_id=encounter.id,
+        ward=form_data.ward,
+        bed_id=form_data.bed_id,
+        ccc_number=form_data.ccc_number or encounter.ccc_number,
+        emergency_contact_name=form_data.emergency_contact_name,
+        emergency_contact_relationship=form_data.emergency_contact_relationship,
+        emergency_contact_number=form_data.emergency_contact_number,
+        doctor_id=form_data.doctor_id,
+        admitted_by=current_user.id,
+        admission_notes=form_data.admission_notes,
+        admitted_at=datetime.utcnow()
+    )
+    db.add(ward_admission)
+    
+    db.commit()
+    db.refresh(admission_recommendation)
+    db.refresh(ward_admission)
+    db.refresh(bed)
+    
+    return {
+        "id": admission_recommendation.id,
+        "encounter_id": encounter.id,
+        "ward": form_data.ward,
+        "bed_id": ward_admission.bed_id,
+        "doctor_id": ward_admission.doctor_id,
+        "ward_admission_id": ward_admission.id,
+        "message": "Patient admitted successfully"
+    }
+
+
+def calculate_age(date_of_birth):
+    """Calculate age from date of birth"""
+    if not date_of_birth:
+        return None
+    from datetime import date
+    today = date.today()
+    return today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+
+
+@router.get("/ward-admissions/daily-state/{ward}")
+def get_daily_ward_state(
+    ward: str,
+    date: Optional[str] = None,  # Date in YYYY-MM-DD format, defaults to today
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get daily ward state statistics for a specific ward"""
+    from datetime import datetime, timedelta
+    from app.models.ward_admission import WardAdmission
+    from app.models.ward_transfer import WardTransfer
+    from app.models.bed import Bed
+    
+    # Parse date or use today
+    if date:
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        target_date = datetime.now().date()
+    
+    # Start and end of target date
+    start_of_day = datetime.combine(target_date, datetime.min.time())
+    end_of_day = datetime.combine(target_date, datetime.max.time())
+    
+    # Previous day
+    previous_day = target_date - timedelta(days=1)
+    start_of_previous_day = datetime.combine(previous_day, datetime.min.time())
+    end_of_previous_day = datetime.combine(previous_day, datetime.max.time())
+    
+    # Get all ward admissions for this ward (including discharged)
+    all_admissions = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward
+    ).options(
+        joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+    ).all()
+    
+    # Remained Previous Day: Patients who were admitted before previous day and not discharged by end of previous day
+    remained_previous_day = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward,
+        WardAdmission.admitted_at < start_of_previous_day,
+        or_(
+            WardAdmission.discharged_at.is_(None),
+            WardAdmission.discharged_at > end_of_previous_day
+        )
+    ).count()
+    
+    # New Admissions on target date (not transfers)
+    new_admissions = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward,
+        WardAdmission.admitted_at >= start_of_day,
+        WardAdmission.admitted_at <= end_of_day
+    ).options(
+        joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+    ).all()
+    
+    # Transfers TO this ward on target date (only accepted transfers)
+    transfers_to_ward = db.query(WardTransfer).filter(
+        WardTransfer.to_ward == ward,
+        WardTransfer.status == "accepted",  # Only count accepted transfers
+        WardTransfer.transferred_at >= start_of_day,
+        WardTransfer.transferred_at <= end_of_day
+    ).options(
+        joinedload(WardTransfer.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+    ).all()
+    
+    # Total Admissions = New Admissions + Transfers In
+    total_admissions = len(new_admissions) + len(transfers_to_ward)
+    
+    # Discharges on target date
+    discharges = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward,
+        WardAdmission.discharged_at >= start_of_day,
+        WardAdmission.discharged_at <= end_of_day,
+        WardAdmission.death_recorded_at.is_(None)  # Exclude deaths from discharges
+    ).options(
+        joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+    ).all()
+    
+    # Deaths on target date
+    deaths = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward,
+        WardAdmission.death_recorded_at >= start_of_day,
+        WardAdmission.death_recorded_at <= end_of_day
+    ).options(
+        joinedload(WardAdmission.encounter).joinedload(Encounter.patient)
+    ).all()
+    
+    # Transfers FROM this ward on target date (only accepted transfers)
+    transfers_from_ward = db.query(WardTransfer).filter(
+        WardTransfer.from_ward == ward,
+        WardTransfer.status == "accepted",  # Only count accepted transfers
+        WardTransfer.transferred_at >= start_of_day,
+        WardTransfer.transferred_at <= end_of_day
+    ).count()
+    
+    # Remained at Midnight: Patients admitted before end of day and not discharged/dead by end of day
+    remained_at_midnight = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward,
+        WardAdmission.admitted_at <= end_of_day,
+        or_(
+            WardAdmission.discharged_at.is_(None),
+            WardAdmission.discharged_at > end_of_day
+        ),
+        or_(
+            WardAdmission.death_recorded_at.is_(None),
+            WardAdmission.death_recorded_at > end_of_day
+        )
+    ).count()
+    
+    # Empty Beds: Total beds in ward minus occupied beds
+    total_beds = db.query(Bed).filter(
+        Bed.ward == ward,
+        Bed.is_active == True
+    ).count()
+    
+    occupied_beds = db.query(WardAdmission).filter(
+        WardAdmission.ward == ward,
+        WardAdmission.discharged_at.is_(None),
+        WardAdmission.death_recorded_at.is_(None)
+    ).count()
+    
+    empty_beds = total_beds - occupied_beds
+    
+    # Format admission data
+    admission_data = []
+    for admission in new_admissions:
+        patient = admission.encounter.patient if admission.encounter else None
+        if patient:
+            admission_data.append({
+                "id": admission.id,
+                "office_no": admission.id,  # Using admission ID as office number
+                "name": f"{patient.name} {patient.surname}",
+                "age": calculate_age(patient.date_of_birth) if patient.date_of_birth else None,
+                "gender": patient.gender,
+                "male": 1 if patient.gender and patient.gender.lower() == "male" else 0,
+                "female": 1 if patient.gender and patient.gender.lower() == "female" else 0,
+                "official": 1 if admission.ccc_number else 0,  # Official if has CCC
+                "non_official": 0 if admission.ccc_number else 1,
+            })
+    
+    # Format transfer data
+    transfer_data = []
+    for transfer in transfers_to_ward:
+        patient = transfer.ward_admission.encounter.patient if transfer.ward_admission.encounter else None
+        if patient:
+            transfer_data.append({
+                "id": transfer.id,
+                "office_no": transfer.ward_admission.id,
+                "name": f"{patient.name} {patient.surname}",
+                "age": calculate_age(patient.date_of_birth) if patient.date_of_birth else None,
+                "gender": patient.gender,
+                "male": 1 if patient.gender and patient.gender.lower() == "male" else 0,
+                "female": 1 if patient.gender and patient.gender.lower() == "female" else 0,
+                "official": 1 if transfer.ward_admission.ccc_number else 0,
+                "non_official": 0 if transfer.ward_admission.ccc_number else 1,
+                "from_ward": transfer.from_ward,
+            })
+    
+    # Format discharge data
+    discharge_data = []
+    for discharge in discharges:
+        patient = discharge.encounter.patient if discharge.encounter else None
+        if patient:
+            discharge_data.append({
+                "id": discharge.id,
+                "office_no": discharge.id,
+                "name": f"{patient.name} {patient.surname}",
+                "age": calculate_age(patient.date_of_birth) if patient.date_of_birth else None,
+                "gender": patient.gender,
+                "male": 1 if patient.gender and patient.gender.lower() == "male" else 0,
+                "female": 1 if patient.gender and patient.gender.lower() == "female" else 0,
+                "official": 1 if discharge.ccc_number else 0,
+                "non_official": 0 if discharge.ccc_number else 1,
+            })
+    
+    # Format death data
+    death_data = []
+    for death in deaths:
+        patient = death.encounter.patient if death.encounter else None
+        if patient:
+            death_data.append({
+                "id": death.id,
+                "office_no": death.id,
+                "name": f"{patient.name} {patient.surname}",
+                "age": calculate_age(patient.date_of_birth) if patient.date_of_birth else None,
+                "gender": patient.gender,
+                "male": 1 if patient.gender and patient.gender.lower() == "male" else 0,
+                "female": 1 if patient.gender and patient.gender.lower() == "female" else 0,
+                "official": 1 if death.ccc_number else 0,
+                "non_official": 0 if death.ccc_number else 1,
+            })
+    
+    return {
+        "ward": ward,
+        "date": target_date.isoformat(),
+        "statistics": {
+            "remained_previous_day": remained_previous_day,
+            "new_admissions": len(new_admissions),
+            "transfers_in": len(transfers_to_ward),
+            "total_admissions": total_admissions,
+            "transfers_out": transfers_from_ward,
+            "total_discharges": len(discharges),
+            "total_deaths": len(deaths),
+            "remained_at_midnight": remained_at_midnight,
+            "empty_beds": empty_beds,
+            "total_beds": total_beds,
+            "occupied_beds": occupied_beds,
+        },
+        "admissions": admission_data,
+        "transfers_in": transfer_data,
+        "discharges": discharge_data,
+        "deaths": death_data,
+    }
+
+
+class TransferPatientRequest(BaseModel):
+    """Request to transfer a patient between wards or beds"""
+    ward_admission_id: int
+    from_ward: str
+    to_ward: str
+    bed_id: int
+    transfer_reason: Optional[str] = None
+
+
+@router.post("/ward-admissions/transfer")
+def transfer_patient(
+    form_data: TransferPatientRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Transfer a patient between wards or beds"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    from app.models.ward_transfer import WardTransfer
+    from app.models.bed import Bed
+    
+    # Get the ward admission
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.id == form_data.ward_admission_id
+    ).first()
+    
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at:
+        raise HTTPException(status_code=400, detail="Cannot transfer a discharged patient")
+    
+    if ward_admission.death_recorded_at:
+        raise HTTPException(status_code=400, detail="Cannot transfer a deceased patient")
+    
+    # Verify bed exists and is available (only check if not a ward transfer, as bed will be checked on acceptance)
+    bed = db.query(Bed).filter(Bed.id == form_data.bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    if bed.ward != form_data.to_ward:
+        raise HTTPException(status_code=400, detail=f"Bed does not belong to ward {form_data.to_ward}")
+    
+    # Check if transferring to a different ward
+    is_ward_transfer = form_data.from_ward != form_data.to_ward
+    
+    if not is_ward_transfer:
+        # For same-ward bed transfers, check if bed is available
+        if bed.is_occupied:
+            raise HTTPException(status_code=400, detail="Bed is already occupied")
+    
+    # Check if there's already a pending transfer for this patient
+    if is_ward_transfer:
+        existing_pending_transfer = db.query(WardTransfer).filter(
+            WardTransfer.ward_admission_id == form_data.ward_admission_id,
+            WardTransfer.status == "pending"
+        ).first()
+        
+        if existing_pending_transfer:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Patient already has a pending transfer request. Please wait for it to be accepted or rejected before creating another transfer."
+            )
+    
+    if is_ward_transfer:
+        # For ward transfers, create a pending transfer record
+        # Don't update ward admission or beds yet - wait for acceptance
+        transfer = WardTransfer(
+            ward_admission_id=ward_admission.id,
+            from_ward=form_data.from_ward,
+            to_ward=form_data.to_ward,
+            transfer_reason=form_data.transfer_reason,
+            status="pending",
+            transferred_by=current_user.id,
+            transferred_at=datetime.utcnow()
+        )
+        db.add(transfer)
+        db.commit()
+        db.refresh(transfer)
+        
+        return {
+            "id": transfer.id,
+            "ward_admission_id": ward_admission.id,
+            "from_ward": form_data.from_ward,
+            "to_ward": form_data.to_ward,
+            "bed_id": form_data.bed_id,
+            "status": "pending",
+            "message": "Transfer request created. Waiting for receiving ward to accept."
+        }
+    else:
+        # For same-ward bed transfers, process immediately
+        # Free up the old bed if it exists
+        if ward_admission.bed_id:
+            old_bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
+            if old_bed:
+                old_bed.is_occupied = False
+                old_bed.updated_at = datetime.utcnow()
+        
+        # Mark new bed as occupied
+        bed.is_occupied = True
+        bed.updated_at = datetime.utcnow()
+        
+        # Update ward admission
+        ward_admission.bed_id = form_data.bed_id
+        ward_admission.updated_at = datetime.utcnow()
+        
+        # Create transfer record (auto-accepted for same-ward transfers)
+        transfer = WardTransfer(
+            ward_admission_id=ward_admission.id,
+            from_ward=form_data.from_ward,
+            to_ward=form_data.to_ward,
+            transfer_reason=form_data.transfer_reason,
+            status="accepted",
+            transferred_by=current_user.id,
+            accepted_by=current_user.id,
+            transferred_at=datetime.utcnow(),
+            accepted_at=datetime.utcnow()
+        )
+        db.add(transfer)
+        
+        db.commit()
+        db.refresh(ward_admission)
+        db.refresh(transfer)
+        db.refresh(bed)
+        
+        return {
+            "id": transfer.id,
+            "ward_admission_id": ward_admission.id,
+            "from_ward": form_data.from_ward,
+            "to_ward": form_data.to_ward,
+            "bed_id": form_data.bed_id,
+            "status": "accepted",
+            "message": "Patient transferred successfully"
+        }
+
+
+@router.get("/ward-admissions/pending-transfers")
+def get_pending_transfers(
+    ward: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get pending transfer requests for a ward"""
+    from app.models.ward_transfer import WardTransfer
+    from app.models.ward_admission import WardAdmission
+    
+    query = db.query(WardTransfer).filter(
+        WardTransfer.status == "pending"
+    )
+    
+    if ward:
+        query = query.filter(WardTransfer.to_ward == ward)
+    
+    transfers = query.options(
+        joinedload(WardTransfer.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(WardTransfer.transferrer)
+    ).order_by(WardTransfer.transferred_at.desc()).all()
+    
+    result = []
+    for transfer in transfers:
+        ward_admission = transfer.ward_admission
+        encounter = ward_admission.encounter if ward_admission else None
+        patient = encounter.patient if encounter else None
+        
+        if not patient:
+            continue
+        
+        result.append({
+            "id": transfer.id,
+            "ward_admission_id": ward_admission.id,
+            "from_ward": transfer.from_ward,
+            "to_ward": transfer.to_ward,
+            "transfer_reason": transfer.transfer_reason,
+            "status": transfer.status,
+            "transferred_by_name": transfer.transferrer.full_name if transfer.transferrer else None,
+            "transferred_at": transfer.transferred_at,
+            "patient_name": patient.name,
+            "patient_surname": patient.surname,
+            "patient_card_number": patient.card_number,
+            "patient_gender": patient.gender,
+            "current_ward": ward_admission.ward,
+            "current_bed_id": ward_admission.bed_id,
+        })
+    
+    return result
+
+
+class AcceptTransferRequest(BaseModel):
+    """Request to accept a transfer"""
+    bed_id: int  # Bed to assign in the receiving ward
+
+
+@router.post("/ward-admissions/transfers/{transfer_id}/accept")
+def accept_transfer(
+    transfer_id: int,
+    form_data: AcceptTransferRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Accept a pending transfer request"""
+    from datetime import datetime
+    from app.models.ward_transfer import WardTransfer
+    from app.models.ward_admission import WardAdmission
+    from app.models.bed import Bed
+    
+    # Get the transfer
+    transfer = db.query(WardTransfer).filter(
+        WardTransfer.id == transfer_id
+    ).first()
+    
+    if not transfer:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    
+    if transfer.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Transfer is already {transfer.status}")
+    
+    # Verify the user has permission to accept transfers for the receiving ward
+    # (This is handled by the role requirement, but you could add ward-specific checks)
+    
+    # Get the ward admission
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.id == transfer.ward_admission_id
+    ).first()
+    
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    # Verify bed exists and is available
+    bed = db.query(Bed).filter(Bed.id == form_data.bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    if bed.ward != transfer.to_ward:
+        raise HTTPException(status_code=400, detail=f"Bed does not belong to ward {transfer.to_ward}")
+    
+    if bed.is_occupied:
+        raise HTTPException(status_code=400, detail="Bed is already occupied")
+    
+    # Free up the old bed if it exists
+    if ward_admission.bed_id:
+        old_bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
+        if old_bed:
+            old_bed.is_occupied = False
+            old_bed.updated_at = datetime.utcnow()
+    
+    # Mark new bed as occupied
+    bed.is_occupied = True
+    bed.updated_at = datetime.utcnow()
+    
+    # Update ward admission
+    ward_admission.ward = transfer.to_ward
+    ward_admission.bed_id = form_data.bed_id
+    ward_admission.updated_at = datetime.utcnow()
+    
+    # Update transfer status
+    transfer.status = "accepted"
+    transfer.accepted_by = current_user.id
+    transfer.accepted_at = datetime.utcnow()
+    transfer.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(ward_admission)
+    db.refresh(transfer)
+    db.refresh(bed)
+    
+    return {
+        "id": transfer.id,
+        "ward_admission_id": ward_admission.id,
+        "from_ward": transfer.from_ward,
+        "to_ward": transfer.to_ward,
+        "bed_id": form_data.bed_id,
+        "status": "accepted",
+        "message": "Transfer accepted successfully"
+    }
+
+
+class RejectTransferRequest(BaseModel):
+    """Request to reject a transfer"""
+    rejection_reason: Optional[str] = None
+
+
+@router.post("/ward-admissions/transfers/{transfer_id}/reject")
+def reject_transfer(
+    transfer_id: int,
+    form_data: RejectTransferRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Reject a pending transfer request"""
+    from datetime import datetime
+    from app.models.ward_transfer import WardTransfer
+    
+    # Get the transfer
+    transfer = db.query(WardTransfer).filter(
+        WardTransfer.id == transfer_id
+    ).first()
+    
+    if not transfer:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    
+    if transfer.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Transfer is already {transfer.status}")
+    
+    # Update transfer status
+    transfer.status = "rejected"
+    transfer.rejected_by = current_user.id
+    transfer.rejection_reason = form_data.rejection_reason
+    transfer.rejected_at = datetime.utcnow()
+    transfer.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(transfer)
+    
+    return {
+        "id": transfer.id,
+        "status": "rejected",
+        "message": "Transfer rejected successfully"
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/transfers")
+def get_ward_admission_transfers(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all transfers for a specific ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.ward_transfer import WardTransfer
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    transfers = db.query(WardTransfer).filter(
+        WardTransfer.ward_admission_id == ward_admission_id
+    ).options(
+        joinedload(WardTransfer.transferrer),
+        joinedload(WardTransfer.accepter),
+        joinedload(WardTransfer.rejecter)
+    ).order_by(WardTransfer.transferred_at.desc()).all()
+    
+    result = []
+    for transfer in transfers:
+        result.append({
+            "id": transfer.id,
+            "from_ward": transfer.from_ward,
+            "to_ward": transfer.to_ward,
+            "transfer_reason": transfer.transfer_reason,
+            "status": transfer.status,
+            "transferred_by": transfer.transferred_by,
+            "transferred_by_name": transfer.transferrer.full_name if transfer.transferrer else None,
+            "transferred_at": transfer.transferred_at,
+            "accepted_by": transfer.accepted_by,
+            "accepted_by_name": transfer.accepter.full_name if transfer.accepter else None,
+            "accepted_at": transfer.accepted_at,
+            "rejected_by": transfer.rejected_by,
+            "rejected_by_name": transfer.rejecter.full_name if transfer.rejecter else None,
+            "rejection_reason": transfer.rejection_reason,
+            "rejected_at": transfer.rejected_at,
+        })
+    
+    return result
 
 
 class CancelAdmissionRequest(BaseModel):
@@ -2913,4 +4466,231 @@ def cancel_admission(
         "cancelled_at": admission.cancelled_at,
         "cancellation_reason": admission.cancellation_reason,
         "message": "Admission cancelled successfully"
+    }
+
+
+# Bed management endpoints
+class BedResponse(BaseModel):
+    id: int
+    ward: str
+    bed_number: str
+    is_occupied: bool
+    is_active: bool
+
+
+@router.get("/wards", response_model=List[str])
+def get_wards(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get list of unique wards from admission recommendations"""
+    from sqlalchemy import distinct
+    
+    wards = db.query(distinct(AdmissionRecommendation.ward)).filter(
+        AdmissionRecommendation.ward.isnot(None)
+    ).order_by(AdmissionRecommendation.ward).all()
+    
+    return [ward[0] for ward in wards if ward[0]]
+
+
+@router.get("/beds", response_model=List[BedResponse])
+def get_beds(
+    ward: Optional[str] = None,
+    available_only: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get beds, optionally filtered by ward and availability"""
+    from app.models.bed import Bed
+    
+    query = db.query(Bed).filter(Bed.is_active == True)
+    
+    if ward:
+        query = query.filter(Bed.ward == ward)
+    
+    if available_only:
+        query = query.filter(Bed.is_occupied == False)
+    
+    beds = query.order_by(Bed.bed_number).all()
+    return beds
+
+
+class BedCreate(BaseModel):
+    ward: str
+    bed_number: str
+    is_active: bool = True
+
+
+@router.post("/beds", response_model=BedResponse, status_code=status.HTTP_201_CREATED)
+def create_bed(
+    bed_data: BedCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Create a new bed in the system - Admin only"""
+    from app.models.bed import Bed
+    
+    # Check if bed with same number in same ward already exists
+    existing_bed = db.query(Bed).filter(
+        Bed.ward == bed_data.ward,
+        Bed.bed_number == bed_data.bed_number,
+        Bed.is_active == True
+    ).first()
+    
+    if existing_bed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bed {bed_data.bed_number} already exists in {bed_data.ward}"
+        )
+    
+    bed = Bed(
+        ward=bed_data.ward,
+        bed_number=bed_data.bed_number,
+        is_active=bed_data.is_active,
+        is_occupied=False
+    )
+    db.add(bed)
+    db.commit()
+    db.refresh(bed)
+    
+    return bed
+
+
+@router.put("/beds/{bed_id}", response_model=BedResponse)
+def update_bed(
+    bed_id: int,
+    bed_data: BedCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update a bed - Admin only"""
+    from app.models.bed import Bed
+    
+    bed = db.query(Bed).filter(Bed.id == bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    # Check if bed with same number in same ward already exists (excluding current bed)
+    existing_bed = db.query(Bed).filter(
+        Bed.ward == bed_data.ward,
+        Bed.bed_number == bed_data.bed_number,
+        Bed.id != bed_id,
+        Bed.is_active == True
+    ).first()
+    
+    if existing_bed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bed {bed_data.bed_number} already exists in {bed_data.ward}"
+        )
+    
+    bed.ward = bed_data.ward
+    bed.bed_number = bed_data.bed_number
+    bed.is_active = bed_data.is_active
+    bed.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(bed)
+    
+    return bed
+
+
+@router.delete("/beds/{bed_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bed(
+    bed_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete (soft delete) a bed - Admin only"""
+    from app.models.bed import Bed
+    
+    bed = db.query(Bed).filter(Bed.id == bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    if bed.is_occupied:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete bed that is currently occupied"
+        )
+    
+    # Soft delete
+    bed.is_active = False
+    bed.updated_at = datetime.utcnow()
+    
+    db.commit()
+    
+    return None
+
+
+# Doctor list endpoint
+class DoctorResponse(BaseModel):
+    id: int
+    full_name: str
+    role: str
+    username: str
+
+
+@router.get("/doctors", response_model=List[DoctorResponse])
+def get_doctors(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get list of all doctors"""
+    doctors = db.query(User).filter(
+        User.role.in_(["Doctor", "PA"]),
+        User.is_active == True
+    ).order_by(User.full_name).all()
+    
+    return [
+        {
+            "id": doctor.id,
+            "full_name": doctor.full_name or doctor.username,
+            "role": doctor.role,
+            "username": doctor.username
+        }
+        for doctor in doctors
+    ]
+
+
+# Cancel admission endpoint (for AM page)
+@router.delete("/ward-admissions/{ward_admission_id}")
+def cancel_ward_admission(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Cancel/delete a ward admission - removes all admission records"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    from app.models.bed import Bed
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    # Free up the bed
+    if ward_admission.bed_id:
+        bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
+        if bed:
+            bed.is_occupied = False
+            bed.updated_at = datetime.utcnow()
+    
+    # Revert admission recommendation confirmation
+    admission = db.query(AdmissionRecommendation).filter(
+        AdmissionRecommendation.id == ward_admission.admission_recommendation_id
+    ).first()
+    
+    if admission:
+        admission.confirmed_by = None
+        admission.confirmed_at = None
+        admission.updated_at = datetime.utcnow()
+    
+    # Delete ward admission record
+    db.delete(ward_admission)
+    
+    db.commit()
+    
+    return {
+        "message": "Admission cancelled successfully. All records have been removed."
     }

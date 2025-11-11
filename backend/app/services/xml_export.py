@@ -28,6 +28,23 @@ def format_datetime(dt_obj) -> str:
     return dt_obj.strftime("%Y-%m-%d")
 
 
+def map_type_of_attendance(attendance_type: str) -> str:
+    """Map type of attendance to XML format"""
+    if not attendance_type:
+        return "EAE"
+    
+    attendance_type = attendance_type.strip()
+    
+    # Map Antenatal to ANC and Postnatal to PNC
+    if attendance_type.lower() == "antenatal":
+        return "ANC"
+    elif attendance_type.lower() == "postnatal":
+        return "PNC"
+    
+    # Return original value for other types (EAE, Referral, CFU, etc.)
+    return attendance_type
+
+
 def generate_claim_xml(claims: List[Claim], db: Session) -> str:
     """
     Generate NHIA ClaimIT compatible XML from claims
@@ -119,7 +136,7 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         SubElement(claim_elem, "typeOfService").text = claim.type_of_service
         SubElement(claim_elem, "isUnbundled").text = "1" if claim.is_unbundled else "0"
         SubElement(claim_elem, "includesPharmacy").text = "1" if claim.includes_pharmacy else "0"
-        SubElement(claim_elem, "typeOfAttendance").text = claim.type_of_attendance or "EAE"
+        SubElement(claim_elem, "typeOfAttendance").text = map_type_of_attendance(claim.type_of_attendance)
         SubElement(claim_elem, "serviceOutcome").text = claim.service_outcome or "DISC"
         
         # Service dates

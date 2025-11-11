@@ -124,10 +124,22 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin'] },
       },
       {
+        path: '/claims/generate/:encounterId',
+        name: 'GenerateClaim',
+        component: () => import('../pages/GenerateClaim.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin'] },
+      },
+      {
         path: '/admin/price-list',
         name: 'PriceListManagement',
         component: () => import('../pages/PriceListManagement.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Admin', 'Pharmacy Head'] },
+      },
+      {
+        path: '/admin/icd10-drg-mapping',
+        name: 'Icd10DrgMapping',
+        component: () => import('../pages/Icd10DrgMapping.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Billing', 'Doctor'] },
       },
       {
         path: '/admin/staff',
@@ -160,6 +172,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
+        path: '/ipd/transfer-patient',
+        name: 'TransferPatient',
+        component: () => import('../pages/TransferPatient.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
         path: '/ipd/doctor-nursing-station',
         name: 'DoctorNursingStation',
         component: () => import('../pages/DoctorNursingStation.vue'),
@@ -169,6 +187,36 @@ const routes = [
         path: '/ipd/admission-manager/:id',
         name: 'AdmissionManager',
         component: () => import('../pages/AdmissionManager.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/bed-management',
+        name: 'BedManagement',
+        component: () => import('../pages/BedManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin'] },
+      },
+      {
+        path: '/ipd/registers',
+        name: 'Registers',
+        component: () => import('../pages/Registers.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/daily-ward-state',
+        name: 'DailyWardState',
+        component: () => import('../pages/DailyWardState.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/transfer-acceptance',
+        name: 'TransferAcceptance',
+        component: () => import('../pages/TransferAcceptance.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/nurse-mid-documentation/:id',
+        name: 'NurseMidDocumentation',
+        component: () => import('../pages/NurseMidDocumentation.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
     ],

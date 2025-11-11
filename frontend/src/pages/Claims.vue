@@ -126,53 +126,28 @@
                 @click="reopenClaim(props.row.claim_id)"
                 class="q-mr-xs"
               />
+              <q-btn
+                v-if="props.row.claim_id && (props.row.claim_status === 'draft' || props.row.claim_status === 'reopened')"
+                size="sm"
+                color="info"
+                label="Regenerate"
+                @click="regenerateClaim(props.row)"
+                class="q-mr-xs"
+              />
+              <q-btn
+                v-if="props.row.claim_status === 'finalized'"
+                size="sm"
+                color="primary"
+                label="View"
+                @click="viewClaim(props.row.claim_id)"
+                class="q-mr-xs"
+              />
             </q-td>
           </template>
         </q-table>
       </q-card-section>
     </q-card>
 
-    <!-- Generate Claim Dialog -->
-    <q-dialog v-model="showClaimDialog">
-      <q-card style="min-width: 400px">
-        <q-card-section>
-          <div class="text-h6">{{ editing ? 'Edit Claim' : 'Generate Claim' }}</div>
-        </q-card-section>
-
-        <q-card-section>
-          <q-form @submit="createClaim" class="q-gutter-md">
-            <q-input
-              v-model="claimForm.physician_id"
-              filled
-              label="Physician ID *"
-              lazy-rules
-              :rules="[(val) => !!val || 'Required']"
-            />
-            <q-select
-              v-model="claimForm.type_of_service"
-              :options="['OPD', 'Inpatient']"
-              filled
-              label="Type of Service"
-            />
-            <q-select
-              v-model="claimForm.type_of_attendance"
-              :options="['EAE', 'Referral']"
-              filled
-              label="Type of Attendance"
-            />
-            <q-input
-              v-model="claimForm.specialty_attended"
-              filled
-              label="Specialty Attended"
-            />
-            <div>
-              <q-btn :label="editing ? 'Update' : 'Generate'" type="submit" color="primary" :loading="generating" />
-              <q-btn label="Cancel" flat v-close-popup @click="() => { editing = false; currentClaimId = null; }" />
-            </div>
-          </q-form>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
   </q-page>
 </template>
 
@@ -197,18 +172,6 @@ const finalizedEncounters = ref([]);
 const claimType = ref(null); // 'opd' | 'ipd' | null
 const loading = ref(false);
 
-const showClaimDialog = ref(false);
-const generating = ref(false);
-const editing = ref(false);
-const currentEncounterId = ref(null);
-const currentClaimId = ref(null);
-
-const claimForm = reactive({
-  physician_id: '',
-  type_of_service: 'OPD',
-  type_of_attendance: 'EAE',
-  specialty_attended: 'OPDC',
-});
 
 const columns = [
   { name: 'id', label: 'Encounter ID', field: 'id', align: 'left' },
@@ -283,17 +246,8 @@ const searchEncounter = async () => {
 };
 
 const generateClaim = (encounter) => {
-  currentEncounterId.value = encounter.id;
-  currentClaimId.value = null;
-  editing.value = false;
-  // Reset form
-  Object.assign(claimForm, {
-    physician_id: '',
-    type_of_service: 'OPD',
-    type_of_attendance: 'EAE',
-    specialty_attended: 'OPDC',
-  });
-  showClaimDialog.value = true;
+  // Navigate to generate claim page
+  $router.push(`/claims/generate/${encounter.id}`);
 };
 
 const editClaim = async (encounter) => {
@@ -303,68 +257,6 @@ const editClaim = async (encounter) => {
   $router.push(`/claims/edit/${encounter.claim_id}`);
 };
 
-const createClaim = async () => {
-  if (editing.value && currentClaimId.value) {
-    // Update existing claim
-    generating.value = true;
-    try {
-      const claimData = {
-        encounter_id: currentEncounterId.value,
-        ...claimForm,
-      };
-      
-      await claimsAPI.update(currentClaimId.value, claimData);
-      
-      $q.notify({
-        type: 'positive',
-        message: 'Claim updated successfully',
-      });
-      
-      showClaimDialog.value = false;
-      Object.assign(claimForm, {
-        physician_id: '',
-        type_of_service: 'OPD',
-        type_of_attendance: 'EAE',
-        specialty_attended: 'OPDC',
-      });
-      currentClaimId.value = null;
-      editing.value = false;
-      
-      loadFinalizedEncounters();
-    } catch (error) {
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || 'Failed to update claim',
-      });
-    } finally {
-      generating.value = false;
-    }
-  } else {
-    // Create new claim
-    generating.value = true;
-    try {
-      const claimData = {
-        encounter_id: currentEncounterId.value,
-        ...claimForm,
-      };
-      
-      await claimsStore.createClaim(claimData);
-      showClaimDialog.value = false;
-      Object.assign(claimForm, {
-        physician_id: '',
-        type_of_service: 'OPD',
-        type_of_attendance: 'EAE',
-        specialty_attended: 'OPDC',
-      });
-      
-      loadFinalizedEncounters();
-    } catch (error) {
-      // Error handled in store
-    } finally {
-      generating.value = false;
-    }
-  }
-};
 
 const finalizeClaim = async (claimId) => {
   $q.dialog({
@@ -402,6 +294,11 @@ const exportSingleClaim = async (claimId) => {
   } catch (error) {
     // Error handled in store
   }
+};
+
+const regenerateClaim = (encounter) => {
+  // Navigate to generate claim page (will update existing claim)
+  $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}`);
 };
 
 const loadFinalizedEncounters = async () => {

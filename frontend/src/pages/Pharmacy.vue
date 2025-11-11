@@ -176,6 +176,10 @@
           <div class="text-grey-7 text-caption">Remarks</div>
           <div class="text-body2">{{ vitals.remarks }}</div>
         </div>
+        <div v-if="vitals.recorded_by_name" class="q-mt-md">
+          <div class="text-grey-7 text-caption">Recorded By</div>
+          <div class="text-body2 text-weight-medium">{{ vitals.recorded_by_name }}</div>
+        </div>
       </q-card-section>
     </q-card>
 
@@ -2601,6 +2605,11 @@ const formatReceiptLine = (label, value) => {
 };
 
 const buildReceiptHtml = async () => {
+  // Ensure staff is loaded before building receipt
+  if (Object.keys(staffMap.value).length === 0) {
+    await loadStaff();
+  }
+  
   const now = new Date();
   const diagText = (diagnoses.value || []).map(d => d.diagnosis).filter(Boolean).join('; ');
   const vit = vitals.value || {};
@@ -2645,11 +2654,13 @@ const buildReceiptHtml = async () => {
   // Get prescriber name from first dispensed prescription
   const firstPrescription = dispensedPrescriptions.value[0];
   const prescriberId = firstPrescription?.prescribed_by;
-  const prescriberName = prescriberId ? (staffMap.value[prescriberId] || 'N/A') : 'N/A';
+  const prescriberName = firstPrescription?.prescriber_name || 
+                         (prescriberId ? (staffMap.value[prescriberId] || 'N/A') : 'N/A');
   
   // Get dispenser name from first dispensed prescription
   const dispenserId = firstPrescription?.dispensed_by;
-  const dispenserName = dispenserId ? (staffMap.value[dispenserId] || 'N/A') : 'N/A';
+  const dispenserName = firstPrescription?.dispenser_name || 
+                        (dispenserId ? (staffMap.value[dispenserId] || 'N/A') : 'N/A');
   
   return `<!doctype html>
   <html>
@@ -2757,6 +2768,11 @@ const printBillCard = async () => {
 };
 
 const buildExternalPrescriptionHtml = async () => {
+  // Ensure staff is loaded before building receipt
+  if (Object.keys(staffMap.value).length === 0) {
+    await loadStaff();
+  }
+  
   const now = new Date();
   
   // Get external prescriptions for this encounter
@@ -2770,7 +2786,7 @@ const buildExternalPrescriptionHtml = async () => {
   // Get prescriber name from first prescription
   const firstPrescription = externalPrescs[0];
   const prescriberId = firstPrescription?.prescribed_by;
-  const prescriberName = prescriberId ? (staffMap.value[prescriberId] || 'N/A') : 'N/A';
+  const prescriberName = prescriberId ? (staffMap.value[prescriberId] || firstPrescription?.prescriber_name || 'N/A') : (firstPrescription?.prescriber_name || 'N/A');
   
   // Build medications list
   let itemsHtmlStr = '';

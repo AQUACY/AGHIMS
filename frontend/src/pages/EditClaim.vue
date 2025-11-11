@@ -1,6 +1,19 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md">Edit NHIS Claim Form</div>
+    <div class="text-h4 q-mb-md">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
+    <q-banner
+      v-if="isViewMode"
+      class="bg-info text-white q-mb-md"
+      rounded
+    >
+      <template v-slot:avatar>
+        <q-icon name="info" />
+      </template>
+      <strong>View Mode</strong>
+      <div class="text-caption q-mt-xs">
+        You can edit this finalized claim and save changes or save and finalize again.
+      </div>
+    </q-banner>
 
     <q-card v-if="loading" class="q-pa-md">
       <q-inner-loading showing color="primary" />
@@ -232,7 +245,7 @@
                   v-model="proceduresList[props.row.index].description"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -243,7 +256,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -253,7 +266,7 @@
                   v-model="proceduresList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -278,7 +291,7 @@
                   v-model="diagnosesList[props.row.index].description"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -288,7 +301,7 @@
                   v-model="diagnosesList[props.row.index].icd10"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -298,7 +311,7 @@
                   v-model="diagnosesList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -306,7 +319,7 @@
               <q-td :props="props">
                 <q-checkbox
                   v-model="diagnosesList[props.row.index].is_chief"
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -317,7 +330,18 @@
       <!-- Investigations -->
       <q-card>
         <q-card-section>
-          <div class="text-h6 q-mb-md">Investigations</div>
+          <div class="row items-center q-mb-md">
+            <div class="text-h6">Investigations</div>
+            <q-space />
+            <q-btn
+              v-if="claimStatus !== 'finalized' || isViewMode"
+              size="sm"
+              color="primary"
+              icon="add"
+              label="Add Investigation"
+              @click="addInvestigation"
+            />
+          </div>
           <q-table
             :rows="investigationsList"
             :columns="investigationColumns"
@@ -331,7 +355,7 @@
                   v-model="investigationsList[props.row.index].description"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -342,7 +366,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -352,8 +376,24 @@
                   v-model="investigationsList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  v-if="investigationsList[props.row.index].description && investigationsList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                  size="sm"
+                  color="negative"
+                  icon="delete"
+                  flat
+                  round
+                  dense
+                  @click="deleteInvestigation(props.row.index)"
+                >
+                  <q-tooltip>Delete Investigation</q-tooltip>
+                </q-btn>
               </q-td>
             </template>
           </q-table>
@@ -363,7 +403,18 @@
       <!-- Medicines -->
       <q-card>
         <q-card-section>
-          <div class="text-h6 q-mb-md">Medicines</div>
+          <div class="row items-center q-mb-md">
+            <div class="text-h6">Medicines</div>
+            <q-space />
+            <q-btn
+              v-if="claimStatus !== 'finalized' || isViewMode"
+              size="sm"
+              color="primary"
+              icon="add"
+              label="Add Medicine"
+              @click="addPrescription"
+            />
+          </div>
           <q-table
             :rows="prescriptionsList"
             :columns="prescriptionColumns"
@@ -377,7 +428,7 @@
                   v-model="prescriptionsList[props.row.index].description"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -389,7 +440,7 @@
                   filled
                   type="number"
                   step="0.01"
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                   @update:model-value="updatePrescriptionTotal(props.row.index)"
                 />
               </q-td>
@@ -401,7 +452,7 @@
                   dense
                   filled
                   type="number"
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                   @update:model-value="updatePrescriptionTotal(props.row.index)"
                 />
               </q-td>
@@ -425,7 +476,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
@@ -435,25 +486,39 @@
                   v-model="prescriptionsList[props.row.index].code"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized'"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
             </template>
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
-                <q-btn
-                  v-if="prescriptionsList[props.row.index].description && prescriptionsList[props.row.index].description.trim() !== ''"
-                  size="sm"
-                  color="primary"
-                  icon="edit"
-                  flat
-                  round
-                  dense
-                  @click="openPrescriptionDialog(props.row.index)"
-                  :disable="claimStatus === 'finalized'"
-                >
-                  <q-tooltip>Edit Dose, Frequency & Duration</q-tooltip>
-                </q-btn>
+                <div class="row q-gutter-xs">
+                  <q-btn
+                    v-if="prescriptionsList[props.row.index].description && prescriptionsList[props.row.index].description.trim() !== ''"
+                    size="sm"
+                    color="primary"
+                    icon="edit"
+                    flat
+                    round
+                    dense
+                    @click="openPrescriptionDialog(props.row.index)"
+                    :disable="claimStatus === 'finalized' && !isViewMode"
+                  >
+                    <q-tooltip>Edit Dose, Frequency & Duration</q-tooltip>
+                  </q-btn>
+                  <q-btn
+                    v-if="prescriptionsList[props.row.index].description && prescriptionsList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                    size="sm"
+                    color="negative"
+                    icon="delete"
+                    flat
+                    round
+                    dense
+                    @click="deletePrescription(props.row.index)"
+                  >
+                    <q-tooltip>Delete Medicine</q-tooltip>
+                  </q-btn>
+                </div>
               </q-td>
             </template>
           </q-table>
@@ -504,6 +569,7 @@
       <!-- Action Buttons -->
       <div class="row q-gutter-md q-mt-md">
         <q-btn
+          v-if="!isViewMode"
           type="submit"
           color="primary"
           label="Save Claim"
@@ -511,6 +577,22 @@
           :disable="claimStatus === 'finalized'"
           class="col-12 col-md-3"
         />
+        <template v-else>
+          <q-btn
+            color="primary"
+            label="Save & Finalize"
+            :loading="saving"
+            @click="saveAndFinalize"
+            class="col-12 col-md-3"
+          />
+          <q-btn
+            type="submit"
+            color="secondary"
+            label="Save Changes"
+            :loading="saving"
+            class="col-12 col-md-3"
+          />
+        </template>
         <q-btn
           color="secondary"
           label="Back"
@@ -589,6 +671,8 @@ const loading = ref(true);
 const saving = ref(false);
 const claimId = ref(null);
 const claimStatus = ref('draft');
+const isViewMode = ref(false);
+const route = useRoute();
 
 // Prescription Dialog
 const showPrescriptionDialog = ref(false);
@@ -656,6 +740,9 @@ const outcomeOptions = ['Discharged', 'Died', 'Transferred Out', 'Absconded/Disc
 const attendanceOptions = [
   { label: 'Chronic Follow-up', value: 'CFU' },
   { label: 'Emergency/Acute Episode', value: 'EAE' },
+  { label: 'Referral', value: 'Referral' },
+  { label: 'Antenatal', value: 'Antenatal' },
+  { label: 'Postnatal', value: 'Postnatal' },
 ];
 
 // Procedures
@@ -707,6 +794,7 @@ const investigationColumns = [
   { name: 'description', label: 'Description', field: 'description', align: 'left' },
   { name: 'date', label: 'DATE', field: 'date', align: 'center' },
   { name: 'gdrg', label: 'G-DRG', field: 'gdrg', align: 'left' },
+  { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
 // Prescriptions
@@ -792,6 +880,151 @@ const savePrescriptionDetails = () => {
     type: 'positive',
     message: 'Prescription details saved',
   });
+};
+
+const addInvestigation = () => {
+  // Find first empty slot
+  const emptyIndex = investigationsList.value.findIndex(inv => !inv.description || inv.description.trim() === '');
+  if (emptyIndex !== -1) {
+    // Focus on the empty slot (it already exists)
+    $q.notify({
+      type: 'info',
+      message: 'Please fill in the empty investigation row',
+      timeout: 2000,
+    });
+  } else if (investigationsList.value.length < 10) {
+    // Add new row if we haven't reached the limit
+    investigationsList.value.push({
+      index: investigationsList.value.length,
+      id: null,
+      description: '',
+      date: '',
+      gdrg: ''
+    });
+    $q.notify({
+      type: 'positive',
+      message: 'New investigation row added',
+      timeout: 2000,
+    });
+  } else {
+    $q.notify({
+      type: 'warning',
+      message: 'Maximum of 10 investigations allowed',
+      timeout: 2000,
+    });
+  }
+};
+
+const deleteInvestigation = (index) => {
+  $q.dialog({
+    title: 'Delete Investigation',
+    message: 'Are you sure you want to delete this investigation?',
+    cancel: true,
+    persistent: true
+  }).onOk(() => {
+    investigationsList.value[index].description = '';
+    investigationsList.value[index].date = '';
+    investigationsList.value[index].gdrg = '';
+    investigationsList.value[index].id = null;
+    $q.notify({
+      type: 'positive',
+      message: 'Investigation deleted',
+    });
+  });
+};
+
+const addPrescription = () => {
+  // Find first empty slot
+  const emptyIndex = prescriptionsList.value.findIndex(presc => !presc.description || presc.description.trim() === '');
+  if (emptyIndex !== -1) {
+    // Focus on the empty slot (it already exists)
+    $q.notify({
+      type: 'info',
+      message: 'Please fill in the empty medicine row',
+      timeout: 2000,
+    });
+  } else if (prescriptionsList.value.length < 10) {
+    // Add new row if we haven't reached the limit
+    prescriptionsList.value.push({
+      index: prescriptionsList.value.length,
+      id: null,
+      description: '',
+      code: '',
+      price: 0,
+      quantity: 0,
+      total_cost: 0,
+      date: '',
+      dose: '',
+      frequency: '',
+      duration: '',
+      unparsed: ''
+    });
+    $q.notify({
+      type: 'positive',
+      message: 'New medicine row added',
+      timeout: 2000,
+    });
+  } else {
+    $q.notify({
+      type: 'warning',
+      message: 'Maximum of 10 medicines allowed',
+      timeout: 2000,
+    });
+  }
+};
+
+const deletePrescription = (index) => {
+  $q.dialog({
+    title: 'Delete Medicine',
+    message: 'Are you sure you want to delete this medicine?',
+    cancel: true,
+    persistent: true
+  }).onOk(() => {
+    prescriptionsList.value[index].description = '';
+    prescriptionsList.value[index].code = '';
+    prescriptionsList.value[index].price = 0;
+    prescriptionsList.value[index].quantity = 0;
+    prescriptionsList.value[index].total_cost = 0;
+    prescriptionsList.value[index].date = '';
+    prescriptionsList.value[index].dose = '';
+    prescriptionsList.value[index].frequency = '';
+    prescriptionsList.value[index].duration = '';
+    prescriptionsList.value[index].unparsed = '';
+    prescriptionsList.value[index].id = null;
+    calculateClaimSummary();
+    $q.notify({
+      type: 'positive',
+      message: 'Medicine deleted',
+    });
+  });
+};
+
+const saveAndFinalize = async (e) => {
+  if (e) {
+    e.preventDefault();
+  }
+  // First save the claim
+  await saveClaim(e);
+  // Wait a bit to ensure save completed
+  await new Promise(resolve => setTimeout(resolve, 500));
+  // Then finalize if save was successful and not currently saving
+  if (!saving.value) {
+    try {
+      await claimsAPI.finalize(route.params.claimId);
+      $q.notify({
+        type: 'positive',
+        message: 'Claim saved and finalized successfully',
+      });
+      claimStatus.value = 'finalized';
+      isViewMode.value = false;
+      $router.push('/claims');
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to finalize claim',
+      });
+    }
+  }
 };
 
 const calculateClaimSummary = async () => {
@@ -936,7 +1169,10 @@ const loadClaimData = async () => {
   }
 };
 
-const saveClaim = async () => {
+const saveClaim = async (e) => {
+  if (e) {
+    e.preventDefault();
+  }
   saving.value = true;
   try {
     // Filter out empty entries
@@ -1019,8 +1255,8 @@ const saveClaim = async () => {
   }
 };
 
-onMounted(() => {
-  claimId.value = parseInt($route.params.claimId);
+onMounted(async () => {
+  claimId.value = parseInt(route.params.claimId);
   if (!claimId.value) {
     $q.notify({
       type: 'negative',
@@ -1029,6 +1265,26 @@ onMounted(() => {
     $router.push('/claims');
     return;
   }
+  // Check if in view mode (from query parameter)
+  isViewMode.value = route.query.view === 'true';
+  
+  // If in view mode and claim is finalized, automatically reopen it
+  if (isViewMode.value) {
+    try {
+      const claimResponse = await claimsAPI.get(claimId.value);
+      if (claimResponse.data.status === 'finalized') {
+        await claimsAPI.reopen(claimId.value);
+        $q.notify({
+          type: 'info',
+          message: 'Claim has been reopened for editing',
+          timeout: 3000,
+        });
+      }
+    } catch (error) {
+      console.error('Error checking/reopening claim:', error);
+    }
+  }
+  
   loadClaimData();
 });
 </script>

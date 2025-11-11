@@ -54,6 +54,58 @@
       </q-card-section>
     </q-card>
 
+    <!-- Pending Transfers Section -->
+    <q-card v-if="selectedWard && pendingTransfers.length > 0" class="glass-card q-mb-md" flat bordered>
+      <q-card-section>
+        <div class="text-h6 glass-text q-mb-md">
+          <q-icon name="swap_horiz" color="warning" class="q-mr-sm" />
+          Pending Transfer Requests ({{ pendingTransfers.length }})
+        </div>
+        <q-list bordered separator>
+          <q-item v-for="transfer in pendingTransfers" :key="transfer.id">
+            <q-item-section avatar>
+              <q-avatar icon="person" color="warning" text-color="white" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>
+                {{ transfer.patient_name }} {{ transfer.patient_surname }}
+              </q-item-label>
+              <q-item-label caption>
+                Card: {{ transfer.patient_card_number }} | From: {{ transfer.from_ward }}
+                <span v-if="transfer.transfer_reason"> | Reason: {{ transfer.transfer_reason }}</span>
+              </q-item-label>
+              <q-item-label caption>
+                Transferred by: {{ transfer.transferred_by_name }} at {{ formatDateTime(transfer.transferred_at) }}
+              </q-item-label>
+            </q-item-section>
+            <q-item-section side>
+              <q-btn
+                flat
+                dense
+                icon="check"
+                label="Accept"
+                color="positive"
+                size="sm"
+                @click="acceptTransfer(transfer)"
+                :loading="acceptingTransferId === transfer.id"
+                class="q-mr-sm"
+              />
+              <q-btn
+                flat
+                dense
+                icon="close"
+                label="Reject"
+                color="negative"
+                size="sm"
+                @click="rejectTransfer(transfer)"
+                :loading="rejectingTransferId === transfer.id"
+              />
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </q-card-section>
+    </q-card>
+
     <!-- Ward Patients Cards -->
     <div v-else-if="selectedWard && wardPatients.length > 0">
       <div class="row items-center q-mb-md">
@@ -187,6 +239,94 @@
         </div>
       </div>
     </div>
+
+    <!-- Accept Transfer Dialog -->
+    <q-dialog v-model="showAcceptDialog" persistent>
+      <q-card style="min-width: 400px;">
+        <q-card-section>
+          <div class="text-h6 glass-text">Accept Transfer</div>
+        </q-card-section>
+
+        <q-card-section>
+          <div class="text-body2 text-secondary q-mb-md">
+            Patient: <strong>{{ currentTransfer?.patient_name }} {{ currentTransfer?.patient_surname }}</strong>
+            <br />
+            From: <strong>{{ currentTransfer?.from_ward }}</strong>
+            <br />
+            To: <strong>{{ currentTransfer?.to_ward }}</strong>
+          </div>
+          <q-select
+            v-model="selectedBedId"
+            :options="availableBedsForTransfer"
+            option-label="bed_number"
+            option-value="id"
+            filled
+            label="Select Bed *"
+            :rules="[val => !!val || 'Please select a bed']"
+            emit-value
+            map-options
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.bed_number }}</q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-chip color="positive" text-color="white" size="sm">Available</q-chip>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="primary" @click="showAcceptDialog = false" />
+          <q-btn
+            flat
+            label="Accept Transfer"
+            color="positive"
+            @click="confirmAcceptTransfer"
+            :loading="acceptingTransferId === currentTransfer?.id"
+            :disable="!selectedBedId"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Reject Transfer Dialog -->
+    <q-dialog v-model="showRejectDialog" persistent>
+      <q-card style="min-width: 400px;">
+        <q-card-section>
+          <div class="text-h6 glass-text">Reject Transfer</div>
+        </q-card-section>
+
+        <q-card-section>
+          <div class="text-body2 text-secondary q-mb-md">
+            Patient: <strong>{{ currentTransfer?.patient_name }} {{ currentTransfer?.patient_surname }}</strong>
+            <br />
+            From: <strong>{{ currentTransfer?.from_ward }}</strong>
+          </div>
+          <q-input
+            v-model="rejectionReason"
+            filled
+            type="textarea"
+            label="Rejection Reason (Optional)"
+            rows="3"
+          />
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="primary" @click="showRejectDialog = false" />
+          <q-btn
+            flat
+            label="Reject Transfer"
+            color="negative"
+            @click="confirmRejectTransfer"
+            :loading="rejectingTransferId === currentTransfer?.id"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -202,9 +342,18 @@ const router = useRouter();
 const loading = ref(false);
 const wardPatients = ref([]);
 const allWardPatients = ref([]); // Store all for getting unique wards
+const pendingTransfers = ref([]);
 const filter = ref('');
 const selectedWard = ref(null);
 const dischargingId = ref(null);
+const acceptingTransferId = ref(null);
+const rejectingTransferId = ref(null);
+const showAcceptDialog = ref(false);
+const showRejectDialog = ref(false);
+const currentTransfer = ref(null);
+const availableBedsForTransfer = ref([]);
+const selectedBedId = ref(null);
+const rejectionReason = ref('');
 
 
 // Get unique wards from all ward patients
@@ -259,6 +408,9 @@ const loadWardPatients = async () => {
     }
     
     wardPatients.value = data;
+    
+    // Load pending transfers for this ward
+    await loadPendingTransfers();
   } catch (error) {
     console.error('Error loading ward patients:', error);
     $q.notify({
@@ -271,11 +423,24 @@ const loadWardPatients = async () => {
   }
 };
 
+const loadPendingTransfers = async () => {
+  if (!selectedWard.value) return;
+  
+  try {
+    const response = await consultationAPI.getPendingTransfers(selectedWard.value);
+    pendingTransfers.value = Array.isArray(response.data) ? response.data : [];
+  } catch (error) {
+    console.error('Error loading pending transfers:', error);
+    pendingTransfers.value = [];
+  }
+};
+
 const onWardSelected = () => {
   if (selectedWard.value) {
     loadWardPatients();
   } else {
     wardPatients.value = [];
+    pendingTransfers.value = [];
   }
 };
 
@@ -329,6 +494,91 @@ const viewEncounter = (encounterId) => {
 
 const openAdmissionManager = (patient) => {
   router.push(`/ipd/admission-manager/${patient.id}?encounter_id=${patient.encounter_id}&card_number=${patient.patient_card_number}`);
+};
+
+const acceptTransfer = async (transfer) => {
+  // Load available beds for the receiving ward
+  try {
+    const bedsResponse = await consultationAPI.getBeds(transfer.to_ward, true);
+    availableBedsForTransfer.value = Array.isArray(bedsResponse.data) ? bedsResponse.data : [];
+    
+    if (availableBedsForTransfer.value.length === 0) {
+      $q.notify({
+        type: 'warning',
+        message: 'No available beds in this ward',
+      });
+      return;
+    }
+    
+    currentTransfer.value = transfer;
+    showAcceptDialog.value = true;
+  } catch (error) {
+    console.error('Error loading beds:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load available beds',
+    });
+  }
+};
+
+const confirmAcceptTransfer = async () => {
+  if (!selectedBedId.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select a bed',
+    });
+    return;
+  }
+  
+  acceptingTransferId.value = currentTransfer.value.id;
+  try {
+    await consultationAPI.acceptTransfer(currentTransfer.value.id, selectedBedId.value);
+    $q.notify({
+      type: 'positive',
+      message: 'Transfer accepted successfully',
+    });
+    showAcceptDialog.value = false;
+    selectedBedId.value = null;
+    currentTransfer.value = null;
+    await loadWardPatients(); // Reload to show the new patient
+  } catch (error) {
+    console.error('Error accepting transfer:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to accept transfer',
+    });
+  } finally {
+    acceptingTransferId.value = null;
+  }
+};
+
+const rejectTransfer = (transfer) => {
+  currentTransfer.value = transfer;
+  rejectionReason.value = '';
+  showRejectDialog.value = true;
+};
+
+const confirmRejectTransfer = async () => {
+  rejectingTransferId.value = currentTransfer.value.id;
+  try {
+    await consultationAPI.rejectTransfer(currentTransfer.value.id, rejectionReason.value);
+    $q.notify({
+      type: 'info',
+      message: 'Transfer rejected',
+    });
+    showRejectDialog.value = false;
+    rejectionReason.value = '';
+    currentTransfer.value = null;
+    await loadPendingTransfers(); // Reload pending transfers
+  } catch (error) {
+    console.error('Error rejecting transfer:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to reject transfer',
+    });
+  } finally {
+    rejectingTransferId.value = null;
+  }
 };
 
 onMounted(async () => {

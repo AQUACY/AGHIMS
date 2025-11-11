@@ -178,6 +178,7 @@
                 </template>
                 <template v-else-if="!props.row.confirmed_by">
                   <q-btn
+                    v-if="isAdmin"
                     flat
                     dense
                     icon="check_circle"
@@ -188,6 +189,7 @@
                     :loading="confirmingId === props.row.id"
                   />
                   <q-btn
+                    v-if="isAdmin"
                     flat
                     dense
                     icon="cancel"
@@ -208,6 +210,7 @@
                     Confirmed
                   </q-chip>
                   <q-btn
+                    v-if="isAdmin"
                     flat
                     dense
                     icon="undo"
@@ -218,6 +221,7 @@
                     :loading="revertingId === props.row.id"
                   />
                   <q-btn
+                    v-if="isAdmin"
                     flat
                     dense
                     icon="cancel"
@@ -234,6 +238,264 @@
         </q-table>
       </q-card-section>
     </q-card>
+
+    <!-- Confirm Admission Dialog - Multi-step Form -->
+    <q-dialog v-model="showConfirmDialog" persistent maximized>
+      <q-card style="min-width: 800px; max-width: 1000px;">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 glass-text">
+            Confirm Admission - {{ selectedAdmissionForConfirm?.patient_name }} {{ selectedAdmissionForConfirm?.patient_surname }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section>
+          <q-tabs v-model="currentTab" class="text-primary" align="left">
+            <q-tab name="patient-info" label="Patient Info" icon="person" />
+            <q-tab name="emergency-contact" label="Emergency Contact" icon="contact_phone" />
+            <q-tab name="bed-selection" label="Bed Selection" icon="hotel" />
+            <q-tab name="doctor-selection" label="Under Care Of" icon="medical_services" />
+          </q-tabs>
+
+          <q-separator />
+
+          <q-tab-panels v-model="currentTab" animated>
+            <!-- Tab 1: Patient Info -->
+            <q-tab-panel name="patient-info">
+              <div class="text-h6 q-mb-md glass-text">Patient Information</div>
+              <div class="row q-col-gutter-md">
+                <div class="col-12">
+                  <q-card flat bordered class="q-pa-md">
+                    <div class="row q-col-gutter-md">
+                      <div class="col-12 col-md-6">
+                        <div class="text-body2 text-secondary">Patient Name</div>
+                        <div class="text-body1 glass-text q-mb-md">
+                          <strong>{{ selectedAdmissionForConfirm?.patient_name }} {{ selectedAdmissionForConfirm?.patient_surname }}</strong>
+                        </div>
+                        <div class="text-body2 text-secondary">Card Number</div>
+                        <div class="text-body1 glass-text q-mb-md">
+                          <strong>{{ selectedAdmissionForConfirm?.patient_card_number }}</strong>
+                        </div>
+                        <div class="text-body2 text-secondary">Ward</div>
+                        <div class="text-body1 glass-text q-mb-md">
+                          <strong>{{ selectedAdmissionForConfirm?.ward }}</strong>
+                        </div>
+                        <div v-if="selectedAdmissionForConfirm?.encounter_ccc_number" class="text-body2 text-secondary">
+                          CCC from OPD Encounter
+                        </div>
+                        <div v-if="selectedAdmissionForConfirm?.encounter_ccc_number" class="text-body1 glass-text">
+                          <strong>{{ selectedAdmissionForConfirm.encounter_ccc_number }}</strong>
+                        </div>
+                      </div>
+                      <div class="col-12 col-md-6">
+                        <q-input
+                          v-model="admissionForm.ccc_number"
+                          filled
+                          label="CCC Number"
+                          hint="Auto-populated from OPD encounter if available. For direct admissions, enter if patient has active insurance, otherwise leave blank (cash and carry)."
+                          :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
+                        >
+                          <template v-slot:append>
+                            <q-btn
+                              v-if="admissionForm.ccc_number"
+                              flat
+                              dense
+                              icon="clear"
+                              @click="admissionForm.ccc_number = ''"
+                            />
+                          </template>
+                        </q-input>
+                        <div class="text-caption text-secondary q-mt-xs">
+                          <q-icon name="info" size="16px" class="q-mr-xs" />
+                          If empty from OPD and patient has active insurance, enter CCC number here.
+                        </div>
+                      </div>
+                    </div>
+                  </q-card>
+                </div>
+              </div>
+            </q-tab-panel>
+
+            <!-- Tab 2: Emergency Contact -->
+            <q-tab-panel name="emergency-contact">
+              <div class="text-h6 q-mb-md glass-text">Emergency Contact Details</div>
+              <div class="text-body2 text-secondary q-mb-md">
+                Emergency contact information is required for admission. At least one person must be available to take care of the patient during admission.
+                <br />
+                <span v-if="admissionForm.emergency_contact_name || admissionForm.emergency_contact_relationship || admissionForm.emergency_contact_number">
+                  <q-icon name="info" color="info" class="q-mr-xs" />
+                  <strong>Contact information from patient registration has been pre-filled.</strong> You can edit if needed.
+                </span>
+                <span v-else>
+                  <q-icon name="warning" color="warning" class="q-mr-xs" />
+                  <strong>No emergency contact found in patient registration.</strong> Please provide emergency contact details below.
+                </span>
+              </div>
+              <div class="row q-col-gutter-md">
+                <div class="col-12 col-md-6">
+                  <q-input
+                    v-model="admissionForm.emergency_contact_name"
+                    filled
+                    label="Contact Name *"
+                    :rules="[val => !!val || 'Contact name is required']"
+                    ref="emergencyContactNameRef"
+                  >
+                    <template v-slot:append>
+                      <q-btn
+                        v-if="admissionForm.emergency_contact_name"
+                        flat
+                        dense
+                        icon="clear"
+                        @click="admissionForm.emergency_contact_name = ''"
+                      />
+                    </template>
+                  </q-input>
+                </div>
+                <div class="col-12 col-md-6">
+                  <q-input
+                    v-model="admissionForm.emergency_contact_relationship"
+                    filled
+                    label="Relationship *"
+                    hint="e.g., Spouse, Parent, Sibling, Friend"
+                    :rules="[val => !!val || 'Relationship is required']"
+                    ref="emergencyContactRelationshipRef"
+                  >
+                    <template v-slot:append>
+                      <q-btn
+                        v-if="admissionForm.emergency_contact_relationship"
+                        flat
+                        dense
+                        icon="clear"
+                        @click="admissionForm.emergency_contact_relationship = ''"
+                      />
+                    </template>
+                  </q-input>
+                </div>
+                <div class="col-12">
+                  <q-input
+                    v-model="admissionForm.emergency_contact_number"
+                    filled
+                    label="Contact Number *"
+                    hint="Phone number of emergency contact"
+                    :rules="[val => !!val || 'Contact number is required']"
+                    ref="emergencyContactNumberRef"
+                  >
+                    <template v-slot:append>
+                      <q-btn
+                        v-if="admissionForm.emergency_contact_number"
+                        flat
+                        dense
+                        icon="clear"
+                        @click="admissionForm.emergency_contact_number = ''"
+                      />
+                    </template>
+                  </q-input>
+                </div>
+              </div>
+            </q-tab-panel>
+
+            <!-- Tab 3: Bed Selection -->
+            <q-tab-panel name="bed-selection">
+              <div class="text-h6 q-mb-md glass-text">Bed Selection</div>
+              <div class="text-body2 text-secondary q-mb-md">
+                Select an available bed for {{ selectedAdmissionForConfirm?.ward }}
+              </div>
+              <q-select
+                v-model="admissionForm.bed_id"
+                :options="beds"
+                option-label="bed_number"
+                option-value="id"
+                filled
+                label="Select Bed *"
+                :loading="loadingBeds"
+                :rules="[val => !!val || 'Please select a bed']"
+                emit-value
+                map-options
+                ref="bedSelectRef"
+              >
+                <template v-slot:option="scope">
+                  <q-item v-bind="scope.itemProps">
+                    <q-item-section>
+                      <q-item-label>{{ scope.opt.bed_number }}</q-item-label>
+                      <q-item-label caption>{{ scope.opt.ward }}</q-item-label>
+                    </q-item-section>
+                    <q-item-section side>
+                      <q-chip color="positive" text-color="white" size="sm">Available</q-chip>
+                    </q-item-section>
+                  </q-item>
+                </template>
+                <template v-slot:no-option>
+                  <q-item>
+                    <q-item-section class="text-grey">
+                      No available beds found for this ward
+                    </q-item-section>
+                  </q-item>
+                </template>
+              </q-select>
+            </q-tab-panel>
+
+            <!-- Tab 4: Doctor Selection -->
+            <q-tab-panel name="doctor-selection">
+              <div class="text-h6 q-mb-md glass-text">Under Care Of Doctor</div>
+              <div class="text-body2 text-secondary q-mb-md">
+                Select the doctor who will be responsible for this patient's care
+              </div>
+              <q-select
+                v-model="admissionForm.doctor_id"
+                :options="doctors"
+                option-label="full_name"
+                option-value="id"
+                filled
+                label="Select Doctor *"
+                :loading="loadingDoctors"
+                :rules="[val => !!val || 'Please select a doctor']"
+                emit-value
+                map-options
+                ref="doctorSelectRef"
+              >
+                <template v-slot:option="scope">
+                  <q-item v-bind="scope.itemProps">
+                    <q-item-section>
+                      <q-item-label>{{ scope.opt.full_name }}</q-item-label>
+                      <q-item-label caption>{{ scope.opt.role }}</q-item-label>
+                    </q-item-section>
+                  </q-item>
+                </template>
+              </q-select>
+            </q-tab-panel>
+          </q-tab-panels>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="primary" @click="showConfirmDialog = false" />
+          <q-btn
+            v-if="currentTab !== 'patient-info'"
+            flat
+            label="Previous"
+            color="primary"
+            @click="previousTab"
+          />
+          <q-btn
+            v-if="currentTab !== 'doctor-selection'"
+            flat
+            label="Next"
+            color="primary"
+            @click="nextTab"
+            :disable="!canProceedToNextTab"
+          />
+          <q-btn
+            v-if="currentTab === 'doctor-selection'"
+            flat
+            label="Confirm Admission"
+            color="positive"
+            @click="submitAdmissionConfirmation"
+            :loading="confirmingId !== null"
+            :disable="!isFormValid"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <!-- Cancel Admission Dialog -->
     <q-dialog v-model="showCancelDialog" persistent>
@@ -282,9 +544,15 @@ import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
 const router = useRouter();
+const authStore = useAuthStore();
+
+const isAdmin = computed(() => {
+  return authStore.user?.role === 'Admin';
+});
 
 const loading = ref(false);
 const admissions = ref([]);
@@ -297,6 +565,22 @@ const cancellingId = ref(null);
 const cancelReason = ref('');
 const showCancelDialog = ref(false);
 const selectedAdmissionForCancel = ref(null);
+const showConfirmDialog = ref(false);
+const selectedAdmissionForConfirm = ref(null);
+const currentTab = ref('patient-info');
+const beds = ref([]);
+const doctors = ref([]);
+const loadingBeds = ref(false);
+const loadingDoctors = ref(false);
+
+const admissionForm = ref({
+  ccc_number: '',
+  emergency_contact_name: '',
+  emergency_contact_relationship: '',
+  emergency_contact_number: '',
+  bed_id: null,
+  doctor_id: null,
+});
 
 const pagination = ref({
   sortBy: 'created_at',
@@ -399,6 +683,18 @@ const loadAdmissions = async () => {
       data = response.data.data;
     }
     
+    // Debug: Check emergency contact data for specific card
+    const testCard = 'ER-A25-AAA0002';
+    const testAdmission = data.find(a => a.patient_card_number === testCard);
+    if (testAdmission) {
+      console.log(`Emergency contact data for ${testCard}:`, {
+        patient_emergency_contact_name: testAdmission.patient_emergency_contact_name,
+        patient_emergency_contact_relationship: testAdmission.patient_emergency_contact_relationship,
+        patient_emergency_contact_number: testAdmission.patient_emergency_contact_number,
+        fullAdmission: testAdmission
+      });
+    }
+    
     allAdmissions.value = data;
     admissions.value = data;
     
@@ -428,32 +724,69 @@ const onSearchChange = () => {
   pagination.value.page = 1;
 };
 
-const confirmAdmission = async (admission) => {
-  $q.dialog({
-    title: 'Confirm Admission',
-    message: `Are you sure you want to confirm admission for ${admission.patient_name} ${admission.patient_surname} to ${admission.ward}?`,
-    cancel: true,
-    persistent: true
-  }).onOk(async () => {
-    confirmingId.value = admission.id;
-    try {
-      await consultationAPI.confirmAdmission(admission.id);
-      $q.notify({
-        type: 'positive',
-        message: 'Admission confirmed successfully',
-      });
-      // Reload admissions to get updated status
-      await loadAdmissions();
-    } catch (error) {
-      console.error('Error confirming admission:', error);
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || 'Failed to confirm admission',
-      });
-    } finally {
-      confirmingId.value = null;
-    }
+const confirmAdmission = (admission) => {
+  selectedAdmissionForConfirm.value = admission;
+  
+  // Debug: Log the full admission object
+  console.log('Full admission object:', JSON.stringify(admission, null, 2));
+  console.log('Emergency contact fields:', {
+    name: admission.patient_emergency_contact_name,
+    relationship: admission.patient_emergency_contact_relationship,
+    number: admission.patient_emergency_contact_number,
+    nameType: typeof admission.patient_emergency_contact_name,
+    nameValue: admission.patient_emergency_contact_name
   });
+  
+  // Auto-populate CCC from encounter if available
+  // For OPD cases: use encounter CCC if exists, otherwise leave empty (can be filled if patient has insurance)
+  // For direct admissions: leave empty (can be filled if patient has active insurance)
+  
+  // Auto-populate emergency contact from patient registration if available
+  // Check if patient has emergency contact details from registration
+  const hasEmergencyContactFromRegistration = !!(
+    admission.patient_emergency_contact_name ||
+    admission.patient_emergency_contact_relationship ||
+    admission.patient_emergency_contact_number
+  );
+  
+  // Auto-populate emergency contact from patient registration if available
+  // Handle null, undefined, and empty strings properly
+  const emergencyContactName = (admission.patient_emergency_contact_name && typeof admission.patient_emergency_contact_name === 'string') 
+    ? admission.patient_emergency_contact_name.trim() 
+    : (admission.patient_emergency_contact_name || '');
+  const emergencyContactRelationship = (admission.patient_emergency_contact_relationship && typeof admission.patient_emergency_contact_relationship === 'string')
+    ? admission.patient_emergency_contact_relationship.trim()
+    : (admission.patient_emergency_contact_relationship || '');
+  const emergencyContactNumber = (admission.patient_emergency_contact_number && typeof admission.patient_emergency_contact_number === 'string')
+    ? admission.patient_emergency_contact_number.trim()
+    : (admission.patient_emergency_contact_number || '');
+  
+  admissionForm.value = {
+    ccc_number: (admission.encounter_ccc_number && typeof admission.encounter_ccc_number === 'string') 
+      ? admission.encounter_ccc_number.trim() 
+      : (admission.encounter_ccc_number || ''), // Auto-populate from OPD encounter if exists
+    emergency_contact_name: emergencyContactName, // Auto-populate from patient registration
+    emergency_contact_relationship: emergencyContactRelationship, // Auto-populate from patient registration
+    emergency_contact_number: emergencyContactNumber, // Auto-populate from patient registration
+    bed_id: null,
+    doctor_id: null,
+  };
+  
+  // Log for debugging
+  console.log('Admission data for card:', admission.patient_card_number, {
+    raw_emergency_contact_name: admission.patient_emergency_contact_name,
+    raw_emergency_contact_relationship: admission.patient_emergency_contact_relationship,
+    raw_emergency_contact_number: admission.patient_emergency_contact_number,
+    processed_emergency_contact_name: emergencyContactName,
+    processed_emergency_contact_relationship: emergencyContactRelationship,
+    processed_emergency_contact_number: emergencyContactNumber,
+    hasEmergencyContactFromRegistration,
+    formValues: admissionForm.value
+  });
+  
+  currentTab.value = 'patient-info';
+  showConfirmDialog.value = true;
+  loadBedsAndDoctors(admission.ward);
 };
 
 const revertConfirmation = async (admission) => {
@@ -532,6 +865,147 @@ const showCancellationReason = (admission) => {
     html: true,
     persistent: true
   });
+};
+
+const loadBedsAndDoctors = async (ward) => {
+  loadingBeds.value = true;
+  loadingDoctors.value = true;
+  try {
+    // Load available beds for the ward
+    const bedsResponse = await consultationAPI.getBeds(ward, true);
+    beds.value = Array.isArray(bedsResponse.data) ? bedsResponse.data : [];
+    
+    // Load doctors
+    const doctorsResponse = await consultationAPI.getDoctors();
+    doctors.value = Array.isArray(doctorsResponse.data) ? doctorsResponse.data : [];
+  } catch (error) {
+    console.error('Error loading beds/doctors:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load beds or doctors',
+    });
+  } finally {
+    loadingBeds.value = false;
+    loadingDoctors.value = false;
+  }
+};
+
+const canProceedToNextTab = computed(() => {
+  if (currentTab.value === 'patient-info') {
+    // Can proceed if CCC is provided or not required
+    return true;
+  } else if (currentTab.value === 'emergency-contact') {
+    // Must have all emergency contact fields
+    return !!(
+      admissionForm.value.emergency_contact_name &&
+      admissionForm.value.emergency_contact_relationship &&
+      admissionForm.value.emergency_contact_number
+    );
+  } else if (currentTab.value === 'bed-selection') {
+    // Must select a bed
+    return !!admissionForm.value.bed_id;
+  } else if (currentTab.value === 'doctor-selection') {
+    // Must select a doctor
+    return !!admissionForm.value.doctor_id;
+  }
+  return false;
+});
+
+const isFormValid = computed(() => {
+  // Check all mandatory fields are completed
+  const hasEmergencyContact = !!(
+    admissionForm.value.emergency_contact_name &&
+    admissionForm.value.emergency_contact_relationship &&
+    admissionForm.value.emergency_contact_number
+  );
+  const hasBed = !!admissionForm.value.bed_id;
+  const hasDoctor = !!admissionForm.value.doctor_id;
+  
+  return hasEmergencyContact && hasBed && hasDoctor;
+});
+
+const nextTab = () => {
+  if (currentTab.value === 'patient-info') {
+    currentTab.value = 'emergency-contact';
+  } else if (currentTab.value === 'emergency-contact') {
+    currentTab.value = 'bed-selection';
+  } else if (currentTab.value === 'bed-selection') {
+    currentTab.value = 'doctor-selection';
+  }
+};
+
+const previousTab = () => {
+  if (currentTab.value === 'doctor-selection') {
+    currentTab.value = 'bed-selection';
+  } else if (currentTab.value === 'bed-selection') {
+    currentTab.value = 'emergency-contact';
+  } else if (currentTab.value === 'emergency-contact') {
+    currentTab.value = 'patient-info';
+  }
+};
+
+const submitAdmissionConfirmation = async () => {
+  // Validate all mandatory fields before submission
+  if (!isFormValid.value) {
+    const missingFields = [];
+    
+    if (!admissionForm.value.emergency_contact_name || 
+        !admissionForm.value.emergency_contact_relationship || 
+        !admissionForm.value.emergency_contact_number) {
+      missingFields.push('Emergency Contact');
+    }
+    if (!admissionForm.value.bed_id) {
+      missingFields.push('Bed Selection');
+    }
+    if (!admissionForm.value.doctor_id) {
+      missingFields.push('Doctor Selection');
+    }
+    
+    $q.notify({
+      type: 'negative',
+      message: `Cannot save admission. Please complete all required fields: ${missingFields.join(', ')}`,
+      timeout: 5000,
+      position: 'top',
+    });
+    
+    // Navigate to the first tab with missing fields
+    if (!admissionForm.value.emergency_contact_name || 
+        !admissionForm.value.emergency_contact_relationship || 
+        !admissionForm.value.emergency_contact_number) {
+      currentTab.value = 'emergency-contact';
+    } else if (!admissionForm.value.bed_id) {
+      currentTab.value = 'bed-selection';
+    } else if (!admissionForm.value.doctor_id) {
+      currentTab.value = 'doctor-selection';
+    }
+    
+    return;
+  }
+
+  const admission = selectedAdmissionForConfirm.value;
+  if (!admission) return;
+
+  confirmingId.value = admission.id;
+  try {
+    await consultationAPI.confirmAdmission(admission.id, admissionForm.value);
+    $q.notify({
+      type: 'positive',
+      message: 'Admission confirmed successfully',
+    });
+    showConfirmDialog.value = false;
+    selectedAdmissionForConfirm.value = null;
+    currentTab.value = 'patient-info';
+    // Reload admissions to get updated status
+    await loadAdmissions();
+  } catch (error) {
+    console.error('Error confirming admission:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm admission',
+    });
+  } finally {
+    confirmingId.value = null;
+  }
 };
 
 const formatDate = (dateString) => {

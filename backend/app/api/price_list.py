@@ -283,34 +283,56 @@ async def upload_icd10_drg_mapping(
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """
-    Upload ICD-10 to DRG code mapping from CSV file
+    Upload ICD-10 to DRG code mapping from CSV or Excel file
     
-    CSV should have columns:
+    File should have columns:
     DRG Code, DRG Description, ICD-10 Code, ICD-10 Description, Notes, Remarks
     
-    This will create mappings between ICD-10 codes and existing DRG codes
-    without modifying any prices in the price list tables.
+    This will:
+    - Update existing mappings (matched by DRG Code + ICD-10 Code)
+    - Create new mappings for combinations that don't exist
+    - Set is_active to True for all imported mappings
     """
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="File must be a CSV file")
+    import pandas as pd
     
-    # Read CSV content
+    is_excel = file.filename.endswith(('.xlsx', '.xls'))
+    is_csv = file.filename.endswith('.csv')
+    
+    if not (is_excel or is_csv):
+        raise HTTPException(status_code=400, detail="File must be a CSV or Excel file (.csv, .xlsx, .xls)")
+    
+    # Read file content
     content = await file.read()
-    try:
-        text_content = content.decode('utf-8')
-    except UnicodeDecodeError:
+    
+    # Parse Excel or CSV
+    if is_excel:
+        # Read Excel file
         try:
-            text_content = content.decode('latin-1')
+            df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
+            # Convert DataFrame to list of dictionaries
+            rows = df.to_dict('records')
+            # Get column names
+            fieldnames = list(df.columns)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error reading Excel file: {str(e)}")
+    else:
+        # Read CSV
+        try:
+            text_content = content.decode('utf-8')
         except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="Unable to decode CSV file. Please ensure it's UTF-8 or Latin-1 encoded.")
+            try:
+                text_content = content.decode('latin-1')
+            except UnicodeDecodeError:
+                raise HTTPException(status_code=400, detail="Unable to decode CSV file. Please ensure it's UTF-8 or Latin-1 encoded.")
+        
+        # Parse CSV
+        csv_reader = csv.DictReader(io.StringIO(text_content))
+        rows = list(csv_reader)
+        fieldnames = csv_reader.fieldnames if csv_reader.fieldnames else []
     
-    # Parse CSV
-    csv_reader = csv.DictReader(io.StringIO(text_content))
-    
-    # Get CSV column names for debugging and normalization
-    fieldnames = csv_reader.fieldnames
+    # Validate file has columns
     if not fieldnames:
-        raise HTTPException(status_code=400, detail="CSV file appears to be empty or invalid")
+        raise HTTPException(status_code=400, detail="File appears to be empty or invalid")
     
     # Normalize column names - strip whitespace and handle BOM
     normalized_columns = {}
@@ -318,7 +340,7 @@ async def upload_icd10_drg_mapping(
         normalized = col.strip().strip('\ufeff')  # Strip BOM if present
         normalized_columns[normalized] = col
     
-    print(f"CSV columns found: {fieldnames}")
+    print(f"File columns found: {fieldnames}")
     print(f"Normalized columns: {list(normalized_columns.keys())}")
     
     # Helper function to find column by multiple possible names (case-insensitive, handles spaces)
@@ -331,18 +353,14 @@ async def upload_icd10_drg_mapping(
                     return actual_key
         return None
     
-    # Validate CSV has data rows
-    csv_reader = csv.DictReader(io.StringIO(text_content))
-    row_count = sum(1 for row in csv_reader)
+    # Validate file has data rows
+    if len(rows) == 0:
+        raise HTTPException(status_code=400, detail="File appears to have no data rows")
     
-    if row_count == 0:
-        raise HTTPException(status_code=400, detail="CSV file appears to have no data rows")
-    
-    # Create a test reader to check first data row
-    test_reader = csv.DictReader(io.StringIO(text_content))
-    test_row = next(test_reader, None)
+    # Get first row for validation
+    test_row = rows[0] if rows else None
     if test_row is None:
-        raise HTTPException(status_code=400, detail="CSV file has no data rows")
+        raise HTTPException(status_code=400, detail="File has no data rows")
     
     # Check if we can find DRG Code column (including d_drg_code variant)
     drg_code_test = find_column_key(test_row, ['DRG Code', 'drg_code', 'DRG_Code', 'drg code', 'DRGCODE', 'd_drg_code', 'D_DRG_Code', 'D_DRG_CODE'])
@@ -351,9 +369,6 @@ async def upload_icd10_drg_mapping(
             status_code=400,
             detail=f"Could not find 'DRG Code' column. Available columns: {list(test_row.keys())}. Please ensure your CSV has a 'DRG Code' column."
         )
-    
-    # Reset CSV reader to start from beginning
-    csv_reader = csv.DictReader(io.StringIO(text_content))
     
     results = {
         "success": [],
@@ -364,7 +379,7 @@ async def upload_icd10_drg_mapping(
     }
     
     row_num = 0
-    for row in csv_reader:
+    for row in rows:
         row_num += 1
         results["total"] += 1
         
@@ -386,12 +401,22 @@ async def upload_icd10_drg_mapping(
                 })
                 continue
             
-            drg_code_value = str(row[drg_code]).strip()
-            drg_desc_value = row.get(drg_description, '').strip() if drg_description else ''
-            icd10_code_value = row.get(icd10_code, '').strip() if icd10_code else ''
-            icd10_desc_value = row.get(icd10_description, '').strip() if icd10_description else ''
-            notes_value = row.get(notes, '').strip() if notes else ''
-            remarks_value = row.get(remarks, '').strip() if remarks else ''
+            # Handle both dict (CSV) and pandas Series (Excel) row types
+            def get_value(row, key):
+                if key is None:
+                    return ''
+                if isinstance(row, dict):
+                    return str(row.get(key, '')).strip() if row.get(key) is not None else ''
+                else:
+                    # pandas Series
+                    return str(row.get(key, '')).strip() if pd.notna(row.get(key)) else ''
+            
+            drg_code_value = get_value(row, drg_code)
+            drg_desc_value = get_value(row, drg_description)
+            icd10_code_value = get_value(row, icd10_code)
+            icd10_desc_value = get_value(row, icd10_description)
+            notes_value = get_value(row, notes)
+            remarks_value = get_value(row, remarks)
             
             # Skip rows without ICD-10 code
             if not icd10_code_value:
@@ -727,6 +752,412 @@ def get_drg_codes_from_icd10(
         })
     
     return results
+
+
+@router.get("/drg-codes/search")
+def search_drg_codes(
+    search_term: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Scan", "Xray", "Claims"]))
+):
+    """Search DRG codes across all sources (procedures, surgeries, unmapped DRG, and existing mappings)"""
+    from sqlalchemy import or_
+    
+    # Collect DRG codes from all sources
+    drg_codes_map = {}  # {drg_code: {code, description}}
+    
+    # 1. From ProcedurePrice
+    if search_term:
+        procedures = db.query(ProcedurePrice).filter(
+            ProcedurePrice.g_drg_code.ilike(f"%{search_term}%"),
+            ProcedurePrice.is_active == True
+        ).distinct(ProcedurePrice.g_drg_code).limit(limit).all()
+    else:
+        procedures = db.query(ProcedurePrice).filter(
+            ProcedurePrice.is_active == True
+        ).distinct(ProcedurePrice.g_drg_code).limit(limit).all()
+    
+    for proc in procedures:
+        if proc.g_drg_code:
+            drg_codes_map[proc.g_drg_code] = {
+                "drg_code": proc.g_drg_code,
+                "drg_description": proc.service_name or ""
+            }
+    
+    # 2. From SurgeryPrice
+    if search_term:
+        surgeries = db.query(SurgeryPrice).filter(
+            SurgeryPrice.g_drg_code.ilike(f"%{search_term}%"),
+            SurgeryPrice.is_active == True
+        ).distinct(SurgeryPrice.g_drg_code).limit(limit).all()
+    else:
+        surgeries = db.query(SurgeryPrice).filter(
+            SurgeryPrice.is_active == True
+        ).distinct(SurgeryPrice.g_drg_code).limit(limit).all()
+    
+    for surg in surgeries:
+        if surg.g_drg_code:
+            if surg.g_drg_code not in drg_codes_map or not drg_codes_map[surg.g_drg_code]["drg_description"]:
+                drg_codes_map[surg.g_drg_code] = {
+                    "drg_code": surg.g_drg_code,
+                    "drg_description": surg.service_name or ""
+                }
+    
+    # 3. From UnmappedDRGPrice
+    if search_term:
+        unmapped = db.query(UnmappedDRGPrice).filter(
+            UnmappedDRGPrice.g_drg_code.ilike(f"%{search_term}%"),
+            UnmappedDRGPrice.is_active == True
+        ).distinct(UnmappedDRGPrice.g_drg_code).limit(limit).all()
+    else:
+        unmapped = db.query(UnmappedDRGPrice).filter(
+            UnmappedDRGPrice.is_active == True
+        ).distinct(UnmappedDRGPrice.g_drg_code).limit(limit).all()
+    
+    for unm in unmapped:
+        if unm.g_drg_code:
+            if unm.g_drg_code not in drg_codes_map or not drg_codes_map[unm.g_drg_code]["drg_description"]:
+                drg_codes_map[unm.g_drg_code] = {
+                    "drg_code": unm.g_drg_code,
+                    "drg_description": unm.service_name or ""
+                }
+    
+    # 4. From ICD10DRGMapping (existing mappings)
+    if search_term:
+        mappings = db.query(ICD10DRGMapping).filter(
+            or_(
+                ICD10DRGMapping.drg_code.ilike(f"%{search_term}%"),
+                ICD10DRGMapping.drg_description.ilike(f"%{search_term}%")
+            ),
+            ICD10DRGMapping.is_active == True
+        ).distinct(ICD10DRGMapping.drg_code).limit(limit).all()
+    else:
+        mappings = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.is_active == True
+        ).distinct(ICD10DRGMapping.drg_code).limit(limit).all()
+    
+    for mapping in mappings:
+        if mapping.drg_code:
+            if mapping.drg_code not in drg_codes_map or not drg_codes_map[mapping.drg_code]["drg_description"]:
+                drg_codes_map[mapping.drg_code] = {
+                    "drg_code": mapping.drg_code,
+                    "drg_description": mapping.drg_description or ""
+                }
+    
+    # Convert to list and sort
+    results = list(drg_codes_map.values())
+    results.sort(key=lambda x: x["drg_code"])
+    
+    return results[:limit]
+
+
+# ICD-10 DRG Mapping Management Endpoints
+class ICD10DRGMappingCreate(BaseModel):
+    """ICD-10 DRG mapping creation model"""
+    drg_code: Optional[str] = None  # Optional to allow unmapped ICD-10 codes
+    drg_description: Optional[str] = None
+    icd10_code: str
+    icd10_description: Optional[str] = None
+    notes: Optional[str] = None
+    remarks: Optional[str] = None
+    is_active: bool = True
+
+
+class ICD10DRGMappingUpdate(BaseModel):
+    """ICD-10 DRG mapping update model"""
+    drg_code: Optional[str] = None
+    drg_description: Optional[str] = None
+    icd10_code: Optional[str] = None
+    icd10_description: Optional[str] = None
+    notes: Optional[str] = None
+    remarks: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/icd10-mappings")
+def list_icd10_drg_mappings(
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    unmapped_only: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor"]))
+):
+    """List all ICD-10 DRG mappings with pagination and search"""
+    from sqlalchemy import or_
+    
+    query = db.query(ICD10DRGMapping)
+    
+    # Apply active status filter if provided
+    if is_active is not None:
+        query = query.filter(ICD10DRGMapping.is_active == is_active)
+    
+    # Filter for unmapped ICD-10 codes (no DRG code or empty DRG code)
+    if unmapped_only:
+        query = query.filter(
+            or_(
+                ICD10DRGMapping.drg_code == '',
+                ICD10DRGMapping.drg_code.is_(None)
+            )
+        )
+    
+    # Apply search filter if provided
+    if search:
+        search_filter = or_(
+            ICD10DRGMapping.drg_code.ilike(f"%{search}%"),
+            ICD10DRGMapping.drg_description.ilike(f"%{search}%"),
+            ICD10DRGMapping.icd10_code.ilike(f"%{search}%"),
+            ICD10DRGMapping.icd10_description.ilike(f"%{search}%")
+        )
+        query = query.filter(search_filter)
+    
+    # Get total count before pagination
+    total = query.count()
+    
+    # Apply pagination
+    mappings = query.order_by(ICD10DRGMapping.icd10_code, ICD10DRGMapping.drg_code).offset(skip).limit(limit).all()
+    
+    results = []
+    for mapping in mappings:
+        results.append({
+            "id": mapping.id,
+            "drg_code": mapping.drg_code,
+            "drg_description": mapping.drg_description or "",
+            "icd10_code": mapping.icd10_code,
+            "icd10_description": mapping.icd10_description or "",
+            "notes": mapping.notes or "",
+            "remarks": mapping.remarks or "",
+            "is_active": mapping.is_active
+        })
+    
+    return {
+        "items": results,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.post("/icd10-mappings")
+def create_icd10_drg_mapping(
+    mapping_data: ICD10DRGMappingCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Create a new ICD-10 DRG mapping"""
+    # Allow empty DRG code for unmapped ICD-10 codes
+    drg_code = mapping_data.drg_code.strip() if mapping_data.drg_code else ''
+    
+    # Check if mapping already exists (only if DRG code is provided)
+    if drg_code:
+        existing = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.drg_code == drg_code,
+            ICD10DRGMapping.icd10_code == mapping_data.icd10_code
+        ).first()
+        
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Mapping between DRG code {drg_code} and ICD-10 code {mapping_data.icd10_code} already exists"
+            )
+    else:
+        # Check if unmapped ICD-10 already exists
+        from sqlalchemy import or_
+        existing = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.icd10_code == mapping_data.icd10_code,
+            or_(
+                ICD10DRGMapping.drg_code == '',
+                ICD10DRGMapping.drg_code.is_(None)
+            )
+        ).first()
+        
+        if existing:
+            # Update existing unmapped entry
+            existing.icd10_description = mapping_data.icd10_description or existing.icd10_description
+            existing.notes = mapping_data.notes or existing.notes
+            existing.remarks = mapping_data.remarks or existing.remarks
+            existing.is_active = mapping_data.is_active
+            db.commit()
+            db.refresh(existing)
+            
+            return {
+                "id": existing.id,
+                "drg_code": existing.drg_code or "",
+                "drg_description": existing.drg_description or "",
+                "icd10_code": existing.icd10_code,
+                "icd10_description": existing.icd10_description or "",
+                "notes": existing.notes or "",
+                "remarks": existing.remarks or "",
+                "is_active": existing.is_active
+            }
+    
+    new_mapping = ICD10DRGMapping(
+        drg_code=drg_code,
+        drg_description=mapping_data.drg_description,
+        icd10_code=mapping_data.icd10_code,
+        icd10_description=mapping_data.icd10_description,
+        notes=mapping_data.notes,
+        remarks=mapping_data.remarks,
+        is_active=mapping_data.is_active
+    )
+    
+    db.add(new_mapping)
+    db.commit()
+    db.refresh(new_mapping)
+    
+    return {
+        "id": new_mapping.id,
+        "drg_code": new_mapping.drg_code,
+        "drg_description": new_mapping.drg_description or "",
+        "icd10_code": new_mapping.icd10_code,
+        "icd10_description": new_mapping.icd10_description or "",
+        "notes": new_mapping.notes or "",
+        "remarks": new_mapping.remarks or "",
+        "is_active": new_mapping.is_active
+    }
+
+
+@router.put("/icd10-mappings/{mapping_id}")
+def update_icd10_drg_mapping(
+    mapping_id: int,
+    mapping_data: ICD10DRGMappingUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update an existing ICD-10 DRG mapping"""
+    mapping = db.query(ICD10DRGMapping).filter(ICD10DRGMapping.id == mapping_id).first()
+    
+    if not mapping:
+        raise HTTPException(status_code=404, detail="ICD-10 DRG mapping not found")
+    
+    # Check if updating to a combination that already exists (if drg_code or icd10_code is being changed)
+    if mapping_data.drg_code or mapping_data.icd10_code:
+        new_drg_code = mapping_data.drg_code if mapping_data.drg_code else mapping.drg_code
+        new_icd10_code = mapping_data.icd10_code if mapping_data.icd10_code else mapping.icd10_code
+        
+        existing = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.drg_code == new_drg_code,
+            ICD10DRGMapping.icd10_code == new_icd10_code,
+            ICD10DRGMapping.id != mapping_id
+        ).first()
+        
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Mapping between DRG code {new_drg_code} and ICD-10 code {new_icd10_code} already exists"
+            )
+    
+    # Update fields
+    if mapping_data.drg_code is not None:
+        mapping.drg_code = mapping_data.drg_code
+    if mapping_data.drg_description is not None:
+        mapping.drg_description = mapping_data.drg_description
+    if mapping_data.icd10_code is not None:
+        mapping.icd10_code = mapping_data.icd10_code
+    if mapping_data.icd10_description is not None:
+        mapping.icd10_description = mapping_data.icd10_description
+    if mapping_data.notes is not None:
+        mapping.notes = mapping_data.notes
+    if mapping_data.remarks is not None:
+        mapping.remarks = mapping_data.remarks
+    if mapping_data.is_active is not None:
+        mapping.is_active = mapping_data.is_active
+    
+    db.commit()
+    db.refresh(mapping)
+    
+    return {
+        "id": mapping.id,
+        "drg_code": mapping.drg_code,
+        "drg_description": mapping.drg_description or "",
+        "icd10_code": mapping.icd10_code,
+        "icd10_description": mapping.icd10_description or "",
+        "notes": mapping.notes or "",
+        "remarks": mapping.remarks or "",
+        "is_active": mapping.is_active
+    }
+
+
+@router.delete("/icd10-mappings/{mapping_id}")
+def delete_icd10_drg_mapping(
+    mapping_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete an ICD-10 DRG mapping (soft delete by setting is_active to False)"""
+    mapping = db.query(ICD10DRGMapping).filter(ICD10DRGMapping.id == mapping_id).first()
+    
+    if not mapping:
+        raise HTTPException(status_code=404, detail="ICD-10 DRG mapping not found")
+    
+    # Soft delete
+    mapping.is_active = False
+    db.commit()
+    
+    return {"message": "ICD-10 DRG mapping deleted successfully"}
+
+
+@router.get("/export/icd10-mapping/csv")
+def export_icd10_drg_mapping_csv(
+    is_active: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor"]))
+):
+    """Export ICD-10 DRG mappings as CSV file"""
+    query = db.query(ICD10DRGMapping)
+    
+    # Apply active status filter if provided
+    if is_active is not None:
+        query = query.filter(ICD10DRGMapping.is_active == is_active)
+    
+    # Get all mappings
+    mappings = query.order_by(ICD10DRGMapping.icd10_code, ICD10DRGMapping.drg_code).all()
+    
+    if not mappings:
+        raise HTTPException(status_code=404, detail="No ICD-10 DRG mappings found")
+    
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write header row
+    writer.writerow([
+        'DRG Code',
+        'DRG Description',
+        'ICD-10 Code',
+        'ICD-10 Description',
+        'Notes',
+        'Remarks',
+        'Is Active'
+    ])
+    
+    # Write data rows
+    for mapping in mappings:
+        writer.writerow([
+            mapping.drg_code or '',
+            mapping.drg_description or '',
+            mapping.icd10_code or '',
+            mapping.icd10_description or '',
+            mapping.notes or '',
+            mapping.remarks or '',
+            'True' if mapping.is_active else 'False'
+        ])
+    
+    # Get CSV content
+    csv_content = output.getvalue()
+    output.close()
+    
+    # Return CSV file
+    filename = "icd10_drg_mapping.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+    )
 
 
 @router.get("/export/{file_type}/csv")

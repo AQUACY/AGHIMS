@@ -81,6 +81,7 @@ class EncounterWithClaimInfo(BaseModel):
     status: str
     department: str
     finalized_at: Optional[datetime]
+    finalized_by_username: Optional[str] = None  # Username of user who finalized
     created_at: datetime
     claim_id: Optional[int] = None
     claim_status: Optional[str] = None
@@ -258,6 +259,19 @@ def create_claim(
         db.add(claim_diag)
         diagnosis_order += 1
     
+    # Check for incomplete investigations
+    incomplete_investigations = [
+        inv for inv in encounter.investigations
+        if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
+    ]
+    
+    if incomplete_investigations:
+        incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot create claim. The following investigations are not completed: {incomplete_list}"
+        )
+    
     # Populate investigations (up to 5, only completed)
     investigation_order = 0
     for inv in encounter.investigations:
@@ -363,6 +377,165 @@ def reopen_claim(
     return {"claim_id": claim.id, "status": claim.status}
 
 
+@router.put("/{claim_id}/regenerate")
+def regenerate_claim(
+    claim_id: int,
+    claim_data: ClaimCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"]))
+):
+    """Regenerate a claim by deleting existing details and recreating from encounter"""
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    
+    # Only allow regenerating draft or reopened claims
+    if claim.status not in ["draft", "reopened"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Can only regenerate claims in draft or reopened mode. Current status: " + claim.status
+        )
+    
+    encounter = db.query(Encounter).filter(Encounter.id == claim_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    if encounter.status != "finalized":
+        raise HTTPException(
+            status_code=400,
+            detail="Can only regenerate claims from finalized encounters"
+        )
+    
+    # Check for incomplete investigations
+    incomplete_investigations = [
+        inv for inv in encounter.investigations
+        if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
+    ]
+    
+    if incomplete_investigations:
+        incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot regenerate claim. The following investigations are not completed: {incomplete_list}"
+        )
+    
+    # Delete existing claim details
+    from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
+    
+    db.query(ClaimDiagnosis).filter(ClaimDiagnosis.claim_id == claim_id).delete()
+    db.query(ClaimInvestigation).filter(ClaimInvestigation.claim_id == claim_id).delete()
+    db.query(ClaimPrescription).filter(ClaimPrescription.claim_id == claim_id).delete()
+    db.query(ClaimProcedure).filter(ClaimProcedure.claim_id == claim_id).delete()
+    
+    # Update claim basic info
+    claim.physician_id = claim_data.physician_id
+    claim.type_of_service = claim_data.type_of_service
+    claim.type_of_attendance = claim_data.type_of_attendance
+    claim.specialty_attended = claim_data.specialty_attended
+    
+    # Get patient info
+    patient = encounter.patient
+    
+    # Check if pharmacy items exist
+    has_pharmacy = len(encounter.prescriptions) > 0
+    claim.includes_pharmacy = has_pharmacy
+    
+    # Get principal GDRG from chief diagnosis
+    principal_gdrg = None
+    chief_diagnosis = db.query(Diagnosis).filter(
+        Diagnosis.encounter_id == encounter.id,
+        Diagnosis.is_chief == True
+    ).first()
+    
+    if chief_diagnosis:
+        principal_gdrg = chief_diagnosis.gdrg_code
+    
+    claim.principal_gdrg = principal_gdrg
+    
+    db.flush()
+    
+    # Repopulate claim detail tables from encounter services
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    
+    # Populate diagnoses (up to 4)
+    diagnosis_order = 0
+    for diag in encounter.diagnoses:
+        if diagnosis_order >= 4:
+            break
+        claim_diag = ClaimDiagnosis(
+            claim_id=claim.id,
+            diagnosis_id=diag.id,
+            description=diag.diagnosis,
+            icd10=diag.icd10,
+            gdrg_code=diag.gdrg_code or "",
+            is_chief=diag.is_chief,
+            display_order=diagnosis_order
+        )
+        db.add(claim_diag)
+        diagnosis_order += 1
+    
+    # Populate investigations (up to 5, only completed)
+    investigation_order = 0
+    for inv in encounter.investigations:
+        if investigation_order >= 5:
+            break
+        if inv.status == "completed" and inv.gdrg_code:
+            claim_inv = ClaimInvestigation(
+                claim_id=claim.id,
+                investigation_id=inv.id,
+                description=inv.procedure_name or "",
+                gdrg_code=inv.gdrg_code,
+                service_date=inv.service_date or encounter.created_at,
+                investigation_type=inv.investigation_type,
+                display_order=investigation_order
+            )
+            db.add(claim_inv)
+            investigation_order += 1
+    
+    # Populate prescriptions (up to 5, only dispensed)
+    prescription_order = 0
+    for presc in encounter.prescriptions:
+        if prescription_order >= 5:
+            break
+        if presc.dispensed_by and presc.medicine_code:
+            # Get claim amount from price list
+            claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+            
+            claim_presc = ClaimPrescription(
+                claim_id=claim.id,
+                prescription_id=presc.id,
+                description=presc.medicine_name,
+                code=presc.medicine_code,
+                price=float(claim_amount) if claim_amount else 0.0,
+                quantity=presc.quantity,
+                total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                service_date=presc.service_date or encounter.created_at,
+                dose=presc.dose or "",
+                frequency=presc.frequency or "",
+                duration=presc.duration or "",
+                unparsed=presc.unparsed or "",
+                display_order=prescription_order
+            )
+            db.add(claim_presc)
+            prescription_order += 1
+    
+    # Populate procedures (from encounter procedure, up to 3)
+    if encounter.procedure_g_drg_code:
+        claim_proc = ClaimProcedure(
+            claim_id=claim.id,
+            description=encounter.procedure_name or "",
+            gdrg_code=encounter.procedure_g_drg_code,
+            service_date=encounter.created_at,
+            display_order=0
+        )
+        db.add(claim_proc)
+    
+    db.commit()
+    db.refresh(claim)
+    
+    return claim
+
+
 @router.get("/export/date-range")
 def export_claims_by_date(
     start_date: date,
@@ -453,6 +626,13 @@ def get_eligible_encounters_for_claims(
         # Check if claim already exists
         claim = db.query(Claim).filter(Claim.encounter_id == encounter.id).first()
         
+        # Get finalized_by username
+        finalized_by_username = None
+        if encounter.finalized_by:
+            finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
+            if finalized_user:
+                finalized_by_username = finalized_user.username
+        
         encounter_data = {
             "id": encounter.id,
             "patient_id": encounter.patient_id,
@@ -462,6 +642,7 @@ def get_eligible_encounters_for_claims(
             "status": encounter.status,
             "department": encounter.department,
             "finalized_at": encounter.finalized_at,
+            "finalized_by_username": finalized_by_username,
             "created_at": encounter.created_at,
             "claim_id": claim.id if claim else None,
             "claim_status": claim.status if claim else None,
@@ -794,17 +975,14 @@ def update_claim_detailed(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin"]))
 ):
-    """Update a draft or reopened claim with detailed information"""
+    """Update a draft, reopened, or finalized claim with detailed information"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     
-    # Only allow editing of draft or reopened claims
+    # If claim is finalized, automatically reopen it to allow editing
     if claim.status == "finalized":
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot edit finalized claims. Please reopen the claim first."
-        )
+        claim.status = ClaimStatus.REOPENED.value
     
     # Update claim fields
     claim.physician_id = claim_data.physician_id

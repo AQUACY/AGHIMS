@@ -271,14 +271,62 @@ export const consultationAPI = {
       responseType: 'blob',
     }),
   getAdmissionRecommendations: () => api.get('/consultation/admissions'),
-  confirmAdmission: (admissionId) => api.put(`/consultation/admissions/${admissionId}/confirm`),
+  confirmAdmission: (admissionId, formData) => api.put(`/consultation/admissions/${admissionId}/confirm`, formData),
   revertAdmissionConfirmation: (admissionId) => api.put(`/consultation/admissions/${admissionId}/revert-confirmation`),
   cancelAdmission: (admissionId, reason) => api.put(`/consultation/admissions/${admissionId}/cancel`, { reason }),
-  getWardAdmissions: (ward) => {
-    const params = ward ? { ward } : {};
+  getWardAdmissions: (ward, includeDischarged = false) => {
+    const params = {};
+    if (ward) params.ward = ward;
+    if (includeDischarged) params.include_discharged = true;
     return api.get('/consultation/ward-admissions', { params });
   },
-  dischargePatient: (wardAdmissionId) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/discharge`),
+    dischargePatient: (wardAdmissionId) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/discharge`),
+    cancelWardAdmission: (wardAdmissionId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}`),
+    updateAdmissionNotes: (wardAdmissionId, notes) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/admission-notes`, { notes }),
+    // Nurse Notes
+    createNurseNote: (wardAdmissionId, notes) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/nurse-notes`, { notes }),
+    getNurseNotes: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/nurse-notes`),
+    toggleNurseNoteStrikethrough: (wardAdmissionId, noteId) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/nurse-notes/${noteId}/strikethrough`),
+    // Nurse Mid Documentation
+    createNurseMidDocumentation: (wardAdmissionId, data) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/nurse-mid-documentations`, data),
+    getNurseMidDocumentations: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/nurse-mid-documentations`),
+    updateNurseMidDocumentation: (wardAdmissionId, documentationId, data) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/nurse-mid-documentations/${documentationId}`, data),
+    // Inpatient Vitals
+    createInpatientVital: (wardAdmissionId, vitalData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/vitals`, vitalData),
+    getInpatientVitals: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/vitals`),
+    // Inpatient Clinical Reviews
+    createInpatientClinicalReview: (wardAdmissionId, reviewData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews`, reviewData),
+    getInpatientClinicalReviews: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews`),
+    // Ward Admission Transfers
+    getWardAdmissionTransfers: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/transfers`),
+    // Direct Admission
+    createDirectAdmission: (admissionData) => api.post('/consultation/admissions/direct', admissionData),
+    // Daily Ward State
+    getDailyWardState: (ward, date) => {
+      const params = {};
+      if (date) params.date = date;
+      return api.get(`/consultation/ward-admissions/daily-state/${encodeURIComponent(ward)}`, { params });
+    },
+    // Transfer Patient
+    transferPatient: (transferData) => api.post('/consultation/ward-admissions/transfer', transferData),
+    // Pending Transfers
+    getPendingTransfers: (ward) => {
+      const params = ward ? { ward } : {};
+      return api.get('/consultation/ward-admissions/pending-transfers', { params });
+    },
+    acceptTransfer: (transferId, bedId) => api.post(`/consultation/ward-admissions/transfers/${transferId}/accept`, { bed_id: bedId }),
+    rejectTransfer: (transferId, reason) => api.post(`/consultation/ward-admissions/transfers/${transferId}/reject`, { rejection_reason: reason }),
+  getWards: () => api.get('/consultation/wards'),
+  getBeds: (ward, availableOnly = false) => {
+    const params = {};
+    if (ward) params.ward = ward;
+    if (availableOnly) params.available_only = true;
+    return api.get('/consultation/beds', { params });
+  },
+  createBed: (bedData) => api.post('/consultation/beds', bedData),
+  updateBed: (bedId, bedData) => api.put(`/consultation/beds/${bedId}`, bedData),
+  deleteBed: (bedId) => api.delete(`/consultation/beds/${bedId}`),
+  getDoctors: () => api.get('/consultation/doctors'),
 };
 
 // Billing endpoints
@@ -331,6 +379,42 @@ export const priceListAPI = {
   getDrgCodesFromIcd10: (icd10Code) => {
     return api.get(`/price-list/icd10/${icd10Code}/drg-codes`);
   },
+  // ICD-10 DRG Mapping Management
+  getIcd10DrgMappings: (skip = 0, limit = 100, search = null, isActive = null, unmappedOnly = false) => {
+    const params = { skip, limit };
+    if (search) {
+      params.search = search;
+    }
+    if (isActive !== null) {
+      params.is_active = isActive;
+    }
+    if (unmappedOnly) {
+      params.unmapped_only = true;
+    }
+    return api.get('/price-list/icd10-mappings', { params });
+  },
+  createIcd10DrgMapping: (data) => {
+    return api.post('/price-list/icd10-mappings', data);
+  },
+  updateIcd10DrgMapping: (mappingId, data) => {
+    return api.put(`/price-list/icd10-mappings/${mappingId}`, data);
+  },
+  deleteIcd10DrgMapping: (mappingId) => {
+    return api.delete(`/price-list/icd10-mappings/${mappingId}`);
+  },
+  exportIcd10DrgMapping: (params = {}) => {
+    return api.get('/price-list/export/icd10-mapping/csv', {
+      params,
+      responseType: 'blob',
+    });
+  },
+  searchDrgCodes: (searchTerm, limit = 50) => {
+    const params = { limit };
+    if (searchTerm) {
+      params.search_term = searchTerm;
+    }
+    return api.get('/price-list/drg-codes/search', { params });
+  },
   search: (searchTerm, serviceType, fileType) => 
     api.get('/price-list/search', { 
       params: { 
@@ -361,6 +445,7 @@ export const claimsAPI = {
   getEditDetails: (claimId) => api.get(`/claims/${claimId}/edit-details`),
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),
   reopen: (claimId) => api.put(`/claims/${claimId}/reopen`),
+  regenerate: (claimId, data) => api.put(`/claims/${claimId}/regenerate`, data),
   exportSingle: (claimId) => 
     api.get(`/claims/export/${claimId}`, { responseType: 'blob' }),
   exportByDateRange: (startDate, endDate) => 

@@ -1,0 +1,1313 @@
+DRG Code,DRG Description,ICD-10 Code,ICD-10 Description,Notes,Remarks,Is Active
+ASUR01A,Operations of thyroid and parathyroid glands >=12 Yrs,D34.00,Benign neoplasm of thyroid gland,,,TRUE
+ASUR01A,Operations of thyroid and parathyroid glands >=12 Yrs,D35.1,Benign neoplasm: Parathyroid gland,,,TRUE
+ASUR01A,Operations of thyroid and parathyroid glands >=12 Yrs,D44.0,Neoplasm of uncertain or unknown behaviour: Thyroid gland,,,TRUE
+ASUR01A,Operations of thyroid and parathyroid glands >=12 Yrs,E04.0,Nontoxic diffuse goitre,,,TRUE
+ASUR02A,Surgery for lung and bronchus lesions >=12 Yrs,J98.4,Other disorders of lung,,,TRUE
+ASUR03A,Thoracostomy and chest tube insertion >=12 Yrs,J90.00,"Pleural effusion, not elsewhere classified",,,TRUE
+ASUR03A,Thoracostomy and chest tube insertion >=12 Yrs,J93.9,"Pneumothorax, unspecified",,,TRUE
+ASUR03A,Thoracostomy and chest tube insertion >=12 Yrs,J94.2,Haemothorax,,,TRUE
+ASUR04A,Operations on the oesophagus and diaphragm >=12 Yrs,C16.0,Malignant neoplasm: Cardia,,,TRUE
+ASUR04A,Operations on the oesophagus and diaphragm >=12 Yrs,K22.2,Oesophageal obstruction,,,TRUE
+ASUR04A,Operations on the oesophagus and diaphragm >=12 Yrs,K22.3,Perforation of oesophagus,,,TRUE
+ASUR04A,Operations on the oesophagus and diaphragm >=12 Yrs,K22.5,"Diverticulum of oesophagus, acquired",,,TRUE
+ASUR04A,Operations on the oesophagus and diaphragm >=12 Yrs,K44.9,Diaphragmatic hernia without obstruction or gangrene,,,TRUE
+ASUR05A,Excision of Neck Swellings >=12 Yrs,D11.9,"Benign neoplasm: Major salivary gland, unspecified",,,TRUE
+ASUR05A,Excision of Neck Swellings >=12 Yrs,D18.1,"Lymphangioma, any site",,,TRUE
+ASUR05A,Excision of Neck Swellings >=12 Yrs,Q18.0,"Sinus, fistula and cyst of branchial cleft",,,TRUE
+ASUR05A,Excision of Neck Swellings >=12 Yrs,Q89.2,Congenital malformations of other endocrine glands,,,TRUE
+ASUR05A,Excision of Neck Swellings >=12 Yrs,R22.1,"Localized swelling, mass and lump, neck",,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,A06.4,Amoebic liver abscess,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,C64.00,"Malignant neoplasm of kidney, except renal pelvis",,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,D13.4,Benign neoplasm: Liver,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,D69.3,Idiopathic thrombocytopenic purpura,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,D73.3,Abscess of spleen,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,D73.4,Cyst of spleen,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,D73.5,Infarction of spleen,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,K75.0,Abscess of liver,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,N13.6,Pyonephrosis,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,Q44.6,Cystic disease of liver,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,S36.0,Injury of spleen,,,TRUE
+ASUR06A,Laparotomy for solid organ Surgery >=12 Yrs,S36.1,Injury of liver or gallbladder,,,TRUE
+ASUR07A,Laparotomy for Gastric Surgery >=12 Yrs,D37.1,Neoplasm of uncertain or unknown behaviour: Stomach,,,TRUE
+ASUR07A,Laparotomy for Gastric Surgery >=12 Yrs,K25.9,"Gastric ulcer: Unspecified as acute or chronic, without haemorrhage or perforation",,,TRUE
+ASUR07A,Laparotomy for Gastric Surgery >=12 Yrs,K26.9,"Duodenal ulcer: Unspecified as acute or chronic, without haemorrhage or perforation",,,TRUE
+ASUR07A,Laparotomy for Gastric Surgery >=12 Yrs,K31.1,Adult hypertrophic pyloric stenosis,,,TRUE
+ASUR07A,Laparotomy for Gastric Surgery >=12 Yrs,K31.7,Polyp of stomach and duodenum,,,TRUE
+ASUR07A,Laparotomy for Gastric Surgery >=12 Yrs,K92.2,"Gastrointestinal haemorrhage, unspecified",,,TRUE
+ASUR08A,Laparotomy for peritonitis >=12 Yrs,K25.5,Gastric ulcer: Chronic or unspecified with perforation,,,TRUE
+ASUR08A,Laparotomy for peritonitis >=12 Yrs,K26.5,Duodenal ulcer: Chronic or unspecified with perforation,,,TRUE
+ASUR08A,Laparotomy for peritonitis >=12 Yrs,K36.00,Other appendicitis,,,TRUE
+ASUR08A,Laparotomy for peritonitis >=12 Yrs,K37.00,Unspecified appendicitis,,,TRUE
+ASUR08A,Laparotomy for peritonitis >=12 Yrs,K63.9,"Disease of intestine, unspecified",,,TRUE
+ASUR08A,Laparotomy for peritonitis >=12 Yrs,K65.9,"Peritonitis, unspecified",,,TRUE
+ASUR09A,Endoscopic surgery for bleeding oesophageal varices >=12 Yrs,I86.4,Gastric varices,,,TRUE
+ASUR10A,Laparotomy and Small Bowel Resection >=12 Yrs,K56.1,Intussusception,,,TRUE
+ASUR10A,Laparotomy and Small Bowel Resection >=12 Yrs,K66.0,Peritoneal adhesions,,,TRUE
+ASUR10A,Laparotomy and Small Bowel Resection >=12 Yrs,K92.2,"Gastrointestinal haemorrhage, unspecified",,,TRUE
+ASUR11A,Laparotomy and colon resection >=12 Yrs,K56.1,Intussusception,,,TRUE
+ASUR11A,Laparotomy and colon resection >=12 Yrs,K56.2,Volvulus,,,TRUE
+ASUR11A,Laparotomy and colon resection >=12 Yrs,K62.3,Rectal prolapse,,,TRUE
+ASUR11A,Laparotomy and colon resection >=12 Yrs,K63.9,"Disease of intestine, unspecified",,,TRUE
+ASUR11A,Laparotomy and colon resection >=12 Yrs,K92.2,"Gastrointestinal haemorrhage, unspecified",,,TRUE
+ASUR11A,Laparotomy and colon resection >=12 Yrs,S36.5,Injury of colon,,,TRUE
+ASUR12A,Laparotomy for Colostomy or Ileostomy >=12 Yrs,K63.9,"Disease of intestine, unspecified",,,TRUE
+ASUR13A,Laparotomy and AP Resection >=12 Yrs,D37.5,Neoplasm of uncertain or unknown behaviour: Rectum,,,TRUE
+ASUR14A,Percutaneous Ultrasound Guided Drainage of lesions >=12 Yrs,A06.4,Amoebic liver abscess,,,TRUE
+ASUR14A,Percutaneous Ultrasound Guided Drainage of lesions >=12 Yrs,A06.5,Amoebic lung abscess,,,TRUE
+ASUR15A,Operations on Anus >=12 Yrs,K60.2,"Anal fissure, unspecified",,,TRUE
+ASUR15A,Operations on Anus >=12 Yrs,K60.3,Anal fistula,,,TRUE
+ASUR15A,Operations on Anus >=12 Yrs,K62.3,Rectal prolapse,,,TRUE
+ASUR15A,Operations on Anus >=12 Yrs,L05.91,Pilonidal cyst without abscess,,,TRUE
+ASUR16A,Laparotomy and drainage of liver >=12 Yrs,A06.4,Amoebic liver abscess,,,TRUE
+ASUR16A,Laparotomy and drainage of liver >=12 Yrs,A06.5,Amoebic lung abscess,,,TRUE
+ASUR17A,Laparotomy for biliary surgery >=12 Yrs,K81.0,Acute cholecystitis,,,TRUE
+ASUR17A,Laparotomy for biliary surgery >=12 Yrs,K83.1,Obstruction of bile duct,,,TRUE
+ASUR17A,Laparotomy for biliary surgery >=12 Yrs,S36.1,Injury of liver or gallbladder,,,TRUE
+ASUR18A,Laparotomy and Pancreatic Surgery >=12 Yrs,D37.7,Neoplasm of uncertain or unknown behaviour: Other digestive organs,,,TRUE
+ASUR18A,Laparotomy and Pancreatic Surgery >=12 Yrs,K86.2,Cyst of pancreas,,,TRUE
+ASUR18A,Laparotomy and Pancreatic Surgery >=12 Yrs,K86.3,Pseudocyst of pancreas,,,TRUE
+ASUR19A,Internal Hernia Repair >=12 Yrs,K44.9,Diaphragmatic hernia without obstruction or gangrene,,,TRUE
+ASUR19A,Internal Hernia Repair >=12 Yrs,K46.9,Unspecified abdominal hernia without obstruction or gangrene,,,TRUE
+ASUR20A,External Hernia Repair >=12 Yrs,K42.9,Umbilical hernia without obstruction or gangrene,,,TRUE
+ASUR20A,External Hernia Repair >=12 Yrs,K43.2,Incisional Hernia Without Obstruction Or Gangrene,,,TRUE
+ASUR20A,External Hernia Repair >=12 Yrs,K43.6,Spigelian Hernia,,,TRUE
+ASUR20A,External Hernia Repair >=12 Yrs,K43.9,Ventral hernia without obstruction or gangrene,,,TRUE
+ASUR21A,Operations on the urethra >=12 Yrs,N34.0,Urethral abscess,,,TRUE
+ASUR21A,Operations on the urethra >=12 Yrs,N36.0,Urethral fistula,,,TRUE
+ASUR21A,Operations on the urethra >=12 Yrs,N36.1,Urethral diverticulum,,,TRUE
+ASUR21A,Operations on the urethra >=12 Yrs,N40.00,Hyperplasia of prostate,,,TRUE
+ASUR22A,Surgery on scrotum & tunica vaginalis >=12 Yrs,I86.1,Scrotal varices,,,TRUE
+ASUR22A,Surgery on scrotum & tunica vaginalis >=12 Yrs,N44.00,Torsion of testis,,,TRUE
+ASUR24A,Vascular surgery operations >=12 Yrs,I71.9,"Aortic aneurysm of unspecified site, without mention of rupture",,,TRUE
+ASUR24A,Vascular surgery operations >=12 Yrs,I72.4,Aneurysm and dissection of artery of lower extremity,,,TRUE
+ASUR24A,Vascular surgery operations >=12 Yrs,I73.9,"Peripheral vascular disease, unspecified",,,TRUE
+ASUR24A,Vascular surgery operations >=12 Yrs,I74.9,Embolism and thrombosis of unspecified artery,,,TRUE
+ASUR28A,Genitourinary surgery >=12 Yrs,B65.9,"Schistosomiasis, unspecified",,,TRUE
+ASUR28A,Genitourinary surgery >=12 Yrs,D29.1,Benign neoplasm: Prostate,,,TRUE
+ASUR28A,Genitourinary surgery >=12 Yrs,D30.3,Benign neoplasm: Bladder,,,TRUE
+ASUR28A,Genitourinary surgery >=12 Yrs,N32.9,"Bladder disorder, unspecified",,,TRUE
+ASUR29A,Craniotomy >=12yrs,D43.2,"Neoplasm of uncertain or unknown behaviour: Brain, unspecified",,,TRUE
+ASUR29A,Craniotomy >=12yrs,I61.9,"Intracerebral haemorrhage, unspecified",,,TRUE
+ASUR30A,General Surgery Excision Biopsy >=12 Yrs,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+ASUR30A,General Surgery Excision Biopsy >=12 Yrs,L72.0,Epidermal cyst,,,TRUE
+ASUR30A,General Surgery Excision Biopsy >=12 Yrs,N62.00,Hypertrophy of breast,,,TRUE
+ASUR30A,General Surgery Excision Biopsy >=12 Yrs,N63.00,Unspecified lump in breast,,,TRUE
+ASUR30A,General Surgery Excision Biopsy >=12 Yrs,Q89.2,Congenital malformations of other endocrine glands,,,TRUE
+ASUR30A,General Surgery Excision Biopsy >=12 Yrs,T01.9,"Multiple open wounds, unspecified",,,TRUE
+ASUR31A,"Incision, Drainage and Debridement - General Surgery >=12 Yrs",N61.00,Inflammatory disorders of breast,,,TRUE
+ASUR32A,Closure of colostomy and ileostomy >=12 Yrs,L43.3,Subacute (active) lichen planus,,,TRUE
+ASUR33A,Laparotomy and Porto-caval Shunt >=12 Yrs,K76.6,Portal hypertension,,,TRUE
+ASUR34A,Conservative management of surgery,K36.00,Other appendicitis,,,TRUE
+ASUR34A,Conservative management of surgery,K81.1,Chronic cholecystitis,,,TRUE
+ASUR35A,Surgery for removal of finger/toe>=12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ASUR35A,Surgery for removal of finger/toe>=12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ASUR35A,Surgery for removal of finger/toe>=12 Yrs,N49.3,Gangrene,,,TRUE
+ASUR36A,Surgery for removal of hand or foot >=12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ASUR36A,Surgery for removal of hand or foot >=12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ASUR36A,Surgery for removal of hand or foot >=12 Yrs,N49.3,Gangrene,,,TRUE
+ASUR37A,"Amputation below or through elbow or knee, through proximal joints or for the
+complete removal of limb >=12 Yr",D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ASUR37A,"Amputation below or through elbow or knee, through proximal joints or for the
+complete removal of limb >=12 Yr",E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ASUR37A,"Amputation below or through elbow or knee, through proximal joints or for the
+complete removal of limb >=12 Yr",N49.3,Gangrene,,,TRUE
+DENT01A,Forceps Extraction of Tooth >=12 Yrs,K00.1,Supernumerary teeth,,,TRUE
+DENT01A,Supernumerary Teeth,K00.1,Supernumerary teeth,,,TRUE
+DENT01A,Forceps Extraction of Tooth >=12 Yrs,K00.6,Disturbances in tooth eruption,,,TRUE
+DENT01A,Supernumerary Teeth,K00.6,Disturbances in tooth eruption,,,TRUE
+DENT01A,Forceps Extraction of Tooth >=12 Yrs,K01.0,Embedded teeth,,,TRUE
+DENT01A,Supernumerary Teeth,K01.0,Embedded teeth,,,TRUE
+DENT01A,Forceps Extraction of Tooth >=12 Yrs,K01.1,Impacted teeth,,,TRUE
+DENT01A,Supernumerary Teeth,K01.1,Impacted teeth,,,TRUE
+DENT01A,Forceps Extraction of Tooth >=12 Yrs,K04.7,Periapical abscess without sinus,,,TRUE
+DENT01A,Supernumerary Teeth,K04.7,Periapical abscess without sinus,,,TRUE
+DENT01A,Forceps Extraction of Tooth >=12 Yrs,K07.3,Anomalies of tooth position,,,TRUE
+DENT01A,Supernumerary Teeth,K07.3,Anomalies of tooth position,,,TRUE
+DENT01C,Forceps Extraction of Tooth <12 Yrs,,,,,TRUE
+DENT02A,Surgical Removal of Tooth >=12 Yrs,,,,,TRUE
+DENT03A,Temporary Filling >=12 Yrs,,,,,TRUE
+DENT03A,Dental Caries,,,,,TRUE
+DENT03C,Temporary Filling <12 Yrs,,,,,TRUE
+DENT04A,Amalgam Filling >=12 Yrs,,,,,TRUE
+DENT04A,Dental Caries,,,,,TRUE
+DENT04C,Amalgam Filling <12 Yrs,,,,,TRUE
+DENT05A,Composite/GI Filling >=12 Yrs,,,,,TRUE
+DENT05A,Abrasion Of Teeth,,,,,TRUE
+DENT05C,Composite/GI Filling <12 Yrs,,,,,TRUE
+DENT06A,Scaling & Polishing >=12 Yrs,K03.6,Deposits [accretions] on teeth,,,TRUE
+DENT06A,Gingivitis And Periodontal Diseases,K03.6,Deposits [accretions] on teeth,,,TRUE
+DENT06A,Scaling & Polishing >=12 Yrs,K05.6,"Periodontal disease, unspecified",,,TRUE
+DENT06A,Gingivitis And Periodontal Diseases,K05.6,"Periodontal disease, unspecified",,,TRUE
+DENT06C,Scaling & Polishing <12 Yrs,,,,,TRUE
+DENT07A,Gingivectomy >=12 Yrs,,,,,TRUE
+DENT07A,Chronic Gingivitis,,,,,TRUE
+DENT07C,Gingivectomy <12 Yrs,,,,,TRUE
+DENT08A,Root Canal Therapy - Single Root (RCT) >=12 Yrs,,,,,TRUE
+DENT08A,Pulpitis,,,,,TRUE
+DENT08C,Root Canal Therapy - Single Root (RCT) <12 Yrs,,,,,TRUE
+DENT09A,Apicectomy >=12 Yrs,,,,,TRUE
+DENT09A,Radicular Cyst,,,,,TRUE
+DENT09C,Apicectomy <12 Yrs,,,,,TRUE
+DENT10A,Incision and Drainage (I & D) of Oro-Facial Abscess >=12 Yrs,,,,,TRUE
+DENT10A,Periapical Abscess Without Sinus,,,,,TRUE
+DENT10C,Incision and Drainage (I & D) of Oro-Facial Abscess <12 Yrs,,,,,TRUE
+DENT11A,Surgical Excision of Intraoral Lesions >=12 Yrs,,,,,TRUE
+DENT11A,Other Disease Of Jaws,,,,,TRUE
+DENT11C,Surgical Excision of Intraoral Lesions <12 Yrs,,,,,TRUE
+DENT12A,Curetage/Sequestrectomy of Facial Bone >=12 Yrs,,,,,TRUE
+DENT12A,Alveolitis Of Jaws,,,,,TRUE
+DENT12C,Curetage/Sequestrectomy of Facial Bone <12 Yrs,,,,,TRUE
+DENT13A,Removal of Stone from Salivary Duct >=12 Yrs,,,,,TRUE
+DENT13A,Sialolithiasis,,,,,TRUE
+DENT13C,Removal of Stone from Salivary Duct <12 Yrs,,,,,TRUE
+DENT14A,Sialoadenectomy >=12 Yrs,,,,,TRUE
+DENT14A,Sialoadenitis,,,,,TRUE
+DENT14C,Sialoadenectomy <12 Yrs,D11.9,"Benign neoplasm: Major salivary gland, unspecified",,,TRUE
+DENT14C,Sialoadenectomy <12 Yrs,K11.6,Mucocele of salivary gland,,,TRUE
+DENT15A,Suturing of Lacerations of Facial Region >=12 Yrs,,,,,TRUE
+DENT15A,Dislocation Of Tooth,,,,,TRUE
+DENT15C,Suturing of Lacerations of Facial Region <12 Yrs,,,,,TRUE
+DENT16A,Dressing of Open Facial Wounds >=12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+DENT16A,Open Wound Of Unspecified Body Region,T14.1,Open wound of unspecified body region,,,TRUE
+DENT16C,Dressing of Open Facial Wounds <12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+DENT17A,Frenectomy/Frenotomy >=12 Yrs,Q38.1,Ankyloglossia,,,TRUE
+DENT17A,Ankyloglossia(Tongue Tie),Q38.1,Ankyloglossia,,,TRUE
+DENT17C,Frenectomy/Frenotomy <12 Yrs,Q38.1,Ankyloglossia,,,TRUE
+DENT18A,Partial Resection of Facial Bones or Soft Tissues >=12 Yrs,D48.0,Neoplasm of uncertain or unknown behaviour: Bone and articular cartilage,,,TRUE
+DENT18A,Tumour Of Bone And Articular Cartilage,D48.0,Neoplasm of uncertain or unknown behaviour: Bone and articular cartilage,,,TRUE
+DENT18C,Partial Resection of Facial Bones or Soft Tissues <12 Yrs,D48.0,Neoplasm of uncertain or unknown behaviour: Bone and articular cartilage,,,TRUE
+DENT19A,Total Resection of Facial Bones and Soft Tissues >=12 Yrs,D48.9,"Neoplasm of uncertain or unknown behaviour: Neoplasm of uncertain or unknown behaviour, unspecified",,,TRUE
+DENT19A,Neoplasm Of Uncertain Or Unknown Behaviour,D48.9,"Neoplasm of uncertain or unknown behaviour: Neoplasm of uncertain or unknown behaviour, unspecified",,,TRUE
+DENT19C,Total Resection of Facial Bones and Soft Tissues <12 Yrs,D48.9,"Neoplasm of uncertain or unknown behaviour: Neoplasm of uncertain or unknown behaviour, unspecified",,,TRUE
+DENT20A,Closed Reduction of Fractures of Facial Bones (IMF) >=12 Yrs,,,,,TRUE
+DENT20A,Fracture Of Skull And Facial Bones,,,,,TRUE
+DENT20C,Closed Reduction of Fractures of Facial Bones (IMF) <12 Yrs,,,,,TRUE
+DENT21A,Open Reduction of Facial Fractures >=12 Yrs,S02.7,Multiple fractures involving skull and facial bones,,,TRUE
+DENT21A,Multiple Fractures Involving Skull And Facial Bones,S02.7,Multiple fractures involving skull and facial bones,,,TRUE
+DENT21C,Open Reduction of Facial Fractures <12 Yrs,S02.7,Multiple fractures involving skull and facial bones,,,TRUE
+DENT22A,Removal of Dental Wiring >=12 Yrs,,,,,TRUE
+DENT22A,Fracture Of Skull And Facial Bones,,,,,TRUE
+DENT22C,Removal of Dental Wiring <12 Yrs,,,,,TRUE
+DENT23A,Manual Reduction of TMJ Dislocation >=12 Yrs,,,,,TRUE
+DENT23A,Dislocation Of Jaw,,,,,TRUE
+DENT23C,Manual Reduction of TMJ Dislocation <12 Yrs,,,,,TRUE
+DENT24A,Dental Examination (Medical Management) >=12 Yrs,D69.9,"Haemorrhagic condition, unspecified",,,TRUE
+DENT24A,Haemorrhagic Condition,D69.9,"Haemorrhagic condition, unspecified",,,TRUE
+DENT24C,Dental Examination (Medical Management) <12 Yrs,D69.9,"Haemorrhagic condition, unspecified",,,TRUE
+ENTH01A,"Excision and biopsy of swellings of ear, nose and throat >=12 Yrs",,,,,TRUE
+ENTH01A,Preauricular Sinus And  Cyst,,,,,TRUE
+ENTH01C,"Excision and biopsy of swellings of ear, nose and throat <12 Yrs",,,,,TRUE
+ENTH02A,Surgery for external ear lesions >=12 Yrs,,,,,TRUE
+ENTH02A,Other And Unspecified Injuries Of Head,,,,,TRUE
+ENTH02C,Surgery for external ear lesions <12 Yrs,,,,,TRUE
+ENTH05A,Surgery for internal ear lesions >=12 Yrs,,,,,TRUE
+ENTH05A,Acquired Stenosis Of External Ear Canal,,,,,TRUE
+ENTH05C,Surgery for internal ear lesions <12 Yrs,,,,,TRUE
+ENTH06A,Reconstructive Surgery of ear >=12 Yrs,,,,,TRUE
+ENTH06A,Congenital Malformation Of Ear Causing Impairment Of Hearing,,,,,TRUE
+ENTH06C,Reconstructive Surgery of ear <12 Yrs,,,,,TRUE
+ENTH07A,Sinus Surgery >=12 Yrs,,,,,TRUE
+ENTH07A,Mastoiditis,,,,,TRUE
+ENTH07C,Sinus Surgery <12 Yrs,,,,,TRUE
+ENTH08A,Surgery of tonsils and adenoids >=12 Yrs,,,,,TRUE
+ENTH08A,Obstructive Sleep Apnoea,,,,,TRUE
+ENTH08C,Surgery of tonsils and adenoids <12 Yrs,,,,,TRUE
+ENTH09A,Surgery of Salivary Glands >=12 Yrs,,,,,TRUE
+ENTH09A,"Neoplasm Of Lip, Oral And Pharynx",,,,,TRUE
+ENTH09C,Surgery of Salivary Glands <12 Yrs,,,,,TRUE
+ENTH10A,Laryngectomy >=12 Yrs,,,,,TRUE
+ENTH10A,Open Wound Of Neck,,,,,TRUE
+ENTH10C,Laryngectomy <12 Yrs,,,,,TRUE
+ENTH12A,Excision and Reconstruction of Oro- and Naso-pharynx >=12 Yrs,,,,,TRUE
+ENTH12A,Oropharyngeal Mass,,,,,TRUE
+ENTH12C,Excision and Reconstruction of Oro- and Naso-pharynx <12 Yrs,,,,,TRUE
+ENTH13A,"Examination under anaesthesia and removal of foreign body in Ear, Nose and
+Throat >=12 Yr",,,,,TRUE
+ENTH13A,Foreign Body In The Ear,,,,,TRUE
+ENTH13C,"Examination under anaesthesia and removal of foreign body in Ear, Nose and
+Throat <12 Yr",,,,,TRUE
+ENTH14A,"Incision and Drainage of Abscess of ear, nose and throat >=12 Yrs",J39.0,Retropharyngeal and parapharyngeal abscess,,,TRUE
+ENTH14A,Retropharyngeal And Parapharyngeal Abscess,J39.0,Retropharyngeal and parapharyngeal abscess,,,TRUE
+ENTH14C,"Incision and Drainage of Abscess of ear, nose and throat <12 Yrs",J39.0,Retropharyngeal and parapharyngeal abscess,,,TRUE
+ENTH15A,Manipulation and reduction of fractured nasal bone >=12 Yrs,,,,,TRUE
+ENTH15A,Fractured Nasal Bone,,,,,TRUE
+ENTH15C,Manipulation and reduction of fractured nasal bone <12 Yrs,,,,,TRUE
+ENTH16A,Specific nasal surgery >=12 Yrs,,,,,TRUE
+ENTH16A,Deviated Nasal Septum,,,,,TRUE
+ENTH16C,Specific nasal surgery <12 Yrs,J34.2,Deviated nasal septum,,,TRUE
+ENTH16C,Specific nasal surgery <12 Yrs,J34.3,Hypertrophy of nasal turbinates,,,TRUE
+ENTH16C,Specific nasal surgery <12 Yrs,M95.0,Acquired deformity of nose,,,TRUE
+ENTH16C,Specific nasal surgery <12 Yrs,Q30.0,Choanal atresia,,,TRUE
+ENTH17A,Arterial Ligation for Epistaxis >=12 Yrs,R04.0,Epistaxis,,,TRUE
+ENTH17A,Epistaxis,R04.0,Epistaxis,,,TRUE
+ENTH17C,Arterial Ligation for Epistaxis <12 Yrs,R04.0,Epistaxis,,,TRUE
+ENTH18A,"Surgery for trauma to ear, nose, throat >=12 Yrs",,,,,TRUE
+ENTH18A,Open Wound Involving Pharynx And Cervical Oesophagus,,,,,TRUE
+ENTH18C,"Surgery for trauma to ear, nose, throat <12 Yrs",,,,,TRUE
+ENTH19A,Excision biopsy of swellings of neck >=12 Yrs,,,,,TRUE
+ENTH19A,Thyroglossal Cyst,,,,,TRUE
+ENTH19C,Excision biopsy of swellings of neck <12 Yrs,,,,,TRUE
+ENTH20A,ENT OPD Procedures >=12 Yrs,,,,,TRUE
+ENTH20A,Impacted Cerumen (Wax In Ear),,,,,TRUE
+ENTH20C,ENT OPD Procedures <12 Yrs,,,,,TRUE
+ENTH21A,Vestibulometry >=12 Yrs,,,,,TRUE
+ENTH21A,Dizziness And Giddiness,,,,,TRUE
+ENTH21C,Vestibulometry <12 Yrs,,,,,TRUE
+ENTH22A,Evoked response audiometry >=12 Yrs,,,,,TRUE
+ENTH22A,Other Hearing Loss,,,,,TRUE
+ENTH22C,Evoked response audiometry <12 Yrs,,,,,TRUE
+ENTH23A,Antral Lavage under Local Anaesthesia >=12 Yrs,,,,,TRUE
+ENTH23A,Chronic Sinusitis,,,,,TRUE
+ENTH23C,Antral Lavage under Local Anaesthesia <12 Yrs,,,,,TRUE
+ENTH24A,Endoscopic ENT Surgery >=12 Yrs,,,,,TRUE
+ENTH24A,Other Disorders Of Nose And Nasal Sinuses,,,,,TRUE
+ENTH24C,Endoscopic ENT Surgery <12 Yrs,,,,,TRUE
+INVE01D,2 Hour Post Prandial Blood Glucose,,,,,TRUE
+INVE01E,Serum Adrenocorticotropic Hormone (ACTH),,,,,TRUE
+INVE02D,24hr Urine for Protein,,,,,TRUE
+INVE02E,Serum Albumin,,,,,TRUE
+INVE03D,Alanine Aminotransferase (ALT),,,,,TRUE
+INVE03E,Serum Alkalne Phosphatase (ALP),,,,,TRUE
+INVE04D,Alpha Amylase (Serum/Urine),,,,,TRUE
+INVE04E,Serum Beta-Human Chorionic Gonadotropin (HCG),,,,,TRUE
+INVE05D,Alpha-Fetoprotein (AFP),,,,,TRUE
+INVE05E,Serum Calcium,,,,,TRUE
+INVE06D,Ap-Prothrombin Time,,,,,TRUE
+INVE06E,Serum Creatinine,,,,,TRUE
+INVE07D,Arterial Blood Gas (ABG),,,,,TRUE
+INVE07E,"Serum Electrolyte (Na+, K+)",,,,,TRUE
+INVE08D,Aspartate Aminotransferase (AST),,,,,TRUE
+INVE08E,Serum Ferritin,,,,,TRUE
+INVE09D,B/F for Malaria Parasites,,,,,TRUE
+INVE09E,Serum Iron (Fe),,,,,TRUE
+INVE100,Acid Phosphate,,,,,TRUE
+INVE101,Chloride,,,,,TRUE
+INVE102,Direct Bilirubin/Total Bilirubin,,,,,TRUE
+INVE103,Donor Screening for HB & AG,,,,,TRUE
+INVE104,Grouping/X Matching/Unit,,,,,TRUE
+INVE105,Hepatitis C screening,,,,,TRUE
+INVE106,IOPA Xray,,,,,TRUE
+INVE107,Magnesium,,,,,TRUE
+INVE108,NA+,,,,,TRUE
+INVE109,Phosphorus,,,,,TRUE
+INVE10D,Barium Enema,,,,,TRUE
+INVE10E,Serum Lactate Dehydrogenase (LDH),,,,,TRUE
+INVE110,Platelet Count,,,,,TRUE
+INVE111,Potassium,,,,,TRUE
+INVE112,Renal Function Test,,,,,TRUE
+INVE113,Semen Analysis,,,,,TRUE
+INVE114,Total leucocyte count,,,,,TRUE
+INVE115,Total Proteins Blood,,,,,TRUE
+INVE116,Urine Sugar,,,,,TRUE
+INVE117,VCT,,,,,TRUE
+INVE118,Vitality Test,,,,,TRUE
+INVE119,VLDL,,,,,TRUE
+INVE11D,Barium Meal,,,,,TRUE
+INVE11E,Serum Prolactin (PRL),,,,,TRUE
+INVE120,WBC+Differential,,,,,TRUE
+INVE122,Malaria Card Test (Dipstik assay/rapid card),,,,,TRUE
+INVE123,RH Typing,,,,,TRUE
+INVE124,Keratometry,,,,,TRUE
+INVE125,A-scan,,,,,TRUE
+INVE126,"Serum vitamin B12, and folate levels",,,,,TRUE
+INVE129,Ultrasound biomicroscopy,,,,,TRUE
+INVE12D,Barium Meal & Follow Through,,,,,TRUE
+INVE12E,Serum Total Protein,,,,,TRUE
+INVE130,Demonstration of Heinz bodies,,,,,TRUE
+INVE132,Anti-streptolysin test,,,,,TRUE
+INVE133,Viral serology,,,,,TRUE
+INVE134,Calcium Infusion test,,,,,TRUE
+INVE135,Pulmonary Function test,,,,,TRUE
+INVE136,Pleural fluid analysis,,,,,TRUE
+INVE137,Cancer antigen 19-9,,,,,TRUE
+INVE138,Transhepatic cholangiography (PTC),,,,,TRUE
+INVE139,Bone Scan,,,,,TRUE
+INVE13D,Barium Swallow,,,,,TRUE
+INVE13E,Serum Triglyceride,,,,,TRUE
+INVE140,Breast tissue Biopsy,,,,,TRUE
+INVE141,C Reactive Protein,,,,,TRUE
+INVE142,EEG (Electroencephalogram),,,,,TRUE
+INVE143,Holter,,,,,TRUE
+INVE144,Angiography,,,,,TRUE
+INVE145,Myocardial perfusion imaging,,,,,TRUE
+INVE146,Guthrie test,,,,,TRUE
+INVE149,Typhi Dot,,,,,TRUE
+INVE14D,Bilirubin,,,,,TRUE
+INVE14E,Serum Uric Acid,,,,,TRUE
+INVE150,AEC,,,,,TRUE
+INVE151,Blood Sugar PP,,,,,TRUE
+INVE152,Biopsy L/A,,,,,TRUE
+INVE154,ASO titre,,,,,TRUE
+INVE155,Gonioscopy,,,,,TRUE
+INVE156,Hematocrit,,,,,TRUE
+INVE157,CT Scan - 2 Region with No Contrast,,,,,TRUE
+INVE158,CT Scan - 2 Region + 1Contrast,,,,,TRUE
+INVE159,CT Scan - 2 region + 2 contrast,,,,,TRUE
+INVE15D,Bleeding and Clotting Time,,,,,TRUE
+INVE15E,Sialogram,,,,,TRUE
+INVE160,MRI 2 region with no contrast,,,,,TRUE
+INVE161,MRI 2 region with + contrast,,,,,TRUE
+INVE16D,Blood for C/S,,,,,TRUE
+INVE16E,Sickling Test,,,,,TRUE
+INVE17D,Blood Grouping,,,,,TRUE
+INVE17E,Skin Scrapping For Fungal Elements,,,,,TRUE
+INVE18D,Blood Grouping & Antibody Screen,,,,,TRUE
+INVE18E,Skin Snip,,,,,TRUE
+INVE19D,Blood Parasites,,,,,TRUE
+INVE19E,Stool C/S,,,,,TRUE
+INVE20D,Blood Urea,,,,,TRUE
+INVE20E,Stool For Occult Blood,,,,,TRUE
+INVE21D,Blood Urea & Electrolytes,,,,,TRUE
+INVE21E,T3,,,,,TRUE
+INVE22D,Bone Marrow - Trephine Biopsy,,,,,TRUE
+INVE22E,T4,,,,,TRUE
+INVE23D,Bone Marrow Aspirate,,,,,TRUE
+INVE23E,Testosterone,,,,,TRUE
+INVE24D,Bue & Creatinine,,,,,TRUE
+INVE24E,Thyroid Function Test (TSH),,,,,TRUE
+INVE25D,Carcino Embryonic Antigen (CEA),,,,,TRUE
+INVE25E,Thyroid Profile,,,,,TRUE
+INVE26D,Cerebrospinal Fluid for C/S,,,,,TRUE
+INVE26E,Total Iron Binding Capacity (TIBC),,,,,TRUE
+INVE27D,Clusters of Differentiation Cells (CD4),,,,,TRUE
+INVE27E,Total Serum Cholesterol,,,,,TRUE
+INVE28D,Coombs Test (Direct),,,,,TRUE
+INVE28E,Trophozoite Count,,,,,TRUE
+INVE29D,Creatine Kinase - Mb (CK - Mb),,,,,TRUE
+INVE29E,Troponin,,,,,TRUE
+INVE30D,Creatine Kinase (CK),,,,,TRUE
+INVE30E,Ultrasound,,,,,TRUE
+INVE31D,CSF Latex Agglutination,,,,,TRUE
+INVE31E,Ultrasound - 2 Regions,,,,,TRUE
+INVE32D,CT Scan - 1 Region + 2 Contrast,,,,,TRUE
+INVE32E,Ultrasound Guided Incision & Drainage,,,,,TRUE
+INVE33D,CT Scan - 1 Region + 1IV Contrast,,,,,TRUE
+INVE33E,Urethrogram,,,,,TRUE
+INVE34D,CT Scan - 1 Region + No Contrast,,,,,TRUE
+INVE34E,Urine C/S,,,,,TRUE
+INVE35D,Cystogram,,,,,TRUE
+INVE35E,Urine For Bence Jones Protein,,,,,TRUE
+INVE36D,Cytology,,,,,TRUE
+INVE36E,Veneral Disease Research Laboratory (VDRL),,,,,TRUE
+INVE37D,Digoxin Level,,,,,TRUE
+INVE37E,Venogram - 1 Region,,,,,TRUE
+INVE38D,Dihydroxy Epiandesterone Sulphate (Dhea-S),,,,,TRUE
+INVE38E,Widal Test,,,,,TRUE
+INVE39D,Doppler Scan,,,,,TRUE
+INVE40D,Ductologram/Galactographyy,,,,,TRUE
+INVE41D,ECG,,,,,TRUE
+INVE42D,Erythrocyte Sedimentation Rate (ESR),,,,,TRUE
+INVE43D,Estrogen,,,,,TRUE
+INVE44D,Factor IX,,,,,TRUE
+INVE45D,Factor VIII,,,,,TRUE
+INVE46D,Fasting Blood Sugar/Random Blood Sugar,,,,,TRUE
+INVE47D,Fistulogram,,,,,TRUE
+INVE48D,Follicle Stimulating Hormone (FSH),,,,,TRUE
+INVE49D,FT3,,,,,TRUE
+INVE50D,FT4,,,,,TRUE
+INVE51D,Full Blood Count FBC (Auto) & Film Comment,,,,,TRUE
+INVE52D,Full Blood Count FBC (Automation),,,,,TRUE
+INVE53D,Full Blood Count With Film Comment (Manual),,,,,TRUE
+INVE54D,Fungal Cultures,,,,,TRUE
+INVE55D,Gamma Glutamyl Transferase (GGT),,,,,TRUE
+INVE56D,Glucose-6-Phosphate Dehydrogenase (G6PD),,,,,TRUE
+INVE57D,Glycosylated Haemoglobin (HBA 1C),,,,,TRUE
+INVE58D,Haemoglobin A2 & F Estimation,,,,,TRUE
+INVE59D,Haemoglobin Electrophoresis,,,,,TRUE
+INVE60D,Haemoglobin Estimation (HB),,,,,TRUE
+INVE61D,HDL - Cholesterol,,,,,TRUE
+INVE62D,Helicobacter Pylori Test,,,,,TRUE
+INVE63D,Hepatitis B Surface Antigen ( HBSAG) HBV,,,,,TRUE
+INVE64D,Hepatitis B Virus Profile (HBV Profile),,,,,TRUE
+INVE65D,High Vaginal Swab For C/S,,,,,TRUE
+INVE66D,High Vaginal Swab Routine Examination,,,,,TRUE
+INVE67D,Histopathology,,,,,TRUE
+INVE68D,Human Immunodeficiency Virus (HIV) Confirmation,,,,,TRUE
+INVE69D,Human Immunodeficiency Virus (HIV) Screening,,,,,TRUE
+INVE70D,Hysterosalpingogram,,,,,TRUE
+INVE71D,Immunostaining,,,,,TRUE
+INVE72D,Intravenous Urography,,,,,TRUE
+INVE73D,LDL - Cholesterol,,,,,TRUE
+INVE74D,LFT,,,,,TRUE
+INVE75D,Lipid Profile,,,,,TRUE
+INVE76D,Lupus Erythematosus Cell (Le Cell),,,,,TRUE
+INVE77D,Luteinizing Hormone (LH),,,,,TRUE
+INVE78D,Mammogram,,,,,TRUE
+INVE79D,"Miscelllaneous Cultures (Fluids, Aspirates & Exudates)",,,,,TRUE
+INVE80D,MRI - 1 Region + Contrast,,,,,TRUE
+INVE81D,MRI - 1 Region + No Contrast,,,,,TRUE
+INVE82D,Myelogram - 1 Region,,,,,TRUE
+INVE83D,Oral Glucose Tolerance Test (OGTT),,,,,TRUE
+INVE84D,Orthopanthomograph (OPT),,,,,TRUE
+INVE85D,Pancreatic Amylase,,,,,TRUE
+INVE86D,Pap Smear/Fine Needle Aspiration,,,,,TRUE
+INVE87D,Percutaneous Biopsy - CT Scan Guide,,,,,TRUE
+INVE88D,Percutaneous Biopsy - Flouroscopic Guide,,,,,TRUE
+INVE89D,X-ray one region,,,,,TRUE
+INVE90D,X-ray two region,,,,,TRUE
+INVE91D,Plasma Cortisol,,,,,TRUE
+INVE92D,Pregnancy Test,,,,,TRUE
+INVE93D,Progesterone (Prog),,,,,TRUE
+INVE94D,Prostate Specific Antigen (PSA),,,,,TRUE
+INVE95D,Prothrombin Time,,,,,TRUE
+INVE96D,Reticulocyte Count (Retics),,,,,TRUE
+INVE97D,Rheumatoid Factor,,,,,TRUE
+INVE98D,Routine Stool Examination,,,,,TRUE
+INVE99D,Routine Urine Examination,,,,,TRUE
+MEDI01A,Thyroid Diseases >=12 Yrs,E00.9,"Congenital iodine-deficiency syndrome, unspecified",,,TRUE
+MEDI01A,Thyroid Diseases >=12 Yrs,E01.8,Other iodine-deficiency-related thyroid disorders and allied conditions,,,TRUE
+MEDI01A,Thyroid Diseases >=12 Yrs,E03.9,"Hypothyroidism, unspecified",,,TRUE
+MEDI01A,Thyroid Diseases >=12 Yrs,E04.9,"Nontoxic goitre, unspecified",,,TRUE
+MEDI02A,Diabetes - Simple >=12 Yrs,,,,,TRUE
+MEDI03A,Diabetes - Complicated >=12 Yrs,E12.5,Malnutrition-related diabetes mellitus: With peripheral circulatory complications,,,TRUE
+MEDI03A,Diabetes - Complicated >=12 Yrs,E14.1,Unspecified diabetes mellitus: With ketoacidosis,,,TRUE
+MEDI03A,Diabetes - Complicated >=12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+MEDI03A,Diabetes - Complicated >=12 Yrs,E14.8,Unspecified diabetes mellitus: With unspecified complications,,,TRUE
+MEDI04A,Other Endocrine Diseases >=12 Yrs,E21.3,"Hyperparathyroidism, unspecified",,,TRUE
+MEDI04A,Other Endocrine Diseases >=12 Yrs,E23.2,Diabetes insipidus,,,TRUE
+MEDI04A,Other Endocrine Diseases >=12 Yrs,E25.0,Congenital adrenogenital disorders associated with enzyme deficiency,,,TRUE
+MEDI05A,Malnutrition >=12 Yrs,E43.00,Unspecified severe protein-energy malnutrition,,,TRUE
+MEDI05A,Malnutrition >=12 Yrs,E55.9,"Vitamin D deficiency, unspecified",,,TRUE
+MEDI06A,Anaemia >=12 Yrs,D50.9,"Iron deficiency anaemia, unspecified",,,TRUE
+MEDI06A,Anaemia >=12 Yrs,D51.9,"Vitamin B12 deficiency anaemia, unspecified",,,TRUE
+MEDI06A,Anaemia >=12 Yrs,D58.9,"Hereditary haemolytic anaemia, unspecified",,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I00.00,Rheumatic fever without mention of heart involvement,,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I25.2,Old myocardial infarction,,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I31.3,Pericardial effusion (noninflammatory),,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I31.9,"Disease of pericardium, unspecified",,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I32.00,Pericarditis In Diseases Classified Elsewhere,,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I38.00,"Endocarditis, valve unspecified",,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I48.00,Atrial fibrillation and flutter,,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I50.0,Congestive heart failure,,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I50.1,Left ventricular failure,,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I50.9,"Heart failure, unspecified",,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,I51.4,"Myocarditis, unspecified",,,TRUE
+MEDI07A,Heart Disease >=12 Yrs,Q24.9,"Congenital malformation of heart, unspecified",,,TRUE
+MEDI08A,Poisoning >=12 Yrs,J68.0,"Bronchitis and pneumonitis due to chemicals, gases, fumes and vapours",,,TRUE
+MEDI10A,Non-Traumatic Coma >=12 Yrs,A17.0,Tuberculous meningitis,,,TRUE
+MEDI10A,Non-Traumatic Coma >=12 Yrs,E14.0,Unspecified diabetes mellitus: With coma,,,TRUE
+MEDI10A,Non-Traumatic Coma >=12 Yrs,E15.00,Nondiabetic hypoglycaemic coma,,,TRUE
+MEDI10A,Non-Traumatic Coma >=12 Yrs,G03.9,"Meningitis, unspecified",,,TRUE
+MEDI10A,Non-Traumatic Coma >=12 Yrs,I64.00,"Stroke, not specified as haemorrhage or infarction",,,TRUE
+MEDI10A,Non-Traumatic Coma >=12 Yrs,N19.00,Unspecified kidney failure,,,TRUE
+MEDI11A,Paralytic Conditions >=12 Yrs,A80.9,"Acute poliomyelitis, unspecified",,,TRUE
+MEDI11A,Paralytic Conditions >=12 Yrs,G35.00,Multiple sclerosis,,,TRUE
+MEDI11A,Paralytic Conditions >=12 Yrs,G37.3,Acute transverse myelitis in demyelinating disease of central nervous system,,,TRUE
+MEDI11A,Paralytic Conditions >=12 Yrs,G61.0,Guillain-BarrE9 syndrome,,,TRUE
+MEDI11A,Paralytic Conditions >=12 Yrs,S14.3,Injury of brachial plexus,,,TRUE
+MEDI12A,Seizure Disorders >=12 Yrs,F44.5,Dissociative convulsions,,,TRUE
+MEDI12A,Seizure Disorders >=12 Yrs,G41.9,"Status epilepticus, unspecified",,,TRUE
+MEDI12A,Seizure Disorders >=12 Yrs,R56.8,Other and unspecified convulsions,,,TRUE
+MEDI13A,Transient Loss of Consciousness >=12 Yrs,G45.9,"Transient cerebral ischaemic attack, unspecified",,,TRUE
+MEDI13A,Transient Loss of Consciousness >=12 Yrs,R55.00,Syncope and collapse,,,TRUE
+MEDI14A,Cerebro Vascular Accident/Stroke >=12 Yrs,I64.00,"Stroke, not specified as haemorrhage or infarction",,,TRUE
+MEDI14A,Cerebro Vascular Accident/Stroke >=12 Yrs,I67.9,"Cerebrovascular disease, unspecified",,,TRUE
+MEDI15A,Bone Marrow Hypoplasia >=12 Yrs,D61.9,"Aplastic anaemia, unspecified",,,TRUE
+MEDI16A,Sickle Cell Disease with Complication/Crisis >=12 Yrs,,,,,TRUE
+MEDI17A,Clotting/Bleeding Disorders >=12 Yrs,D65.00,Disseminated intravascular coagulation [defibrination syndrome],,,TRUE
+MEDI17A,Clotting/Bleeding Disorders >=12 Yrs,D66.00,Hereditary factor VIII deficiency,,,TRUE
+MEDI18A,Diseases of Skin/Subcutaneous Tissues >=12 Yrs,L30.9,"Dermatitis, unspecified",,,TRUE
+MEDI18A,Diseases of Skin/Subcutaneous Tissues >=12 Yrs,L51.1,Bullous erythema multiforme,,,TRUE
+MEDI18A,Diseases of Skin/Subcutaneous Tissues >=12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+MEDI19A,Kidney Disease without Renal Failure >=12 Yrs,N10.00,Acute tubulo-interstitial nephritis,,,TRUE
+MEDI19A,Kidney Disease without Renal Failure >=12 Yrs,N12.00,"Tubulo-interstitial nephritis, not specified as acute or chronic",,,TRUE
+MEDI19A,Kidney Disease without Renal Failure >=12 Yrs,N39.1,"Persistent proteinuria, unspecified",,,TRUE
+MEDI20A,Renal Failure without Dialysis >=12 Yrs,N18.9,"Chronic kidney disease, unspecified",,,TRUE
+MEDI21A,Acute Renal Failure with Dialysis >=12 Yrs,,,,,TRUE
+MEDI22A,Obstructive Airway Disease >=12 Yrs,J21.9,"Acute bronchiolitis, unspecified",,,TRUE
+MEDI22A,Obstructive Airway Disease >=12 Yrs,J40.00,"Bronchitis, not specified as acute or chronic",,,TRUE
+MEDI22A,Obstructive Airway Disease >=12 Yrs,J42.00,Unspecified chronic bronchitis,,,TRUE
+MEDI22A,Obstructive Airway Disease >=12 Yrs,J44.9,"Chronic obstructive pulmonary disease, unspecified",,,TRUE
+MEDI22A,Obstructive Airway Disease >=12 Yrs,J46.00,Status asthmaticus,,,TRUE
+MEDI23A,Diarrhoea and Vomiting >=12 Yrs,A06.0,Acute amoebic dysentery,,,TRUE
+MEDI23A,Diarrhoea and Vomiting >=12 Yrs,A09.0,Other and unspecified gastroenteritis and colitis of infectious origin,,,TRUE
+MEDI24A,Liver Diseases >=12 Yrs,B17.9,"Acute viral hepatitis, unspecified",,,TRUE
+MEDI25A,Gastro Intestinal Tract Bleeding >=12 Yrs,I86.4,Gastric varices,,,TRUE
+MEDI25A,Gastro Intestinal Tract Bleeding >=12 Yrs,K63.9,"Disease of intestine, unspecified",,,TRUE
+MEDI25A,Gastro Intestinal Tract Bleeding >=12 Yrs,K92.0,Haematemesis,,,TRUE
+MEDI25A,Gastro Intestinal Tract Bleeding >=12 Yrs,K92.1,Melaena,,,TRUE
+MEDI25A,Gastro Intestinal Tract Bleeding >=12 Yrs,K92.2,"Gastrointestinal haemorrhage, unspecified",,,TRUE
+MEDI26A,Non-Specific Abdominal Conditions >=12 Yrs,B83.9,"Helminthiasis, unspecified",,,TRUE
+MEDI26A,Non-Specific Abdominal Conditions >=12 Yrs,B89.00,Unspecified parasitic disease,,,TRUE
+MEDI26A,Non-Specific Abdominal Conditions >=12 Yrs,K30.00,Dyspepsia,,,TRUE
+MEDI26A,Non-Specific Abdominal Conditions >=12 Yrs,K86.1,Other chronic pancreatitis,,,TRUE
+MEDI26A,Non-Specific Abdominal Conditions >=12 Yrs,R10.4,Other and unspecified abdominal pain,,,TRUE
+MEDI27A,Shock >=12 Yrs,A41.9,"Sepsis, unspecified",,,TRUE
+MEDI27A,Shock >=12 Yrs,R57.0,Cardiogenic shock,,,TRUE
+MEDI27A,Shock >=12 Yrs,R57.1,Hypovolaemic shock,,,TRUE
+MEDI27A,Shock >=12 Yrs,R58.00,"Haemorrhage, not elsewhere classified",,,TRUE
+MEDI28A,Malaria >=12 Yrs,B54.00,Unspecified malaria,,,TRUE
+MEDI29A,Black Water Fever >=12 Yrs,,,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A20.3,Plague meningitis,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A35.00,Other tetanus,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A41.9,"Sepsis, unspecified",,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A86.00,Unspecified viral encephalitis,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A90.00,Dengue fever [classical dengue],,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A91.00,Dengue haemorrhagic fever,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A92.0,Chikungunya virus disease,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A92.8,Other specified mosquito-borne viral fevers,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A92.9,"Mosquito-borne viral fever, unspecified",,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,A99.00,Unspecified viral haemorrhagic fever,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,B94.1,Sequelae of viral encephalitis,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,G03.9,"Meningitis, unspecified",,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,G05.00,"Encephalitis, Myelitis And Encephalomyelitis In Diseases Classified Elsewhere",,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,I33.0,Acute and subacute infective endocarditis,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,J47.00,Bronchiectasis,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,J99.00,Respiratory Disorders In Diseases Classified Elsewhere,,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,N12.00,"Tubulo-interstitial nephritis, not specified as acute or chronic",,,TRUE
+MEDI30A,Systemic Infections >=12 Yrs,R21.00,Rash and other nonspecific skin eruption,,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,A53.9,"Syphilis, unspecified",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,B02.9,Zoster without complication,,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,J02.9,"Acute pharyngitis, unspecified",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,J18.9,"Pneumonia, unspecified",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,J32.9,"Chronic sinusitis, unspecified",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,J40.00,"Bronchitis, not specified as acute or chronic",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,J98.8,Other specified respiratory disorders,,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,L23.9,"Allergic contact dermatitis, unspecified cause",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,N39.0,"Urinary tract infection, site not specified",,,TRUE
+MEDI31A,Localised Infections >=12 Yrs,P38.00,Omphalitis of newborn with or without mild haemorrhage,,,TRUE
+MEDI32A,Hypertension >=12 Yrs,I10.00,Essential (primary) hypertension,,,TRUE
+MEDI33A,Ischaemic Heart Disease >=12 Yrs,I20.0,Unstable angina,,,TRUE
+MEDI34A,Pulmonary Embolism >=12 Yrs,,,,,TRUE
+MEDI35A,Ulcer of Skin >=12 Yrs,,,,,TRUE
+MEDI36A,Alcoholism >=12 Yrs,,,,,TRUE
+MEDI37A,Animal Bites >=12 Yrs,W50.00,"Hit, struck, kicked, twisted, bitten or scratched by another person",,,TRUE
+MEDI37A,Animal Bites >=12 Yrs,W53.00,Bitten by rat,,,TRUE
+MEDI37A,Animal Bites >=12 Yrs,W54.00,Bitten or struck by dog,,,TRUE
+MEDI37A,Animal Bites >=12 Yrs,W55.00,Bitten or struck by other mammals,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.0,HIV disease resulting in mycobacterial infection,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.1,HIV disease resulting in other bacterial infections,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.2,HIV disease resulting in cytomegaloviral disease,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.3,HIV disease resulting in other viral infections,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.4,HIV disease resulting in candidiasis,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.5,HIV disease resulting in other mycoses,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.6,HIV disease resulting in Pneumocystis jirovecii pneumonia,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.7,HIV disease resulting in multiple infections,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.8,HIV disease resulting in other infectious and parasitic diseases,,,TRUE
+MEDI38A,Retroviral Infection/Immuno Suppression >=12 Yrs,B20.9,HIV disease resulting in unspecified infectious or parasitic disease,,,TRUE
+MEDI39A,Chemotheraphy,D06.9,"Carcinoma in situ: Cervix, unspecified",,,TRUE
+MEDI40A,Radiotheraphy,D05.01,Lobular carcinoma in situ of right breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.10,Intraductal carcinoma in situ of unspecified breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.11,Intraductal carcinoma in situ of right breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.12,Intraductal carcinoma in situ of left breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.7,Other carcinoma in situ of breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.80,Other specified type of carcinoma in situ of unspecified breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.81,Other specified type of carcinoma in situ of right breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.82,Other specified type of carcinoma in situ of left breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.90,Unspecified type of carcinoma in situ of unspecified breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.91,Unspecified type of carcinoma in situ of right breast,,,TRUE
+MEDI40A,Radiotheraphy,D05.92,Unspecified type of carcinoma in situ of left breast,,,TRUE
+MEDI40A,Radiotheraphy,D06.9,"Carcinoma in situ: Cervix, unspecified",,,TRUE
+MEDI41A,Cerebral Malaria,B50.0,Plasmodium falciparum malaria with cerebral complications,,,TRUE
+MEDI42A,Dialysis for Chronic Renal Failure >=12Yrs,,,,,TRUE
+OBGY01A,Gynaecological Laparotomy,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY01A,Gynaecological Laparotomy,D27.00,Benign neoplasm of ovary,,,TRUE
+OBGY01A,Gynaecological Laparotomy,N73.9,"Female pelvic inflammatory disease, unspecified",,,TRUE
+OBGY01A,Gynaecological Laparotomy,N80.9,"Endometriosis, unspecified",,,TRUE
+OBGY01A,Gynaecological Laparotomy,N85.8,Other specified noninflammatory disorders of uterus,,,TRUE
+OBGY01A,Gynaecological Laparotomy,O08.9,"Complication following abortion and ectopic and molar pregnancy, unspecified",,,TRUE
+OBGY01A,Gynaecological Laparotomy,O71.9,"Obstetric trauma, unspecified",,,TRUE
+OBGY01A,Gynaecological Laparotomy,O72.1,Other immediate postpartum haemorrhage,,,TRUE
+OBGY01A,Gynaecological Laparotomy,O85.00,Puerperal sepsis,,,TRUE
+OBGY01A,Gynaecological Laparotomy,O90.9,"Complication of the puerperium, unspecified",,,TRUE
+OBGY02A,Diagnostic Laparascopy,N73.9,"Female pelvic inflammatory disease, unspecified",,,TRUE
+OBGY02A,Diagnostic Laparascopy,N80.9,"Endometriosis, unspecified",,,TRUE
+OBGY02A,Diagnostic Laparascopy,N85.8,Other specified noninflammatory disorders of uterus,,,TRUE
+OBGY02A,Diagnostic Laparascopy,O72.1,Other immediate postpartum haemorrhage,,,TRUE
+OBGY03A,Operative Laparascopy,D25.9,"Leiomyoma of uterus, unspecified",,,TRUE
+OBGY03A,Operative Laparascopy,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY03A,Operative Laparascopy,D27.00,Benign neoplasm of ovary,,,TRUE
+OBGY03A,Operative Laparascopy,N80.9,"Endometriosis, unspecified",,,TRUE
+OBGY03A,Operative Laparascopy,O08.9,"Complication following abortion and ectopic and molar pregnancy, unspecified",,,TRUE
+OBGY04A,Culdocentesis/Culdotomy,N73.9,"Female pelvic inflammatory disease, unspecified",,,TRUE
+OBGY05A,Cauterization,C52.00,Malignant neoplasm of vagina,,,TRUE
+OBGY05A,Cauterization,C53.9,"Malignant neoplasm: Cervix uteri, unspecified",,,TRUE
+OBGY05A,Cauterization,C57.9,"Malignant neoplasm: Female genital organ, unspecified",,,TRUE
+OBGY05A,Cauterization,D26.0,Other benign neoplasm: Cervix uteri,,,TRUE
+OBGY05A,Cauterization,N72.00,Inflammatory disease of cervix uteri,,,TRUE
+OBGY05A,Cauterization,N80.9,"Endometriosis, unspecified",,,TRUE
+OBGY06A,MVA/EOU,O02.1,Missed abortion,,,TRUE
+OBGY06A,MVA/EOU,O02.89,Other abnormal products of conception,,,TRUE
+OBGY06A,MVA/EOU,O02.9,"Abnormal product of conception, unspecified",,,TRUE
+OBGY06A,MVA/EOU,O03.0,"Spontaneous abortion: Incomplete, complicated by genital tract and pelvic infection",,,TRUE
+OBGY06A,MVA/EOU,O03.1,"Spontaneous abortion: Incomplete, complicated by delayed or excessive haemorrhage",,,TRUE
+OBGY06A,MVA/EOU,O03.2,"Spontaneous abortion: Incomplete, complicated by embolism",,,TRUE
+OBGY06A,MVA/EOU,O03.32,Renal failure following incomplete spontaneous abortion,,,TRUE
+OBGY06A,MVA/EOU,O03.37,Sepsis following incomplete spontaneous abortion,,,TRUE
+OBGY06A,MVA/EOU,O03.39,Incomplete spontaneous abortion with other complications,,,TRUE
+OBGY06A,MVA/EOU,O03.4,"Spontaneous abortion: Incomplete, without complication",,,TRUE
+OBGY06A,MVA/EOU,O04.0,"Medical abortion: Incomplete, complicated by genital tract and pelvic infection",,,TRUE
+OBGY07A,Suction Curettage,O02.0,Blighted ovum and nonhydatidiform mole,,,TRUE
+OBGY08A,Manual Removal of Placenta,O72.1,Other immediate postpartum haemorrhage,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,N72.00,Inflammatory disease of cervix uteri,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,N73.9,"Female pelvic inflammatory disease, unspecified",,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,N95.1,Menopausal and female climacteric states,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O13.00,Gestational [pregnancy-induced] hypertension without significant proteinuria,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O20.0,Threatened abortion,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O25.00,Malnutrition in pregnancy,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O74.9,"Complication of anaesthesia during labour and delivery, unspecified",,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O85.00,Puerperal sepsis,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O86.11,Cervicitis following delivery,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,O86.89,Other specified puerperal infections,,,TRUE
+OBGY09A,Expectant management/Medical Treatment in Obstetrics and Gynaecology,R10.2,Pelvic and perineal pain,,,TRUE
+OBGY10A,Marsupialization of Batholin's gland,N75.9,"Disease of Bartholin gland, unspecified",,,TRUE
+OBGY10A,Marsupialization of Batholin's gland,O72.1,Other immediate postpartum haemorrhage,,,TRUE
+OBGY11A,Excision of genital lesions,N75.9,"Disease of Bartholin gland, unspecified",,,TRUE
+OBGY12A,Incision and drainage in Gynaecology Cases,N75.9,"Disease of Bartholin gland, unspecified",,,TRUE
+OBGY12A,Incision and drainage in Gynaecology Cases,N89.9,"Noninflammatory disorder of vagina, unspecified",,,TRUE
+OBGY12A,Incision and drainage in Gynaecology Cases,N90.9,"Noninflammatory disorder of vulva and perineum, unspecified",,,TRUE
+OBGY12A,Incision and drainage in Gynaecology Cases,O71.9,"Obstetric trauma, unspecified",,,TRUE
+OBGY12A,Incision and drainage in Gynaecology Cases,O90.9,"Complication of the puerperium, unspecified",,,TRUE
+OBGY13A,Pelvic Floor Repair - Simple,N81.6,Rectocele,,,TRUE
+OBGY13A,Pelvic Floor Repair - Simple,N81.9,"Female genital prolapse, unspecified",,,TRUE
+OBGY14A,Vaginal Hysterectomy,D25.9,"Leiomyoma of uterus, unspecified",,,TRUE
+OBGY14A,Vaginal Hysterectomy,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY15A,Repair of Enterocele,N81.5,Vaginal enterocele,,,TRUE
+OBGY16A,Vaginal Pessary Insertion,N81.9,"Female genital prolapse, unspecified",,,TRUE
+OBGY17A,Colpocleisis,N81.9,"Female genital prolapse, unspecified",,,TRUE
+OBGY18A,Fistula Repair - Simple,N82.0,Vesicovaginal fistula,,,TRUE
+OBGY19A,Fistula Repair - Complex,N82.3,Fistula of vagina to large intestine,,,TRUE
+OBGY20A,Abdominal Hysterectomy,D25.9,"Leiomyoma of uterus, unspecified",,,TRUE
+OBGY20A,Abdominal Hysterectomy,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY20A,Abdominal Hysterectomy,D27.00,Benign neoplasm of ovary,,,TRUE
+OBGY20A,Abdominal Hysterectomy,N80.9,"Endometriosis, unspecified",,,TRUE
+OBGY20A,Abdominal Hysterectomy,N81.9,"Female genital prolapse, unspecified",,,TRUE
+OBGY21A,Perineal repair - Complex,O71.5,Other obstetric injury to pelvic organs,,,TRUE
+OBGY21A,Perineal repair - Complex,O71.9,"Obstetric trauma, unspecified",,,TRUE
+OBGY21A,Perineal repair - Complex,O72.1,Other immediate postpartum haemorrhage,,,TRUE
+OBGY21A,Perineal repair - Complex,O90.9,"Complication of the puerperium, unspecified",,,TRUE
+OBGY22A,Pelvic Floor Repair - Complex,N81.6,Rectocele,,,TRUE
+OBGY23A,Colposcopy and Biopsy,C53.8,Malignant neoplasm: Overlapping lesion of cervix uteri,,,TRUE
+OBGY23A,Colposcopy and Biopsy,C53.9,"Malignant neoplasm: Cervix uteri, unspecified",,,TRUE
+OBGY23A,Colposcopy and Biopsy,N93.9,"Abnormal uterine and vaginal bleeding, unspecified",,,TRUE
+OBGY24A,Partial Vaginectomy,,,,,TRUE
+OBGY25A,Polypectomy (Avulsion),,,,,TRUE
+OBGY26A,Hysteroscopy,D36.9,Benign neoplasm: Benign neoplasm of unspecified site,,,TRUE
+OBGY26A,Hysteroscopy,N92.0,Excessive and frequent menstruation with regular cycle,,,TRUE
+OBGY26A,Hysteroscopy,N92.1,Excessive and frequent menstruation with irregular cycle,,,TRUE
+OBGY26A,Hysteroscopy,N93.9,"Abnormal uterine and vaginal bleeding, unspecified",,,TRUE
+OBGY27A,Correction of Malposition of Uterus,N85.4,Malposition of uterus,,,TRUE
+OBGY27A,Correction of Malposition of Uterus,N85.5,Inversion of uterus,,,TRUE
+OBGY28A,Vulvectomy,,,,,TRUE
+OBGY29A,Instrumental delivery,P95.00,Fetal death of unspecified cause,,,TRUE
+OBGY30A,Internal Podalic Version with Breech Extraction,,,,,TRUE
+OBGY31A,Destructive Delivery,P95.00,Fetal death of unspecified cause,,,TRUE
+OBGY32A,Caesarean Section,O33.9,"Maternal care for disproportion, unspecified",,,TRUE
+OBGY32A,Caesarean Section,O48.00,Prolonged pregnancy,,,TRUE
+OBGY32A,Caesarean Section,O62.9,"Abnormality of forces of labour, unspecified",,,TRUE
+OBGY32A,Caesarean Section,O66.9,"Obstructed labour, unspecified",,,TRUE
+OBGY32A,Caesarean Section,O67.9,"Intrapartum haemorrhage, unspecified",,,TRUE
+OBGY34A,Spontaneous Vaginal Delivery with or without Episiotomy,O63.1,Prolonged second stage (of labour),,,TRUE
+OBGY35A,Cervical Cerclage suture,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY35A,Cervical Cerclage suture,N88.3,Incompetence of cervix uteri,,,TRUE
+OBGY36A,Myomectomy,D25.9,"Leiomyoma of uterus, unspecified",,,TRUE
+OBGY36A,Myomectomy,D26.9,"Other benign neoplasm: Uterus, unspecified",,,TRUE
+OBGY36A,Myomectomy,O80.9,"Single spontaneous delivery, unspecified",,,TRUE
+OBGY38A,Post Partum Haemorrhage,,,,,TRUE
+OBGY39A,Wertheim's Operation,,,,,TRUE
+OBGY40A,Eclampsia,,,,,TRUE
+OPDC01A,Orthopaedic Surgery-Adult,,,,,TRUE
+OPDC01C,Orthopaedic Surgery-Child,,,,,TRUE
+OPDC02A,Antenatal/Postnatal,,,,,TRUE
+OPDC03A,Dental Adult (without procedure),,,,,TRUE
+OPDC03C,Dental Child (without procedure),,,,,TRUE
+OPDC04A,ENT Adult (without procedure),,,,,TRUE
+OPDC04C,ENT Child (without procedure),,,,,TRUE
+OPDC05A,Eye Adult (without procedure),,,,,TRUE
+OPDC05C,Eye Child (without procedure),,,,,TRUE
+OPDC06A,General OPD - Adult,,,,,TRUE
+OPDC06C,General OPD - Child,,,,,TRUE
+OPDC07A,Medical (Adult),,,,,TRUE
+OPDC08A,Gynaecology,,,,,TRUE
+OPDC09C,Paediatric Surgery,,,,,TRUE
+OPDC10C,Paediatrics,,,,,TRUE
+OPDC11A,Unbundled Consultation - Adult,,,,,TRUE
+OPDC11C,Unbundled Consultation - Child,,,,,TRUE
+OPDC12A,Surgery (General & Reconstructive) - Adult,,,,,TRUE
+OPDC13A,Physiotherapy-Adult,,,,,TRUE
+OPDC13C,Physiotherapy-Child,,,,,TRUE
+OPDC14A,Capitation OPD -Adult,,,,,TRUE
+OPDC14C,Capitation OPD -Child,,,,,TRUE
+OPHT01A,Enucleation >=12 Yrs,,,,,TRUE
+OPHT01A,Exophthalmic Conditions,,,,,TRUE
+OPHT01C,Enucleation <12 Yrs,,,,,TRUE
+OPHT02A,Evisceration >=12 Yrs,,,,,TRUE
+OPHT02A,Purulent Endophthalmitis,,,,,TRUE
+OPHT02C,Evisceration <12 Yrs,,,,,TRUE
+OPHT03A,Removal of superficial foreign body >=12 Yrs,,,,,TRUE
+OPHT03A,Foreign Body On External Eye,,,,,TRUE
+OPHT03C,Removal of superficial foreign body <12 Yrs,,,,,TRUE
+OPHT04A,Removal of intraocular foreign body >=12 Yrs,,,,,TRUE
+OPHT04A,Penetrating Wound Of Eyeball With Foreign Body,,,,,TRUE
+OPHT04C,Removal of intraocular foreign body <12 Yrs,,,,,TRUE
+OPHT05A,Removal of intraorbital foreign body >=12 Yrs,,,,,TRUE
+OPHT05A,Penetrating Wound Of Orbit With Or Without Foreign Body,,,,,TRUE
+OPHT05C,Removal of intraorbital foreign body <12 Yrs,,,,,TRUE
+OPHT06A,Eyelid surgery >=12 Yrs,Q10.0,Congenital ptosis,,,TRUE
+OPHT06A,Open Wound Of Eyelid And Periocular Area,Q10.0,Congenital ptosis,,,TRUE
+OPHT06C,Eyelid surgery <12 Yrs,Q10.0,Congenital ptosis,,,TRUE
+OPHT07A,Scleral and Corneal surgery >=12 Yrs,,,,,TRUE
+OPHT07A,Pterygium,,,,,TRUE
+OPHT07C,Scleral and Corneal surgery <12 Yrs,,,,,TRUE
+OPHT08A,Anterior chamber washout >=12 Yrs,,,,,TRUE
+OPHT08A,Hyphaema,,,,,TRUE
+OPHT08C,Anterior chamber washout <12 Yrs,,,,,TRUE
+OPHT09A,Glaucoma surgery >=12 Yrs,H40.9,"Glaucoma, unspecified",,,TRUE
+OPHT09A,Glaucoma,H40.9,"Glaucoma, unspecified",,,TRUE
+OPHT09C,Glaucoma surgery <12 Yrs,H40.9,"Glaucoma, unspecified",,,TRUE
+OPHT10A,Cataract surgery >=12 Yrs,H26.9,"Cataract, unspecified",,,TRUE
+OPHT10A,Cataract,H26.9,"Cataract, unspecified",,,TRUE
+OPHT10C,Cataract surgery <12 Yrs,H26.9,"Cataract, unspecified",,,TRUE
+OPHT11A,Strabismus surgery >=12 Yrs,H50.9,"Strabismus, unspecified",,,TRUE
+OPHT11A,All Strabismus,H50.9,"Strabismus, unspecified",,,TRUE
+OPHT11C,Strabismus surgery <12 Yrs,H50.9,"Strabismus, unspecified",,,TRUE
+OPHT12A,Incision and curettage of eyelid >=12 Yrs,,,,,TRUE
+OPHT12A,Chalazion,,,,,TRUE
+OPHT12C,Incision and curettage of eyelid <12 Yrs,,,,,TRUE
+OPHT13A,Reconstructive surgery of eyelid >=12 Yrs,Q10.0,Congenital ptosis,,,TRUE
+OPHT13A,Keratoconjunctivitis,Q10.0,Congenital ptosis,,,TRUE
+OPHT13C,Reconstructive surgery of eyelid <12 Yrs,Q10.0,Congenital ptosis,,,TRUE
+OPHT14A,Nasolacrimal drainage system surgery >=12 Yrs,,,,,TRUE
+OPHT14A,Stenosis And Insufficiency Of Lacrimal Passages,,,,,TRUE
+OPHT14C,Nasolacrimal drainage system surgery <12 Yrs,,,,,TRUE
+OPHT15A,Incision and drainage of abscesses >=12 Yrs,,,,,TRUE
+OPHT15A,Acute Inflammation Of Orbit (Orbital Abscess),,,,,TRUE
+OPHT15C,Incision and drainage of abscesses <12 Yrs,,,,,TRUE
+OPHT16A,Examination under anaesthesia >=12 Yrs,H52.7,"Disorder of refraction, unspecified",,,TRUE
+OPHT16A,Disorders Of Refraction And Accommodation,H52.7,"Disorder of refraction, unspecified",,,TRUE
+OPHT16C,Examination under anaesthesia <12 Yrs,H52.7,"Disorder of refraction, unspecified",,,TRUE
+OPHT17A,Uveitis Management,,,,,TRUE
+OPHT18A,Cataract Surgery with Implants >=12 Yrs,H26.9,"Cataract, unspecified",,,TRUE
+ORTH01A,Bandaging/Cast (POP Application) >=12 Yrs,,,,,TRUE
+ORTH01A,"Dislocation, Sprain And Strain Of Unspecified Body Region",,,,,TRUE
+ORTH01C,Bandaging/Cast (POP Application) <12 Yrs,,,,,TRUE
+ORTH02A,Bone Biopsy >=12 Yrs,,,,,TRUE
+ORTH02A,Malignant Neoplasm Of Bone And Articular Cartilage,,,,,TRUE
+ORTH02C,Bone Biopsy <12 Yrs,C41.9,"Malignant neoplasm: Bone and articular cartilage, unspecified",,,TRUE
+ORTH03A,Bone Graft >=12 Yrs,M84.1,Nonunion of fracture [pseudarthrosis],,,TRUE
+ORTH03A,Disorders Of Bone Density And Structure(Bone Loss),M84.1,Nonunion of fracture [pseudarthrosis],,,TRUE
+ORTH03C,Bone Graft <12 Yrs,M84.1,Nonunion of fracture [pseudarthrosis],,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S22.0,Fracture of thoracic vertebra,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S22.0,Fracture of thoracic vertebra,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S22.1,Multiple fractures of thoracic spine,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S22.1,Multiple fractures of thoracic spine,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S32.0,Fracture of lumbar vertebra,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S32.0,Fracture of lumbar vertebra,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S32.1,Fracture of sacrum,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S32.1,Fracture of sacrum,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S32.2,Fracture of coccyx,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S32.2,Fracture of coccyx,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S42.2,Fracture of upper end of humerus,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S42.2,Fracture of upper end of humerus,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S42.7,"Multiple fractures of clavicle, scapula and humerus",,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S42.7,"Multiple fractures of clavicle, scapula and humerus",,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S52.5,Fracture of lower end of radius,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S52.5,Fracture of lower end of radius,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,S52.6,Fracture of lower end of both ulna and radius,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,S52.6,Fracture of lower end of both ulna and radius,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH04A,Closed Reduction and Splintage of Fractures and Joints >=12 Yrs,T14.3,"Dislocation, sprain and strain of unspecified body region",,,TRUE
+ORTH04A,Fracture Of Unspecified Body Region,T14.3,"Dislocation, sprain and strain of unspecified body region",,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S22.0,Fracture of thoracic vertebra,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S22.1,Multiple fractures of thoracic spine,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S32.0,Fracture of lumbar vertebra,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S32.1,Fracture of sacrum,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S32.2,Fracture of coccyx,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S42.2,Fracture of upper end of humerus,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S42.7,"Multiple fractures of clavicle, scapula and humerus",,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S52.5,Fracture of lower end of radius,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,S52.6,Fracture of lower end of both ulna and radius,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH04C,Closed Reduction and Splintage of Fractures and Joints <12 Yrs,T14.3,"Dislocation, sprain and strain of unspecified body region",,,TRUE
+ORTH05A,Debridement and Suturing >=12 Yrs,L08.9,"Local infection of skin and subcutaneous tissue, unspecified",,,TRUE
+ORTH05A,Open Wound Of Unspecified Body Region,L08.9,"Local infection of skin and subcutaneous tissue, unspecified",,,TRUE
+ORTH05A,Debridement and Suturing >=12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+ORTH05A,Open Wound Of Unspecified Body Region,T14.1,Open wound of unspecified body region,,,TRUE
+ORTH05A,Debridement and Suturing >=12 Yrs,T14.3,"Dislocation, sprain and strain of unspecified body region",,,TRUE
+ORTH05A,Open Wound Of Unspecified Body Region,T14.3,"Dislocation, sprain and strain of unspecified body region",,,TRUE
+ORTH05C,Debridement and Suturing <12 Yrs,L08.9,"Local infection of skin and subcutaneous tissue, unspecified",,,TRUE
+ORTH05C,Debridement and Suturing <12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+ORTH05C,Debridement and Suturing <12 Yrs,T14.3,"Dislocation, sprain and strain of unspecified body region",,,TRUE
+ORTH07A,Excision of Soft Tissue Lumps >=12 Yrs,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+ORTH07A,Lipoma,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+ORTH07A,Excision of Soft Tissue Lumps >=12 Yrs,R22.9,"Localized swelling, mass and lump, unspecified",,,TRUE
+ORTH07A,Lipoma,R22.9,"Localized swelling, mass and lump, unspecified",,,TRUE
+ORTH07C,Excision of Soft Tissue Lumps <12 Yrs,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+ORTH07C,Excision of Soft Tissue Lumps <12 Yrs,R22.9,"Localized swelling, mass and lump, unspecified",,,TRUE
+ORTH08A,External Fixation >=12 Yrs,C41.9,"Malignant neoplasm: Bone and articular cartilage, unspecified",,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,C41.9,"Malignant neoplasm: Bone and articular cartilage, unspecified",,,TRUE
+ORTH08A,External Fixation >=12 Yrs,S32.7,Multiple fractures of lumbar spine and pelvis,,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,S32.7,Multiple fractures of lumbar spine and pelvis,,,TRUE
+ORTH08A,External Fixation >=12 Yrs,S42.3,Fracture of shaft of humerus,,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,S42.3,Fracture of shaft of humerus,,,TRUE
+ORTH08A,External Fixation >=12 Yrs,S42.4,Fracture of lower end of humerus,,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,S42.4,Fracture of lower end of humerus,,,TRUE
+ORTH08A,External Fixation >=12 Yrs,S62.6,Fracture of other finger,,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,S62.6,Fracture of other finger,,,TRUE
+ORTH08A,External Fixation >=12 Yrs,T02.9,"Multiple fractures, unspecified",,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,T02.9,"Multiple fractures, unspecified",,,TRUE
+ORTH08A,External Fixation >=12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH08A,Fracture Of Unspecified Body Region,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH08C,External Fixation <12 Yrs,C41.9,"Malignant neoplasm: Bone and articular cartilage, unspecified",,,TRUE
+ORTH08C,External Fixation <12 Yrs,S32.7,Multiple fractures of lumbar spine and pelvis,,,TRUE
+ORTH08C,External Fixation <12 Yrs,S42.3,Fracture of shaft of humerus,,,TRUE
+ORTH08C,External Fixation <12 Yrs,S42.4,Fracture of lower end of humerus,,,TRUE
+ORTH08C,External Fixation <12 Yrs,S62.6,Fracture of other finger,,,TRUE
+ORTH08C,External Fixation <12 Yrs,T02.9,"Multiple fractures, unspecified",,,TRUE
+ORTH08C,External Fixation <12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH09A,Fasciotomy >=12 Yrs,L08.9,"Local infection of skin and subcutaneous tissue, unspecified",,,TRUE
+ORTH09A,Traumatic Ischaemia Of Muscle,L08.9,"Local infection of skin and subcutaneous tissue, unspecified",,,TRUE
+ORTH09A,Fasciotomy >=12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+ORTH09A,Traumatic Ischaemia Of Muscle,T14.1,Open wound of unspecified body region,,,TRUE
+ORTH09A,Fasciotomy >=12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH09A,Traumatic Ischaemia Of Muscle,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH09A,Fasciotomy >=12 Yrs,T14.7,Crushing injury and traumatic amputation of unspecified body region,,,TRUE
+ORTH09A,Traumatic Ischaemia Of Muscle,T14.7,Crushing injury and traumatic amputation of unspecified body region,,,TRUE
+ORTH09A,Fasciotomy >=12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+ORTH09A,Traumatic Ischaemia Of Muscle,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+ORTH09C,Fasciotomy <12 Yrs,L08.9,"Local infection of skin and subcutaneous tissue, unspecified",,,TRUE
+ORTH09C,Fasciotomy <12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+ORTH09C,Fasciotomy <12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH09C,Fasciotomy <12 Yrs,T14.7,Crushing injury and traumatic amputation of unspecified body region,,,TRUE
+ORTH09C,Fasciotomy <12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+ORTH10A,Hemi-Arthroplasty >=12 Yrs,,,,,TRUE
+ORTH10A,Fracture Of Neck Of Femur,,,,,TRUE
+ORTH10C,Hemi-Arthroplasty <12 Yrs,,,,,TRUE
+ORTH11A,Incision and Drainage of Abscesses >=12 Yrs,T14.0,Superficial injury of unspecified body region,,,TRUE
+ORTH11A,Cutaneous Abscess,T14.0,Superficial injury of unspecified body region,,,TRUE
+ORTH11C,Incision and Drainage of Abscesses < 12 Yrs,T14.0,Superficial injury of unspecified body region,,,TRUE
+ORTH12A,Internal Fixation of Fractures >=12 Yrs,M84.1,Nonunion of fracture [pseudarthrosis],,,TRUE
+ORTH12A,Fracture Of Unspecified Body Region,M84.1,Nonunion of fracture [pseudarthrosis],,,TRUE
+ORTH12A,Internal Fixation of Fractures >=12 Yrs,S52.0,Fracture of upper end of ulna,,,TRUE
+ORTH12A,Fracture Of Unspecified Body Region,S52.0,Fracture of upper end of ulna,,,TRUE
+ORTH12A,Internal Fixation of Fractures >=12 Yrs,S52.2,Fracture of shaft of ulna,,,TRUE
+ORTH12A,Fracture Of Unspecified Body Region,S52.2,Fracture of shaft of ulna,,,TRUE
+ORTH12A,Internal Fixation of Fractures >=12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH12A,Fracture Of Unspecified Body Region,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH12C,Internal Fixation of Fractures <12 Yrs,M84.1,Nonunion of fracture [pseudarthrosis],,,TRUE
+ORTH12C,Internal Fixation of Fractures <12 Yrs,S52.0,Fracture of upper end of ulna,,,TRUE
+ORTH12C,Internal Fixation of Fractures <12 Yrs,S52.2,Fracture of shaft of ulna,,,TRUE
+ORTH12C,Internal Fixation of Fractures <12 Yrs,T14.2,Fracture of unspecified body region,,,TRUE
+ORTH14A,Major Surgery of Joints >=12 Yrs,D16.6,Benign neoplasm: Vertebral column,,,TRUE
+ORTH14A,Pyogenic Arthritis,D16.6,Benign neoplasm: Vertebral column,,,TRUE
+ORTH14A,Major Surgery of Joints >=12 Yrs,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+ORTH14A,Pyogenic Arthritis,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+ORTH14A,Major Surgery of Joints >=12 Yrs,M01.1,Tb Arthirtis,,,TRUE
+ORTH14A,Pyogenic Arthritis,M01.1,Tb Arthirtis,,,TRUE
+ORTH14A,Major Surgery of Joints >=12 Yrs,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH14A,Pyogenic Arthritis,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH14A,Major Surgery of Joints >=12 Yrs,M13.9,"Arthritis, unspecified",,,TRUE
+ORTH14A,Pyogenic Arthritis,M13.9,"Arthritis, unspecified",,,TRUE
+ORTH14C,Major Surgery of Joints <12 Yrs,D16.6,Benign neoplasm: Vertebral column,,,TRUE
+ORTH14C,Major Surgery of Joints <12 Yrs,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+ORTH14C,Major Surgery of Joints <12 Yrs,M01.1,Tb Arthirtis,,,TRUE
+ORTH14C,Major Surgery of Joints <12 Yrs,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH14C,Major Surgery of Joints <12 Yrs,M13.9,"Arthritis, unspecified",,,TRUE
+ORTH15A,Minor Surgery of Joints >=12 Yrs,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+ORTH15A,Haemarthrosis,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+ORTH15A,Minor Surgery of Joints >=12 Yrs,M11.9,"Crystal arthropathy, unspecified",,,TRUE
+ORTH15A,Haemarthrosis,M11.9,"Crystal arthropathy, unspecified",,,TRUE
+ORTH15A,Minor Surgery of Joints >=12 Yrs,M13.9,"Arthritis, unspecified",,,TRUE
+ORTH15A,Haemarthrosis,M13.9,"Arthritis, unspecified",,,TRUE
+ORTH15C,Minor Surgery of Joints <12 Yrs,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+ORTH15C,Minor Surgery of Joints <12 Yrs,M11.9,"Crystal arthropathy, unspecified",,,TRUE
+ORTH15C,Minor Surgery of Joints <12 Yrs,M13.9,"Arthritis, unspecified",,,TRUE
+ORTH16A,Nail Avulsion >=12 Yrs,L60.0,Ingrowing nail,,,TRUE
+ORTH16A,Superficial Injury Of Wrist And Hand,L60.0,Ingrowing nail,,,TRUE
+ORTH16A,Nail Avulsion >=12 Yrs,S60.9,"Superficial injury of wrist and hand, unspecified",,,TRUE
+ORTH16A,Superficial Injury Of Wrist And Hand,S60.9,"Superficial injury of wrist and hand, unspecified",,,TRUE
+ORTH16C,Nail Avulsion <12 Yrs,L60.0,Ingrowing nail,,,TRUE
+ORTH16C,Nail Avulsion <12 Yrs,S60.9,"Superficial injury of wrist and hand, unspecified",,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,M84.0,Malunion of fracture,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,M84.0,Malunion of fracture,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,P11.5,Birth injury to spine and spinal cord,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,P11.5,Birth injury to spine and spinal cord,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S22.0,Fracture of thoracic vertebra,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S22.0,Fracture of thoracic vertebra,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S22.1,Multiple fractures of thoracic spine,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S22.1,Multiple fractures of thoracic spine,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S32.0,Fracture of lumbar vertebra,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S32.0,Fracture of lumbar vertebra,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S32.1,Fracture of sacrum,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S32.1,Fracture of sacrum,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S32.2,Fracture of coccyx,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S32.2,Fracture of coccyx,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S42.2,Fracture of upper end of humerus,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S42.2,Fracture of upper end of humerus,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S42.3,Fracture of shaft of humerus,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S42.3,Fracture of shaft of humerus,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S42.7,"Multiple fractures of clavicle, scapula and humerus",,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S42.7,"Multiple fractures of clavicle, scapula and humerus",,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S43.0,Dislocation of shoulder joint,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S43.0,Dislocation of shoulder joint,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S52.2,Fracture of shaft of ulna,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S52.2,Fracture of shaft of ulna,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S52.5,Fracture of lower end of radius,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S52.5,Fracture of lower end of radius,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S52.6,Fracture of lower end of both ulna and radius,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S52.6,Fracture of lower end of both ulna and radius,,,TRUE
+ORTH17A,Open Reduction and Internal Fixation >=12 Yrs,S52.8,Fracture of other parts of forearm,,,TRUE
+ORTH17A,Dislocation Of Shoulder Joint,S52.8,Fracture of other parts of forearm,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,M84.0,Malunion of fracture,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,P11.5,Birth injury to spine and spinal cord,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S22.0,Fracture of thoracic vertebra,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S22.1,Multiple fractures of thoracic spine,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S32.0,Fracture of lumbar vertebra,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S32.1,Fracture of sacrum,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S32.2,Fracture of coccyx,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S42.2,Fracture of upper end of humerus,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S42.3,Fracture of shaft of humerus,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S42.7,"Multiple fractures of clavicle, scapula and humerus",,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S43.0,Dislocation of shoulder joint,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S52.2,Fracture of shaft of ulna,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S52.5,Fracture of lower end of radius,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S52.6,Fracture of lower end of both ulna and radius,,,TRUE
+ORTH17C,Open Reduction and Internal Fixation <12 Yrs,S52.8,Fracture of other parts of forearm,,,TRUE
+ORTH18A,Osteotomy >=12 Yrs,M95.9,"Acquired deformity of musculoskeletal system, unspecified",,,TRUE
+ORTH18A,Other Acquired Deformity Of Musculoskeletal System,M95.9,"Acquired deformity of musculoskeletal system, unspecified",,,TRUE
+ORTH18A,Osteotomy >=12 Yrs,Q68.8,Other specified congenital musculoskeletal deformities,,,TRUE
+ORTH18A,Other Acquired Deformity Of Musculoskeletal System,Q68.8,Other specified congenital musculoskeletal deformities,,,TRUE
+ORTH18C,Osteotomy <12 Yrs,M95.9,"Acquired deformity of musculoskeletal system, unspecified",,,TRUE
+ORTH18C,Osteotomy <12 Yrs,Q68.8,Other specified congenital musculoskeletal deformities,,,TRUE
+ORTH19A,Skin Traction >=12 Yrs,Q68.8,Other specified congenital musculoskeletal deformities,,,TRUE
+ORTH19A,Dislocation Of Hip,Q68.8,Other specified congenital musculoskeletal deformities,,,TRUE
+ORTH19C,Skin Traction < 12 Yrs,Q68.8,Other specified congenital musculoskeletal deformities,,,TRUE
+ORTH20A,Surgery for Infected Bone >=12 Yrs,B99.00,Other and unspecified infectious diseases,,,TRUE
+ORTH20A,Osteomyelitis,B99.00,Other and unspecified infectious diseases,,,TRUE
+ORTH20C,Surgery for Infected Bone <12 Yrs,B99.00,Other and unspecified infectious diseases,,,TRUE
+ORTH22A,Synovectomy >=12 Yrs,M01.1,Tb Arthirtis,,,TRUE
+ORTH22A,Rheumatoid Arthritis,M01.1,Tb Arthirtis,,,TRUE
+ORTH22A,Synovectomy >=12 Yrs,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH22A,Rheumatoid Arthritis,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH22C,Synovectomy <12 Yrs,M01.1,Tb Arthirtis,,,TRUE
+ORTH22C,Synovectomy <12 Yrs,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH23A,Tendon Surgery >=12 Yrs,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH23A,Contracture Of Joints Eg. Hammertoes,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH23A,Tendon Surgery >=12 Yrs,T14.6,Injury of muscles and tendons of unspecified body region,,,TRUE
+ORTH23A,Contracture Of Joints Eg. Hammertoes,T14.6,Injury of muscles and tendons of unspecified body region,,,TRUE
+ORTH23C,Tendon Surgery <12 Yrs,M06.9,"Rheumatoid arthritis, unspecified",,,TRUE
+ORTH23C,Tendon Surgery <12 Yrs,T14.6,Injury of muscles and tendons of unspecified body region,,,TRUE
+ORTH24A,Head injury/spinal injury >=12 Yrs,S09.0,"Injury of blood vessels of head, not elsewhere classified",,,TRUE
+ORTH24A,Superficial Injury Of Head,S09.0,"Injury of blood vessels of head, not elsewhere classified",,,TRUE
+ORTH24A,Head injury/spinal injury >=12 Yrs,T08.00,"Fracture of spine, level unspecified",,,TRUE
+ORTH24A,Superficial Injury Of Head,T08.00,"Fracture of spine, level unspecified",,,TRUE
+ORTH24A,Head injury/spinal injury >=12 Yrs,T09.0,"Superficial injury of trunk, level unspecified",,,TRUE
+ORTH24A,Superficial Injury Of Head,T09.0,"Superficial injury of trunk, level unspecified",,,TRUE
+ORTH24C,Head injury/spinal injury <12 Yrs,T08.00,"Fracture of spine, level unspecified",,,TRUE
+ORTH25A,Surgery for removal of finger/toe >=12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ORTH25A,Unspecified Diabetes Mellitus With Peripheral Circulatory Complications,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ORTH25A,Surgery for removal of finger/toe >=12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ORTH25A,Unspecified Diabetes Mellitus With Peripheral Circulatory Complications,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ORTH25A,Surgery for removal of finger/toe >=12 Yrs,N49.3,Gangrene,,,TRUE
+ORTH25A,Unspecified Diabetes Mellitus With Peripheral Circulatory Complications,N49.3,Gangrene,,,TRUE
+ORTH25C,Surgery for removal of finger/toe <12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ORTH25C,Surgery for removal of finger/toe <12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ORTH25C,Surgery for removal of finger/toe <12 Yrs,N49.3,Gangrene,,,TRUE
+ORTH26A,Surgery for amputation of hand/foot (through or below ankle/wrist joint) >=12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ORTH26A,Unspecified Diabetes Mellitus With Peripheral Circulatory Complications,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ORTH26A,Surgery for amputation of hand/foot (through or below ankle/wrist joint) >=12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ORTH26A,Unspecified Diabetes Mellitus With Peripheral Circulatory Complications,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ORTH26A,Surgery for amputation of hand/foot (through or below ankle/wrist joint) >=12 Yrs,N49.3,Gangrene,,,TRUE
+ORTH26A,Unspecified Diabetes Mellitus With Peripheral Circulatory Complications,N49.3,Gangrene,,,TRUE
+ORTH26C,Surgery for amputation of hand/foot (through or below ankle/wrist joint) <12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+ORTH26C,Surgery for amputation of hand/foot (through or below ankle/wrist joint) <12 Yrs,E14.5,Unspecified diabetes mellitus: With peripheral circulatory complications,,,TRUE
+ORTH26C,Surgery for amputation of hand/foot (through or below ankle/wrist joint) <12 Yrs,N49.3,Gangrene,,,TRUE
+ORTH27A,"Amputation below or through elbow or knee, through proximal joints or for the
+complete removal of limb >=12 Yr",A48.0,Gas gangrene,,,TRUE
+ORTH27A,"Amputation below or through elbow or knee, through proximal joints or for the
+complete removal of limb >=12 Yr",Q74.9,Unspecified congenital malformation of limb(s),,,TRUE
+ORTH27A,"Amputation below or through elbow or knee, through proximal joints or for the
+complete removal of limb >=12 Yr",R02.00,"Gangrene, not elsewhere classified",,,TRUE
+ORTH27C,Amputation below or through elbow or knee or for the complete removal of limb <12 Yrs,,,,,TRUE
+PAED01C,Thyroid Diseases <12 Yrs,E03.0,Congenital hypothyroidism with diffuse goitre,,,TRUE
+PAED01C,Thyroid Diseases <12 Yrs,E03.9,"Hypothyroidism, unspecified",,,TRUE
+PAED01C,Thyroid Diseases <12 Yrs,E04.9,"Nontoxic goitre, unspecified",,,TRUE
+PAED01C,Thyroid Diseases <12 Yrs,E61.8,Deficiency of other specified nutrient elements,,,TRUE
+PAED02C,Diabetes - Simple <12 Yrs,,,,,TRUE
+PAED03C,Diabetes with Complications <12 Yrs,E14.1,Unspecified diabetes mellitus: With ketoacidosis,,,TRUE
+PAED03C,Diabetes with Complications <12 Yrs,E14.8,Unspecified diabetes mellitus: With unspecified complications,,,TRUE
+PAED03C,Diabetes with Complications <12 Yrs,E87.0,Hyperosmolality and hypernatraemia,,,TRUE
+PAED04C,Other Endocrine Diseases <12 Yrs,E21.3,"Hyperparathyroidism, unspecified",,,TRUE
+PAED04C,Other Endocrine Diseases <12 Yrs,E23.2,Diabetes insipidus,,,TRUE
+PAED04C,Other Endocrine Diseases <12 Yrs,E25.0,Congenital adrenogenital disorders associated with enzyme deficiency,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E40.00,Kwashiorkor,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E41.00,Nutritional marasmus,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E42.00,Marasmic kwashiorkor,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E43.00,Unspecified severe protein-energy malnutrition,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E45.00,Retarded development following protein-energy malnutrition,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E46.00,Unspecified protein-energy malnutrition,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E54.00,Ascorbic acid deficiency,,,TRUE
+PAED05C,Malnutrition <12 Yrs,E55.9,"Vitamin D deficiency, unspecified",,,TRUE
+PAED06C,Anaemia <12 Yrs,D50.9,"Iron deficiency anaemia, unspecified",,,TRUE
+PAED06C,Anaemia <12 Yrs,D51.9,"Vitamin B12 deficiency anaemia, unspecified",,,TRUE
+PAED06C,Anaemia <12 Yrs,D58.9,"Hereditary haemolytic anaemia, unspecified",,,TRUE
+PAED06C,Anaemia <12 Yrs,P61.2,Anaemia of prematurity,,,TRUE
+PAED07C,Other Neonatal Diseases,E70.0,Classical phenylketonuria,,,TRUE
+PAED07C,Other Neonatal Diseases,E88.9,"Metabolic disorder, unspecified",,,TRUE
+PAED08C,Neonatal Jaundice - Severe,P58.9,"Neonatal jaundice due to excessive haemolysis, unspecified",,,TRUE
+PAED09C,Neonatal Jaundice - Simple,P59.9,"Neonatal jaundice, unspecified",,,TRUE
+PAED10C,Birth Weight Abnormalities,P08.0,Exceptionally large baby,,,TRUE
+PAED11C,Birth Trauma,P10.9,Unspecified intracranial laceration and haemorrhage due to birth injury,,,TRUE
+PAED11C,Birth Trauma,P13.9,"Birth injury to skeleton, unspecified",,,TRUE
+PAED11C,Birth Trauma,P15.9,"Birth injury, unspecified",,,TRUE
+PAED12C,Neonatal Respiratory Disorders without Ventilation,,,,,TRUE
+PAED13C,Neonatal Respiratory Disorders with Ventilation,P22.0,Respiratory distress syndrome of newborn,,,TRUE
+PAED14C,Neonatal Septicaemia,A33.00,Tetanus neonatorum,,,TRUE
+PAED14C,Neonatal Septicaemia,A41.9,"Sepsis, unspecified",,,TRUE
+PAED14C,Neonatal Septicaemia,G03.9,"Meningitis, unspecified",,,TRUE
+PAED14C,Neonatal Septicaemia,J18.9,"Pneumonia, unspecified",,,TRUE
+PAED15C,Heart Disease <12 Yrs,I00.00,Rheumatic fever without mention of heart involvement,,,TRUE
+PAED15C,Heart Disease <12 Yrs,I31.3,Pericardial effusion (noninflammatory),,,TRUE
+PAED15C,Heart Disease <12 Yrs,I31.9,"Disease of pericardium, unspecified",,,TRUE
+PAED15C,Heart Disease <12 Yrs,I38.00,"Endocarditis, valve unspecified",,,TRUE
+PAED15C,Heart Disease <12 Yrs,I50.9,"Heart failure, unspecified",,,TRUE
+PAED15C,Heart Disease <12 Yrs,I51.4,"Myocarditis, unspecified",,,TRUE
+PAED15C,Heart Disease <12 Yrs,Q24.9,"Congenital malformation of heart, unspecified",,,TRUE
+PAED16C,Poisoning <12 Yrs,J68.0,"Bronchitis and pneumonitis due to chemicals, gases, fumes and vapours",,,TRUE
+PAED18C,Non-Traumatic Coma <12 Yrs,A17.0,Tuberculous meningitis,,,TRUE
+PAED18C,Non-Traumatic Coma <12 Yrs,E14.0,Unspecified diabetes mellitus: With coma,,,TRUE
+PAED18C,Non-Traumatic Coma <12 Yrs,E15.00,Nondiabetic hypoglycaemic coma,,,TRUE
+PAED18C,Non-Traumatic Coma <12 Yrs,G03.9,"Meningitis, unspecified",,,TRUE
+PAED18C,Non-Traumatic Coma <12 Yrs,I64.00,"Stroke, not specified as haemorrhage or infarction",,,TRUE
+PAED18C,Non-Traumatic Coma <12 Yrs,N19.00,Unspecified kidney failure,,,TRUE
+PAED19C,Paralytic Conditions <12 Yrs,A80.9,"Acute poliomyelitis, unspecified",,,TRUE
+PAED19C,Paralytic Conditions <12 Yrs,G37.3,Acute transverse myelitis in demyelinating disease of central nervous system,,,TRUE
+PAED19C,Paralytic Conditions <12 Yrs,G61.0,Guillain-BarrE9 syndrome,,,TRUE
+PAED20C,Seizure Disorders <12 Yrs,R56.8,Other and unspecified convulsions,,,TRUE
+PAED21C,Transient Loss of Consciousness <12 Yrs,G41.9,"Status epilepticus, unspecified",,,TRUE
+PAED21C,Transient Loss of Consciousness <12 Yrs,G45.9,"Transient cerebral ischaemic attack, unspecified",,,TRUE
+PAED21C,Transient Loss of Consciousness <12 Yrs,R55.00,Syncope and collapse,,,TRUE
+PAED22C,Cerebro Vascular Accident/Stroke <12 Yrs,G80.9,"Cerebral palsy, unspecified",,,TRUE
+PAED22C,Cerebro Vascular Accident/Stroke <12 Yrs,I67.9,"Cerebrovascular disease, unspecified",,,TRUE
+PAED23C,Bone Marrow Hypoplasia <12 Yrs,D61.9,"Aplastic anaemia, unspecified",,,TRUE
+PAED24C,Sickle Cell Disease with Complication/Crisis <12 Yrs,,,,,TRUE
+PAED25C,Clotting/Bleeding Disorders <12 Yrs,D65.00,Disseminated intravascular coagulation [defibrination syndrome],,,TRUE
+PAED25C,Clotting/Bleeding Disorders <12 Yrs,D66.00,Hereditary factor VIII deficiency,,,TRUE
+PAED25C,Clotting/Bleeding Disorders <12 Yrs,P53.00,Haemorrhagic disease of fetus and newborn,,,TRUE
+PAED26C,Diseases of Skin/Subcutaneous Tissues <12 Yrs,L23.9,"Allergic contact dermatitis, unspecified cause",,,TRUE
+PAED26C,Diseases of Skin/Subcutaneous Tissues <12 Yrs,L30.9,"Dermatitis, unspecified",,,TRUE
+PAED26C,Diseases of Skin/Subcutaneous Tissues <12 Yrs,L51.1,Bullous erythema multiforme,,,TRUE
+PAED26C,Diseases of Skin/Subcutaneous Tissues <12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+PAED27C,Kidney Disease without Renal Failure <12 Yrs,,,,,TRUE
+PAED28C,Renal Failure without Dialysis <12 Yrs,N18.9,"Chronic kidney disease, unspecified",,,TRUE
+PAED29C,Acute Renal Failure with Dialysis <12 Yrs,N17.9,"Acute renal failure, unspecified",,,TRUE
+PAED30C,Obstructive Airway Disease <12 Yrs,J21.9,"Acute bronchiolitis, unspecified",,,TRUE
+PAED30C,Obstructive Airway Disease <12 Yrs,J40.00,"Bronchitis, not specified as acute or chronic",,,TRUE
+PAED30C,Obstructive Airway Disease <12 Yrs,J42.00,Unspecified chronic bronchitis,,,TRUE
+PAED30C,Obstructive Airway Disease <12 Yrs,J44.9,"Chronic obstructive pulmonary disease, unspecified",,,TRUE
+PAED30C,Obstructive Airway Disease <12 Yrs,J46.00,Status asthmaticus,,,TRUE
+PAED31C,Diarrhoea and Vomiting <12 Yrs,A03.9,"Shigellosis, unspecified",,,TRUE
+PAED31C,Diarrhoea and Vomiting <12 Yrs,A09.0,Other and unspecified gastroenteritis and colitis of infectious origin,,,TRUE
+PAED32C,Liver Diseases <12 Yrs,B17.9,"Acute viral hepatitis, unspecified",,,TRUE
+PAED33C,Gastro Intestinal Tract Bleeding <12 Yrs,I86.4,Gastric varices,,,TRUE
+PAED33C,Gastro Intestinal Tract Bleeding <12 Yrs,K92.0,Haematemesis,,,TRUE
+PAED33C,Gastro Intestinal Tract Bleeding <12 Yrs,K92.1,Melaena,,,TRUE
+PAED33C,Gastro Intestinal Tract Bleeding <12 Yrs,K92.2,"Gastrointestinal haemorrhage, unspecified",,,TRUE
+PAED34C,Non-Specific Abdominal Conditions <12 Yrs,B83.9,"Helminthiasis, unspecified",,,TRUE
+PAED34C,Non-Specific Abdominal Conditions <12 Yrs,B89.00,Unspecified parasitic disease,,,TRUE
+PAED35C,Shock <12 Yrs,A41.9,"Sepsis, unspecified",,,TRUE
+PAED35C,Shock <12 Yrs,R57.0,Cardiogenic shock,,,TRUE
+PAED35C,Shock <12 Yrs,R57.1,Hypovolaemic shock,,,TRUE
+PAED35C,Shock <12 Yrs,R57.9,"Shock, unspecified",,,TRUE
+PAED35C,Shock <12 Yrs,R58.00,"Haemorrhage, not elsewhere classified",,,TRUE
+PAED36C,Malaria <12 Yrs,B54.00,Unspecified malaria,,,TRUE
+PAED37C,Black Water Fever <12 Yrs,,,,,TRUE
+PAED38C,Severe Infections <12 Yrs,A20.3,Plague meningitis,,,TRUE
+PAED38C,Severe Infections <12 Yrs,A41.9,"Sepsis, unspecified",,,TRUE
+PAED38C,Severe Infections <12 Yrs,A86.00,Unspecified viral encephalitis,,,TRUE
+PAED38C,Severe Infections <12 Yrs,A92.8,Other specified mosquito-borne viral fevers,,,TRUE
+PAED38C,Severe Infections <12 Yrs,A92.9,"Mosquito-borne viral fever, unspecified",,,TRUE
+PAED38C,Severe Infections <12 Yrs,A99.00,Unspecified viral haemorrhagic fever,,,TRUE
+PAED38C,Severe Infections <12 Yrs,B94.1,Sequelae of viral encephalitis,,,TRUE
+PAED38C,Severe Infections <12 Yrs,G03.9,"Meningitis, unspecified",,,TRUE
+PAED38C,Severe Infections <12 Yrs,G05.00,"Encephalitis, Myelitis And Encephalomyelitis In Diseases Classified Elsewhere",,,TRUE
+PAED38C,Severe Infections <12 Yrs,I33.0,Acute and subacute infective endocarditis,,,TRUE
+PAED38C,Severe Infections <12 Yrs,J18.9,"Pneumonia, unspecified",,,TRUE
+PAED38C,Severe Infections <12 Yrs,J47.00,Bronchiectasis,,,TRUE
+PAED38C,Severe Infections <12 Yrs,J99.00,Respiratory Disorders In Diseases Classified Elsewhere,,,TRUE
+PAED38C,Severe Infections <12 Yrs,M00.9,"Pyogenic arthritis, unspecified",,,TRUE
+PAED38C,Severe Infections <12 Yrs,N12.00,"Tubulo-interstitial nephritis, not specified as acute or chronic",,,TRUE
+PAED38C,Severe Infections <12 Yrs,Q33.4,Congenital bronchiectasis,,,TRUE
+PAED38C,Severe Infections <12 Yrs,R21.00,Rash and other nonspecific skin eruption,,,TRUE
+PAED39C,Localised Infections <12 Yrs,J02.9,"Acute pharyngitis, unspecified",,,TRUE
+PAED39C,Localised Infections <12 Yrs,J18.9,"Pneumonia, unspecified",,,TRUE
+PAED39C,Localised Infections <12 Yrs,J32.9,"Chronic sinusitis, unspecified",,,TRUE
+PAED39C,Localised Infections <12 Yrs,J40.00,"Bronchitis, not specified as acute or chronic",,,TRUE
+PAED39C,Localised Infections <12 Yrs,J98.8,Other specified respiratory disorders,,,TRUE
+PAED39C,Localised Infections <12 Yrs,N39.0,"Urinary tract infection, site not specified",,,TRUE
+PAED39C,Localised Infections <12 Yrs,P38.00,Omphalitis of newborn with or without mild haemorrhage,,,TRUE
+PAED40C,Hypertension <12 Yrs,I10.00,Essential (primary) hypertension,,,TRUE
+PAED41C,Ischaemic Heart Disease <12 Yrs,I20.0,Unstable angina,,,TRUE
+PAED41C,Ischaemic Heart Disease <12 Yrs,I25.2,Old myocardial infarction,,,TRUE
+PAED42C,Pulmonary Embolism <12 Yrs,,,,,TRUE
+PAED43C,Ulcer of Skin <12 Yrs,,,,,TRUE
+PAED44C,Animal Bites <12 Yrs,W53.00,Bitten by rat,,,TRUE
+PAED44C,Animal Bites <12 Yrs,W54.00,Bitten or struck by dog,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.0,HIV disease resulting in mycobacterial infection,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.1,HIV disease resulting in other bacterial infections,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.2,HIV disease resulting in cytomegaloviral disease,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.3,HIV disease resulting in other viral infections,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.4,HIV disease resulting in candidiasis,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.5,HIV disease resulting in other mycoses,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.6,HIV disease resulting in Pneumocystis jirovecii pneumonia,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.7,HIV disease resulting in multiple infections,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.8,HIV disease resulting in other infectious and parasitic diseases,,,TRUE
+PAED45C,Retroviral Infection/Immuno Suppression <12 Yrs,B20.9,HIV disease resulting in unspecified infectious or parasitic disease,,,TRUE
+PAED46C,Cerebral Malaria,B50.0,Plasmodium falciparum malaria with cerebral complications,,,TRUE
+PAED49C,Acute Lymphoblastic Leukaemia (Initiation Therapy),,,,,TRUE
+PAED50C,Acute Lymphoblastic Leukaemia (Maintenance Therapy),,,,,TRUE
+PAED54C,Dialysis for Chronic Renal Failure < 12Yrs,,,,,TRUE
+PSUR01C,Laparotomy and Resection <12 Yrs,K31.1,Adult hypertrophic pyloric stenosis,,,TRUE
+PSUR01C,Laparotomy and Resection <12 Yrs,K43.3,Parastomal Hernia With Obstruction Without Gangrene,,,TRUE
+PSUR01C,Laparotomy and Resection <12 Yrs,Q41.9,"Congenital absence, atresia and stenosis of small intestine, part unspecified",,,TRUE
+PSUR01C,Laparotomy and Resection <12 Yrs,Q43.0,Meckel diverticulum,,,TRUE
+PSUR01C,Laparotomy and Resection <12 Yrs,Q43.1,Hirschsprung disease,,,TRUE
+PSUR02C,Laparotomy and Excision Biopsy <12 Yrs,D73.1,Hypersplenism,,,TRUE
+PSUR02C,Laparotomy and Excision Biopsy <12 Yrs,E27.9,"Disorder of adrenal gland, unspecified",,,TRUE
+PSUR02C,Laparotomy and Excision Biopsy <12 Yrs,N28.9,"Disorder of kidney and ureter, unspecified",,,TRUE
+PSUR03C,Laparotomy and surgery for upper renal anomalies <12 Yrs,N13.2,Hydronephrosis with renal and ureteral calculous obstruction,,,TRUE
+PSUR03C,Laparotomy and surgery for upper renal anomalies <12 Yrs,Q61.4,Renal dysplasia,,,TRUE
+PSUR03C,Laparotomy and surgery for upper renal anomalies <12 Yrs,Q63.9,"Congenital malformation of kidney, unspecified",,,TRUE
+PSUR04C,Excision Biopsy deep masses <12 Yrs,D48.9,"Neoplasm of uncertain or unknown behaviour: Neoplasm of uncertain or unknown behaviour, unspecified",,,TRUE
+PSUR05C,Excision Biopsy Superficial masses <12 Yrs,D18.1,"Lymphangioma, any site",,,TRUE
+PSUR05C,Excision Biopsy Superficial masses <12 Yrs,D23.9,"Benign neoplasm: Skin, unspecified",,,TRUE
+PSUR05C,Excision Biopsy Superficial masses <12 Yrs,K62.1,Rectal polyp,,,TRUE
+PSUR05C,Excision Biopsy Superficial masses <12 Yrs,Q18.0,"Sinus, fistula and cyst of branchial cleft",,,TRUE
+PSUR05C,Excision Biopsy Superficial masses <12 Yrs,Q89.2,Congenital malformations of other endocrine glands,,,TRUE
+PSUR05C,Excision Biopsy Superficial masses <12 Yrs,R22.9,"Localized swelling, mass and lump, unspecified",,,TRUE
+PSUR06C,Incision and Drainage GA <12 Yrs,N61.00,Inflammatory disorders of breast,,,TRUE
+PSUR07C,Repair of Minor Abdominal Wall Defects <12 Yrs,K44.9,Diaphragmatic hernia without obstruction or gangrene,,,TRUE
+PSUR07C,Repair of Minor Abdominal Wall Defects <12 Yrs,K46.9,Unspecified abdominal hernia without obstruction or gangrene,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,K42.9,Umbilical hernia without obstruction or gangrene,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,K43.2,Incisional Hernia Without Obstruction Or Gangrene,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,K43.6,Spigelian Hernia,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,K43.9,Ventral hernia without obstruction or gangrene,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,Q79.2,Exomphalos,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,Q79.3,Gastroschisis,,,TRUE
+PSUR08C,Repair of Major Abdominal Wall Defects <12 Yrs,Q79.4,Prune belly syndrome,,,TRUE
+PSUR09C,Exploratory Laparotomy <12 Yrs,K65.9,"Peritonitis, unspecified",,,TRUE
+PSUR09C,Exploratory Laparotomy <12 Yrs,K66.1,Haemoperitoneum,,,TRUE
+PSUR10C,Gastrostomy <12 Yrs,Q39.0,Atresia of oesophagus without fistula,,,TRUE
+PSUR11C,Laparotomy with Repair <12 Yrs,K43.9,Ventral hernia without obstruction or gangrene,,,TRUE
+PSUR11C,Laparotomy with Repair <12 Yrs,K44.9,Diaphragmatic hernia without obstruction or gangrene,,,TRUE
+PSUR12C,Laparotomy with Appendicectomy <12 Yrs,K36.00,Other appendicitis,,,TRUE
+PSUR12C,Laparotomy with Appendicectomy <12 Yrs,K37.00,Unspecified appendicitis,,,TRUE
+PSUR14C,Thoracotomy and oesophageal surgery <12 Yrs,K21.9,Gastro-oesophageal reflux disease without oesophagitis,,,TRUE
+PSUR14C,Thoracotomy and oesophageal surgery <12 Yrs,K22.0,Achalasia of cardia,,,TRUE
+PSUR14C,Thoracotomy and oesophageal surgery <12 Yrs,K22.2,Oesophageal obstruction,,,TRUE
+PSUR14C,Thoracotomy and oesophageal surgery <12 Yrs,Q39.0,Atresia of oesophagus without fistula,,,TRUE
+PSUR15C,Repair of Lower Urinary Tract Malformation <12 Yrs,N36.0,Urethral fistula,,,TRUE
+PSUR15C,Repair of Lower Urinary Tract Malformation <12 Yrs,Q54.9,"Hypospadias, unspecified",,,TRUE
+PSUR15C,Repair of Lower Urinary Tract Malformation <12 Yrs,Q64.0,Epispadias,,,TRUE
+PSUR16C,Repair of Congenital Genito-Urinary Malformations <12 Yrs,Q64.0,Epispadias,,,TRUE
+PSUR17C,Surgery for anal conditions <12 Yrs,K60.2,"Anal fissure, unspecified",,,TRUE
+PSUR17C,Surgery for anal conditions <12 Yrs,K60.3,Anal fistula,,,TRUE
+PSUR17C,Surgery for anal conditions <12 Yrs,K62.1,Rectal polyp,,,TRUE
+PSUR18C,Primary Closure and Repair <12 Yrs,Q01.0,Frontal encephalocele,,,TRUE
+PSUR18C,Primary Closure and Repair <12 Yrs,Q05.9,"Spina bifida, unspecified",,,TRUE
+PSUR18C,Primary Closure and Repair <12 Yrs,Q35.9,"Cleft palate, unspecified",,,TRUE
+PSUR18C,Primary Closure and Repair <12 Yrs,Q36.9,"Cleft lip, unilateral",,,TRUE
+PSUR19C,Laparatomy for biliary surgery <12 Yrs,Q44.2,Atresia of bile ducts,,,TRUE
+PSUR19C,Laparatomy for biliary surgery <12 Yrs,Q44.4,Choledochal cyst,,,TRUE
+PSUR20C,Laparotomy with Separation <12 Yrs,Q89.4,Conjoined twins,,,TRUE
+PSUR21C,Surgery of Scrotal contents and testes <12 Yrs,I86.1,Scrotal varices,,,TRUE
+PSUR21C,Surgery of Scrotal contents and testes <12 Yrs,N43.3,"Hydrocele, unspecified",,,TRUE
+PSUR21C,Surgery of Scrotal contents and testes <12 Yrs,Q53.9,"Undescended testicle, unspecified",,,TRUE
+PSUR23C,Laparotomy for Haemoperitoneum <12 Yrs,R19.8,Other specified symptoms and signs involving the digestive system and abdomen,,,TRUE
+PSUR23C,Laparotomy for Haemoperitoneum <12 Yrs,S36.0,Injury of spleen,,,TRUE
+PSUR23C,Laparotomy for Haemoperitoneum <12 Yrs,S36.1,Injury of liver or gallbladder,,,TRUE
+PSUR24C,Laparotomy with Enterostomy Formation and closure <12 Yrs,K60.5,Anorectal fistula,,,TRUE
+PSUR24C,Laparotomy with Enterostomy Formation and closure <12 Yrs,Q43.1,Hirschsprung disease,,,TRUE
+PSUR25C,Posterior Sagittal Anorectoplasty (PSARP) <12 Yrs,Q43.9,"Congenital malformation of intestine, unspecified",,,TRUE
+PSUR26C,Burns - OPD Wound Dressing <12 Yrs,T31.0,Burns involving less than 10% of body surface,,,TRUE
+PSUR27C,Burns - Non operative Management - Inpatient <12 Yrs,,,,,TRUE
+PSUR28C,Surgery for Burns <12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+PSUR29C,Minor Surgery for Sexual Assault <12 Yrs,,,,,TRUE
+PSUR30C,Major Surgery for Sexual Assault <12 Yrs,,,,,TRUE
+PSUR31C,Laparotomy with anastomosis <12 Yrs,K66.8,Other specified disorders of peritoneum,,,TRUE
+PSUR31C,Laparotomy with anastomosis <12 Yrs,Q41.9,"Congenital absence, atresia and stenosis of small intestine, part unspecified",,,TRUE
+PSUR31C,Laparotomy with anastomosis <12 Yrs,Q43.3,Congenital malformations of intestinal fixation,,,TRUE
+PSUR32C,Craniotomy <12 Yrs,D43.2,"Neoplasm of uncertain or unknown behaviour: Brain, unspecified",,,TRUE
+PSUR32C,Craniotomy <12 Yrs,I61.9,"Intracerebral haemorrhage, unspecified",,,TRUE
+PSUR33C,Endoscopic surgery for bleeding oesophageal varices <12 Yrs,I86.4,Gastric varices,,,TRUE
+PSUR34C,Thoracostomy and chest tube insertion <12 Yrs,J90.00,"Pleural effusion, not elsewhere classified",,,TRUE
+PSUR34C,Thoracostomy and chest tube insertion <12 Yrs,J93.9,"Pneumothorax, unspecified",,,TRUE
+PSUR34C,Thoracostomy and chest tube insertion <12 Yrs,J94.2,Haemothorax,,,TRUE
+PSUR35C,Vascular Surgery Operations <12 Yrs,I71.9,"Aortic aneurysm of unspecified site, without mention of rupture",,,TRUE
+PSUR35C,Vascular Surgery Operations <12 Yrs,I72.4,Aneurysm and dissection of artery of lower extremity,,,TRUE
+PSUR35C,Vascular Surgery Operations <12 Yrs,I73.9,"Peripheral vascular disease, unspecified",,,TRUE
+PSUR35C,Vascular Surgery Operations <12 Yrs,I74.9,Embolism and thrombosis of unspecified artery,,,TRUE
+PSUR36C,Conservative management of surgery <12 Yrs,K36.00,Other appendicitis,,,TRUE
+PSUR36C,Conservative management of surgery <12 Yrs,K38.8,Other specified diseases of appendix,,,TRUE
+PSUR36C,Conservative management of surgery <12 Yrs,K81.1,Chronic cholecystitis,,,TRUE
+PSUR37C,Surgery for removal of finger/toe <12 Yrs,D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+PSUR37C,Surgery for removal of finger/toe <12 Yrs,N49.3,Gangrene,,,TRUE
+PSUR38C,"Surgery for amputation of hand/foot (through or below ankle or wrist
+joint) <12 Yr",D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+PSUR38C,"Surgery for amputation of hand/foot (through or below ankle or wrist
+joint) <12 Yr",N49.3,Gangrene,,,TRUE
+PSUR39C,"Amputation below or through elbow or knee, through proximal joints
+or for the complete removal of limb <12 Yr",D48.7,Neoplasm of uncertain or unknown behaviour: Other specified sites,,,TRUE
+PSUR39C,"Amputation below or through elbow or knee, through proximal joints
+or for the complete removal of limb <12 Yr",N49.3,Gangrene,,,TRUE
+RSUR01A,Reconstructive repair >=12 Yrs,Q35.9,"Cleft palate, unspecified",,,TRUE
+RSUR01A,Cleft Lip,Q35.9,"Cleft palate, unspecified",,,TRUE
+RSUR01A,Reconstructive repair >=12 Yrs,Q36.9,"Cleft lip, unilateral",,,TRUE
+RSUR01A,Cleft Lip,Q36.9,"Cleft lip, unilateral",,,TRUE
+RSUR01A,Reconstructive repair >=12 Yrs,Q54.9,"Hypospadias, unspecified",,,TRUE
+RSUR01A,Cleft Lip,Q54.9,"Hypospadias, unspecified",,,TRUE
+RSUR01A,Reconstructive repair >=12 Yrs,T14.4,Injury of nerve(s) of unspecified body region,,,TRUE
+RSUR01A,Cleft Lip,T14.4,Injury of nerve(s) of unspecified body region,,,TRUE
+RSUR01A,Reconstructive repair >=12 Yrs,T14.5,Injury of blood vessel(s) of unspecified body region,,,TRUE
+RSUR01A,Cleft Lip,T14.5,Injury of blood vessel(s) of unspecified body region,,,TRUE
+RSUR01A,Reconstructive repair >=12 Yrs,T14.6,Injury of muscles and tendons of unspecified body region,,,TRUE
+RSUR01A,Cleft Lip,T14.6,Injury of muscles and tendons of unspecified body region,,,TRUE
+RSUR01C,Reconstructive repair <12 Yrs,Q35.9,"Cleft palate, unspecified",,,TRUE
+RSUR01C,Reconstructive repair <12 Yrs,Q36.9,"Cleft lip, unilateral",,,TRUE
+RSUR01C,Reconstructive repair <12 Yrs,Q54.9,"Hypospadias, unspecified",,,TRUE
+RSUR01C,Reconstructive repair <12 Yrs,T14.4,Injury of nerve(s) of unspecified body region,,,TRUE
+RSUR01C,Reconstructive repair <12 Yrs,T14.5,Injury of blood vessel(s) of unspecified body region,,,TRUE
+RSUR01C,Reconstructive repair <12 Yrs,T14.6,Injury of muscles and tendons of unspecified body region,,,TRUE
+RSUR02A,Shaving and Skin Grafting >=12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR02A,Burns,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR02C,Shaving and Skin Grafting <12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR03A,Excisional Debridement and Dressing >=12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR03A,Burns,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR03C,Excisional Debridement and Dressing <12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR04A,Excisional Debridement with Suturing >=12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+RSUR04A,Injury Of Unspecified Body Region,T14.1,Open wound of unspecified body region,,,TRUE
+RSUR04C,Excisional Debridement with Suturing <12 Yrs,T14.1,Open wound of unspecified body region,,,TRUE
+RSUR05A,Excisional Debridement with Skin Grafting >=12 Yrs,,,,,TRUE
+RSUR05A,Injury Of Unspecified Body Region,,,,,TRUE
+RSUR05C,Excisional Debridement with Skin Grafting <12 Yrs,,,,,TRUE
+RSUR06A,Excisional Debridement with Flap Reconstruction >=12 Yrs,,,,,TRUE
+RSUR06A,Injury Of Unspecified Body Region,,,,,TRUE
+RSUR06C,Excisional Debridement with Flap Reconstruction <12 Yrs,,,,,TRUE
+RSUR07A,Excision Biopsy >=12 Yrs,C49.9,"Malignant neoplasm: Connective and soft tissue, unspecified",,,TRUE
+RSUR07A,Lipoma,C49.9,"Malignant neoplasm: Connective and soft tissue, unspecified",,,TRUE
+RSUR07A,Excision Biopsy >=12 Yrs,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+RSUR07A,Lipoma,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+RSUR07A,Excision Biopsy >=12 Yrs,Q69.9,"Polydactyly, unspecified",,,TRUE
+RSUR07A,Lipoma,Q69.9,"Polydactyly, unspecified",,,TRUE
+RSUR07C,Excision Biopsy <12 Yrs,C49.9,"Malignant neoplasm: Connective and soft tissue, unspecified",,,TRUE
+RSUR07C,Excision Biopsy <12 Yrs,D17.9,"Benign lipomatous neoplasm, unspecified",,,TRUE
+RSUR07C,Excision Biopsy <12 Yrs,Q69.9,"Polydactyly, unspecified",,,TRUE
+RSUR08A,Escharotomy >=12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR08A,Burns,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR08C,Escharotomy <12 Yrs,T30.0,"Burn of unspecified body region, unspecified degree",,,TRUE
+RSUR10A,Corrective Osteotomy >=12 Yrs,Q75.0,Craniosynostosis,,,TRUE
+RSUR10A,Craniosynostosis,Q75.0,Craniosynostosis,,,TRUE
+RSUR10C,Corrective Osteotomy <12 Yrs,Q75.0,Craniosynostosis,,,TRUE
+RSUR11A,Reconstruction >=12 Yrs,K13.0,Diseases of lips,,,TRUE
+RSUR11A,Injury Of Unspecified Body Region,K13.0,Diseases of lips,,,TRUE
+RSUR11C,Reconstruction <12 Yrs,K13.0,Diseases of lips,,,TRUE
+RSUR12A,Release/Excision and Split Skin Grafting >=12 Yrs,I89.0,"Lymphoedema, not elsewhere classified",,,TRUE
+RSUR12A,Lymphoedema(Lymphangiectasis),I89.0,"Lymphoedema, not elsewhere classified",,,TRUE
+RSUR12C,Release/Excision and Split Skin Grafting <12 Yrs,I89.0,"Lymphoedema, not elsewhere classified",,,TRUE
+RSUR13A,Release/Excision and Full thickness skin graft >=12 Yrs,Q70.9,"Syndactyly, unspecified",,,TRUE
+RSUR13A,Neurofibromatosis,Q70.9,"Syndactyly, unspecified",,,TRUE
+RSUR13C,Release/Excision and Full thickness skin graft <12 Yrs,Q70.9,"Syndactyly, unspecified",,,TRUE

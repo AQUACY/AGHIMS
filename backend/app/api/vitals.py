@@ -53,6 +53,8 @@ class VitalResponse(BaseModel):
     rdt_malaria: Optional[str]
     retro_rdt: Optional[str]
     remarks: Optional[str]
+    recorded_by: Optional[int] = None
+    recorded_by_name: Optional[str] = None  # Name of user who recorded vitals
     
     class Config:
         from_attributes = True
@@ -62,13 +64,42 @@ class VitalResponse(BaseModel):
 def get_vitals(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records", "Pharmacy", "Pharmacy Head"]))
 ):
     """Get vitals for an encounter"""
     vital = db.query(Vital).filter(Vital.encounter_id == encounter_id).first()
     if not vital:
         raise HTTPException(status_code=404, detail="Vitals not found")
-    return vital
+    
+    # Get recorded_by user information
+    recorded_by_name = None
+    if vital.recorded_by:
+        recorder = db.query(User).filter(User.id == vital.recorded_by).first()
+        if recorder:
+            recorded_by_name = recorder.full_name
+    
+    # Create response with recorded_by info
+    vital_dict = {
+        'id': vital.id,
+        'encounter_id': vital.encounter_id,
+        'bp': vital.bp,
+        'temperature': vital.temperature,
+        'pulse': vital.pulse,
+        'respiration': vital.respiration,
+        'weight': vital.weight,
+        'height': vital.height,
+        'bmi': vital.bmi,
+        'spo2': vital.spo2,
+        'rbs': vital.rbs,
+        'fbs': vital.fbs,
+        'upt': vital.upt,
+        'rdt_malaria': vital.rdt_malaria,
+        'retro_rdt': vital.retro_rdt,
+        'remarks': vital.remarks,
+        'recorded_by': vital.recorded_by,
+        'recorded_by_name': recorded_by_name,
+    }
+    return VitalResponse(**vital_dict)
 
 
 @router.get("/date/{date}")

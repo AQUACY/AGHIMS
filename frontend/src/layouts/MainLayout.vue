@@ -403,6 +403,21 @@
             <q-item-label>Patient Upload</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'Icd10DrgMapping' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="medical_information" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>ICD-10 DRG Mapping</q-item-label>
+          </q-item-section>
+        </q-item>
       </q-list>
     </q-drawer>
 

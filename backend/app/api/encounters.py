@@ -18,7 +18,9 @@ class EncounterResponse(BaseModel):
     """Encounter response model"""
     id: int
     patient_id: int
-    ccc_number: Optional[str]
+    patient_name: Optional[str] = None  # Patient full name
+    patient_card_number: Optional[str] = None  # Patient card number
+    ccc_number: Optional[str] = None
     status: str
     department: str
     procedure_g_drg_code: Optional[str] = None
@@ -28,6 +30,7 @@ class EncounterResponse(BaseModel):
     finalized_by: Optional[int] = None
     finalized_by_name: Optional[str] = None  # Name of doctor/PA who finalized
     finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
+    finalized_by_username: Optional[str] = None  # Username of doctor/PA who finalized
     archived: bool = False
     
     class Config:
@@ -57,15 +60,35 @@ def get_encounter(
     # Get finalized_by user info if exists
     finalized_by_name = None
     finalized_by_role = None
+    finalized_by_username = None
     if encounter.finalized_by:
         finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
         if finalized_user:
             finalized_by_name = finalized_user.full_name
             finalized_by_role = finalized_user.role
+            finalized_by_username = finalized_user.username
+    
+    # Get patient information
+    patient = encounter.patient
+    patient_name = ""
+    patient_card_number = ""
+    if patient:
+        # Construct patient name
+        name_parts = []
+        if patient.name:
+            name_parts.append(patient.name)
+        if patient.surname:
+            name_parts.append(patient.surname)
+        if patient.other_names:
+            name_parts.append(patient.other_names)
+        patient_name = " ".join(name_parts).strip() if name_parts else ""
+        patient_card_number = patient.card_number or ""
     
     return {
         "id": encounter.id,
         "patient_id": encounter.patient_id,
+        "patient_name": patient_name,
+        "patient_card_number": patient_card_number,
         "ccc_number": encounter.ccc_number,
         "status": encounter.status,
         "department": encounter.department,
@@ -76,6 +99,7 @@ def get_encounter(
         "finalized_by": encounter.finalized_by,
         "finalized_by_name": finalized_by_name,
         "finalized_by_role": finalized_by_role,
+        "finalized_by_username": finalized_by_username,
         "archived": encounter.archived,
     }
 
