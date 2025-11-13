@@ -247,9 +247,11 @@ def create_claim(
     for diag in encounter.diagnoses:
         if diagnosis_order >= 4:
             break
+        # Verify diagnosis still exists in database before referencing it
+        diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
         claim_diag = ClaimDiagnosis(
             claim_id=claim.id,
-            diagnosis_id=diag.id,
+            diagnosis_id=diag.id if diagnosis_exists else None,
             description=diag.diagnosis,
             icd10=diag.icd10,
             gdrg_code=diag.gdrg_code or "",
@@ -462,9 +464,11 @@ def regenerate_claim(
     for diag in encounter.diagnoses:
         if diagnosis_order >= 4:
             break
+        # Verify diagnosis still exists in database before referencing it
+        diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
         claim_diag = ClaimDiagnosis(
             claim_id=claim.id,
-            diagnosis_id=diag.id,
+            diagnosis_id=diag.id if diagnosis_exists else None,
             description=diag.diagnosis,
             icd10=diag.icd10,
             gdrg_code=diag.gdrg_code or "",
@@ -1084,9 +1088,15 @@ def update_claim_detailed(
     # Recreate diagnoses from updated data
     for idx, diag_update in enumerate(claim_data.diagnoses):
         if diag_update.description and diag_update.description.strip():
+            # Verify diagnosis still exists in database before referencing it
+            diagnosis_id = None
+            if diag_update.id:
+                diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag_update.id).first() is not None
+                diagnosis_id = diag_update.id if diagnosis_exists else None
+            
             claim_diag = ClaimDiagnosis(
                 claim_id=claim.id,
-                diagnosis_id=diag_update.id if diag_update.id else None,
+                diagnosis_id=diagnosis_id,
                 description=diag_update.description,
                 icd10=diag_update.icd10 or "",
                 gdrg_code=diag_update.gdrg or "",
