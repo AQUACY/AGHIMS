@@ -301,9 +301,13 @@ def create_claim(
             # Get claim amount from price list
             claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
             
+            # Verify prescription still exists in database before referencing it
+            from app.models.prescription import Prescription
+            prescription_exists = db.query(Prescription).filter(Prescription.id == presc.id).first() is not None
+            
             claim_presc = ClaimPrescription(
                 claim_id=claim.id,
-                prescription_id=presc.id,
+                prescription_id=presc.id if prescription_exists else None,
                 description=presc.medicine_name,
                 code=presc.medicine_code,
                 price=float(claim_amount) if claim_amount else 0.0,
@@ -505,9 +509,13 @@ def regenerate_claim(
             # Get claim amount from price list
             claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
             
+            # Verify prescription still exists in database before referencing it
+            from app.models.prescription import Prescription
+            prescription_exists = db.query(Prescription).filter(Prescription.id == presc.id).first() is not None
+            
             claim_presc = ClaimPrescription(
                 claim_id=claim.id,
-                prescription_id=presc.id,
+                prescription_id=presc.id if prescription_exists else None,
                 description=presc.medicine_name,
                 code=presc.medicine_code,
                 price=float(claim_amount) if claim_amount else 0.0,
@@ -1138,9 +1146,16 @@ def update_claim_detailed(
                 except:
                     pass
             
+            # Verify prescription still exists in database before referencing it
+            prescription_id = None
+            if presc_update.id:
+                from app.models.prescription import Prescription
+                prescription_exists = db.query(Prescription).filter(Prescription.id == presc_update.id).first() is not None
+                prescription_id = presc_update.id if prescription_exists else None
+            
             claim_presc = ClaimPrescription(
                 claim_id=claim.id,
-                prescription_id=presc_update.id if presc_update.id else None,
+                prescription_id=prescription_id,
                 description=presc_update.description,
                 code=presc_update.code,
                 price=presc_update.price,
