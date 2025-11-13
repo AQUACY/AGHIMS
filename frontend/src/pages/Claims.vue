@@ -58,14 +58,55 @@
             filled
             type="number"
             label="Search Encounter ID"
-            class="col-12 col-md-4"
+            class="col-12 col-md-2"
             @keyup.enter="searchEncounter"
+          />
+          <q-input
+            v-model="filterCardNumber"
+            filled
+            label="Card Number"
+            class="col-12 col-md-2"
+            clearable
+            @keyup.enter="loadFinalizedEncounters"
+          />
+          <q-input
+            v-model="filterStartDate"
+            filled
+            type="date"
+            label="Start Date"
+            class="col-12 col-md-2"
+            clearable
+          />
+          <q-input
+            v-model="filterEndDate"
+            filled
+            type="date"
+            label="End Date"
+            class="col-12 col-md-2"
+            clearable
+          />
+          <q-select
+            v-model="filterClaimStatus"
+            filled
+            :options="claimStatusOptions"
+            label="Claim Status"
+            class="col-12 col-md-2"
+            clearable
+            emit-value
+            map-options
           />
           <q-btn
             color="primary"
             label="Search"
             @click="searchEncounter"
-            class="col-12 col-md-2 glass-button"
+            class="col-12 col-md-1 glass-button"
+          />
+          <q-btn
+            color="secondary"
+            label="Clear Filters"
+            @click="clearFilters"
+            class="col-12 col-md-1 glass-button"
+            outline
           />
         </div>
 
@@ -171,6 +212,18 @@ const searchEncounterId = ref('');
 const finalizedEncounters = ref([]);
 const claimType = ref(null); // 'opd' | 'ipd' | null
 const loading = ref(false);
+const filterStartDate = ref('');
+const filterEndDate = ref('');
+const filterClaimStatus = ref(null);
+const filterCardNumber = ref('');
+
+const claimStatusOptions = [
+  { label: 'All', value: null },
+  { label: 'No Claim', value: 'no_claim' },
+  { label: 'Draft', value: 'draft' },
+  { label: 'Finalized', value: 'finalized' },
+  { label: 'Reopened', value: 'reopened' },
+];
 
 
 const columns = [
@@ -245,6 +298,15 @@ const searchEncounter = async () => {
   }
 };
 
+const clearFilters = () => {
+  filterStartDate.value = '';
+  filterEndDate.value = '';
+  filterClaimStatus.value = null;
+  filterCardNumber.value = '';
+  searchEncounterId.value = '';
+  loadFinalizedEncounters();
+};
+
 const generateClaim = (encounter) => {
   // Navigate to generate claim page
   $router.push(`/claims/generate/${encounter.id}`);
@@ -304,7 +366,13 @@ const regenerateClaim = (encounter) => {
 const loadFinalizedEncounters = async () => {
   loading.value = true;
   try {
-    const response = await claimsAPI.getEligibleEncounters(claimType.value);
+    const response = await claimsAPI.getEligibleEncounters(
+      claimType.value,
+      filterStartDate.value || null,
+      filterEndDate.value || null,
+      filterClaimStatus.value || null,
+      filterCardNumber.value || null
+    );
     finalizedEncounters.value = response.data.map(encounter => ({
       id: encounter.id,
       patient_name: encounter.patient_name,
@@ -332,6 +400,13 @@ onMounted(() => {
 
 watch(claimType, () => {
   loadFinalizedEncounters();
+});
+
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber], () => {
+  // Auto-reload when filters change (debounce could be added if needed)
+  if (!searchEncounterId.value) {
+    loadFinalizedEncounters();
+  }
 });
 </script>
 

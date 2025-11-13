@@ -216,6 +216,23 @@ export const consultationAPI = {
     api.put(`/consultation/prescription/${prescriptionId}/return`),
   getDispensedPrescriptions: (encounterId) => 
     api.get(`/consultation/prescription/encounter/${encounterId}/dispensed`),
+  // Inpatient prescription endpoints
+  getWardAdmissionsByPatientCard: (cardNumber, includeDischarged = false) => 
+    api.get(`/consultation/ward-admissions/patient/${cardNumber}`, { params: { include_discharged: includeDischarged } }),
+  getInpatientPrescriptionsByPatientCard: (cardNumber) => 
+    api.get(`/consultation/inpatient-prescription/patient/${cardNumber}`),
+  getInpatientPrescriptionsByWardAdmission: (wardAdmissionId) => 
+    api.get(`/consultation/ward-admissions/${wardAdmissionId}/prescriptions/all`),
+  getAllInpatientDiagnoses: (wardAdmissionId) => 
+    api.get(`/consultation/ward-admissions/${wardAdmissionId}/diagnoses/all`),
+  confirmInpatientPrescription: (prescriptionId, data = null) => 
+    api.put(`/consultation/inpatient-prescription/${prescriptionId}/confirm`, data || {}),
+  unconfirmInpatientPrescription: (prescriptionId) => 
+    api.put(`/consultation/inpatient-prescription/${prescriptionId}/unconfirm`),
+  dispenseInpatientPrescription: (prescriptionId, data = null) => 
+    api.put(`/consultation/inpatient-prescription/${prescriptionId}/dispense`, data),
+  returnInpatientPrescription: (prescriptionId) => 
+    api.put(`/consultation/inpatient-prescription/${prescriptionId}/return`),
   getInvestigationsByPatientCard: (cardNumber, encounterId, investigationType = null) => {
     const url = `/consultation/investigation/patient/${cardNumber}/encounter/${encounterId}`;
     const params = investigationType ? { investigation_type: investigationType } : {};
@@ -225,8 +242,27 @@ export const consultationAPI = {
     const url = `/consultation/investigation/list/${investigationType}`;
     return api.get(url, { params: filters });
   },
+  getInpatientInvestigationsByType: (investigationType, filters = {}) => {
+    const url = `/consultation/inpatient-investigations/by-type`;
+    return api.get(url, { params: { investigation_type: investigationType, ...filters } });
+  },
+  confirmInpatientInvestigation: (investigationId, data = {}) => {
+    return api.put(`/consultation/inpatient-investigation/${investigationId}/confirm`, data);
+  },
+  revertInpatientInvestigationStatus: (investigationId) => 
+    api.put(`/consultation/inpatient-investigation/${investigationId}/revert-status`),
+  revertInpatientInvestigationToRequested: (investigationId, reason) => 
+    api.put(`/consultation/inpatient-investigation/${investigationId}/revert-to-requested`, { reason }),
+  bulkConfirmInpatientInvestigations: (investigationIds, addToIpdBill = true) => 
+    api.put('/consultation/inpatient-investigations/bulk-confirm', { 
+      investigation_ids: investigationIds,
+      add_to_ipd_bill: addToIpdBill
+    }),
   getInvestigation: (investigationId) => {
     return api.get(`/consultation/investigation/${investigationId}`);
+  },
+  getInpatientInvestigation: (investigationId) => {
+    return api.get(`/consultation/inpatient-investigation/${investigationId}`);
   },
   updateInvestigationDetails: (investigationId, data) => 
     api.put(`/consultation/investigation/${investigationId}/update-details`, data),
@@ -280,6 +316,7 @@ export const consultationAPI = {
     if (includeDischarged) params.include_discharged = true;
     return api.get('/consultation/ward-admissions', { params });
   },
+  getWardAdmission: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}`),
     dischargePatient: (wardAdmissionId) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/discharge`),
     cancelWardAdmission: (wardAdmissionId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}`),
     updateAdmissionNotes: (wardAdmissionId, notes) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/admission-notes`, { notes }),
@@ -294,9 +331,49 @@ export const consultationAPI = {
     // Inpatient Vitals
     createInpatientVital: (wardAdmissionId, vitalData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/vitals`, vitalData),
     getInpatientVitals: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/vitals`),
+    updateInpatientVital: (wardAdmissionId, vitalId, vitalData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/vitals/${vitalId}`, vitalData),
     // Inpatient Clinical Reviews
     createInpatientClinicalReview: (wardAdmissionId, reviewData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews`, reviewData),
     getInpatientClinicalReviews: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews`),
+    updateInpatientClinicalReview: (wardAdmissionId, clinicalReviewId, reviewData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}`, reviewData),
+    deleteInpatientClinicalReview: (wardAdmissionId, clinicalReviewId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}`),
+    // Inpatient Diagnoses
+    createInpatientDiagnosis: (wardAdmissionId, clinicalReviewId, diagnosisData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/diagnoses`, diagnosisData),
+    getInpatientDiagnoses: (wardAdmissionId, clinicalReviewId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/diagnoses`),
+    deleteInpatientDiagnosis: (wardAdmissionId, clinicalReviewId, diagnosisId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/diagnoses/${diagnosisId}`),
+    // Inpatient Prescriptions
+    createInpatientPrescription: (wardAdmissionId, clinicalReviewId, prescriptionData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/prescriptions`, prescriptionData),
+    getInpatientPrescriptions: (wardAdmissionId, clinicalReviewId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/prescriptions`),
+    deleteInpatientPrescription: (wardAdmissionId, clinicalReviewId, prescriptionId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/prescriptions/${prescriptionId}`),
+    getAllWardAdmissionPrescriptions: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/prescriptions`),
+    // Treatment Sheet
+    createTreatmentAdministration: (wardAdmissionId, administrationData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/treatment-sheet/administrations`, administrationData),
+    getTreatmentAdministrations: (wardAdmissionId, prescriptionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/treatment-sheet/administrations${prescriptionId ? `?prescription_id=${prescriptionId}` : ''}`),
+    deleteTreatmentAdministration: (wardAdmissionId, administrationId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/treatment-sheet/administrations/${administrationId}`),
+    // Inpatient Investigations
+    createInpatientInvestigation: (wardAdmissionId, clinicalReviewId, investigationData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/investigations`, investigationData),
+    getInpatientInvestigations: (wardAdmissionId, clinicalReviewId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/investigations`),
+    deleteInpatientInvestigation: (wardAdmissionId, clinicalReviewId, investigationId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/investigations/${investigationId}`),
+    // Inpatient Surgeries
+    createInpatientSurgery: (wardAdmissionId, surgeryData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/surgeries`, surgeryData),
+    getInpatientSurgeries: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/surgeries`),
+    getInpatientSurgery: (wardAdmissionId, surgeryId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`),
+    updateInpatientSurgery: (wardAdmissionId, surgeryId, surgeryData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`, surgeryData),
+    deleteInpatientSurgery: (wardAdmissionId, surgeryId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`),
+    // Additional Services (Admin-defined)
+    createAdditionalService: (serviceData) => api.post('/consultation/additional-services', serviceData),
+    getAdditionalServices: (activeOnly = false) => api.get(`/consultation/additional-services?active_only=${activeOnly}`),
+    getAdditionalService: (serviceId) => api.get(`/consultation/additional-services/${serviceId}`),
+    updateAdditionalService: (serviceId, serviceData) => api.put(`/consultation/additional-services/${serviceId}`, serviceData),
+    deleteAdditionalService: (serviceId) => api.delete(`/consultation/additional-services/${serviceId}`),
+    // Inpatient Additional Service Usage
+    startAdditionalService: (wardAdmissionId, serviceData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/additional-services`, serviceData),
+    getInpatientAdditionalServices: (wardAdmissionId, activeOnly = false) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/additional-services?active_only=${activeOnly}`),
+    stopAdditionalService: (wardAdmissionId, serviceUsageId, stopData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/additional-services/${serviceUsageId}/stop`, stopData),
+    // Inpatient Inventory Debits
+    createInpatientInventoryDebit: (wardAdmissionId, debitData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits`, debitData),
+    getInpatientInventoryDebits: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits`),
+    deleteInpatientInventoryDebit: (wardAdmissionId, debitId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits/${debitId}`),
     // Ward Admission Transfers
     getWardAdmissionTransfers: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/transfers`),
     // Direct Admission
@@ -376,6 +453,13 @@ export const priceListAPI = {
     }
     return api.get('/price-list/icd10/search', { params });
   },
+  searchPriceItems: (searchTerm = null, serviceType = null, fileType = null) => {
+    const params = {};
+    if (searchTerm) params.search_term = searchTerm;
+    if (serviceType) params.service_type = serviceType;
+    if (fileType) params.file_type = fileType;
+    return api.get('/price-list/search', { params });
+  },
   getDrgCodesFromIcd10: (icd10Code) => {
     return api.get(`/price-list/icd10/${icd10Code}/drg-codes`);
   },
@@ -434,8 +518,13 @@ export const priceListAPI = {
 // Claims endpoints
 export const claimsAPI = {
   create: (data) => api.post('/claims/', data),
-  getEligibleEncounters: (type = null) => {
-    const params = type ? { claim_type: type } : {};
+  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null) => {
+    const params = {};
+    if (type) params.claim_type = type;
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+    if (claimStatus) params.claim_status = claimStatus;
+    if (cardNumber) params.card_number = cardNumber;
     return api.get('/claims/eligible-encounters', { params });
   },
   get: (claimId) => api.get(`/claims/${claimId}`),

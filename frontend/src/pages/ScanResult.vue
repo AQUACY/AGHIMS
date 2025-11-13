@@ -143,8 +143,8 @@
             v-model="resultForm.attachment"
             filled
             label="Upload PDF/Attachment"
-            accept=".pdf,.jpg,.jpeg,.png"
-            hint="Upload PDF or image file"
+            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+            hint="Upload PDF, Word document, or image file"
             @update:model-value="onFileSelected"
           >
             <template v-slot:prepend>
@@ -236,9 +236,29 @@ const loadInvestigation = async () => {
 
   loading.value = true;
   try {
-    // Load investigation details
-    const invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
-    investigation.value = invResponse.data;
+    // Load investigation details - try OPD first, then IPD
+    let invResponse;
+    try {
+      invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+      investigation.value = invResponse.data;
+    } catch (opdError) {
+      // If OPD fails with 404, try IPD
+      if (opdError.response?.status === 404) {
+        try {
+          invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+          investigation.value = invResponse.data;
+        } catch (ipdError) {
+          $q.notify({
+            type: 'negative',
+            message: 'Investigation not found',
+          });
+          router.push('/scan');
+          return;
+        }
+      } else {
+        throw opdError;
+      }
+    }
     
     if (!investigation.value) {
       $q.notify({
@@ -249,12 +269,22 @@ const loadInvestigation = async () => {
       return;
     }
 
-    // Load encounter details
-    try {
-      const encounterResponse = await encountersAPI.get(investigation.value.encounter_id);
-      encounter.value = encounterResponse.data;
-    } catch (error) {
-      console.error('Failed to load encounter:', error);
+    // Load encounter details (only for OPD investigations)
+    if (investigation.value.encounter_id && investigation.value.source !== 'inpatient') {
+      try {
+        const encounterResponse = await encountersAPI.get(investigation.value.encounter_id);
+        encounter.value = encounterResponse.data;
+      } catch (error) {
+        console.error('Failed to load encounter:', error);
+      }
+    } else if (investigation.value.source === 'inpatient' && investigation.value.encounter_id) {
+      // For IPD, we can still load the encounter if needed
+      try {
+        const encounterResponse = await encountersAPI.get(investigation.value.encounter_id);
+        encounter.value = encounterResponse.data;
+      } catch (error) {
+        console.error('Failed to load encounter:', error);
+      }
     }
     
     // Load patient details using card number from investigation

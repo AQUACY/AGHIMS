@@ -46,10 +46,24 @@
           />
         </div>
 
+        <!-- Service Selection: OPD or IPD -->
+        <div class="q-mt-md">
+          <div class="text-subtitle1 q-mb-sm glass-text">Select Service Type:</div>
+          
+          <!-- OPD Section -->
+          <div v-if="todaysEncounter || oldEncounters.length > 0" class="q-mb-md">
+            <div class="text-weight-medium q-mb-sm">OPD Services</div>
+            
         <!-- Today's Encounter -->
-        <div v-if="todaysEncounter" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm glass-text">Today's Encounter:</div>
-          <q-card class="q-mb-md" flat bordered style="background-color: rgba(46, 139, 87, 0.1);">
+            <div v-if="todaysEncounter" class="q-mb-sm">
+              <q-card 
+                flat 
+                bordered 
+                clickable
+                :class="{ 'bg-blue-1': serviceType === 'opd' && selectedEncounterId === todaysEncounter.id }"
+                @click="selectOPDEncounter(todaysEncounter.id)"
+                style="cursor: pointer; background-color: rgba(46, 139, 87, 0.1);"
+              >
             <q-card-section>
               <div class="row items-center">
                 <div class="col">
@@ -65,12 +79,12 @@
         </div>
 
         <!-- Old Encounters - Collapsible -->
-        <div v-if="oldEncounters.length > 0" class="q-mt-md">
+            <div v-if="oldEncounters.length > 0">
           <q-expansion-item
             v-model="oldEncountersExpanded"
             icon="history"
-            :label="`Previous Services (${oldEncounters.length})`"
-            header-class="text-subtitle1 glass-text"
+                :label="`Previous OPD Services (${oldEncounters.length})`"
+                header-class="text-subtitle2"
             class="q-mb-sm"
           >
             <div class="q-gutter-sm q-pa-sm">
@@ -80,8 +94,8 @@
                 flat
                 bordered
                 clickable
-                :class="{ 'bg-blue-1': selectedEncounterId === encounter.id }"
-                @click="selectOldEncounter(encounter.id)"
+                    :class="{ 'bg-blue-1': serviceType === 'opd' && selectedEncounterId === encounter.id }"
+                    @click="selectOPDEncounter(encounter.id)"
                 style="cursor: pointer;"
               >
                 <q-card-section class="q-pa-sm">
@@ -98,16 +112,49 @@
               </q-card>
             </div>
           </q-expansion-item>
+            </div>
         </div>
 
-        <div v-if="!todaysEncounter && oldEncounters.length === 0" class="text-grey-7 q-mt-md">
-          No active encounters found for this patient
+          <!-- IPD Section -->
+          <div v-if="wardAdmissions.length > 0" class="q-mb-md">
+            <div class="text-weight-medium q-mb-sm">IPD Services</div>
+            <div class="q-gutter-sm">
+              <q-card
+                v-for="admission in wardAdmissions"
+                :key="admission.id"
+                flat
+                bordered
+                clickable
+                :class="{ 'bg-purple-1': serviceType === 'ipd' && selectedWardAdmissionId === admission.id }"
+                @click="selectIPDAdmission(admission.id)"
+                style="cursor: pointer;"
+              >
+                <q-card-section class="q-pa-sm">
+                  <div class="row items-center">
+                    <div class="col">
+                      <div class="text-weight-medium">Ward: {{ admission.ward }}</div>
+                      <div class="text-caption text-grey-7 q-mt-xs">
+                        <span v-if="admission.bed_number">Bed: {{ admission.bed_number }} | </span>
+                        Admitted: {{ formatDate(admission.admitted_at) }}
+                      </div>
+                    </div>
+                    <q-badge color="purple" label="IPD" />
+                    <q-icon name="chevron_right" color="grey-6" />
+                  </div>
+                </q-card-section>
+              </q-card>
+            </div>
+          </div>
+
+          <div v-if="(!todaysEncounter && oldEncounters.length === 0) && wardAdmissions.length === 0" class="text-grey-7 q-mt-md">
+            No active services found for this patient
+          </div>
         </div>
       </q-card-section>
     </q-card>
 
     <!-- Diagnoses -->
-    <q-card v-if="selectedEncounterId && diagnoses.length > 0" class="q-mb-md">
+    <q-card v-if="(selectedEncounterId || selectedWardAdmissionId) && diagnoses.length > 0" class="q-mb-md">
       <q-card-section>
         <div class="text-h6 q-mb-md">Diagnoses</div>
         <div class="row q-gutter-md">
@@ -146,8 +193,8 @@
       </q-card-section>
     </q-card>
 
-    <!-- Vitals -->
-    <q-card v-if="selectedEncounterId && vitals" class="q-mb-md">
+    <!-- Vitals - OPD -->
+    <q-card v-if="serviceType === 'opd' && selectedEncounterId && vitals" class="q-mb-md">
       <q-card-section>
         <div class="text-h6 q-mb-md">Vitals</div>
         <div class="row q-gutter-md">
@@ -183,10 +230,62 @@
       </q-card-section>
     </q-card>
 
+    <!-- Vitals - IPD (Most Recent) -->
+    <q-card v-if="serviceType === 'ipd' && selectedWardAdmissionId && latestInpatientVital" class="q-mb-md">
+      <q-card-section>
+        <div class="text-h6 q-mb-md">Latest Vitals</div>
+        <div class="row q-gutter-md">
+          <div v-if="latestInpatientVital.blood_pressure_systolic || latestInpatientVital.blood_pressure_diastolic" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Blood Pressure</div>
+            <div class="text-body1 text-weight-medium">
+              {{ latestInpatientVital.blood_pressure_systolic }}/{{ latestInpatientVital.blood_pressure_diastolic }} mmHg
+            </div>
+          </div>
+          <div v-if="latestInpatientVital.temperature" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Temperature</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.temperature }}°C</div>
+          </div>
+          <div v-if="latestInpatientVital.pulse" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Pulse</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.pulse }} bpm</div>
+          </div>
+          <div v-if="latestInpatientVital.respiratory_rate" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Respiratory Rate</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.respiratory_rate }} /min</div>
+          </div>
+          <div v-if="latestInpatientVital.oxygen_saturation" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Oxygen Saturation</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.oxygen_saturation }}%</div>
+          </div>
+          <div v-if="latestInpatientVital.weight" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Weight</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.weight }} kg</div>
+          </div>
+          <div v-if="latestInpatientVital.height" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">Height</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.height }} cm</div>
+          </div>
+          <div v-if="latestInpatientVital.bmi" class="col-12 col-md-3">
+            <div class="text-grey-7 text-caption">BMI</div>
+            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.bmi }}</div>
+          </div>
+        </div>
+        <div v-if="latestInpatientVital.notes" class="q-mt-md">
+          <div class="text-grey-7 text-caption">Notes</div>
+          <div class="text-body2">{{ latestInpatientVital.notes }}</div>
+        </div>
+        <div v-if="latestInpatientVital.recorded_by_name" class="q-mt-md">
+          <div class="text-grey-7 text-caption">Recorded By</div>
+          <div class="text-body2 text-weight-medium">{{ latestInpatientVital.recorded_by_name }}</div>
+          <div class="text-caption text-grey-6">{{ formatDate(latestInpatientVital.recorded_at) }}</div>
+        </div>
+      </q-card-section>
+    </q-card>
+
     <!-- No Diagnoses/Vitals Message -->
-    <q-card v-if="selectedEncounterId && !loadingData && diagnoses.length === 0 && !vitals" class="q-mb-md">
+    <q-card v-if="(selectedEncounterId || selectedWardAdmissionId) && !loadingData && diagnoses.length === 0 && !vitals && !latestInpatientVital" class="q-mb-md">
       <q-card-section class="text-center text-grey-7">
-        No diagnoses or vitals recorded for this encounter yet
+        No diagnoses or vitals recorded yet
       </q-card-section>
     </q-card>
 
@@ -241,7 +340,7 @@
     </q-card>
 
     <!-- Prescriptions Table -->
-    <q-card v-if="selectedEncounterId">
+    <q-card v-if="selectedEncounterId || selectedWardAdmissionId">
       <q-card-section>
         <div class="row items-center q-mb-md">
           <div class="text-h6">Prescriptions</div>
@@ -252,10 +351,11 @@
             icon="print"
             label="Print Bill Card"
             @click="printBillCard"
-            :disable="!selectedEncounterId || !patient"
+            :disable="(serviceType === 'opd' && !selectedEncounterId) || (serviceType === 'ipd' && !selectedWardAdmissionId) || !patient"
             class="q-mr-sm"
           />
           <q-btn
+            v-if="serviceType === 'opd'"
             color="primary"
             icon="add"
             label="Add Prescription"
@@ -264,6 +364,16 @@
             class="q-mr-sm"
           />
           <q-btn
+            v-if="serviceType === 'ipd'"
+            color="primary"
+            icon="add"
+            label="Add Medication"
+            @click="openAddPrescriptionDialog"
+            :disable="!selectedWardAdmissionId"
+            class="q-mr-sm"
+          />
+          <q-btn
+            v-if="serviceType === 'opd'"
             color="secondary"
             icon="local_pharmacy"
             label="Add External Prescription"
@@ -271,7 +381,15 @@
             :disable="!selectedEncounterId"
           />
           <q-btn
-            v-if="externalPrescriptions.length > 0"
+            v-if="serviceType === 'ipd'"
+            color="secondary"
+            icon="local_pharmacy"
+            label="Add External Prescription"
+            @click="openAddExternalPrescriptionDialog"
+            :disable="!selectedWardAdmissionId"
+          />
+          <q-btn
+            v-if="serviceType === 'opd' && externalPrescriptions.length > 0"
             color="accent"
             icon="print"
             label="Print External Prescriptions"
@@ -280,14 +398,16 @@
             class="q-ml-sm"
           />
         </div>
-        <q-table
-          v-if="prescriptions.length > 0"
-          :rows="prescriptions"
-          :columns="columns"
-          row-key="id"
-          flat
-          :loading="loadingPrescriptions"
-        >
+        <!-- OPD Prescriptions Section -->
+        <div v-if="serviceType === 'opd' && prescriptions.length > 0" class="q-mb-md">
+          <div class="text-h6 q-mb-sm">OPD Prescriptions</div>
+          <q-table
+            :rows="prescriptions"
+            :columns="columns"
+            row-key="id"
+            flat
+            :loading="loadingPrescriptions"
+          >
           <template v-slot:top>
             <div class="row items-center q-pa-sm">
               <q-checkbox
@@ -323,6 +443,7 @@
               <div class="row items-center q-gutter-xs">
                 <span>{{ props.value }}</span>
                 <q-badge v-if="props.row.is_external" color="orange" label="External" />
+                <q-badge v-if="props.row.prescription_type === 'inpatient' || props.row.source === 'inpatient'" color="purple" label="IPD" />
               </div>
             </q-td>
           </template>
@@ -382,9 +503,9 @@
                   @click="viewInstructions(props.row)"
                   title="View Instructions"
                 />
-              <!-- Edit button for Admin (even if confirmed) -->
+              <!-- Edit button for Admin (even if confirmed) - only for OPD prescriptions -->
               <q-btn
-                  v-if="authStore.userRole === 'Admin'"
+                  v-if="authStore.userRole === 'Admin' && props.row.prescription_type !== 'inpatient' && props.row.source !== 'inpatient'"
                   size="sm"
                   color="secondary"
                   icon="edit"
@@ -402,8 +523,8 @@
                   icon="check_circle"
                   label="Confirm"
                   @click="confirmPrescription(props.row)"
-                  :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null"
+                  :loading="confirmingId === props.row.id || confirmingInpatient === props.row.id"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null || dispensingInpatient !== null || unconfirmingInpatient !== null"
                 />
               <q-btn
                   v-if="props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
@@ -412,21 +533,21 @@
                   icon="undo"
                   label="Revert"
                   @click="unconfirmPrescription(props.row)"
-                  :loading="unconfirmingId === props.row.id"
-                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null"
+                  :loading="unconfirmingId === props.row.id || unconfirmingInpatient === props.row.id"
+                  :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null || confirmingInpatient !== null || dispensingInpatient !== null"
                 >
                   <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
                 </q-btn>
                 <q-btn
-                  v-if="!props.row.is_dispensed && !props.row.is_external"
+                  v-if="!props.row.is_dispensed && !props.row.is_external && props.row.is_confirmed && (props.row.prescription_type === 'inpatient' || props.row.source === 'inpatient' || canDispense(props.row))"
                   size="sm"
                   color="positive"
                   label="Dispense"
                   @click="dispensePrescription(props.row)"
-                  :loading="dispensingId === props.row.id || returningId === props.row.id"
-                  :disable="dispensingId !== null || returningId !== null || !canDispense(props.row)"
+                  :loading="dispensingId === props.row.id || returningId === props.row.id || dispensingInpatient === props.row.id"
+                  :disable="dispensingId !== null || returningId !== null || confirmingInpatient !== null || unconfirmingInpatient !== null || (props.row.prescription_type !== 'inpatient' && props.row.source !== 'inpatient' && !canDispense(props.row))"
                 >
-                  <q-tooltip v-if="!canDispense(props.row)">
+                  <q-tooltip v-if="props.row.prescription_type !== 'inpatient' && props.row.source !== 'inpatient' && !canDispense(props.row)">
                     Bill must be paid before dispense
                   </q-tooltip>
                   <q-tooltip v-else>
@@ -460,7 +581,166 @@
               </div>
             </q-td>
           </template>
-        </q-table>
+          </q-table>
+        </div>
+
+        <!-- IPD Prescriptions Section -->
+        <div v-if="serviceType === 'ipd' && inpatientPrescriptions.length > 0" class="q-mb-md">
+          <div class="text-h6 q-mb-sm">IPD Prescriptions</div>
+          <div class="text-caption text-info q-mb-sm">
+            IPD medications can be dispensed but must be added to IPD bill to be charged at discharge.
+          </div>
+          <q-table
+            :rows="inpatientPrescriptions"
+            :columns="inpatientColumns"
+            row-key="id"
+            flat
+            :loading="loadingInpatientPrescriptions"
+          >
+            <template v-slot:top>
+              <div class="row items-center q-pa-sm">
+                <q-checkbox
+                  :model-value="allPendingSelectedInpatient"
+                  :indeterminate="somePendingSelectedInpatient"
+                  @update:model-value="toggleAllPendingInpatient"
+                  label="Select all pending prescriptions"
+                  class="q-mr-md"
+                />
+                <q-btn
+                  v-if="selectedInpatientPrescriptions.length > 0"
+                  color="primary"
+                  icon="add"
+                  label="Add Selected to Confirmation"
+                  @click="addSelectedToConfirmationInpatient"
+                  class="q-mr-sm"
+                />
+              </div>
+            </template>
+            <template v-slot:body-cell-prescriber="props">
+              <q-td :props="props">
+                <div v-if="props.row.prescriber_name">
+                  <div class="text-weight-medium">{{ props.row.prescriber_name }}</div>
+                </div>
+                <span v-else class="text-grey-6">N/A</span>
+              </q-td>
+            </template>
+            <template v-slot:body-cell-medicine_name="props">
+              <q-td :props="props">
+                <div class="row items-center q-gutter-xs">
+                  <span>{{ props.value }}</span>
+                  <q-badge color="purple" label="IPD" />
+                </div>
+              </q-td>
+            </template>
+            <template v-slot:body-cell-status="props">
+              <q-td :props="props">
+                <q-badge
+                  v-if="props.row.is_confirmed && props.row.is_dispensed"
+                  color="positive"
+                  label="Dispensed"
+                />
+                <q-badge
+                  v-else-if="props.row.is_confirmed"
+                  color="blue"
+                  label="Confirmed"
+                />
+                <q-badge
+                  v-else
+                  color="orange"
+                  label="Pending"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-selection="props">
+              <q-td :props="props">
+                <q-checkbox
+                  v-if="!props.row.is_confirmed && !props.row.is_dispensed"
+                  :model-value="isInpatientPrescriptionSelected(props.row)"
+                  @update:model-value="toggleInpatientPrescriptionSelection(props.row, $event)"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-price="props">
+              <q-td :props="props">
+                <span v-if="props.row.calculated_price !== undefined" class="text-weight-medium text-primary">
+                  {{ formatCurrency(props.row.calculated_price) }}
+                </span>
+                <span v-else class="text-grey-6 text-caption">Calculating...</span>
+              </q-td>
+            </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <div class="row q-gutter-xs">
+                  <q-btn
+                    v-if="props.row.instructions"
+                    size="sm"
+                    color="info"
+                    icon="visibility"
+                    flat
+                    round
+                    @click="viewInstructions(props.row)"
+                    title="View Instructions"
+                  />
+                  <q-btn
+                    v-if="!props.row.is_confirmed && !props.row.is_dispensed"
+                    size="sm"
+                    color="primary"
+                    icon="check_circle"
+                    label="Confirm"
+                    @click="confirmPrescription(props.row)"
+                    :loading="confirmingInpatient === props.row.id"
+                    :disable="confirmingInpatient !== null || dispensingInpatient !== null || unconfirmingInpatient !== null"
+                  />
+                  <q-btn
+                    v-if="props.row.is_confirmed && !props.row.is_dispensed"
+                    size="sm"
+                    color="warning"
+                    icon="undo"
+                    label="Revert"
+                    @click="unconfirmPrescription(props.row)"
+                    :loading="unconfirmingInpatient === props.row.id"
+                    :disable="confirmingInpatient !== null || dispensingInpatient !== null || unconfirmingInpatient !== null"
+                  >
+                    <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
+                  </q-btn>
+                  <q-btn
+                    v-if="!props.row.is_dispensed && props.row.is_confirmed"
+                    size="sm"
+                    color="positive"
+                    label="Dispense"
+                    @click="dispensePrescription(props.row)"
+                    :loading="dispensingInpatient === props.row.id"
+                    :disable="dispensingInpatient !== null || confirmingInpatient !== null || unconfirmingInpatient !== null"
+                  >
+                    <q-tooltip>Dispense prescription</q-tooltip>
+                  </q-btn>
+                  <q-btn
+                    v-if="props.row.is_dispensed"
+                    size="sm"
+                    color="negative"
+                    icon="undo"
+                    label="Return"
+                    @click="returnPrescription(props.row)"
+                    :loading="returningId === props.row.id"
+                    :disable="dispensingInpatient !== null || returningId !== null"
+                  >
+                    <q-tooltip>Return dispensed prescription</q-tooltip>
+                  </q-btn>
+                </div>
+              </q-td>
+            </template>
+          </q-table>
+        </div>
+
+        <!-- Empty State -->
+        <div v-if="serviceType && ((serviceType === 'opd' && prescriptions.length === 0) || (serviceType === 'ipd' && inpatientPrescriptions.length === 0))" class="text-center q-pa-lg">
+          <q-icon name="medication" size="4em" color="grey-6" />
+          <div class="text-h6 q-mt-md text-grey-6">No prescriptions found</div>
+          <div class="text-body2 text-grey-6">
+            <span v-if="serviceType === 'opd'">Prescriptions will appear here once they are added for this encounter.</span>
+            <span v-else>Prescriptions will appear here once they are added in a clinical review.</span>
+          </div>
+        </div>
       </q-card-section>
     </q-card>
 
@@ -593,9 +873,10 @@
     </q-card>
 
     <!-- No Prescriptions Message -->
-    <q-card v-if="selectedEncounterId && !loadingPrescriptions && prescriptions.length === 0" class="q-mt-md">
+    <q-card v-if="patient && !loadingPrescriptions && !loadingInpatientPrescriptions && prescriptions.length === 0 && inpatientPrescriptions.length === 0" class="q-mt-md">
       <q-card-section class="text-center text-grey-7">
-        No prescriptions found for this encounter
+        <div v-if="selectedEncounterId">No prescriptions found for this encounter</div>
+        <div v-else>No prescriptions found for this patient</div>
       </q-card-section>
     </q-card>
 
@@ -897,6 +1178,93 @@
       </q-card>
     </q-dialog>
 
+    <!-- Confirm Inpatient Prescription Dialog -->
+    <q-dialog v-model="showConfirmInpatientDialog">
+      <q-card style="min-width: 500px; max-width: 700px">
+        <q-card-section>
+          <div class="text-h6">Confirm Inpatient Prescription</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+            {{ confirmInpatientForm.medicine_name }} ({{ confirmInpatientForm.medicine_code }})
+          </div>
+          <div class="text-caption text-info q-mt-sm">
+            Review and update prescription details if needed. IPD medications can be dispensed but must be added to IPD bill to be charged at discharge.
+          </div>
+        </q-card-section>
+
+        <q-card-section>
+          <q-form @submit="confirmInpatientPrescriptionSubmit" class="q-gutter-md">
+            <q-input
+              v-model="confirmInpatientForm.dose"
+              filled
+              label="Dose *"
+              hint="e.g., 500 MG"
+              :rules="[(val) => !!val || 'Dose is required']"
+            />
+            <q-input
+              v-model="confirmInpatientForm.frequency"
+              filled
+              label="Frequency *"
+              hint="e.g., 2 DAILY"
+              :rules="[(val) => !!val || 'Frequency is required']"
+            />
+            <q-input
+              v-model="confirmInpatientForm.duration"
+              filled
+              label="Duration *"
+              hint="e.g., 7 DAYS"
+              :rules="[(val) => !!val || 'Duration is required']"
+            />
+            <q-input
+              v-model.number="confirmInpatientForm.quantity"
+              filled
+              type="number"
+              label="Quantity *"
+              hint="Number of units"
+              :rules="[
+                (val) => !!val || 'Quantity is required',
+                (val) => val > 0 || 'Quantity must be greater than 0'
+              ]"
+            />
+            <q-input
+              v-model="confirmInpatientForm.instructions"
+              filled
+              type="textarea"
+              label="Instructions / Remarks"
+              rows="3"
+              hint="Instructions for taking this medication"
+            />
+            <q-checkbox
+              v-model="confirmInpatientForm.add_to_ipd_bill"
+              label="Add to IPD Bill"
+              color="purple"
+              class="q-mt-md"
+            />
+            <div class="text-caption text-grey-7 q-ml-md" v-if="confirmInpatientForm.add_to_ipd_bill">
+              This medication will be added to the patient's IPD bill and charged at discharge.
+            </div>
+            <div class="text-caption text-warning q-ml-md" v-else>
+              This medication will be confirmed but NOT added to the IPD bill. It can still be dispensed.
+            </div>
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn
+                label="Cancel"
+                flat
+                v-close-popup
+                class="col"
+              />
+              <q-btn
+                label="Confirm"
+                type="submit"
+                color="purple"
+                class="col"
+                :loading="confirmingInpatient !== null"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
     <!-- Edit Prescription Dialog -->
     <q-dialog v-model="showEditPrescriptionDialog">
       <q-card style="min-width: 600px; max-width: 800px">
@@ -1118,6 +1486,16 @@ const unconfirmingId = ref(null);
 const deletingId = ref(null);
 const confirmingMultiple = ref(false);
 const updatingPrescriptionId = ref(null);
+// Inpatient prescriptions
+const wardAdmissions = ref([]);
+const selectedWardAdmissionId = ref(null);
+const inpatientPrescriptions = ref([]);
+const loadingInpatientPrescriptions = ref(false);
+const confirmingInpatient = ref(null);
+const dispensingInpatient = ref(null);
+const unconfirmingInpatient = ref(null);
+const combinedPrescriptions = ref([]);
+const serviceType = ref(null); // 'opd' or 'ipd'
 const showEditPrescriptionDialog = ref(false);
 const editPrescriptionForm = ref({
   id: null,
@@ -1132,9 +1510,12 @@ const editPrescriptionForm = ref({
   instructions: '',
 });
 const selectedPrescriptions = ref([]);
+const selectedInpatientPrescriptions = ref([]);
 const itemizedPrescriptions = ref([]);
 const diagnoses = ref([]);
 const vitals = ref(null);
+const inpatientVitals = ref([]); // Array of vitals for IPD (can have multiple)
+const latestInpatientVital = ref(null); // Most recent vital for display
 const loadingData = ref(false);
 const showDispenseDialog = ref(false);
 const showConfirmDialog = ref(false);
@@ -1162,6 +1543,18 @@ const confirmForm = ref({
   quantity: 1,
   instructions: '',
   is_external: false,
+});
+const showConfirmInpatientDialog = ref(false);
+const confirmInpatientForm = ref({
+  id: null,
+  medicine_name: '',
+  medicine_code: '',
+  dose: '',
+  frequency: '',
+  duration: '',
+  quantity: 1,
+  instructions: '',
+  add_to_ipd_bill: true,
 });
 const bills = ref([]);
 const newPrescriptionForm = ref({
@@ -1322,6 +1715,78 @@ const addSelectedToConfirmation = () => {
       }, 0);
     }
   });
+};
+
+// IPD Prescription Selection Functions
+const isInpatientPrescriptionSelected = (prescription) => {
+  return selectedInpatientPrescriptions.value.some(p => p.id === prescription.id);
+};
+
+const toggleInpatientPrescriptionSelection = (prescription, selected) => {
+  if (selected && !isInpatientPrescriptionSelected(prescription)) {
+    selectedInpatientPrescriptions.value.push(prescription);
+  } else if (!selected) {
+    selectedInpatientPrescriptions.value = selectedInpatientPrescriptions.value.filter(p => p.id !== prescription.id);
+    itemizedPrescriptions.value = itemizedPrescriptions.value.filter(p => p.id !== prescription.id);
+  }
+};
+
+const pendingInpatientPrescriptions = computed(() => {
+  return inpatientPrescriptions.value.filter(p => !p.is_confirmed && !p.is_dispensed);
+});
+
+const allPendingSelectedInpatient = computed(() => {
+  return pendingInpatientPrescriptions.value.length > 0 && 
+         pendingInpatientPrescriptions.value.every(p => isInpatientPrescriptionSelected(p));
+});
+
+const somePendingSelectedInpatient = computed(() => {
+  return !allPendingSelectedInpatient.value && 
+         pendingInpatientPrescriptions.value.some(p => isInpatientPrescriptionSelected(p));
+});
+
+const toggleAllPendingInpatient = (selected) => {
+  if (selected) {
+    pendingInpatientPrescriptions.value.forEach(p => {
+      if (!isInpatientPrescriptionSelected(p)) {
+        selectedInpatientPrescriptions.value.push(p);
+      }
+    });
+  } else {
+    selectedInpatientPrescriptions.value = selectedInpatientPrescriptions.value.filter(
+      p => pendingInpatientPrescriptions.value.every(pending => pending.id !== p.id)
+    );
+    itemizedPrescriptions.value = [];
+  }
+};
+
+const addSelectedToConfirmationInpatient = () => {
+  const pending = selectedInpatientPrescriptions.value.filter(p => !p.is_confirmed && !p.is_dispensed);
+  if (pending.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select at least one pending prescription',
+    });
+    return;
+  }
+  
+  pending.forEach(prescription => {
+    if (!itemizedPrescriptions.value.some(item => item.id === prescription.id)) {
+      const newItem = {
+        ...prescription,
+        editableDose: parseFloat(prescription.dose) || 0,
+        editableUnit: prescription.unit || 'TAB',
+        editableFrequency: prescription.frequency || 'OD',
+        editableDuration: prescription.duration || '1 DAY',
+        editableQuantity: prescription.quantity || 1,
+        editableInstructions: prescription.instructions || '',
+      };
+      itemizedPrescriptions.value.push(newItem);
+      setTimeout(() => {
+        calculateItemizedQuantity(newItem);
+      }, 0);
+    }
+  });
   
   $q.notify({
     type: 'positive',
@@ -1405,36 +1870,91 @@ const confirmMultiplePrescriptions = async () => {
   }
   
   confirmingMultiple.value = true;
+  let confirmedCount = 0;
+  let failedCount = 0;
+  const errors = [];
+  
   try {
-    // Confirm each prescription with updated values (skip external ones)
-    for (const prescription of nonExternalPrescriptions) {
-      // Skip external prescriptions
-      if (prescription.is_external) {
-        continue;
+    // Separate OPD and IPD prescriptions
+    const opdPrescriptions = nonExternalPrescriptions.filter(p => 
+      p.prescription_type !== 'inpatient' && p.source !== 'inpatient'
+    );
+    const ipdPrescriptions = nonExternalPrescriptions.filter(p => 
+      p.prescription_type === 'inpatient' || p.source === 'inpatient'
+    );
+    
+    // Confirm OPD prescriptions
+    for (const prescription of opdPrescriptions) {
+      try {
+        const confirmData = {
+          dose: prescription.editableDose ? String(prescription.editableDose) : null,
+          frequency: prescription.editableFrequency || null,
+          duration: prescription.editableDuration || null,
+          quantity: prescription.editableQuantity || null,
+          instructions: prescription.editableInstructions || null,
+        };
+        
+        await consultationAPI.confirmPrescription(prescription.id, confirmData);
+        confirmedCount++;
+      } catch (error) {
+        console.error(`Failed to confirm OPD prescription ${prescription.id}:`, error);
+        failedCount++;
+        errors.push(`${prescription.medicine_name}: ${error.response?.data?.detail || error.message}`);
       }
-      
-      const confirmData = {
-        dose: prescription.editableDose ? String(prescription.editableDose) : null,
-        frequency: prescription.editableFrequency || null,
-        duration: prescription.editableDuration || null,
-        quantity: prescription.editableQuantity || null,
-        instructions: prescription.editableInstructions || null,
-      };
-      
-      await consultationAPI.confirmPrescription(prescription.id, confirmData);
     }
     
-    $q.notify({
-      type: 'positive',
-      message: `Successfully confirmed ${nonExternalPrescriptions.length} prescription(s) and generated bills`,
-    });
+    // Confirm IPD prescriptions
+    for (const prescription of ipdPrescriptions) {
+      try {
+        const confirmData = {
+          dose: prescription.editableDose ? String(prescription.editableDose) : null,
+          frequency: prescription.editableFrequency || null,
+          duration: prescription.editableDuration || null,
+          quantity: prescription.editableQuantity || null,
+          instructions: prescription.editableInstructions || null,
+          add_to_ipd_bill: true, // Default to adding to IPD bill
+        };
+        
+        await consultationAPI.confirmInpatientPrescription(prescription.id, confirmData);
+        confirmedCount++;
+      } catch (error) {
+        console.error(`Failed to confirm IPD prescription ${prescription.id}:`, error);
+        failedCount++;
+        errors.push(`${prescription.medicine_name}: ${error.response?.data?.detail || error.message}`);
+      }
+    }
+    
+    // Show notification based on results
+    if (confirmedCount > 0 && failedCount === 0) {
+      $q.notify({
+        type: 'positive',
+        message: `Successfully confirmed ${confirmedCount} prescription(s) and generated bills`,
+      });
+    } else if (confirmedCount > 0 && failedCount > 0) {
+      $q.notify({
+        type: 'warning',
+        message: `Confirmed ${confirmedCount} prescription(s), but ${failedCount} failed. ${errors.join('; ')}`,
+        timeout: 8000,
+      });
+    } else {
+      $q.notify({
+        type: 'negative',
+        message: `Failed to confirm prescriptions. ${errors.join('; ')}`,
+        timeout: 8000,
+      });
+    }
     
     // Clear selections
     selectedPrescriptions.value = [];
+    selectedInpatientPrescriptions.value = [];
     itemizedPrescriptions.value = [];
     
-    // Reload prescriptions
-    await loadPrescriptions();
+    // Reload prescriptions based on current service type
+    if (serviceType.value === 'ipd') {
+      await loadInpatientPrescriptions();
+    } else {
+      await loadPrescriptions();
+    }
   } catch (error) {
     console.error('Failed to confirm prescriptions:', error);
     const errorMessage = error.response?.data?.detail || error.message || 'Failed to confirm prescriptions';
@@ -1469,62 +1989,175 @@ const loadPharmacyMedications = async () => {
 
 // Initialize medicationOptions when dialog opens
 const openAddPrescriptionDialog = async () => {
-  if (!selectedEncounterId.value) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please select an encounter first',
-    });
-    return;
-  }
-  
-  // Load medications if not already loaded
-  if (allMedications.value.length === 0) {
-    await loadPharmacyMedications();
+  if (serviceType.value === 'ipd') {
+    // For IPD, need ward admission
+    if (!selectedWardAdmissionId.value) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please select an IPD admission first',
+      });
+      return;
+    }
+    
+    // For IPD, we need a clinical review to add prescriptions
+    // Get the latest clinical review for this ward admission
+    try {
+      const reviewsResponse = await consultationAPI.getInpatientClinicalReviews(selectedWardAdmissionId.value);
+      const reviews = reviewsResponse.data || [];
+      
+      if (reviews.length === 0) {
+        $q.notify({
+          type: 'warning',
+          message: 'No clinical review found for this admission. Please create a clinical review first.',
+          timeout: 5000,
+        });
+        return;
+      }
+      
+      // Use the most recent clinical review
+      const latestReview = reviews[0]; // Already sorted by reviewed_at desc
+      
+      // Load medications if not already loaded
+      if (allMedications.value.length === 0) {
+        await loadPharmacyMedications();
+      } else {
+        medicationOptions.value = allMedications.value;
+      }
+      
+      selectedMedication.value = null;
+      newPrescriptionForm.value = {
+        ward_admission_id: selectedWardAdmissionId.value,
+        clinical_review_id: latestReview.id,
+        medicine_code: '',
+        medicine_name: '',
+        dose: '',
+        frequency: '',
+        duration: '',
+        quantity: 1,
+      };
+      showAddPrescriptionDialog.value = true;
+    } catch (error) {
+      console.error('Error loading clinical reviews:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to load clinical reviews',
+      });
+    }
   } else {
-    medicationOptions.value = allMedications.value;
+    // For OPD, need encounter
+    if (!selectedEncounterId.value) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please select an encounter first',
+      });
+      return;
+    }
+    
+    // Load medications if not already loaded
+    if (allMedications.value.length === 0) {
+      await loadPharmacyMedications();
+    } else {
+      medicationOptions.value = allMedications.value;
+    }
+    
+    selectedMedication.value = null;
+    newPrescriptionForm.value = {
+      encounter_id: selectedEncounterId.value,
+      medicine_code: '',
+      medicine_name: '',
+      dose: '',
+      frequency: '',
+      duration: '',
+      quantity: 1,
+    };
+    showAddPrescriptionDialog.value = true;
   }
-  
-  selectedMedication.value = null;
-  newPrescriptionForm.value = {
-    encounter_id: selectedEncounterId.value,
-    medicine_code: '',
-    medicine_name: '',
-    dose: '',
-    frequency: '',
-    duration: '',
-    quantity: 1,
-  };
-  showAddPrescriptionDialog.value = true;
 };
 
 const openAddExternalPrescriptionDialog = async () => {
-  if (!selectedEncounterId.value) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please select an encounter first',
-    });
-    return;
-  }
-  
-  // Load medications if not already loaded
-  if (allMedications.value.length === 0) {
-    await loadPharmacyMedications();
+  if (serviceType.value === 'ipd') {
+    // For IPD, external prescriptions are not typically used, but we'll allow it
+    if (!selectedWardAdmissionId.value) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please select an IPD admission first',
+      });
+      return;
+    }
+    
+    // Get the latest clinical review
+    try {
+      const reviewsResponse = await consultationAPI.getInpatientClinicalReviews(selectedWardAdmissionId.value);
+      const reviews = reviewsResponse.data || [];
+      
+      if (reviews.length === 0) {
+        $q.notify({
+          type: 'warning',
+          message: 'No clinical review found for this admission. Please create a clinical review first.',
+          timeout: 5000,
+        });
+        return;
+      }
+      
+      const latestReview = reviews[0];
+      
+      // Load medications if not already loaded
+      if (allMedications.value.length === 0) {
+        await loadPharmacyMedications();
+      } else {
+        medicationOptions.value = allMedications.value;
+      }
+      
+      selectedMedication.value = null;
+      externalPrescriptionForm.value = {
+        ward_admission_id: selectedWardAdmissionId.value,
+        clinical_review_id: latestReview.id,
+        medicine_code: '',
+        medicine_name: '',
+        dose: '',
+        frequency: '',
+        duration: '',
+        quantity: 1,
+        instructions: '',
+      };
+      showAddExternalPrescriptionDialog.value = true;
+    } catch (error) {
+      console.error('Error loading clinical reviews:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to load clinical reviews',
+      });
+    }
   } else {
-    medicationOptions.value = allMedications.value;
+    // For OPD
+    if (!selectedEncounterId.value) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please select an encounter first',
+      });
+      return;
+    }
+    
+    // Load medications if not already loaded
+    if (allMedications.value.length === 0) {
+      await loadPharmacyMedications();
+    } else {
+      medicationOptions.value = allMedications.value;
+    }
+    
+    selectedMedication.value = null;
+    externalPrescriptionForm.value = {
+      encounter_id: selectedEncounterId.value,
+      medicine_code: '',
+      medicine_name: '',
+      dose: '',
+      frequency: '',
+      duration: '',
+      quantity: 1,
+      instructions: '',
+    };
+    showAddExternalPrescriptionDialog.value = true;
   }
-  
-  selectedMedication.value = null;
-  externalPrescriptionForm.value = {
-    encounter_id: selectedEncounterId.value,
-    medicine_code: '',
-    medicine_name: '',
-    dose: '',
-    frequency: '',
-    duration: '',
-    quantity: 1,
-    instructions: '',
-  };
-  showAddExternalPrescriptionDialog.value = true;
 };
 
 // Computed property to get external prescriptions
@@ -1554,6 +2187,20 @@ const itemizedColumns = [
   { name: 'duration', label: 'Duration', field: 'editableDuration', align: 'left' },
   { name: 'quantity', label: 'Quantity', field: 'editableQuantity', align: 'right' },
   { name: 'actions', label: '', field: 'actions', align: 'center' },
+];
+
+const inpatientColumns = [
+  { name: 'selection', label: '', field: 'selection', align: 'left', style: 'width: 50px' },
+  { name: 'medicine_name', label: 'Medicine', field: 'medicine_name', align: 'left' },
+  { name: 'medicine_code', label: 'Code', field: 'medicine_code', align: 'left' },
+  { name: 'dose', label: 'Dose', field: 'dose', align: 'left' },
+  { name: 'frequency', label: 'Frequency', field: 'frequency', align: 'left' },
+  { name: 'duration', label: 'Duration', field: 'duration', align: 'left' },
+  { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'right' },
+  { name: 'price', label: 'Amount', field: 'calculated_price', align: 'right' },
+  { name: 'prescriber', label: 'Prescriber', field: 'prescriber_name', align: 'left' },
+  { name: 'status', label: 'Status', field: 'is_confirmed', align: 'center' },
+  { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
 const searchPatient = async () => {
@@ -1589,6 +2236,9 @@ const searchPatient = async () => {
     // Use the first patient (or exact match if available)
     patient.value = patients[0];
 
+    // Load ward admissions for this patient
+    await loadWardAdmissions();
+
     // Get patient's active encounters
     const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
     const allEncounters = encountersResponse.data.filter(e => !e.archived);
@@ -1612,10 +2262,9 @@ const searchPatient = async () => {
     // Set today's encounter (use the most recent one if multiple)
     if (todaysEncounters.length > 0) {
       todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-      selectedEncounterId.value = todaysEncounter.value.id;
+      // Don't auto-select - let user choose
       // Pre-fetch procedure names for today's encounter
       getEncounterProcedures(todaysEncounter.value);
-      await loadPrescriptions();
     } else {
       todaysEncounter.value = null;
     }
@@ -1656,12 +2305,15 @@ const searchPatient = async () => {
 };
 
 const loadPrescriptions = async () => {
-  if (!selectedEncounterId.value || !patient.value) return;
+  if (!selectedEncounterId.value || !patient.value) {
+    prescriptions.value = [];
+    return;
+  }
 
   loadingPrescriptions.value = true;
   loadingData.value = true;
   try {
-    // Load prescriptions
+    // Load OPD prescriptions only
     const prescriptionsResponse = await consultationAPI.getPrescriptionsByPatientCard(
       patient.value.card_number,
       selectedEncounterId.value
@@ -1800,6 +2452,25 @@ const loadPrescriptions = async () => {
 };
 
 const confirmPrescription = (prescription) => {
+  // Check if this is an inpatient prescription
+  if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
+    // For inpatient, show confirmation dialog with "Add to IPD bill" checkbox
+    const defaultQuantity = prescription.quantity && prescription.quantity > 0 ? prescription.quantity : 1;
+    confirmInpatientForm.value = {
+      id: prescription.id,
+      medicine_name: prescription.medicine_name,
+      medicine_code: prescription.medicine_code,
+      dose: prescription.dose || '',
+      frequency: prescription.frequency || '',
+      duration: prescription.duration || '',
+      quantity: defaultQuantity,
+      instructions: prescription.instructions || '',
+      add_to_ipd_bill: true, // Default to true
+    };
+    showConfirmInpatientDialog.value = true;
+    return;
+  }
+  
   // Prevent confirming external prescriptions
   if (prescription.is_external) {
     $q.notify({
@@ -1809,6 +2480,7 @@ const confirmPrescription = (prescription) => {
     return;
   }
   
+  // For OPD, show confirmation dialog
   // Populate form with current prescription data
   // If quantity is 0 (from doctor), set to 1 as default for pharmacy to edit
   const defaultQuantity = prescription.quantity && prescription.quantity > 0 ? prescription.quantity : 1;
@@ -1824,6 +2496,41 @@ const confirmPrescription = (prescription) => {
     is_external: false, // Reset to false when opening dialog
   };
   showConfirmDialog.value = true;
+};
+
+// Confirm inpatient prescription with dialog
+const confirmInpatientPrescriptionSubmit = async () => {
+  if (!confirmInpatientForm.value.id) return;
+
+  confirmingInpatient.value = confirmInpatientForm.value.id;
+  try {
+    const confirmData = {
+      dose: confirmInpatientForm.value.dose,
+      frequency: confirmInpatientForm.value.frequency,
+      duration: confirmInpatientForm.value.duration,
+      quantity: confirmInpatientForm.value.quantity,
+      instructions: confirmInpatientForm.value.instructions || null,
+      add_to_ipd_bill: confirmInpatientForm.value.add_to_ipd_bill !== false, // Default to true
+    };
+
+    await consultationAPI.confirmInpatientPrescription(confirmInpatientForm.value.id, confirmData);
+    $q.notify({
+      type: 'positive',
+      message: confirmInpatientForm.value.add_to_ipd_bill 
+        ? 'Inpatient prescription confirmed and added to IPD bill' 
+        : 'Inpatient prescription confirmed (not added to bill)',
+    });
+    showConfirmInpatientDialog.value = false;
+    await loadInpatientPrescriptions();
+  } catch (error) {
+    console.error('Error confirming inpatient prescription:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm prescription',
+    });
+  } finally {
+    confirmingInpatient.value = null;
+  }
 };
 
 const confirmPrescriptionSubmit = async () => {
@@ -1861,6 +2568,11 @@ const confirmPrescriptionSubmit = async () => {
 };
 
 const canDispense = (prescription) => {
+  // Inpatient prescriptions can always be dispensed (no payment check)
+  if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
+    return prescription.is_confirmed;
+  }
+  
   // Must be confirmed before dispense
   if (!prescription.is_confirmed) {
     console.log(`canDispense: Prescription ${prescription.id} not confirmed`);
@@ -1924,7 +2636,14 @@ const canDispense = (prescription) => {
 };
 
 const dispensePrescription = (prescription) => {
-  // Populate form with current prescription data
+  // Check if this is an inpatient prescription
+  if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
+    // For inpatient, dispense directly without dialog (no payment check needed)
+    dispenseInpatientPrescriptionDirect(prescription);
+    return;
+  }
+  
+  // For OPD, show dispense dialog
   dispenseForm.value = {
     id: prescription.id,
     medicine_name: prescription.medicine_name,
@@ -1935,6 +2654,30 @@ const dispensePrescription = (prescription) => {
     quantity: prescription.quantity || 1,
   };
   showDispenseDialog.value = true;
+};
+
+// Direct dispense for inpatient prescriptions (no dialog needed)
+const dispenseInpatientPrescriptionDirect = async (prescription) => {
+  dispensingInpatient.value = prescription.id;
+  try {
+    await consultationAPI.dispenseInpatientPrescription(prescription.id);
+    $q.notify({
+      type: 'positive',
+      message: 'Inpatient prescription dispensed successfully',
+    });
+    await loadInpatientPrescriptions();
+    if (selectedEncounterId.value) {
+      await loadPrescriptions();
+    }
+  } catch (error) {
+    console.error('Error dispensing inpatient prescription:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to dispense prescription',
+    });
+  } finally {
+    dispensingInpatient.value = null;
+  }
 };
 
 const confirmDispense = async () => {
@@ -1974,6 +2717,32 @@ const unconfirmPrescription = async (prescription) => {
     cancel: true,
     persistent: true,
   }).onOk(async () => {
+    // Check if this is an inpatient prescription
+    if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
+      unconfirmingInpatient.value = prescription.id;
+      try {
+        await consultationAPI.unconfirmInpatientPrescription(prescription.id);
+        $q.notify({
+          type: 'positive',
+          message: 'Inpatient prescription reverted to pending successfully',
+          position: 'top',
+        });
+        await loadInpatientPrescriptions();
+        if (selectedEncounterId.value) {
+          await loadPrescriptions();
+        }
+      } catch (error) {
+        console.error('Unconfirm error:', error);
+        $q.notify({
+          type: 'negative',
+          message: error.response?.data?.detail || error.message || 'Failed to revert prescription',
+          position: 'top',
+        });
+      } finally {
+        unconfirmingInpatient.value = null;
+      }
+    } else {
+      // OPD prescription
     unconfirmingId.value = prescription.id;
     try {
       console.log('Unconfirming prescription:', prescription.id);
@@ -1998,6 +2767,7 @@ const unconfirmPrescription = async (prescription) => {
       });
     } finally {
       unconfirmingId.value = null;
+      }
     }
   });
 };
@@ -2011,13 +2781,23 @@ const returnPrescription = async (prescription) => {
   }).onOk(async () => {
     returningId.value = prescription.id;
     try {
-      await consultationAPI.returnPrescription(prescription.id);
-      $q.notify({
-        type: 'positive',
-        message: 'Prescription returned successfully',
-      });
-      // Reload prescriptions to update status
-      await loadPrescriptions();
+      // Check if this is an inpatient prescription
+      if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
+        // Use dedicated inpatient return endpoint
+        await consultationAPI.returnInpatientPrescription(prescription.id);
+        $q.notify({
+          type: 'positive',
+          message: 'Inpatient prescription returned successfully',
+        });
+        await loadInpatientPrescriptions();
+      } else {
+        await consultationAPI.returnPrescription(prescription.id);
+        $q.notify({
+          type: 'positive',
+          message: 'Prescription returned successfully',
+        });
+        await loadPrescriptions();
+      }
     } catch (error) {
       $q.notify({
         type: 'negative',
@@ -2099,6 +2879,7 @@ const updatePrescriptionSubmit = async () => {
     showEditPrescriptionDialog.value = false;
     // Reload prescriptions to update status
     await loadPrescriptions();
+    await loadInpatientPrescriptions();
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -2191,15 +2972,56 @@ const addPrescription = async () => {
 
   addingPrescription.value = true;
   try {
-    await consultationAPI.createPrescription(newPrescriptionForm.value);
-    $q.notify({
-      type: 'positive',
-      message: 'Prescription added successfully',
-    });
+    if (serviceType.value === 'ipd') {
+      // For IPD, use inpatient prescription endpoint
+      if (!newPrescriptionForm.value.ward_admission_id || !newPrescriptionForm.value.clinical_review_id) {
+        $q.notify({
+          type: 'warning',
+          message: 'Missing ward admission or clinical review information',
+        });
+        return;
+      }
+      
+      await consultationAPI.createInpatientPrescription(
+        newPrescriptionForm.value.ward_admission_id,
+        newPrescriptionForm.value.clinical_review_id,
+        {
+          medicine_code: newPrescriptionForm.value.medicine_code,
+          medicine_name: newPrescriptionForm.value.medicine_name,
+          dose: newPrescriptionForm.value.dose || null,
+          unit: newPrescriptionForm.value.unit || null,
+          frequency: newPrescriptionForm.value.frequency || null,
+          duration: newPrescriptionForm.value.duration || null,
+          quantity: newPrescriptionForm.value.quantity || 0,
+        }
+      );
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Inpatient medication added successfully',
+      });
+      
+      // Reload IPD prescriptions
+      await loadInpatientPrescriptions();
+    } else {
+      // For OPD, use regular prescription endpoint
+      await consultationAPI.createPrescription(newPrescriptionForm.value);
+      $q.notify({
+        type: 'positive',
+        message: 'Prescription added successfully',
+      });
+      
+      // Reload OPD prescriptions
+      await loadPrescriptions();
+    }
+    
     showAddPrescriptionDialog.value = false;
     // Reset form
     selectedMedication.value = null;
     Object.assign(newPrescriptionForm.value, {
+      encounter_id: serviceType.value === 'opd' ? selectedEncounterId.value : undefined,
+      ward_admission_id: serviceType.value === 'ipd' ? selectedWardAdmissionId.value : undefined,
+      clinical_review_id: serviceType.value === 'ipd' ? newPrescriptionForm.value.clinical_review_id : undefined,
       medicine_code: '',
       medicine_name: '',
       dose: '',
@@ -2207,8 +3029,6 @@ const addPrescription = async () => {
       duration: '',
       quantity: 1,
     });
-    // Reload prescriptions
-    await loadPrescriptions();
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -2230,19 +3050,40 @@ const addExternalPrescription = async () => {
 
   addingPrescription.value = true;
   try {
-    const prescriptionData = {
-      ...externalPrescriptionForm.value,
-      is_external: true,
-    };
-    await consultationAPI.createPrescription(prescriptionData);
-    $q.notify({
-      type: 'positive',
-      message: 'External prescription added successfully',
-    });
+    if (serviceType.value === 'ipd') {
+      // For IPD, external prescriptions are not typically used
+      // But if needed, we can add them as regular prescriptions with is_external flag
+      // However, the inpatient prescription model doesn't have is_external in the same way
+      // For now, show a message that external prescriptions for IPD are not supported
+      $q.notify({
+        type: 'warning',
+        message: 'External prescriptions for IPD are not currently supported. Please add as a regular medication.',
+      });
+      showAddExternalPrescriptionDialog.value = false;
+      return;
+    } else {
+      // For OPD, use regular prescription endpoint with is_external flag
+      const prescriptionData = {
+        ...externalPrescriptionForm.value,
+        is_external: true,
+      };
+      await consultationAPI.createPrescription(prescriptionData);
+      $q.notify({
+        type: 'positive',
+        message: 'External prescription added successfully',
+      });
+      
+      // Reload OPD prescriptions
+      await loadPrescriptions();
+    }
+    
     showAddExternalPrescriptionDialog.value = false;
     // Reset form
     selectedMedication.value = null;
     Object.assign(externalPrescriptionForm.value, {
+      encounter_id: serviceType.value === 'opd' ? selectedEncounterId.value : undefined,
+      ward_admission_id: serviceType.value === 'ipd' ? selectedWardAdmissionId.value : undefined,
+      clinical_review_id: serviceType.value === 'ipd' ? externalPrescriptionForm.value.clinical_review_id : undefined,
       medicine_code: '',
       medicine_name: '',
       dose: '',
@@ -2251,8 +3092,6 @@ const addExternalPrescription = async () => {
       quantity: 1,
       instructions: '',
     });
-    // Reload prescriptions
-    await loadPrescriptions();
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -2264,8 +3103,7 @@ const addExternalPrescription = async () => {
 };
 
 const selectOldEncounter = async (encounterId) => {
-  selectedEncounterId.value = encounterId;
-  await loadPrescriptions();
+  await selectOPDEncounter(encounterId);
 };
 
 const formatDate = (dateString) => {
@@ -2278,6 +3116,16 @@ const formatDate = (dateString) => {
     hour: '2-digit',
     minute: '2-digit'
   });
+};
+
+const formatCurrency = (amount) => {
+  if (amount === undefined || amount === null) return 'N/A';
+  return new Intl.NumberFormat('en-GH', {
+    style: 'currency',
+    currency: 'GHS',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(amount);
 };
 
 const encounterProceduresCache = ref(new Map());
@@ -2323,6 +3171,10 @@ const getEncounterProcedures = (encounter) => {
 const clearSearch = () => {
   cardNumber.value = '';
   patient.value = null;
+  serviceType.value = null;
+  selectedWardAdmissionId.value = null;
+  wardAdmissions.value = [];
+  inpatientPrescriptions.value = [];
   activeEncounters.value = [];
   todaysEncounter.value = null;
   oldEncounters.value = [];
@@ -2593,6 +3445,277 @@ watch([() => prescriptions.value, () => currentEncounter.value], () => {
   }
 }, { deep: true });
 
+// Load ward admissions for the current patient
+const loadWardAdmissions = async () => {
+  if (!patient.value || !patient.value.card_number) {
+    wardAdmissions.value = [];
+    return;
+  }
+  
+  try {
+    const response = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
+    wardAdmissions.value = response.data || [];
+  } catch (error) {
+    console.error('Error loading ward admissions:', error);
+    if (error.response?.status !== 404) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to load ward admissions',
+      });
+    }
+    wardAdmissions.value = [];
+  }
+};
+
+// Select OPD encounter
+const selectOPDEncounter = async (encounterId) => {
+  serviceType.value = 'opd';
+  selectedEncounterId.value = encounterId;
+  selectedWardAdmissionId.value = null;
+  await loadPrescriptions();
+};
+
+// Select IPD admission
+const selectIPDAdmission = async (wardAdmissionId) => {
+  console.log('selectIPDAdmission: Selected ward admission ID:', wardAdmissionId);
+  serviceType.value = 'ipd';
+  selectedWardAdmissionId.value = wardAdmissionId;
+  selectedEncounterId.value = null;
+  prescriptions.value = []; // Clear OPD prescriptions
+  await loadInpatientPrescriptions();
+  console.log('selectIPDAdmission: After loading, serviceType:', serviceType.value);
+  console.log('selectIPDAdmission: After loading, inpatientPrescriptions.length:', inpatientPrescriptions.value.length);
+};
+
+// Load inpatient prescriptions for selected ward admission
+const loadInpatientPrescriptions = async () => {
+  if (!selectedWardAdmissionId.value) {
+    console.log('loadInpatientPrescriptions: No ward admission ID selected');
+    inpatientPrescriptions.value = [];
+    return;
+  }
+  
+  console.log('loadInpatientPrescriptions: Loading prescriptions for ward admission:', selectedWardAdmissionId.value);
+  loadingInpatientPrescriptions.value = true;
+  try {
+    const response = await consultationAPI.getInpatientPrescriptionsByWardAdmission(selectedWardAdmissionId.value);
+    console.log('loadInpatientPrescriptions: API response:', response);
+    const inpatientData = response.data || [];
+    console.log('loadInpatientPrescriptions: Parsed data:', inpatientData);
+    
+    // Mark as inpatient
+    inpatientPrescriptions.value = inpatientData.map(p => ({
+      ...p,
+      prescription_type: 'inpatient',
+      source: 'inpatient'
+    }));
+    
+    console.log('loadInpatientPrescriptions: Final prescriptions array:', inpatientPrescriptions.value);
+    
+    // Load diagnoses
+    try {
+      const diagnosesResponse = await consultationAPI.getAllInpatientDiagnoses(selectedWardAdmissionId.value);
+      diagnoses.value = diagnosesResponse.data || [];
+      console.log('loadInpatientPrescriptions: Loaded diagnoses:', diagnoses.value);
+      
+      // If no IPD diagnoses, try to get from OPD encounter
+      if (diagnoses.value.length === 0) {
+        const admission = wardAdmissions.value.find(wa => wa.id === selectedWardAdmissionId.value);
+        if (admission?.encounter_id) {
+          try {
+            const opdDiagnosesResponse = await consultationAPI.getDiagnoses(admission.encounter_id);
+            diagnoses.value = opdDiagnosesResponse.data || [];
+            console.log('loadInpatientPrescriptions: Loaded OPD diagnoses as fallback:', diagnoses.value);
+          } catch (e) {
+            console.error('Failed to load OPD diagnoses:', e);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load diagnoses:', error);
+      diagnoses.value = [];
+    }
+    
+    // Load vitals - try IPD first, then fallback to OPD
+    try {
+      const vitalsResponse = await consultationAPI.getInpatientVitals(selectedWardAdmissionId.value);
+      inpatientVitals.value = vitalsResponse.data || [];
+      // Get most recent vital
+      if (inpatientVitals.value.length > 0) {
+        latestInpatientVital.value = inpatientVitals.value[0]; // Already sorted by recorded_at desc
+        console.log('loadInpatientPrescriptions: Loaded IPD vitals:', inpatientVitals.value);
+        console.log('loadInpatientPrescriptions: Latest IPD vital:', latestInpatientVital.value);
+      } else {
+        // No IPD vitals - try to get from OPD encounter
+        const admission = wardAdmissions.value.find(wa => wa.id === selectedWardAdmissionId.value);
+        if (admission?.encounter_id) {
+          try {
+            const opdVitalsResponse = await vitalsAPI.getByEncounter(admission.encounter_id);
+            const opdVital = opdVitalsResponse.data;
+            if (opdVital) {
+              // Convert OPD vital format to match IPD format for display
+              latestInpatientVital.value = {
+                temperature: opdVital.temperature,
+                blood_pressure_systolic: opdVital.bp ? parseFloat(opdVital.bp.split('/')[0]) : null,
+                blood_pressure_diastolic: opdVital.bp ? parseFloat(opdVital.bp.split('/')[1]) : null,
+                pulse: opdVital.pulse,
+                respiratory_rate: opdVital.respiration,
+                oxygen_saturation: opdVital.spo2,
+                weight: opdVital.weight,
+                height: opdVital.height,
+                bmi: opdVital.bmi,
+                notes: opdVital.remarks,
+                recorded_by_name: opdVital.recorded_by_name,
+                recorded_at: opdVital.recorded_at || new Date().toISOString(),
+              };
+              console.log('loadInpatientPrescriptions: Loaded OPD vitals as fallback:', latestInpatientVital.value);
+            } else {
+              latestInpatientVital.value = null;
+            }
+          } catch (e) {
+            console.error('Failed to load OPD vitals:', e);
+            latestInpatientVital.value = null;
+          }
+        } else {
+          latestInpatientVital.value = null;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load vitals:', error);
+      inpatientVitals.value = [];
+      // Try OPD vitals as fallback
+      const admission = wardAdmissions.value.find(wa => wa.id === selectedWardAdmissionId.value);
+      if (admission?.encounter_id) {
+        try {
+          const opdVitalsResponse = await vitalsAPI.getByEncounter(admission.encounter_id);
+          const opdVital = opdVitalsResponse.data;
+          if (opdVital) {
+            latestInpatientVital.value = {
+              temperature: opdVital.temperature,
+              blood_pressure_systolic: opdVital.bp && opdVital.bp.includes('/') ? parseFloat(opdVital.bp.split('/')[0]) : null,
+              blood_pressure_diastolic: opdVital.bp && opdVital.bp.includes('/') ? parseFloat(opdVital.bp.split('/')[1]) : null,
+              pulse: opdVital.pulse,
+              respiratory_rate: opdVital.respiration,
+              oxygen_saturation: opdVital.spo2,
+              weight: opdVital.weight,
+              height: opdVital.height,
+              bmi: opdVital.bmi,
+              notes: opdVital.remarks,
+              recorded_by_name: opdVital.recorded_by_name,
+              recorded_at: opdVital.recorded_at || new Date().toISOString(),
+            };
+          } else {
+            latestInpatientVital.value = null;
+          }
+        } catch (e) {
+          console.error('Failed to load OPD vitals as fallback:', e);
+          latestInpatientVital.value = null;
+        }
+      } else {
+        latestInpatientVital.value = null;
+      }
+    }
+    
+    // Calculate prices for IPD prescriptions
+    await calculateInpatientPrescriptionPrices();
+  } catch (error) {
+    console.error('Error loading inpatient prescriptions:', error);
+    console.error('Error details:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      message: error.message
+    });
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load inpatient prescriptions',
+    });
+    inpatientPrescriptions.value = [];
+  } finally {
+    loadingInpatientPrescriptions.value = false;
+  }
+};
+
+// Calculate prices for inpatient prescriptions
+const calculateInpatientPrescriptionPrices = async () => {
+  if (!inpatientPrescriptions.value.length) {
+    return;
+  }
+  
+  try {
+    // Get encounter for insurance status
+    const admission = wardAdmissions.value.find(wa => wa.id === selectedWardAdmissionId.value);
+    if (!admission) return;
+    
+    const encounterResponse = await encountersAPI.get(admission.encounter_id);
+    const encounter = encounterResponse.data;
+    const isInsured = encounter?.ccc_number && encounter.ccc_number.trim() !== '';
+    
+    // Calculate price for each prescription
+    for (const prescription of inpatientPrescriptions.value) {
+      if (prescription.medicine_code && !prescription.is_external) {
+        try {
+          const unitPrice = await getMedicationPrice(prescription.medicine_code, isInsured);
+          const quantity = prescription.quantity || 1;
+          prescription.calculated_price = unitPrice * quantity;
+          prescription.unit_price = unitPrice;
+        } catch (error) {
+          console.error(`Failed to get price for prescription ${prescription.id}:`, error);
+          prescription.calculated_price = 0;
+          prescription.unit_price = 0;
+        }
+      } else {
+        prescription.calculated_price = 0;
+        prescription.unit_price = 0;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to calculate inpatient prescription prices:', error);
+  }
+};
+
+// Confirm inpatient prescription
+const confirmInpatientPrescription = async (prescription) => {
+  confirmingInpatient.value = prescription.id;
+  try {
+    await consultationAPI.confirmInpatientPrescription(prescription.id);
+    $q.notify({
+      type: 'positive',
+      message: 'Inpatient prescription confirmed and added to IPD bill',
+    });
+    await loadInpatientPrescriptions();
+  } catch (error) {
+    console.error('Error confirming inpatient prescription:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm prescription',
+    });
+  } finally {
+    confirmingInpatient.value = null;
+  }
+};
+
+// Dispense inpatient prescription
+const dispenseInpatientPrescription = async (prescription) => {
+  dispensingInpatient.value = prescription.id;
+  try {
+    await consultationAPI.dispenseInpatientPrescription(prescription.id);
+    $q.notify({
+      type: 'positive',
+      message: 'Inpatient prescription dispensed successfully',
+    });
+    await loadInpatientPrescriptions();
+  } catch (error) {
+    console.error('Error dispensing inpatient prescription:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to dispense prescription',
+    });
+  } finally {
+    dispensingInpatient.value = null;
+  }
+};
+
 onMounted(() => {
   loadPharmacyMedications();
   loadStaff();
@@ -2747,24 +3870,263 @@ const buildReceiptHtml = async () => {
   </html>`;
 };
 
-const printBillCard = async () => {
-  if (!selectedEncounterId.value || !patient.value) {
-    $q.notify({ type: 'warning', message: 'Select encounter first' });
-    return;
-  }
-  
-  // Ensure staff is loaded
+const buildIPDReceiptHtml = async () => {
+  // Ensure staff is loaded before building receipt
   if (Object.keys(staffMap.value).length === 0) {
     await loadStaff();
   }
   
-  const receiptHtml = await buildReceiptHtml();
-  const w = window.open('', '_blank', 'width=420,height=800');
-  if (!w) return;
-  w.document.open();
-  w.document.write(receiptHtml);
-  w.document.close();
-  setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
+  const now = new Date();
+  
+  // Get ward admission details
+  const admission = wardAdmissions.value.find(wa => wa.id === selectedWardAdmissionId.value);
+  const encounterId = admission?.encounter_id;
+  
+  // Get diagnoses - use IPD diagnoses if available, otherwise try OPD diagnoses
+  let diagText = (diagnoses.value || []).map(d => d.diagnosis).filter(Boolean).join('; ');
+  
+  // If no IPD diagnoses, try to get from OPD encounter
+  if (!diagText || diagText.trim() === '') {
+    if (encounterId) {
+      try {
+        const opdDiagnosesResponse = await consultationAPI.getDiagnoses(encounterId);
+        const opdDiagnoses = opdDiagnosesResponse.data || [];
+        diagText = opdDiagnoses.map(d => d.diagnosis).filter(Boolean).join('; ');
+        console.log('buildIPDReceiptHtml: Loaded OPD diagnoses as fallback:', diagText);
+      } catch (e) {
+        console.error('Failed to load OPD diagnoses for print:', e);
+      }
+    }
+  }
+  
+  // Get vitals - use IPD vitals if available, otherwise try OPD vitals
+  let vit = latestInpatientVital.value || {};
+  
+  // If no IPD vitals, try to get from OPD encounter
+  if (!vit || (!vit.weight && !vit.temperature && !vit.pulse)) {
+    if (encounterId) {
+      try {
+        const opdVitalsResponse = await vitalsAPI.getByEncounter(encounterId);
+        const opdVital = opdVitalsResponse.data;
+        if (opdVital) {
+          // Convert OPD vital format to match IPD format
+          vit = {
+            temperature: opdVital.temperature,
+            blood_pressure_systolic: opdVital.bp ? parseFloat(opdVital.bp.split('/')[0]) : null,
+            blood_pressure_diastolic: opdVital.bp ? parseFloat(opdVital.bp.split('/')[1]) : null,
+            pulse: opdVital.pulse,
+            respiratory_rate: opdVital.respiration,
+            oxygen_saturation: opdVital.spo2,
+            weight: opdVital.weight,
+            height: opdVital.height,
+            bmi: opdVital.bmi,
+            notes: opdVital.remarks,
+            recorded_by_name: opdVital.recorded_by_name,
+            recorded_at: opdVital.recorded_at || new Date().toISOString(),
+          };
+        }
+      } catch (e) {
+        console.error('Failed to load OPD vitals for print:', e);
+      }
+    }
+  }
+  
+  // Get encounter for insurance status
+  let isInsured = false;
+  let cccNumber = '';
+  if (encounterId) {
+    try {
+      const encResp = await encountersAPI.get(encounterId);
+      const encounter = encResp.data;
+      isInsured = !!(encounter?.ccc_number && encounter.ccc_number.trim() !== '');
+      cccNumber = encounter?.ccc_number || '';
+    } catch (e) {
+      console.error('Failed to get encounter:', e);
+    }
+  }
+  
+  // Get dispensed IPD prescriptions
+  const dispensedIPD = inpatientPrescriptions.value.filter(p => p.is_dispensed);
+  
+  // Build items HTML with unit costs and total costs, and calculate grand total
+  const itemsDataPromises = dispensedIPD.map(async (p, idx) => {
+    const unitCost = p.unit_price || await getMedicationPrice(p.medicine_code, isInsured);
+    const quantity = p.quantity || 0;
+    const totalCost = unitCost * quantity;
+    
+    const line1 = `${idx + 1}. ${p.medicine_name || ''}`;
+    const line2 = [
+      p.dose ? `Dose: ${p.dose}` : '',
+      p.frequency ? `Freq: ${p.frequency}` : '',
+      p.duration ? `Dur: ${p.duration}` : '',
+    ].filter(Boolean).join('  ');
+    const line3 = `Qty: ${quantity}`;
+    const line4 = `Unit Cost: ₵${unitCost.toFixed(2)}`;
+    const line5 = `Total Cost: ₵${totalCost.toFixed(2)}`;
+    
+    const itemHtml = `
+      <div class=\"item\">
+        <div class=\"i1\">${line1}</div>
+        ${line2 ? `<div class=\"i2\">${line2}</div>` : ''}
+        <div class=\"i3\">${line3}</div>
+        <div class=\"i4\">${line4}</div>
+        <div class=\"i4\">${line5}</div>
+      </div>`;
+    
+    return { html: itemHtml, totalCost };
+  });
+  
+  const itemsData = await Promise.all(itemsDataPromises);
+  const itemsHtmlStr = itemsData.map(item => item.html).join('');
+  
+  // Calculate grand total from all individual total costs
+  const grandTotal = itemsData.reduce((sum, item) => sum + item.totalCost, 0);
+  
+  // Get prescriber name from first dispensed prescription
+  const firstPrescription = dispensedIPD[0];
+  const prescriberId = firstPrescription?.prescribed_by;
+  const prescriberName = firstPrescription?.prescriber_name || 
+                         (prescriberId ? (staffMap.value[prescriberId] || 'N/A') : 'N/A');
+  
+  // Get dispenser name from first dispensed prescription
+  const dispenserId = firstPrescription?.dispensed_by;
+  const dispenserName = firstPrescription?.dispenser_name || 
+                        (dispenserId ? (staffMap.value[dispenserId] || 'N/A') : 'N/A');
+  
+  const formatReceiptLine = (label, value) => {
+    return `<div class=\"lbl\">${label}:</div><div class=\"val\">${value || ''}</div><div class=\"clearfix\"></div>`;
+  };
+  
+  return `<!doctype html>
+  <html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>IPD Pharmacy Bill Card</title>
+    <style>
+      /* Force 70mm thermal size for print & PDF */
+      @page { size: 70mm auto; margin: 2mm; }
+      html, body { width: 70mm; margin: 0; padding: 0; }
+      body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .center { text-align: center; }
+      .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
+      .logo-container { display: flex; justify-content: center; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .logo { max-width: 25mm; max-height: 20mm; object-fit: contain; }
+      .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
+      .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
+      .sec { margin: 6px 0; }
+      .lbl { display: inline-block; min-width: 30mm; }
+      .val { float: right; max-width: 30mm; text-align: right; }
+      .clearfix { clear: both; }
+      .item { border-top: 1px dashed #000; padding: 4px 0; }
+      .i1 { font-weight: bold; }
+      .i2 { }
+      .i3 { }
+      .i4 { color: #333; }
+      .grand-total { font-weight: bold; font-size: 13px; }
+      .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
+      .dispenser { margin-bottom: 4px; }
+      /* On screen, center the receipt for a visual preview */
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 70mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media print { .preview-wrap { box-shadow: none; padding: 0; } }
+    </style>
+  </head>
+  <body>
+    <div class=\"preview-wrap\">
+      <div class=\"logo-container\">
+        <img src=\"/logos/ministry-of-health-logo.png\" alt=\"Ministry of Health\" class=\"logo\" onerror=\"this.style.display='none'\">
+        <img src=\"/logos/ghana-health-service-logo.png\" alt=\"Ghana Health Service\" class=\"logo\" onerror=\"this.style.display='none'\">
+      </div>
+      <div class=\"center hospital-name\">ASESEWA GOVERNMENT HOSPITAL</div>
+      <div class=\"hdr center\">
+        <div class=\"dept-name\">IPD PHARMACY DEPARTMENT BILL CARD</div>
+        <div>${now.toLocaleString()}</div>
+      </div>
+      <div class=\"sec\">
+        ${formatReceiptLine('Ward Admission ID', selectedWardAdmissionId.value)}
+        ${formatReceiptLine('Encounter ID', encounterId || 'N/A')}
+        ${formatReceiptLine('Patient', `${patient.value?.name || ''} ${patient.value?.surname || ''}`.trim())}
+        ${formatReceiptLine('Card', patient.value?.card_number || '')}
+        ${formatReceiptLine('Insurance', patient.value?.insurance_id || 'N/A')}
+        ${formatReceiptLine('CCC', cccNumber || '')}
+        ${admission ? formatReceiptLine('Ward', admission.ward || '') : ''}
+        ${admission?.bed_number ? formatReceiptLine('Bed', admission.bed_number) : ''}
+        <div class=\"clearfix\"></div>
+      </div>
+      <div class=\"sec\">
+        <div><strong>Diagnosis</strong></div>
+        <div>${diagText || 'N/A'}</div>
+      </div>
+      <div class=\"sec\">
+        <div><strong>Latest Vitals</strong></div>
+        ${vit.weight ? formatReceiptLine('Weight (kg)', vit.weight) : ''}
+        ${vit.blood_pressure_systolic || vit.blood_pressure_diastolic ? formatReceiptLine('BP', `${vit.blood_pressure_systolic || ''}/${vit.blood_pressure_diastolic || ''} mmHg`) : ''}
+        ${vit.temperature ? formatReceiptLine('Temp (°C)', vit.temperature) : ''}
+        <div class=\"clearfix\"></div>
+      </div>
+      <div class=\"sec\">
+        ${formatReceiptLine('Prescriber', prescriberName)}
+        <div class=\"clearfix\"></div>
+      </div>
+      <div class=\"sec\">
+        <div class=\"center\"><strong>Dispensed Medicines</strong></div>
+        ${itemsHtmlStr || '<div class=\"center\">No dispensed medicines</div>'}
+      </div>
+      <div class=\"sec\">
+        <div class=\"clearfix\"></div>
+        ${formatReceiptLine('Grand Total', `₵${grandTotal.toFixed(2)}`)}
+        <div class=\"clearfix\"></div>
+      </div>
+      <div class=\"footer\">
+        <div class=\"dispenser\">${formatReceiptLine('Dispenser', dispenserName)}</div>
+        <div class=\"clearfix\"></div>
+        <div class=\"center\">Thank you</div>
+      </div>
+    </div>
+  </body>
+  </html>`;
+};
+
+const printBillCard = async () => {
+  if (serviceType.value === 'ipd') {
+    // Print IPD bill card
+    if (!selectedWardAdmissionId.value || !patient.value) {
+      $q.notify({ type: 'warning', message: 'Select IPD admission first' });
+      return;
+    }
+    
+    // Ensure staff is loaded
+    if (Object.keys(staffMap.value).length === 0) {
+      await loadStaff();
+    }
+    
+    const receiptHtml = await buildIPDReceiptHtml();
+    const w = window.open('', '_blank', 'width=420,height=800');
+    if (!w) return;
+    w.document.open();
+    w.document.write(receiptHtml);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
+  } else {
+    // Print OPD bill card
+    if (!selectedEncounterId.value || !patient.value) {
+      $q.notify({ type: 'warning', message: 'Select encounter first' });
+      return;
+    }
+    
+    // Ensure staff is loaded
+    if (Object.keys(staffMap.value).length === 0) {
+      await loadStaff();
+    }
+    
+    const receiptHtml = await buildReceiptHtml();
+    const w = window.open('', '_blank', 'width=420,height=800');
+    if (!w) return;
+    w.document.open();
+    w.document.write(receiptHtml);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
+  }
 };
 
 const buildExternalPrescriptionHtml = async () => {

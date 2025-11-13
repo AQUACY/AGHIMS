@@ -41,7 +41,7 @@ class BillItem(Base):
     item_code = Column(String(50), nullable=False)
     item_name = Column(String(500), nullable=False)
     category = Column(String(50))  # surgery, procedure, product, consumable, drg
-    quantity = Column(Integer, default=1, nullable=False)
+    quantity = Column(Float, default=1.0, nullable=False)  # Changed to Float to support fractional quantities (e.g., 6.15 hours)
     unit_price = Column(Float, nullable=False)
     total_price = Column(Float, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

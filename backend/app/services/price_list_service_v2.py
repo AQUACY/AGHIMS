@@ -821,6 +821,73 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
     return 0.0
 
 
+def get_surgery_price(db: Session, g_drg_code: str, is_insured: bool = False, service_type: Optional[str] = None) -> float:
+    """
+    Get price for a surgery from SurgeryPrice table only (prioritizes surgery prices over procedure/day surgery prices)
+    
+    For cash patients: returns Base Rate
+    For insured patients: returns Co-Payment (top-up amount that insured patient pays)
+    
+    Args:
+        db: Database session
+        g_drg_code: G-DRG code for the surgery
+        is_insured: Whether the patient is insured
+        service_type: Optional service type (department/clinic) to filter by
+    """
+    print(f"DEBUG get_surgery_price: g_drg_code='{g_drg_code}', is_insured={is_insured}, service_type='{service_type}'")
+    
+    # Search ONLY in SurgeryPrice table (not ProcedurePrice which may contain day surgeries)
+    surgery_query = db.query(SurgeryPrice).filter(
+        SurgeryPrice.g_drg_code == g_drg_code,
+        SurgeryPrice.is_active == True
+    )
+    if service_type:
+        surgery_query = surgery_query.filter(SurgeryPrice.service_type == service_type)
+    
+    surgery = surgery_query.first()
+    
+    if surgery:
+        print(f"DEBUG: Found surgery in SurgeryPrice table with service_type='{service_type}'")
+        if is_insured:
+            # For insured patients: use Co-Payment (top-up amount)
+            # If Co-Payment is not available, fall back to Base Rate
+            if surgery.nhia_claim_co_payment is not None:
+                print(f"DEBUG: Returning co-payment from SurgeryPrice: {surgery.nhia_claim_co_payment}")
+                return float(surgery.nhia_claim_co_payment)
+            else:
+                # Fallback to base rate if co-payment not specified
+                print(f"DEBUG: No co-payment, returning base_rate from SurgeryPrice: {surgery.base_rate}")
+                return float(surgery.base_rate)
+        else:
+            # For cash patients: use Base Rate
+            print(f"DEBUG: Returning base_rate from SurgeryPrice: {surgery.base_rate}")
+            return float(surgery.base_rate)
+    
+    # If service_type was provided but no match found, try without service_type filter as fallback
+    if service_type:
+        print(f"DEBUG: No match found with service_type='{service_type}', trying without service_type filter")
+        fallback_surgery = db.query(SurgeryPrice).filter(
+            SurgeryPrice.g_drg_code == g_drg_code,
+            SurgeryPrice.is_active == True
+        ).first()
+        
+        if fallback_surgery:
+            print(f"DEBUG: Found surgery in SurgeryPrice table (without service_type filter)")
+            if is_insured:
+                if fallback_surgery.nhia_claim_co_payment is not None:
+                    print(f"DEBUG: Returning co-payment from SurgeryPrice: {fallback_surgery.nhia_claim_co_payment}")
+                    return float(fallback_surgery.nhia_claim_co_payment)
+                else:
+                    print(f"DEBUG: No co-payment, returning base_rate from SurgeryPrice: {fallback_surgery.base_rate}")
+                    return float(fallback_surgery.base_rate)
+            else:
+                print(f"DEBUG: Returning base_rate from SurgeryPrice: {fallback_surgery.base_rate}")
+                return float(fallback_surgery.base_rate)
+    
+    print(f"DEBUG: Surgery NOT FOUND in SurgeryPrice table - Code: {g_drg_code}")
+    return 0.0
+
+
 def search_price_items_all_tables(db: Session, search_term: str = None, service_type: str = None, file_type: str = None):
     """
     Search price list items across all tables

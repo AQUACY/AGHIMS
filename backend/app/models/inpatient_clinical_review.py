@@ -22,10 +22,9 @@ class InpatientClinicalReview(Base):
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="clinical_reviews")
     reviewer = relationship("User", foreign_keys=[reviewed_by])
-    # Diagnoses, investigations, and prescriptions will be linked via foreign keys when those models are created
-    # diagnoses = relationship("InpatientDiagnosis", back_populates="clinical_review", cascade="all, delete-orphan")
-    # investigations = relationship("InpatientInvestigation", back_populates="clinical_review", cascade="all, delete-orphan")
-    # prescriptions = relationship("InpatientPrescription", back_populates="clinical_review", cascade="all, delete-orphan")
+    diagnoses = relationship("InpatientDiagnosis", back_populates="clinical_review", cascade="all, delete-orphan")
+    investigations = relationship("InpatientInvestigation", back_populates="clinical_review", cascade="all, delete-orphan")
+    prescriptions = relationship("InpatientPrescription", back_populates="clinical_review", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<InpatientClinicalReview {self.id} - WardAdmission {self.ward_admission_id}>"

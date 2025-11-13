@@ -3,7 +3,7 @@
   <q-layout view="hHh lpR fFf" class="layout-glass">
     <q-header elevated class="glass-header text-white">
       <q-toolbar>
-        <!-- Hamburger Menu (Mobile Only) -->
+        <!-- Hamburger Menu (All Screen Sizes) -->
         <q-btn
           flat
           dense
@@ -11,9 +11,8 @@
           icon="menu"
           class="q-mr-sm"
           @click="drawerOpen = !drawerOpen"
-          v-if="$q.screen.lt.md"
         >
-          <q-tooltip>Menu</q-tooltip>
+          <q-tooltip>{{ drawerOpen ? 'Hide Sidebar' : 'Show Sidebar' }}</q-tooltip>
         </q-btn>
         <q-toolbar-title class="text-weight-bold">
           <img src="../../public/logos/ghana-health-service-logo.png" alt="AGHIMS" width="32px" height="32px" /> 
@@ -416,6 +415,21 @@
           </q-item-section>
           <q-item-section>
             <q-item-label>ICD-10 DRG Mapping</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'AdditionalServicesManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="add_circle" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Additional Services</q-item-label>
           </q-item-section>
         </q-item>
       </q-list>

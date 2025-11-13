@@ -25,10 +25,12 @@
           <q-input
             v-model="filterDate"
             filled
-            label="Date"
+            label="Date (optional)"
             type="date"
             class="col-12 col-md-3"
             @update:model-value="loadRequests"
+            clearable
+            hint="Leave empty to show all dates"
           >
             <template v-slot:prepend>
               <q-icon name="event" />
@@ -133,7 +135,29 @@
           </template>
           <template v-slot:body-cell-encounter_date="props">
             <q-td :props="props">
-              {{ formatDate(props.value) }}
+              {{ formatDate(props.value || props.row.created_at) }}
+            </q-td>
+          </template>
+          <template v-slot:body-cell-source="props">
+            <q-td :props="props">
+              <q-badge
+                v-if="props.value === 'inpatient' || props.row.prescription_type === 'inpatient'"
+                color="purple"
+                label="IPD"
+              />
+              <q-badge
+                v-else
+                color="blue"
+                label="OPD"
+              />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-ward="props">
+            <q-td :props="props">
+              <span v-if="props.value || props.row.bed_number">
+                {{ props.value || '' }}{{ props.row.bed_number ? ` / ${props.row.bed_number}` : '' }}
+              </span>
+              <span v-else class="text-grey">-</span>
             </q-td>
           </template>
           <template v-slot:body-cell-actions="props">
@@ -231,6 +255,33 @@
         </q-card-section>
         <q-card-actions align="right">
           <q-btn label="Close" color="primary" flat v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- IPD Confirmation Dialog -->
+    <q-dialog v-model="showConfirmInpatientDialog" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section>
+          <div class="text-h6">Confirm IPD Investigation</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+            {{ confirmInpatientForm.procedure_name }}
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-checkbox
+            v-model="confirmInpatientForm.add_to_ipd_bill"
+            label="Add to IPD bill"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="primary" @click="showConfirmInpatientDialog = false" />
+          <q-btn
+            label="Confirm"
+            color="primary"
+            @click="confirmInpatientInvestigation"
+            :loading="confirmingId === confirmInpatientForm.id"
+          />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -503,6 +554,12 @@ const confirmingId = ref(null);
 const revertingId = ref(null);
 const revertingToRequestedId = ref(null);
 const showRemarksDialog = ref(false);
+const showConfirmInpatientDialog = ref(false);
+const confirmInpatientForm = ref({
+  id: null,
+  procedure_name: '',
+  add_to_ipd_bill: true
+});
 const viewingRemarks = ref(null);
 const showUpdateServiceDialog = ref(false);
 const showAddServiceDialog = ref(false);
@@ -535,6 +592,8 @@ const loadingPatients = ref(false);
 const requestColumns = [
   { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left', sortable: true },
   { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left', sortable: true },
+  { name: 'source', label: 'Source', field: 'source', align: 'center', sortable: true },
+  { name: 'ward', label: 'Ward/Bed', field: 'ward', align: 'left', sortable: true },
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left', sortable: true },
   { name: 'gdrg_code', label: 'G-DRG Code', field: 'gdrg_code', align: 'left', sortable: true },
   { name: 'encounter_date', label: 'Request Date', field: 'encounter_date', align: 'left', sortable: true },
@@ -573,8 +632,28 @@ const loadRequests = async () => {
       filters.date = filterDate.value;
     }
     
-    const response = await consultationAPI.getInvestigationsByType('scan', filters);
-    requests.value = response.data || [];
+    // Load both OPD and IPD investigations
+    const [opdResponse, ipdResponse] = await Promise.all([
+      consultationAPI.getInvestigationsByType('scan', filters).catch(err => {
+        console.error('Failed to load OPD investigations:', err);
+        return { data: [] };
+      }),
+      consultationAPI.getInpatientInvestigationsByType('scan', filters).catch(err => {
+        console.error('Failed to load IPD investigations:', err);
+        console.error('Error details:', err.response?.data || err.message);
+        return { data: [] };
+      })
+    ]);
+    
+    const opdRequests = opdResponse.data || [];
+    const ipdRequests = ipdResponse.data || [];
+    
+    // Mark source and merge
+    const opdMarked = opdRequests.map(req => ({ ...req, source: 'opd' }));
+    const ipdMarked = ipdRequests.map(req => ({ ...req, source: 'inpatient' }));
+    
+    // Merge both lists
+    requests.value = [...opdMarked, ...ipdMarked];
   } catch (error) {
     console.error('Failed to load requests:', error);
     $q.notify({
@@ -587,7 +666,7 @@ const loadRequests = async () => {
   }
 };
 
-// Initialize date to today
+// Initialize date to today (optional - user can clear to see all dates)
 const initializeDate = () => {
   const today = new Date();
   const year = today.getFullYear();
@@ -597,29 +676,41 @@ const initializeDate = () => {
 };
 
 const confirmInvestigation = async (investigation) => {
-  $q.dialog({
-    title: 'Confirm Investigation',
-    message: `Confirm ${investigation.procedure_name || investigation.gdrg_code}?`,
-    cancel: true,
-    persistent: true,
-  }).onOk(async () => {
-    confirmingId.value = investigation.id;
-    try {
-      await consultationAPI.confirmInvestigation(investigation.id);
-      $q.notify({
-        type: 'positive',
-        message: 'Investigation confirmed',
-      });
-      await loadRequests();
-    } catch (error) {
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || 'Failed to confirm investigation',
-      });
-    } finally {
-      confirmingId.value = null;
-    }
-  });
+  // Check if IPD investigation
+  if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+    // Show IPD confirmation dialog
+    showConfirmInpatientDialog.value = true;
+    confirmInpatientForm.value = {
+      id: investigation.id,
+      procedure_name: investigation.procedure_name || investigation.gdrg_code,
+      add_to_ipd_bill: true
+    };
+  } else {
+    // Standard OPD confirmation
+    $q.dialog({
+      title: 'Confirm Investigation',
+      message: `Confirm ${investigation.procedure_name || investigation.gdrg_code}?`,
+      cancel: true,
+      persistent: true,
+    }).onOk(async () => {
+      confirmingId.value = investigation.id;
+      try {
+        await consultationAPI.confirmInvestigation(investigation.id);
+        $q.notify({
+          type: 'positive',
+          message: 'Investigation confirmed',
+        });
+        await loadRequests();
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to confirm investigation',
+        });
+      } finally {
+        confirmingId.value = null;
+      }
+    });
+  }
 };
 
 const viewRemarks = (investigation) => {
@@ -629,6 +720,30 @@ const viewRemarks = (investigation) => {
 
 const navigateToResultPage = (request) => {
   router.push(`/scan/result/${request.id}`);
+};
+
+const confirmInpatientInvestigation = async () => {
+  if (!confirmInpatientForm.value.id) return;
+  
+  confirmingId.value = confirmInpatientForm.value.id;
+  try {
+    await consultationAPI.confirmInpatientInvestigation(confirmInpatientForm.value.id, {
+      add_to_ipd_bill: confirmInpatientForm.value.add_to_ipd_bill
+    });
+    $q.notify({
+      type: 'positive',
+      message: 'IPD investigation confirmed',
+    });
+    showConfirmInpatientDialog.value = false;
+    await loadRequests();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm investigation',
+    });
+  } finally {
+    confirmingId.value = null;
+  }
 };
 
 const revertToRequested = async (investigation) => {
@@ -649,7 +764,12 @@ const revertToRequested = async (investigation) => {
   }).onOk(async (reason) => {
     revertingToRequestedId.value = investigation.id;
     try {
-      await consultationAPI.revertInvestigationToRequested(investigation.id, reason);
+      // Check if IPD investigation
+      if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+        await consultationAPI.revertInpatientInvestigationToRequested(investigation.id, reason);
+      } else {
+        await consultationAPI.revertInvestigationToRequested(investigation.id, reason);
+      }
     $q.notify({
       type: 'positive',
         message: 'Status reverted to requested successfully',
@@ -675,7 +795,12 @@ const revertInvestigationStatus = async (investigation) => {
   }).onOk(async () => {
     revertingId.value = investigation.id;
     try {
-      await consultationAPI.revertInvestigationStatus(investigation.id);
+      // Check if IPD investigation
+      if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+        await consultationAPI.revertInpatientInvestigationStatus(investigation.id);
+      } else {
+        await consultationAPI.revertInvestigationStatus(investigation.id);
+      }
     $q.notify({
       type: 'positive',
         message: 'Status reverted to confirmed successfully',
@@ -979,40 +1104,95 @@ const bulkConfirmInvestigations = async () => {
     });
     return;
   }
-  
-  const investigationIds = requestedInvestigations.map(inv => inv.id);
-  
-  $q.dialog({
-    title: 'Confirm Selected Investigations',
-    message: `Are you sure you want to confirm ${investigationIds.length} investigation(s)?`,
-    cancel: true,
-    persistent: true,
-  }).onOk(async () => {
-    bulkConfirming.value = true;
-    try {
-      const response = await consultationAPI.bulkConfirmInvestigations(investigationIds);
+
+  // Separate IPD and OPD investigations
+  const ipdInvestigations = requestedInvestigations.filter(inv => inv.source === 'inpatient' || inv.prescription_type === 'inpatient');
+  const opdInvestigations = requestedInvestigations.filter(inv => inv.source !== 'inpatient' && inv.prescription_type !== 'inpatient');
+
+  bulkConfirming.value = true;
+  try {
+    let totalConfirmed = 0;
+    let totalRequested = 0;
+    const allErrors = [];
+
+    // Confirm IPD investigations
+    if (ipdInvestigations.length > 0) {
+      const ipdIds = ipdInvestigations.map(inv => inv.id);
+      // For IPD, show dialog to ask if they want to add to IPD bill
+      const addToBill = await new Promise((resolve) => {
+        $q.dialog({
+          title: 'Confirm IPD Investigations',
+          message: `You are about to confirm ${ipdInvestigations.length} IPD investigation(s). Add to IPD bill?`,
+          cancel: true,
+          persistent: true,
+          options: {
+            type: 'checkbox',
+            model: [true],
+            items: [
+              { label: 'Add to IPD bill', value: true }
+            ]
+          }
+        }).onOk((result) => {
+          resolve(result && result[0] ? true : false);
+        }).onCancel(() => {
+          resolve(null); // User cancelled
+        });
+      });
+
+      if (addToBill === null) {
+        // User cancelled
+        bulkConfirming.value = false;
+        return;
+      }
+
+      try {
+        const response = await consultationAPI.bulkConfirmInpatientInvestigations(ipdIds, addToBill);
+        totalConfirmed += response.data.confirmed_count;
+        totalRequested += response.data.total_requested;
+        if (response.data.errors && response.data.errors.length > 0) {
+          allErrors.push(...response.data.errors);
+        }
+      } catch (error) {
+        allErrors.push(`IPD confirm error: ${error.response?.data?.detail || 'Unknown error'}`);
+      }
+    }
+
+    // Confirm OPD investigations
+    if (opdInvestigations.length > 0) {
+      const opdIds = opdInvestigations.map(inv => inv.id);
+      const response = await consultationAPI.bulkConfirmInvestigations(opdIds);
+      totalConfirmed += response.data.confirmed_count;
+      totalRequested += response.data.total_requested;
+      if (response.data.errors && response.data.errors.length > 0) {
+        allErrors.push(...response.data.errors);
+      }
+    }
+
+    if (allErrors.length > 0) {
+      $q.notify({
+        type: 'warning',
+        message: `Confirmed ${totalConfirmed} of ${totalRequested} investigations. Some errors occurred.`,
+        caption: allErrors.join('; '),
+        timeout: 5000,
+      });
+    } else {
       $q.notify({
         type: 'positive',
-        message: `Successfully confirmed ${response.data.confirmed_count} investigation(s)`,
+        message: `Successfully confirmed ${totalConfirmed} investigation(s)`,
       });
-      if (response.data.errors && response.data.errors.length > 0) {
-        $q.notify({
-          type: 'warning',
-          message: `Some investigations could not be confirmed. Check console for details.`,
-        });
-        console.warn('Bulk confirm errors:', response.data.errors);
-      }
-      selectedInvestigations.value = [];
-      await loadRequests();
-    } catch (error) {
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || 'Failed to confirm investigations',
-      });
-    } finally {
-      bulkConfirming.value = false;
     }
-  });
+    
+    // Clear selection and reload
+    selectedInvestigations.value = [];
+    await loadRequests();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm investigations',
+    });
+  } finally {
+    bulkConfirming.value = false;
+  }
 };
 
 // Patient selection handlers

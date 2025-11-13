@@ -41,6 +41,9 @@ class WardAdmission(Base):
     inpatient_vitals = relationship("InpatientVital", back_populates="ward_admission", cascade="all, delete-orphan")
     clinical_reviews = relationship("InpatientClinicalReview", back_populates="ward_admission", cascade="all, delete-orphan")
     transfers = relationship("WardTransfer", back_populates="ward_admission", cascade="all, delete-orphan")
+    surgeries = relationship("InpatientSurgery", back_populates="ward_admission", cascade="all, delete-orphan")
+    additional_services = relationship("InpatientAdditionalService", back_populates="ward_admission", cascade="all, delete-orphan")
+    inventory_debits = relationship("InpatientInventoryDebit", back_populates="ward_admission", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<WardAdmission {self.encounter_id} - {self.ward}>"

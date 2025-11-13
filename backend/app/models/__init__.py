@@ -25,6 +25,14 @@ from app.models.nurse_note import NurseNote
 from app.models.nurse_mid_documentation import NurseMidDocumentation
 from app.models.inpatient_vital import InpatientVital
 from app.models.inpatient_clinical_review import InpatientClinicalReview
+from app.models.inpatient_diagnosis import InpatientDiagnosis
+from app.models.inpatient_prescription import InpatientPrescription
+from app.models.inpatient_investigation import InpatientInvestigation
+from app.models.inpatient_surgery import InpatientSurgery
+from app.models.additional_service import AdditionalService
+from app.models.inpatient_additional_service import InpatientAdditionalService
+from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+from app.models.treatment_sheet_administration import TreatmentSheetAdministration
 from app.models.ward_transfer import WardTransfer
 from app.models.lab_result import LabResult
 from app.models.scan_result import ScanResult
@@ -66,6 +74,14 @@ __all__ = [
     "NurseMidDocumentation",
     "InpatientVital",
     "InpatientClinicalReview",
+    "InpatientDiagnosis",
+    "InpatientPrescription",
+    "InpatientInvestigation",
+    "InpatientSurgery",
+    "AdditionalService",
+    "InpatientAdditionalService",
+    "InpatientInventoryDebit",
+    "TreatmentSheetAdministration",
     "WardTransfer",
     "LabResult",
     "ScanResult",

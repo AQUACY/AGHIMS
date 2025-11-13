@@ -61,7 +61,7 @@ class BillItemCreate(BaseModel):
     item_code: Optional[str] = None  # Optional - for miscellaneous items without codes (can be None/null)
     item_name: str  # Required - name/description of the item
     category: Optional[str] = None  # Optional - for miscellaneous items without category (can be None/null)
-    quantity: int = 1
+    quantity: float = 1.0  # Changed to float to support fractional quantities (e.g., 6.15 hours)
     unit_price: Optional[float] = None  # Optional custom price. If not provided, will look up from price list
     
     class Config:
@@ -96,7 +96,7 @@ class BillItemResponse(BaseModel):
     item_code: str
     item_name: str
     category: str
-    quantity: int
+    quantity: float  # Changed to float to support fractional quantities (e.g., 6.15 hours)
     unit_price: float
     total_price: float
     amount_paid: float = 0.0  # Total amount paid for this item across all receipts

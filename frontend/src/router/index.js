@@ -154,6 +154,18 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/additional-services',
+        name: 'AdditionalServicesManagement',
+        component: () => import('../pages/AdditionalServicesManagement.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin' },
+      },
+      {
+        path: '/ipd/inventory-debit/:id',
+        name: 'InpatientInventoryDebit',
+        component: () => import('../pages/InpatientInventoryDebit.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
         path: '/ipd',
         name: 'IPD',
         component: () => import('../pages/IPD.vue'),
@@ -217,6 +229,18 @@ const routes = [
         path: '/ipd/nurse-mid-documentation/:id',
         name: 'NurseMidDocumentation',
         component: () => import('../pages/NurseMidDocumentation.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/clinical-review/:id',
+        name: 'ClinicalReview',
+        component: () => import('../pages/ClinicalReview.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/treatment-sheet/:id',
+        name: 'TreatmentSheet',
+        component: () => import('../pages/TreatmentSheet.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
     ],

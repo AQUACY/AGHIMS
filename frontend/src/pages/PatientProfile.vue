@@ -176,6 +176,65 @@
         </q-card-section>
       </q-card>
 
+      <!-- IPD Information -->
+      <q-card class="q-mb-md glass-card" v-if="patient && wardAdmissions.length > 0" flat>
+        <q-card-section>
+          <div class="row items-center q-mb-md">
+            <div class="text-h6 glass-text">IPD (Inpatient Department) Information</div>
+          </div>
+          
+          <q-list class="glass-card">
+            <q-item 
+              v-for="admission in wardAdmissions" 
+              :key="admission.id"
+              class="q-mb-xs"
+            >
+              <q-item-section avatar>
+                <q-icon 
+                  :name="admission.discharged_at ? 'check_circle' : 'local_hospital'" 
+                  :color="admission.discharged_at ? 'grey' : 'primary'"
+                  size="md"
+                />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label class="text-weight-medium glass-text">
+                  Ward: {{ admission.ward }}
+                  <q-badge 
+                    :color="admission.discharged_at ? 'grey' : 'positive'"
+                    :label="admission.discharged_at ? 'Discharged' : 'Active'"
+                    class="q-ml-sm"
+                  />
+                </q-item-label>
+                <q-item-label caption>
+                  <div>Admitted: {{ formatDateTime(admission.admitted_at) }}</div>
+                  <div v-if="admission.bed_number">Bed: {{ admission.bed_number }}</div>
+                  <div v-if="admission.discharged_at">Discharged: {{ formatDateTime(admission.discharged_at) }}</div>
+                  <div v-if="admission.encounter_department">Department: {{ admission.encounter_department }}</div>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-btn
+                  v-if="!admission.discharged_at"
+                  color="primary"
+                  icon="local_hospital"
+                  label="Go to IPD"
+                  @click="goToIPD(admission.id)"
+                  class="glass-button"
+                />
+                <q-btn
+                  v-else
+                  color="info"
+                  icon="visibility"
+                  label="View IPD Details"
+                  @click="viewIPDDetails(admission.id)"
+                  class="glass-button"
+                />
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+      </q-card>
+
       <!-- Patient Encounters -->
       <q-card>
         <q-card-section>
@@ -589,6 +648,8 @@ const patientEncounters = ref([]);
 const loading = ref(false);
 const loadingEncounters = ref(false);
 const loadingBills = ref(false);
+const loadingIPD = ref(false);
+const wardAdmissions = ref([]);
 const totalBillAmount = ref(0);
 const totalPaidAmount = ref(0);
 const totalRemainingBalance = computed(() => Math.max(0, totalBillAmount.value - totalPaidAmount.value));
@@ -803,6 +864,7 @@ const loadPatient = async () => {
     
     patient.value = exactMatch || patients[0];
     await loadEncounters(patient.value.id);
+    await loadWardAdmissions(patient.value.card_number);
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -830,6 +892,21 @@ const loadEncounters = async (patientId) => {
     patientEncounters.value = [];
   } finally {
     loadingEncounters.value = false;
+  }
+};
+
+const loadWardAdmissions = async (cardNumber) => {
+  if (!cardNumber) return;
+  
+  loadingIPD.value = true;
+  try {
+    const response = await consultationAPI.getWardAdmissionsByPatientCard(cardNumber, true); // Include discharged
+    wardAdmissions.value = response.data || [];
+  } catch (error) {
+    console.error('Failed to load ward admissions:', error);
+    wardAdmissions.value = [];
+  } finally {
+    loadingIPD.value = false;
   }
 };
 
@@ -945,6 +1022,20 @@ const goToXray = (encounterId) => {
   router.push({
     name: 'Xray',
     query: { encounterId: encounterId }
+  });
+};
+
+const goToIPD = (wardAdmissionId) => {
+  router.push({
+    name: 'AdmissionManager',
+    params: { id: wardAdmissionId }
+  });
+};
+
+const viewIPDDetails = (wardAdmissionId) => {
+  router.push({
+    name: 'AdmissionManager',
+    params: { id: wardAdmissionId }
   });
 };
 

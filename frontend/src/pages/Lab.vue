@@ -25,10 +25,12 @@
           <q-input
             v-model="filterDate"
             filled
-            label="Date"
+            label="Date (optional)"
             type="date"
             class="col-12 col-md-3"
             @update:model-value="loadRequests"
+            clearable
+            hint="Leave empty to show all dates"
           >
             <template v-slot:prepend>
               <q-icon name="event" />
@@ -123,9 +125,32 @@
               />
             </q-td>
           </template>
+          <template v-slot:body-cell-source="props">
+            <q-td :props="props">
+              <q-badge
+                v-if="props.value === 'inpatient'"
+                color="purple"
+                label="IPD"
+              />
+              <q-badge
+                v-else
+                color="blue"
+                label="OPD"
+              />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-ward="props">
+            <q-td :props="props">
+              <span v-if="props.row.source === 'inpatient'">
+                {{ props.row.ward || 'N/A' }}
+                <span v-if="props.row.bed_number"> / Bed {{ props.row.bed_number }}</span>
+              </span>
+              <span v-else class="text-grey-6">-</span>
+            </q-td>
+          </template>
           <template v-slot:body-cell-encounter_date="props">
             <q-td :props="props">
-              {{ formatDate(props.value) }}
+              {{ formatDate(props.value || props.row.created_at) }}
             </q-td>
           </template>
           <template v-slot:body-cell-actions="props">
@@ -272,8 +297,8 @@
               v-model="resultForm.attachment"
               filled
               label="Upload PDF/Attachment"
-              accept=".pdf,.jpg,.jpeg,.png"
-              hint="Upload PDF or image file from analyzer"
+              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+              hint="Upload PDF, Word document, or image file from analyzer"
               @update:model-value="onFileSelected"
             >
               <template v-slot:prepend>
@@ -317,6 +342,35 @@
         </q-card-section>
         <q-card-actions align="right">
           <q-btn label="Close" color="primary" flat v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Confirm IPD Investigation Dialog -->
+    <q-dialog v-model="showConfirmInpatientDialog" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section>
+          <div class="text-h6">Confirm IPD Investigation</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+            {{ confirmInpatientForm.procedure_name }}
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-checkbox
+            v-model="confirmInpatientForm.add_to_ipd_bill"
+            label="Add to IPD Bill"
+            hint="Add this investigation to the patient's IPD bill"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="primary" @click="showConfirmInpatientDialog = false" />
+          <q-btn
+            flat
+            label="Confirm"
+            color="positive"
+            @click="confirmInpatientInvestigation"
+            :loading="confirmingId === confirmInpatientForm.id"
+          />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -380,10 +434,18 @@ const resultForm = ref({
 });
 const showRemarksDialog = ref(false);
 const viewingRemarks = ref(null);
+const showConfirmInpatientDialog = ref(false);
+const confirmInpatientForm = ref({
+  id: null,
+  procedure_name: '',
+  add_to_ipd_bill: true,
+});
 
 const requestColumns = [
   { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left', sortable: true },
   { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left', sortable: true },
+  { name: 'source', label: 'Source', field: 'source', align: 'center', sortable: true },
+  { name: 'ward', label: 'Ward/Bed', field: 'ward', align: 'left', sortable: true },
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left', sortable: true },
   { name: 'gdrg_code', label: 'G-DRG Code', field: 'gdrg_code', align: 'left', sortable: true },
   { name: 'encounter_date', label: 'Request Date', field: 'encounter_date', align: 'left', sortable: true },
@@ -446,10 +508,13 @@ const canAddResults = (row) => {
     return false;
   }
   
-  // Find the actual investigation object from investigations array
-  const investigation = investigations.value.find(inv => inv.id === investigationId);
+  // Find the actual investigation object from investigations array or requests array
+  let investigation = investigations.value.find(inv => inv.id === investigationId);
   if (!investigation) {
-    console.log(`canAddResults: Investigation ${investigationId} not found in investigations array`);
+    investigation = requests.value.find(inv => inv.id === investigationId);
+  }
+  if (!investigation) {
+    console.log(`canAddResults: Investigation ${investigationId} not found`);
     return false;
   }
   
@@ -457,6 +522,12 @@ const canAddResults = (row) => {
   if (investigation.status !== 'confirmed' && investigation.status !== 'completed') {
     console.log(`canAddResults: Investigation ${investigation.id} not confirmed/completed`);
     return false;
+  }
+  
+  // For IPD investigations, allow adding results without payment requirement
+  if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+    console.log(`canAddResults: IPD investigation ${investigation.id}, allowing results without payment check`);
+    return true;
   }
   
   console.log(`canAddResults: Checking investigation ${investigation.id}`, {
@@ -799,8 +870,39 @@ const loadRequests = async () => {
       filters.date = filterDate.value;
     }
     
-    const response = await consultationAPI.getInvestigationsByType('lab', filters);
-    requests.value = response.data || [];
+    // Load both OPD and IPD investigations
+    const [opdResponse, ipdResponse] = await Promise.all([
+      consultationAPI.getInvestigationsByType('lab', filters).catch(err => {
+        console.error('Failed to load OPD investigations:', err);
+        return { data: [] };
+      }),
+      consultationAPI.getInpatientInvestigationsByType('lab', filters).catch(err => {
+        console.error('Failed to load IPD investigations:', err);
+        console.error('Error details:', err.response?.data || err.message);
+        return { data: [] };
+      })
+    ]);
+    
+    const opdRequests = opdResponse.data || [];
+    const ipdRequests = ipdResponse.data || [];
+    
+    console.log('Loaded investigations:', {
+      opdCount: opdRequests.length,
+      ipdCount: ipdRequests.length,
+      filters: filters,
+      opdRequests: opdRequests,
+      ipdRequests: ipdRequests,
+      opdResponse: opdResponse,
+      ipdResponse: ipdResponse
+    });
+    
+    // Merge and mark source
+    requests.value = [
+      ...opdRequests.map(r => ({ ...r, source: 'opd' })),
+      ...ipdRequests.map(r => ({ ...r, source: 'inpatient' }))
+    ];
+    
+    console.log('Total requests after merge:', requests.value.length);
   } catch (error) {
     console.error('Failed to load requests:', error);
     $q.notify({
@@ -813,16 +915,30 @@ const loadRequests = async () => {
   }
 };
 
-// Initialize date to today
+// Initialize date to today (optional - user can clear to see all)
 const initializeDate = () => {
   const today = new Date();
   const year = today.getFullYear();
   const month = String(today.getMonth() + 1).padStart(2, '0');
   const day = String(today.getDate()).padStart(2, '0');
   filterDate.value = `${year}-${month}-${day}`;
+  // Note: User can clear the date filter to see all investigations
 };
 
 const confirmInvestigation = async (investigation) => {
+  // Check if this is an IPD investigation
+  if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+    // For IPD, show confirmation dialog with "Add to IPD bill" checkbox
+    showConfirmInpatientDialog.value = true;
+    confirmInpatientForm.value = {
+      id: investigation.id,
+      procedure_name: investigation.procedure_name || investigation.gdrg_code,
+      add_to_ipd_bill: true, // Default to true
+    };
+    return;
+  }
+  
+  // For OPD, use simple confirmation
   $q.dialog({
     title: 'Confirm Investigation',
     message: `Confirm ${investigation.procedure_name || investigation.gdrg_code}?`,
@@ -851,6 +967,35 @@ const confirmInvestigation = async (investigation) => {
       confirmingId.value = null;
     }
   });
+};
+
+const confirmInpatientInvestigation = async () => {
+  if (!confirmInpatientForm.value.id) return;
+  
+  confirmingId.value = confirmInpatientForm.value.id;
+  try {
+    await consultationAPI.confirmInpatientInvestigation(confirmInpatientForm.value.id, {
+      add_to_ipd_bill: confirmInpatientForm.value.add_to_ipd_bill
+    });
+    $q.notify({
+      type: 'positive',
+      message: 'IPD investigation confirmed successfully',
+    });
+    showConfirmInpatientDialog.value = false;
+    // Reload requests list
+    await loadRequests();
+    // Also reload investigations if in legacy view
+    if (selectedEncounterId.value) {
+      await loadInvestigations();
+    }
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to confirm IPD investigation',
+    });
+  } finally {
+    confirmingId.value = null;
+  }
 };
 
 const viewRemarks = (investigation) => {
@@ -1160,7 +1305,12 @@ const revertToRequested = async (investigation) => {
   }).onOk(async (reason) => {
     revertingToRequestedId.value = investigation.id;
     try {
-      await consultationAPI.revertInvestigationToRequested(investigation.id, reason);
+      // Check if IPD investigation
+      if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+        await consultationAPI.revertInpatientInvestigationToRequested(investigation.id, reason);
+      } else {
+        await consultationAPI.revertInvestigationToRequested(investigation.id, reason);
+      }
       $q.notify({
         type: 'positive',
         message: 'Status reverted to requested successfully',
@@ -1186,7 +1336,12 @@ const revertInvestigationStatus = async (investigation) => {
   }).onOk(async () => {
     revertingId.value = investigation.id;
     try {
-      await consultationAPI.revertInvestigationStatus(investigation.id);
+      // Check if IPD investigation
+      if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+        await consultationAPI.revertInpatientInvestigationStatus(investigation.id);
+      } else {
+        await consultationAPI.revertInvestigationStatus(investigation.id);
+      }
       $q.notify({
         type: 'positive',
         message: 'Status reverted to confirmed successfully',
@@ -1237,22 +1392,80 @@ const bulkConfirmInvestigations = async () => {
     return;
   }
 
+  // Separate IPD and OPD investigations
+  const ipdInvestigations = requestedInvestigations.filter(inv => inv.source === 'inpatient' || inv.prescription_type === 'inpatient');
+  const opdInvestigations = requestedInvestigations.filter(inv => inv.source !== 'inpatient' && inv.prescription_type !== 'inpatient');
+
   bulkConfirming.value = true;
   try {
-    const investigationIds = requestedInvestigations.map(inv => inv.id);
-    const response = await consultationAPI.bulkConfirmInvestigations(investigationIds);
-    
-    if (response.data.errors && response.data.errors.length > 0) {
+    let totalConfirmed = 0;
+    let totalRequested = 0;
+    const allErrors = [];
+
+    // Confirm IPD investigations
+    if (ipdInvestigations.length > 0) {
+      const ipdIds = ipdInvestigations.map(inv => inv.id);
+      // For IPD, show dialog to ask if they want to add to IPD bill
+      const addToBill = await new Promise((resolve) => {
+        $q.dialog({
+          title: 'Confirm IPD Investigations',
+          message: `You are about to confirm ${ipdInvestigations.length} IPD investigation(s). Add to IPD bill?`,
+          cancel: true,
+          persistent: true,
+          options: {
+            type: 'checkbox',
+            model: [true],
+            items: [
+              { label: 'Add to IPD bill', value: true }
+            ]
+          }
+        }).onOk((result) => {
+          resolve(result && result[0] ? true : false);
+        }).onCancel(() => {
+          resolve(null); // User cancelled
+        });
+      });
+
+      if (addToBill === null) {
+        // User cancelled
+        bulkConfirming.value = false;
+        return;
+      }
+
+      try {
+        const response = await consultationAPI.bulkConfirmInpatientInvestigations(ipdIds, addToBill);
+        totalConfirmed += response.data.confirmed_count;
+        totalRequested += response.data.total_requested;
+        if (response.data.errors && response.data.errors.length > 0) {
+          allErrors.push(...response.data.errors);
+        }
+      } catch (error) {
+        allErrors.push(`IPD confirm error: ${error.response?.data?.detail || 'Unknown error'}`);
+      }
+    }
+
+    // Confirm OPD investigations
+    if (opdInvestigations.length > 0) {
+      const opdIds = opdInvestigations.map(inv => inv.id);
+      const response = await consultationAPI.bulkConfirmInvestigations(opdIds);
+      totalConfirmed += response.data.confirmed_count;
+      totalRequested += response.data.total_requested;
+      if (response.data.errors && response.data.errors.length > 0) {
+        allErrors.push(...response.data.errors);
+      }
+    }
+
+    if (allErrors.length > 0) {
       $q.notify({
         type: 'warning',
-        message: `Confirmed ${response.data.confirmed_count} of ${response.data.total_requested} investigations. Some errors occurred.`,
-        caption: response.data.errors.join('; '),
+        message: `Confirmed ${totalConfirmed} of ${totalRequested} investigations. Some errors occurred.`,
+        caption: allErrors.join('; '),
         timeout: 5000,
       });
     } else {
       $q.notify({
         type: 'positive',
-        message: `Successfully confirmed ${response.data.confirmed_count} investigation(s)`,
+        message: `Successfully confirmed ${totalConfirmed} investigation(s)`,
       });
     }
     

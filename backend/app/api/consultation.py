@@ -561,6 +561,7 @@ class PrescriptionDispense(BaseModel):
     quantity: Optional[int] = None
     instructions: Optional[str] = None  # Instructions for the drug
     is_external: Optional[bool] = None  # Mark prescription as external (to be filled outside)
+    add_to_ipd_bill: Optional[bool] = True  # For IPD prescriptions: whether to add to IPD bill
 
 
 @router.put("/prescription/{prescription_id}/dispense", response_model=PrescriptionResponse)
@@ -570,8 +571,9 @@ def dispense_prescription(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
 ):
-    """Mark a prescription as dispensed - only allowed if bill is paid or bill amount is 0"""
+    """Mark a prescription as dispensed - only allowed if bill is paid or bill amount is 0 (except for inpatients)"""
     from app.models.bill import Bill, BillItem, ReceiptItem, Receipt
+    from app.models.ward_admission import WardAdmission
     
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
     if not prescription:
@@ -583,32 +585,39 @@ def dispense_prescription(
     if prescription.confirmed_by is None:
         raise HTTPException(status_code=400, detail="Prescription must be confirmed before dispense")
     
-    # Check if bill for this prescription is paid or amount is 0
-    # Find the bill item for this prescription
-    bill_item = db.query(BillItem).filter(
-        BillItem.item_code == prescription.medicine_code,
-        BillItem.item_name.like(f"%{prescription.medicine_name}%")
-    ).join(Bill).filter(
-        Bill.encounter_id == prescription.encounter_id,
-        Bill.is_paid == False
-    ).first()
+    # Check if this is an inpatient prescription (encounter is linked to a ward admission)
+    is_inpatient = db.query(WardAdmission).filter(
+        WardAdmission.encounter_id == prescription.encounter_id
+    ).first() is not None
     
-    if bill_item:
-        # Check if bill item is fully paid
-        total_paid = 0.0
-        for receipt_item in db.query(ReceiptItem).filter(
-            ReceiptItem.bill_item_id == bill_item.id
-        ).join(Receipt).filter(Receipt.refunded == False).all():
-            total_paid += receipt_item.amount_paid
+    # For inpatients, skip payment check - medications are added to IPD bills and paid at discharge
+    if not is_inpatient:
+        # Check if bill for this prescription is paid or amount is 0
+        # Find the bill item for this prescription
+        bill_item = db.query(BillItem).filter(
+            BillItem.item_code == prescription.medicine_code,
+            BillItem.item_name.like(f"%{prescription.medicine_name}%")
+        ).join(Bill).filter(
+            Bill.encounter_id == prescription.encounter_id,
+            Bill.is_paid == False
+        ).first()
         
-        remaining_balance = bill_item.total_price - total_paid
-        
-        # Only allow dispense if bill amount is 0 or fully paid
-        if bill_item.total_price > 0 and remaining_balance > 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot dispense prescription. Bill not paid. Remaining balance: {remaining_balance:.2f}"
-            )
+        if bill_item:
+            # Check if bill item is fully paid
+            total_paid = 0.0
+            for receipt_item in db.query(ReceiptItem).filter(
+                ReceiptItem.bill_item_id == bill_item.id
+            ).join(Receipt).filter(Receipt.refunded == False).all():
+                total_paid += receipt_item.amount_paid
+            
+            remaining_balance = bill_item.total_price - total_paid
+            
+            # Only allow dispense if bill amount is 0 or fully paid
+            if bill_item.total_price > 0 and remaining_balance > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot dispense prescription. Bill not paid. Remaining balance: {remaining_balance:.2f}"
+                )
     
     # Update prescription fields if provided
     if dispense_data:
@@ -2792,6 +2801,143 @@ def get_admission_recommendations(
         raise HTTPException(status_code=500, detail=f"Error fetching admission recommendations: {str(e)}")
 
 
+def _create_ipd_admission_bill(db: Session, encounter, ccc_number: Optional[str], created_by: int):
+    """
+    Create automatic bill for IPD admission based on insurance status and surgery/diagnosis.
+    
+    Rules:
+    - Insured clients: 50 cedis admission fee + surgery co-payment (if surgery exists)
+    - Non-insured clients: 30 cedis admission fee + chief diagnosis (if no surgery) OR surgery base rate (if surgery exists)
+    """
+    from app.models.bill import Bill, BillItem
+    from app.models.diagnosis import Diagnosis
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    # Check if patient is insured (has CCC number)
+    is_insured = ccc_number is not None and ccc_number.strip() != ""
+    
+    # Check if there's a surgery (procedure_g_drg_code exists)
+    has_surgery = encounter.procedure_g_drg_code is not None and encounter.procedure_g_drg_code.strip() != ""
+    
+    # Find or create an unpaid bill for this encounter
+    existing_bill = db.query(Bill).filter(
+        Bill.encounter_id == encounter.id,
+        Bill.is_paid == False
+    ).first()
+    
+    if existing_bill:
+        bill = existing_bill
+    else:
+        # Create new bill
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=encounter.id,
+            bill_number=bill_number,
+            is_insured=is_insured,
+            created_by=created_by
+        )
+        db.add(bill)
+        db.flush()
+    
+    # Add admission fee
+    admission_fee = 50.0 if is_insured else 30.0
+    
+    # Check if admission fee item already exists
+    existing_admission_fee = db.query(BillItem).filter(
+        BillItem.bill_id == bill.id,
+        BillItem.item_name.like("%Admission Fee%")
+    ).first()
+    
+    if not existing_admission_fee:
+        admission_fee_item = BillItem(
+            bill_id=bill.id,
+            item_code="IPD-ADM-FEE",
+            item_name=f"IPD Admission Fee ({'Insured' if is_insured else 'Non-Insured'})",
+            category="other",
+            quantity=1,
+            unit_price=admission_fee,
+            total_price=admission_fee
+        )
+        db.add(admission_fee_item)
+        bill.total_amount += admission_fee
+    
+    # Handle surgery or chief diagnosis
+    if has_surgery:
+        # Surgery case: Add surgery fee
+        surgery_code = encounter.procedure_g_drg_code
+        surgery_name = encounter.procedure_name or f"Surgery: {surgery_code}"
+        
+        # Check if surgery item already exists
+        existing_surgery = db.query(BillItem).filter(
+            BillItem.bill_id == bill.id,
+            BillItem.item_code == surgery_code
+        ).first()
+        
+        if not existing_surgery:
+            # Get surgery price (co-payment for insured, base rate for non-insured)
+            surgery_price = get_price_from_all_tables(
+                db, 
+                surgery_code, 
+                is_insured=is_insured,
+                service_type=encounter.department
+            )
+            
+            if surgery_price > 0:
+                surgery_item = BillItem(
+                    bill_id=bill.id,
+                    item_code=surgery_code,
+                    item_name=f"Surgery: {surgery_name}",
+                    category="surgery",
+                    quantity=1,
+                    unit_price=surgery_price,
+                    total_price=surgery_price
+                )
+                db.add(surgery_item)
+                bill.total_amount += surgery_price
+    else:
+        # No surgery: For non-insured, add chief diagnosis
+        if not is_insured:
+            # Find chief diagnosis
+            chief_diagnosis = db.query(Diagnosis).filter(
+                Diagnosis.encounter_id == encounter.id,
+                Diagnosis.is_chief == True,
+                Diagnosis.gdrg_code.isnot(None),
+                Diagnosis.gdrg_code != ''
+            ).first()
+            
+            if chief_diagnosis:
+                # Check if chief diagnosis item already exists
+                existing_diagnosis = db.query(BillItem).filter(
+                    BillItem.bill_id == bill.id,
+                    BillItem.item_code == chief_diagnosis.gdrg_code,
+                    BillItem.category == "drg"
+                ).first()
+                
+                if not existing_diagnosis:
+                    # Get diagnosis price (base rate for non-insured)
+                    diagnosis_price = get_price_from_all_tables(
+                        db,
+                        chief_diagnosis.gdrg_code,
+                        is_insured=False
+                    )
+                    
+                    if diagnosis_price > 0:
+                        diagnosis_item = BillItem(
+                            bill_id=bill.id,
+                            item_code=chief_diagnosis.gdrg_code,
+                            item_name=f"Diagnosis: {chief_diagnosis.diagnosis}",
+                            category="drg",
+                            quantity=1,
+                            unit_price=diagnosis_price,
+                            total_price=diagnosis_price
+                        )
+                        db.add(diagnosis_item)
+                        bill.total_amount += diagnosis_price
+    
+    db.flush()
+
+
 class ConfirmAdmissionRequest(BaseModel):
     ccc_number: Optional[str] = None
     emergency_contact_name: str
@@ -2890,6 +3036,16 @@ def confirm_admission(
         admitted_at=datetime.utcnow()
     )
     db.add(ward_admission)
+    db.flush()  # Flush to get ward_admission ID before committing
+    
+    # Auto-generate IPD admission bill
+    try:
+        _create_ipd_admission_bill(db, encounter, ccc_to_use, current_user.id)
+    except Exception as e:
+        # Log error but don't fail admission confirmation
+        import logging
+        logging.error(f"Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}")
+        # Continue with admission confirmation even if bill creation fails
     
     db.commit()
     db.refresh(admission)
@@ -3108,6 +3264,97 @@ def get_ward_admissions(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error fetching ward admissions: {str(e)}")
+
+
+@router.get("/ward-admissions/{ward_admission_id}", response_model=WardAdmissionResponse)
+def get_ward_admission(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get a single ward admission by ID"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.patient import Patient
+    
+    try:
+        ward_admission = db.query(WardAdmission).options(
+            joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+            joinedload(WardAdmission.bed)
+        ).filter(WardAdmission.id == ward_admission_id).first()
+        
+        if not ward_admission:
+            raise HTTPException(status_code=404, detail="Ward admission not found")
+        
+        encounter = ward_admission.encounter
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found for this ward admission")
+        
+        patient = encounter.patient
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found for this encounter")
+        
+        # Get admitted_by user info
+        admitted_by_name = None
+        admitted_by_role = None
+        if ward_admission.admitted_by:
+            admitted_user = db.query(User).filter(User.id == ward_admission.admitted_by).first()
+            if admitted_user:
+                admitted_by_name = admitted_user.full_name
+                admitted_by_role = admitted_user.role
+        
+        # Get discharged_by user info if discharged
+        discharged_by_name = None
+        discharged_by_role = None
+        if ward_admission.discharged_by:
+            discharged_user = db.query(User).filter(User.id == ward_admission.discharged_by).first()
+            if discharged_user:
+                discharged_by_name = discharged_user.full_name
+                discharged_by_role = discharged_user.role
+        
+        # Get emergency contact directly from patient table
+        emergency_contact_name = patient.emergency_contact_name
+        emergency_contact_relationship = patient.emergency_contact_relationship
+        emergency_contact_number = patient.emergency_contact_number
+        
+        # Get bed information
+        bed_number = None
+        if ward_admission.bed_id and ward_admission.bed:
+            bed_number = ward_admission.bed.bed_number
+        
+        return {
+            "id": ward_admission.id,
+            "encounter_id": ward_admission.encounter_id,
+            "ward": ward_admission.ward,
+            "bed_id": ward_admission.bed_id,
+            "bed_number": bed_number,
+            "admitted_by": ward_admission.admitted_by,
+            "admitted_at": ward_admission.admitted_at,
+            "discharged_at": ward_admission.discharged_at,
+            "discharged_by": ward_admission.discharged_by,
+            "patient_name": patient.name,
+            "patient_surname": patient.surname,
+            "patient_other_names": patient.other_names,
+            "patient_card_number": patient.card_number,
+            "patient_gender": patient.gender,
+            "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
+            "encounter_created_at": encounter.created_at,
+            "encounter_service_type": encounter.department,
+            "admitted_by_name": admitted_by_name,
+            "admitted_by_role": admitted_by_role,
+            "discharged_by_name": discharged_by_name,
+            "discharged_by_role": discharged_by_role,
+            "emergency_contact_name": emergency_contact_name,
+            "emergency_contact_relationship": emergency_contact_relationship,
+            "emergency_contact_number": emergency_contact_number,
+            "admission_notes": ward_admission.admission_notes,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_ward_admission: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching ward admission: {str(e)}")
 
 
 @router.put("/ward-admissions/{ward_admission_id}/discharge")
@@ -3547,6 +3794,82 @@ def get_inpatient_vitals(
     return result
 
 
+@router.put("/ward-admissions/{ward_admission_id}/vitals/{vital_id}")
+def update_inpatient_vital(
+    ward_admission_id: int,
+    vital_id: int,
+    request: CreateInpatientVitalRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Update a vital record for an inpatient"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_vital import InpatientVital
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    vital = db.query(InpatientVital).filter(
+        InpatientVital.id == vital_id,
+        InpatientVital.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not vital:
+        raise HTTPException(status_code=404, detail="Vital record not found")
+    
+    # Check permissions: user can edit their own vital, admin can edit any
+    if current_user.role != "Admin" and vital.recorded_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own vital record. Admin can edit any record."
+        )
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot edit vital record for discharged patient")
+    
+    # Calculate BMI if weight and height are provided
+    bmi = None
+    if request.weight and request.height and request.height > 0:
+        bmi = request.weight / ((request.height / 100) ** 2)
+    
+    # Update vital fields
+    vital.temperature = request.temperature
+    vital.blood_pressure_systolic = request.blood_pressure_systolic
+    vital.blood_pressure_diastolic = request.blood_pressure_diastolic
+    vital.pulse = request.pulse
+    vital.respiratory_rate = request.respiratory_rate
+    vital.oxygen_saturation = request.oxygen_saturation
+    vital.weight = request.weight
+    vital.height = request.height
+    vital.bmi = bmi
+    vital.notes = request.notes
+    
+    db.commit()
+    db.refresh(vital)
+    
+    recorder = db.query(User).filter(User.id == vital.recorded_by).first()
+    
+    return {
+        "id": vital.id,
+        "ward_admission_id": vital.ward_admission_id,
+        "temperature": vital.temperature,
+        "blood_pressure_systolic": vital.blood_pressure_systolic,
+        "blood_pressure_diastolic": vital.blood_pressure_diastolic,
+        "pulse": vital.pulse,
+        "respiratory_rate": vital.respiratory_rate,
+        "oxygen_saturation": vital.oxygen_saturation,
+        "weight": vital.weight,
+        "height": vital.height,
+        "bmi": vital.bmi,
+        "notes": vital.notes,
+        "recorded_by": vital.recorded_by,
+        "recorded_by_name": recorder.full_name if recorder else None,
+        "recorded_at": vital.recorded_at,
+        "message": "Vital record updated successfully"
+    }
+
+
 @router.put("/ward-admissions/{ward_admission_id}/nurse-notes/{note_id}/strikethrough")
 def toggle_nurse_note_strikethrough(
     ward_admission_id: int,
@@ -3677,6 +4000,3216 @@ def get_inpatient_clinical_reviews(
     return result
 
 
+@router.put("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}")
+def update_inpatient_clinical_review(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    request: CreateInpatientClinicalReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Update a clinical review for an inpatient"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    # Check permissions: user can edit their own review, admin can edit any
+    if current_user.role != "Admin" and clinical_review.reviewed_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own clinical review. Admin can edit any review."
+        )
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot edit clinical review for discharged patient")
+    
+    # Update review notes
+    clinical_review.review_notes = request.review_notes
+    
+    db.commit()
+    db.refresh(clinical_review)
+    
+    reviewer = db.query(User).filter(User.id == clinical_review.reviewed_by).first()
+    
+    return {
+        "id": clinical_review.id,
+        "ward_admission_id": clinical_review.ward_admission_id,
+        "review_notes": clinical_review.review_notes,
+        "reviewed_by": clinical_review.reviewed_by,
+        "reviewed_by_name": reviewer.full_name if reviewer else None,
+        "reviewed_at": clinical_review.reviewed_at,
+        "message": "Clinical review updated successfully"
+    }
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}")
+def delete_inpatient_clinical_review(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete a clinical review (Admin only)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    # Only Admin can delete
+    if current_user.role != "Admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only Admin can delete clinical reviews"
+        )
+    
+    db.delete(clinical_review)
+    db.commit()
+    
+    return {
+        "message": "Clinical review deleted successfully"
+    }
+
+
+# Inpatient Diagnosis endpoints
+class InpatientDiagnosisCreate(BaseModel):
+    clinical_review_id: int
+    icd10: Optional[str] = None
+    diagnosis: str
+    gdrg_code: Optional[str] = None
+    diagnosis_status: Optional[str] = None  # 'new', 'old', or 'recurring'
+    is_provisional: bool = False
+    is_chief: bool = False
+
+
+@router.post("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/diagnoses")
+def create_inpatient_diagnosis(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    diagnosis_data: InpatientDiagnosisCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Add a diagnosis to a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_diagnosis import InpatientDiagnosis
+    from app.models.icd10_drg_mapping import ICD10DRGMapping
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    # Convert None ICD-10 to empty string
+    diagnosis_dict = diagnosis_data.dict()
+    if diagnosis_dict.get('icd10') is None:
+        diagnosis_dict['icd10'] = ''
+    
+    # Auto-add ICD-10 code to system if it doesn't exist
+    icd10_code = diagnosis_dict.get('icd10', '').strip()
+    if icd10_code:
+        existing_mapping = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.icd10_code == icd10_code
+        ).first()
+        
+        if not existing_mapping:
+            new_icd10 = ICD10DRGMapping(
+                drg_code='',
+                drg_description='',
+                icd10_code=icd10_code,
+                icd10_description=diagnosis_dict.get('diagnosis', '').strip() or '',
+                notes='Auto-added from inpatient diagnosis entry',
+                remarks='',
+                is_active=True
+            )
+            db.add(new_icd10)
+            db.flush()
+    
+    # Auto-map ICD-10 to DRG code
+    if icd10_code and not diagnosis_dict.get('gdrg_code'):
+        mapping = db.query(ICD10DRGMapping).filter(
+            ICD10DRGMapping.icd10_code == icd10_code,
+            ICD10DRGMapping.is_active == True,
+            ICD10DRGMapping.drg_code != '',
+            ICD10DRGMapping.drg_code.isnot(None)
+        ).first()
+        
+        if mapping:
+            diagnosis_dict['gdrg_code'] = mapping.drg_code
+            if not diagnosis_dict.get('diagnosis') or not diagnosis_dict['diagnosis'].strip():
+                if mapping.icd10_description:
+                    diagnosis_dict['diagnosis'] = mapping.icd10_description
+    
+    diagnosis = InpatientDiagnosis(**diagnosis_dict, created_by=current_user.id)
+    db.add(diagnosis)
+    db.commit()
+    db.refresh(diagnosis)
+    
+    return {
+        "id": diagnosis.id,
+        "clinical_review_id": diagnosis.clinical_review_id,
+        "icd10": diagnosis.icd10,
+        "diagnosis": diagnosis.diagnosis,
+        "gdrg_code": diagnosis.gdrg_code,
+        "diagnosis_status": diagnosis.diagnosis_status,
+        "is_provisional": diagnosis.is_provisional,
+        "is_chief": diagnosis.is_chief,
+        "created_by": diagnosis.created_by,
+        "created_at": diagnosis.created_at,
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/diagnoses")
+def get_inpatient_diagnoses(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all diagnoses for a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_diagnosis import InpatientDiagnosis
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    diagnoses = db.query(InpatientDiagnosis).filter(
+        InpatientDiagnosis.clinical_review_id == clinical_review_id
+    ).all()
+    
+    return [
+        {
+            "id": d.id,
+            "clinical_review_id": d.clinical_review_id,
+            "icd10": d.icd10,
+            "diagnosis": d.diagnosis,
+            "gdrg_code": d.gdrg_code,
+            "diagnosis_status": d.diagnosis_status,
+            "is_provisional": d.is_provisional,
+            "is_chief": d.is_chief,
+            "created_by": d.created_by,
+            "created_at": d.created_at,
+        }
+        for d in diagnoses
+    ]
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/diagnoses/{diagnosis_id}")
+def delete_inpatient_diagnosis(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    diagnosis_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Delete a diagnosis from a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_diagnosis import InpatientDiagnosis
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    diagnosis = db.query(InpatientDiagnosis).filter(
+        InpatientDiagnosis.id == diagnosis_id,
+        InpatientDiagnosis.clinical_review_id == clinical_review_id
+    ).first()
+    if not diagnosis:
+        raise HTTPException(status_code=404, detail="Diagnosis not found")
+    
+    db.delete(diagnosis)
+    db.commit()
+    return None
+
+
+# Inpatient Prescription endpoints
+class InpatientPrescriptionCreate(BaseModel):
+    clinical_review_id: int
+    medicine_code: str
+    medicine_name: str
+    dose: Optional[str] = None
+    unit: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    instructions: Optional[str] = None
+    quantity: int = 0
+    unparsed: Optional[str] = None
+
+
+@router.post("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions")
+def create_inpatient_prescription(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    prescription_data: InpatientPrescriptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Add a prescription to a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_prescription import InpatientPrescription
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    # Get frequency value from mapping
+    frequency_value = None
+    if prescription_data.frequency:
+        frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
+    
+    prescription = InpatientPrescription(
+        clinical_review_id=clinical_review_id,
+        medicine_code=prescription_data.medicine_code,
+        medicine_name=prescription_data.medicine_name,
+        dose=prescription_data.dose,
+        unit=prescription_data.unit,
+        frequency=prescription_data.frequency,
+        frequency_value=frequency_value,
+        duration=prescription_data.duration,
+        instructions=prescription_data.instructions,
+        quantity=prescription_data.quantity,
+        unparsed=prescription_data.unparsed,
+        prescribed_by=current_user.id
+    )
+    
+    db.add(prescription)
+    db.commit()
+    db.refresh(prescription)
+    
+    return {
+        "id": prescription.id,
+        "clinical_review_id": prescription.clinical_review_id,
+        "medicine_code": prescription.medicine_code,
+        "medicine_name": prescription.medicine_name,
+        "dose": prescription.dose,
+        "unit": prescription.unit,
+        "frequency": prescription.frequency,
+        "frequency_value": prescription.frequency_value,
+        "duration": prescription.duration,
+        "instructions": prescription.instructions,
+        "quantity": prescription.quantity,
+        "prescribed_by": prescription.prescribed_by,
+        "created_at": prescription.created_at,
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions")
+def get_inpatient_prescriptions(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all prescriptions for a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_prescription import InpatientPrescription
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    prescriptions = db.query(InpatientPrescription).filter(
+        InpatientPrescription.clinical_review_id == clinical_review_id
+    ).all()
+    
+    return [
+        {
+            "id": p.id,
+            "clinical_review_id": p.clinical_review_id,
+            "medicine_code": p.medicine_code,
+            "medicine_name": p.medicine_name,
+            "dose": p.dose,
+            "unit": p.unit,
+            "frequency": p.frequency,
+            "frequency_value": p.frequency_value,
+            "duration": p.duration,
+            "instructions": p.instructions,
+            "quantity": p.quantity,
+            "prescribed_by": p.prescribed_by,
+            "created_at": p.created_at,
+        }
+        for p in prescriptions
+    ]
+
+
+@router.get("/ward-admissions/{ward_admission_id}/prescriptions")
+def get_all_ward_admission_prescriptions(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all DISPENSED prescriptions for a ward admission (for treatment sheet)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.prescription import Prescription
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    result = []
+    
+    # 1. Get all DISPENSED inpatient prescriptions from clinical reviews
+    clinical_reviews = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).all()
+    
+    if clinical_reviews:
+        clinical_review_ids = [cr.id for cr in clinical_reviews]
+        inpatient_prescriptions = db.query(InpatientPrescription).filter(
+            InpatientPrescription.clinical_review_id.in_(clinical_review_ids),
+            InpatientPrescription.dispensed_by.isnot(None)  # Only dispensed prescriptions
+        ).order_by(InpatientPrescription.created_at.desc()).all()
+        
+        for p in inpatient_prescriptions:
+            result.append({
+                "id": p.id,
+                "clinical_review_id": p.clinical_review_id,
+                "encounter_id": None,  # Not from OPD encounter
+                "medicine_code": p.medicine_code,
+                "medicine_name": p.medicine_name,
+                "dose": p.dose,
+                "unit": p.unit,
+                "frequency": p.frequency,
+                "frequency_value": p.frequency_value,
+                "duration": p.duration,
+                "instructions": p.instructions,
+                "quantity": p.quantity,
+                "prescribed_by": p.prescribed_by,
+                "created_at": p.created_at,
+                "source": "inpatient"  # Mark as inpatient prescription
+            })
+    
+    # 2. Get DISPENSED OPD encounter prescriptions (if encounter_id exists)
+    if ward_admission.encounter_id:
+        opd_prescriptions = db.query(Prescription).filter(
+            Prescription.encounter_id == ward_admission.encounter_id,
+            Prescription.dispensed_by.isnot(None)  # Only dispensed prescriptions
+        ).order_by(Prescription.created_at.desc()).all()
+        
+        for p in opd_prescriptions:
+            result.append({
+                "id": p.id,
+                "clinical_review_id": None,  # Not from clinical review
+                "encounter_id": p.encounter_id,
+                "medicine_code": p.medicine_code,
+                "medicine_name": p.medicine_name,
+                "dose": p.dose,
+                "unit": p.unit,
+                "frequency": p.frequency,
+                "frequency_value": p.frequency_value,
+                "duration": p.duration,
+                "instructions": p.instructions,
+                "quantity": p.quantity,
+                "prescribed_by": p.prescribed_by,
+                "created_at": p.created_at,
+                "source": "opd"  # Mark as OPD prescription
+            })
+    
+    # Sort by created_at descending
+    result.sort(key=lambda x: x.get("created_at") or datetime.min, reverse=True)
+    
+    return result
+
+
+@router.get("/ward-admissions/{ward_admission_id}/diagnoses/all")
+def get_all_inpatient_diagnoses_for_ward_admission(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin", "Nurse", "Doctor", "PA"]))
+):
+    """Get all diagnoses for a ward admission (across all clinical reviews and from OPD encounter)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_diagnosis import InpatientDiagnosis
+    from app.models.diagnosis import Diagnosis
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    result = []
+    
+    # Get OPD diagnoses from the encounter (if encounter exists)
+    if ward_admission.encounter_id:
+        opd_diagnoses = db.query(Diagnosis).filter(
+            Diagnosis.encounter_id == ward_admission.encounter_id
+        ).order_by(Diagnosis.created_at.desc()).all()
+        
+        for d in opd_diagnoses:
+            creator = db.query(User).filter(User.id == d.created_by).first()
+            result.append({
+                "id": d.id,
+                "clinical_review_id": None,  # OPD diagnoses don't have clinical_review_id
+                "icd10": d.icd10,
+                "diagnosis": d.diagnosis,
+                "gdrg_code": d.gdrg_code,
+                "diagnosis_status": d.diagnosis_status,
+                "is_provisional": d.is_provisional,
+                "is_chief": d.is_chief,
+                "created_by": d.created_by,
+                "created_by_name": creator.full_name if creator else "Unknown",
+                "created_at": d.created_at,
+                "source": "opd",  # Flag to indicate this is from OPD encounter
+            })
+    
+    # Get all clinical reviews for this ward admission
+    clinical_reviews = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).all()
+    
+    if clinical_reviews:
+        clinical_review_ids = [cr.id for cr in clinical_reviews]
+        
+        # Get all diagnoses from all clinical reviews
+        inpatient_diagnoses = db.query(InpatientDiagnosis).filter(
+            InpatientDiagnosis.clinical_review_id.in_(clinical_review_ids)
+        ).order_by(InpatientDiagnosis.created_at.desc()).all()
+        
+        for d in inpatient_diagnoses:
+            creator = db.query(User).filter(User.id == d.created_by).first()
+            result.append({
+                "id": d.id,
+                "clinical_review_id": d.clinical_review_id,
+                "icd10": d.icd10,
+                "diagnosis": d.diagnosis,
+                "gdrg_code": d.gdrg_code,
+                "diagnosis_status": d.diagnosis_status,
+                "is_provisional": d.is_provisional,
+                "is_chief": d.is_chief,
+                "created_by": d.created_by,
+                "created_by_name": creator.full_name if creator else "Unknown",
+                "created_at": d.created_at,
+                "source": "inpatient",  # Flag to indicate this is from inpatient clinical review
+            })
+    
+    # Sort all diagnoses by created_at (most recent first)
+    result.sort(key=lambda x: x.get("created_at") or datetime.min, reverse=True)
+    
+    return result
+
+
+@router.get("/ward-admissions/{ward_admission_id}/prescriptions/all")
+def get_all_inpatient_prescriptions_for_pharmacy(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Get ALL inpatient prescriptions for a ward admission (for pharmacy - includes pending, confirmed, and dispensed)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.user import User as UserModel
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    result = []
+    
+    # Get all clinical reviews for this ward admission
+    clinical_reviews = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).all()
+    
+    if not clinical_reviews:
+        return []
+    
+    clinical_review_ids = [cr.id for cr in clinical_reviews]
+    
+    # Get ALL inpatient prescriptions (pending, confirmed, and dispensed)
+    inpatient_prescriptions = db.query(InpatientPrescription).filter(
+        InpatientPrescription.clinical_review_id.in_(clinical_review_ids)
+    ).order_by(InpatientPrescription.created_at.desc()).all()
+    
+    for p in inpatient_prescriptions:
+        # Get prescriber info
+        prescriber = db.query(UserModel).filter(UserModel.id == p.prescribed_by).first()
+        prescriber_name = prescriber.full_name if prescriber else "Unknown"
+        
+        # Get confirmer info if confirmed
+        confirmer_name = None
+        if p.confirmed_by:
+            confirmer = db.query(UserModel).filter(UserModel.id == p.confirmed_by).first()
+            confirmer_name = confirmer.full_name if confirmer else "Unknown"
+        
+        # Get dispenser info if dispensed
+        dispenser_name = None
+        if p.dispensed_by:
+            dispenser = db.query(UserModel).filter(UserModel.id == p.dispensed_by).first()
+            dispenser_name = dispenser.full_name if dispenser else "Unknown"
+        
+        result.append({
+            "id": p.id,
+            "clinical_review_id": p.clinical_review_id,
+            "ward_admission_id": ward_admission.id,
+            "encounter_id": ward_admission.encounter_id,
+            "ward": ward_admission.ward,
+            "medicine_code": p.medicine_code,
+            "medicine_name": p.medicine_name,
+            "dose": p.dose,
+            "unit": p.unit,
+            "frequency": p.frequency,
+            "frequency_value": p.frequency_value,
+            "duration": p.duration,
+            "instructions": p.instructions,
+            "quantity": p.quantity,
+            "prescribed_by": p.prescribed_by,
+            "prescriber_name": prescriber_name,
+            "confirmed_by": p.confirmed_by,
+            "confirmer_name": confirmer_name,
+            "confirmed_at": p.confirmed_at,
+            "dispensed_by": p.dispensed_by,
+            "dispenser_name": dispenser_name,
+            "is_external": bool(p.is_external) if hasattr(p, 'is_external') else False,
+            "created_at": p.created_at,
+            "is_confirmed": p.confirmed_by is not None,
+            "is_dispensed": p.dispensed_by is not None
+        })
+    
+    return result
+
+
+# Treatment Sheet Administration endpoints
+class TreatmentSheetAdministrationCreate(BaseModel):
+    prescription_id: int
+    administration_date: str  # ISO date string
+    administration_time: str  # HH:MM format
+    signature: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.post("/ward-admissions/{ward_admission_id}/treatment-sheet/administrations")
+def create_treatment_administration(
+    ward_admission_id: int,
+    administration_data: TreatmentSheetAdministrationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Record medication administration on treatment sheet"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.prescription import Prescription
+    from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+    from datetime import datetime, date, time
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    # Verify prescription belongs to this ward admission
+    # Check if it's an inpatient prescription
+    inpatient_prescription = db.query(InpatientPrescription).filter(
+        InpatientPrescription.id == administration_data.prescription_id
+    ).first()
+    
+    # Check if it's an OPD prescription
+    opd_prescription = None
+    if not inpatient_prescription:
+        opd_prescription = db.query(Prescription).filter(
+            Prescription.id == administration_data.prescription_id
+        ).first()
+    
+    if not inpatient_prescription and not opd_prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    # Validate prescription belongs to this ward admission
+    if inpatient_prescription:
+        # Check if prescription belongs to a clinical review for this ward admission
+        clinical_review = db.query(InpatientClinicalReview).filter(
+            InpatientClinicalReview.id == inpatient_prescription.clinical_review_id,
+            InpatientClinicalReview.ward_admission_id == ward_admission_id
+        ).first()
+        
+        if not clinical_review:
+            raise HTTPException(status_code=400, detail="Prescription does not belong to this ward admission")
+    elif opd_prescription:
+        # Check if OPD prescription belongs to the encounter for this ward admission
+        if opd_prescription.encounter_id != ward_admission.encounter_id:
+            raise HTTPException(status_code=400, detail="Prescription does not belong to this ward admission's encounter")
+    
+    # Parse date and time
+    try:
+        admin_date = datetime.fromisoformat(administration_data.administration_date).date()
+        time_parts = administration_data.administration_time.split(':')
+        admin_time = time(int(time_parts[0]), int(time_parts[1]))
+    except (ValueError, IndexError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date or time format: {str(e)}")
+    
+    # Determine prescription type
+    prescription_type = "inpatient" if inpatient_prescription else "opd"
+    
+    administration = TreatmentSheetAdministration(
+        ward_admission_id=ward_admission_id,
+        prescription_id=administration_data.prescription_id,
+        prescription_type=prescription_type,
+        administration_date=admin_date,
+        administration_time=admin_time,
+        given_by=current_user.id,
+        signature=administration_data.signature,
+        notes=administration_data.notes
+    )
+    
+    db.add(administration)
+    db.commit()
+    db.refresh(administration)
+    
+    giver = db.query(User).filter(User.id == current_user.id).first()
+    
+    return {
+        "id": administration.id,
+        "ward_admission_id": administration.ward_admission_id,
+        "prescription_id": administration.prescription_id,
+        "administration_date": administration.administration_date.isoformat(),
+        "administration_time": administration.administration_time.strftime("%H:%M"),
+        "given_by": administration.given_by,
+        "given_by_name": giver.full_name if giver else None,
+        "signature": administration.signature,
+        "notes": administration.notes,
+        "created_at": administration.created_at,
+        "message": "Medication administration recorded successfully"
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/treatment-sheet/administrations")
+def get_treatment_administrations(
+    ward_admission_id: int,
+    prescription_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all medication administrations for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    query = db.query(TreatmentSheetAdministration).filter(
+        TreatmentSheetAdministration.ward_admission_id == ward_admission_id
+    )
+    
+    if prescription_id:
+        query = query.filter(TreatmentSheetAdministration.prescription_id == prescription_id)
+    
+    administrations = query.order_by(
+        TreatmentSheetAdministration.administration_date.desc(),
+        TreatmentSheetAdministration.administration_time.desc()
+    ).all()
+    
+    result = []
+    for admin in administrations:
+        giver = db.query(User).filter(User.id == admin.given_by).first()
+        result.append({
+            "id": admin.id,
+            "ward_admission_id": admin.ward_admission_id,
+            "prescription_id": admin.prescription_id,
+            "prescription_type": getattr(admin, 'prescription_type', 'inpatient'),  # Default for backward compatibility
+            "administration_date": admin.administration_date.isoformat(),
+            "administration_time": admin.administration_time.strftime("%H:%M"),
+            "given_by": admin.given_by,
+            "given_by_name": giver.full_name if giver else None,
+            "signature": admin.signature,
+            "notes": admin.notes,
+            "created_at": admin.created_at,
+        })
+    
+    return result
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/treatment-sheet/administrations/{administration_id}")
+def delete_treatment_administration(
+    ward_admission_id: int,
+    administration_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Delete a medication administration record (only by creator or Admin)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    administration = db.query(TreatmentSheetAdministration).filter(
+        TreatmentSheetAdministration.id == administration_id,
+        TreatmentSheetAdministration.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not administration:
+        raise HTTPException(status_code=404, detail="Administration record not found")
+    
+    # Check permissions: user can delete their own record, admin can delete any
+    if current_user.role != "Admin" and administration.given_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own administration records. Admin can delete any record."
+        )
+    
+    db.delete(administration)
+    db.commit()
+    
+    return {"message": "Administration record deleted successfully"}
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions/{prescription_id}")
+def delete_inpatient_prescription(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Delete a prescription from a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_prescription import InpatientPrescription
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    prescription = db.query(InpatientPrescription).filter(
+        InpatientPrescription.id == prescription_id,
+        InpatientPrescription.clinical_review_id == clinical_review_id
+    ).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Prescription not found")
+    
+    db.delete(prescription)
+    db.commit()
+    return None
+
+
+@router.put("/inpatient-prescription/{prescription_id}/confirm")
+def confirm_inpatient_prescription(
+    prescription_id: int,
+    dispense_data: Optional[PrescriptionDispense] = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Confirm an inpatient prescription and add to IPD bill (no payment required)"""
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    prescription = db.query(InpatientPrescription).filter(InpatientPrescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Inpatient prescription not found")
+    
+    if prescription.confirmed_by is not None:
+        raise HTTPException(status_code=400, detail="Prescription has already been confirmed")
+    
+    # Get clinical review and ward admission to access encounter
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == prescription.clinical_review_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.id == clinical_review.ward_admission_id
+    ).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    encounter = ward_admission.encounter
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Update prescription details if provided
+    if dispense_data:
+        if dispense_data.dose is not None:
+            prescription.dose = dispense_data.dose
+        if dispense_data.frequency is not None:
+            prescription.frequency = dispense_data.frequency
+        if dispense_data.duration is not None:
+            prescription.duration = dispense_data.duration
+        if dispense_data.quantity is not None:
+            if dispense_data.quantity <= 0:
+                raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+            prescription.quantity = dispense_data.quantity
+        if dispense_data.instructions is not None:
+            prescription.instructions = dispense_data.instructions
+    
+    # Mark as confirmed
+    prescription.confirmed_by = current_user.id
+    prescription.confirmed_at = datetime.utcnow()
+    
+    # Determine if insured based on encounter CCC number
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    # Get price for the medicine
+    unit_price = get_price_from_all_tables(db, prescription.medicine_code, is_insured_encounter)
+    
+    # Ensure quantity is set
+    if not prescription.quantity or prescription.quantity <= 0:
+        prescription.quantity = 1
+    
+    total_price = unit_price * prescription.quantity
+    
+    # Check if we should add to IPD bill (default is True)
+    add_to_bill = True
+    if dispense_data and hasattr(dispense_data, 'add_to_ipd_bill'):
+        add_to_bill = dispense_data.add_to_ipd_bill if dispense_data.add_to_ipd_bill is not None else True
+    
+    # Add to IPD bill (no payment required - accumulates until discharge)
+    if total_price > 0 and add_to_bill:
+        # Find or create a bill for this encounter
+        existing_bill = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False  # Only use unpaid bills
+        ).first()
+        
+        if existing_bill:
+            # Check if this prescription is already in the bill
+            existing_item = db.query(BillItem).filter(
+                BillItem.bill_id == existing_bill.id,
+                BillItem.item_code == prescription.medicine_code,
+                BillItem.item_name.like(f"%{prescription.medicine_name}%")
+            ).first()
+            
+            if not existing_item:
+                # Add bill item to existing bill
+                bill_item = BillItem(
+                    bill_id=existing_bill.id,
+                    item_code=prescription.medicine_code,
+                    item_name=f"Prescription: {prescription.medicine_name}",
+                    category="product",
+                    quantity=prescription.quantity,
+                    unit_price=unit_price,
+                    total_price=total_price
+                )
+                db.add(bill_item)
+                existing_bill.total_amount += total_price
+        else:
+            # Create new bill
+            bill_number = f"BILL-{random.randint(100000, 999999)}"
+            bill = Bill(
+                encounter_id=encounter.id,
+                bill_number=bill_number,
+                is_insured=is_insured_encounter,
+                total_amount=total_price,
+                created_by=current_user.id
+            )
+            db.add(bill)
+            db.flush()
+            
+            # Create bill item
+            bill_item = BillItem(
+                bill_id=bill.id,
+                item_code=prescription.medicine_code,
+                item_name=f"Prescription: {prescription.medicine_name}",
+                category="product",
+                quantity=prescription.quantity,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+            db.add(bill_item)
+    
+    db.commit()
+    db.refresh(prescription)
+    
+    return {
+        "id": prescription.id,
+        "medicine_code": prescription.medicine_code,
+        "medicine_name": prescription.medicine_name,
+        "confirmed_by": prescription.confirmed_by,
+        "confirmed_at": prescription.confirmed_at,
+        "message": "Inpatient prescription confirmed and added to IPD bill"
+    }
+
+
+@router.put("/inpatient-prescription/{prescription_id}/dispense")
+def dispense_inpatient_prescription(
+    prescription_id: int,
+    dispense_data: Optional[PrescriptionDispense] = Body(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Mark an inpatient prescription as dispensed (no payment check - medications accumulate in IPD bills)"""
+    from app.models.inpatient_prescription import InpatientPrescription
+    
+    prescription = db.query(InpatientPrescription).filter(InpatientPrescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Inpatient prescription not found")
+    
+    if prescription.dispensed_by is not None:
+        raise HTTPException(status_code=400, detail="Prescription has already been dispensed")
+    
+    if prescription.confirmed_by is None:
+        raise HTTPException(status_code=400, detail="Prescription must be confirmed before dispense")
+    
+    # Update prescription fields if provided
+    if dispense_data:
+        if dispense_data.dose is not None:
+            prescription.dose = dispense_data.dose
+        if dispense_data.frequency is not None:
+            prescription.frequency = dispense_data.frequency
+        if dispense_data.duration is not None:
+            prescription.duration = dispense_data.duration
+        if dispense_data.quantity is not None:
+            if dispense_data.quantity <= 0:
+                raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+            prescription.quantity = dispense_data.quantity
+    
+    prescription.dispensed_by = current_user.id
+    prescription.service_date = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(prescription)
+    
+    return {
+        "id": prescription.id,
+        "medicine_code": prescription.medicine_code,
+        "medicine_name": prescription.medicine_name,
+        "dispensed_by": prescription.dispensed_by,
+        "service_date": prescription.service_date,
+        "message": "Inpatient prescription dispensed successfully"
+    }
+
+
+@router.put("/inpatient-prescription/{prescription_id}/return")
+def return_inpatient_prescription(
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Return a dispensed inpatient prescription (undo dispense)"""
+    from app.models.inpatient_prescription import InpatientPrescription
+    
+    prescription = db.query(InpatientPrescription).filter(InpatientPrescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Inpatient prescription not found")
+    
+    if prescription.dispensed_by is None:
+        raise HTTPException(status_code=400, detail="Prescription has not been dispensed")
+    
+    prescription.dispensed_by = None
+    # Don't set service_date to None - it has a NOT NULL constraint
+    # Keep the existing service_date value or update it to current time
+    prescription.service_date = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(prescription)
+    
+    return {
+        "id": prescription.id,
+        "medicine_code": prescription.medicine_code,
+        "medicine_name": prescription.medicine_name,
+        "dispensed_by": None,
+        "service_date": prescription.service_date.isoformat() if prescription.service_date else None,
+        "message": "Inpatient prescription returned successfully"
+    }
+
+
+@router.put("/inpatient-prescription/{prescription_id}/unconfirm")
+def unconfirm_inpatient_prescription(
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Revert a confirmed inpatient prescription back to pending status (undo confirmation)"""
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.bill import Bill, BillItem
+    
+    prescription = db.query(InpatientPrescription).filter(InpatientPrescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Inpatient prescription not found")
+    
+    if prescription.confirmed_by is None:
+        raise HTTPException(status_code=400, detail="Prescription has not been confirmed")
+    
+    # Prevent unconfirming if prescription has been dispensed
+    if prescription.dispensed_by is not None:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot revert a prescription that has already been dispensed. Please return it first."
+        )
+    
+    # Get encounter through clinical review and ward admission
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == prescription.clinical_review_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.id == clinical_review.ward_admission_id
+    ).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    encounter = ward_admission.encounter
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Find and remove the bill item that was created during confirmation
+    unpaid_bills = db.query(Bill).filter(
+        Bill.encounter_id == encounter.id,
+        Bill.is_paid == False
+    ).all()
+    
+    for bill in unpaid_bills:
+        # Find the bill item for this prescription
+        bill_item = db.query(BillItem).filter(
+            BillItem.bill_id == bill.id,
+            BillItem.item_code == prescription.medicine_code,
+            BillItem.item_name.like(f"%{prescription.medicine_name}%")
+        ).first()
+        
+        if bill_item:
+            # Remove the bill item amount from the bill total
+            bill.total_amount -= bill_item.total_price
+            if bill.total_amount < 0:
+                bill.total_amount = 0.0
+            
+            # Delete the bill item
+            db.delete(bill_item)
+            
+            # If bill has no items left and total is 0, delete the bill
+            remaining_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).count()
+            if remaining_items == 0 and bill.total_amount == 0:
+                db.delete(bill)
+    
+    # Clear confirmation fields
+    prescription.confirmed_by = None
+    prescription.confirmed_at = None
+    
+    db.commit()
+    db.refresh(prescription)
+    
+    return {
+        "id": prescription.id,
+        "medicine_code": prescription.medicine_code,
+        "medicine_name": prescription.medicine_name,
+        "confirmed_by": None,
+        "confirmed_at": None,
+        "message": "Inpatient prescription unconfirmed successfully"
+    }
+
+
+@router.get("/ward-admissions/patient/{card_number}")
+def get_ward_admissions_by_patient_card(
+    card_number: str,
+    include_discharged: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Billing", "Admin", "Nurse", "Doctor", "PA", "Records"]))
+):
+    """Get ward admissions for a patient by card number. Set include_discharged=True to include discharged admissions."""
+    from app.models.ward_admission import WardAdmission
+    from app.models.patient import Patient
+    
+    # Verify patient exists
+    patient = db.query(Patient).filter(Patient.card_number == card_number).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Get all ward admissions for this patient
+    patient_encounters = db.query(Encounter).filter(
+        Encounter.patient_id == patient.id
+    ).all()
+    
+    if not patient_encounters:
+        return []
+    
+    encounter_ids = [e.id for e in patient_encounters]
+    
+    query = db.query(WardAdmission).filter(
+        WardAdmission.encounter_id.in_(encounter_ids)
+    )
+    
+    # Filter by discharged status if not including discharged
+    if not include_discharged:
+        query = query.filter(WardAdmission.discharged_at.is_(None))
+    
+    ward_admissions = query.order_by(WardAdmission.admitted_at.desc()).all()
+    
+    result = []
+    for wa in ward_admissions:
+        encounter = wa.encounter
+        if not encounter:
+            continue
+        
+        result.append({
+            "id": wa.id,
+            "encounter_id": wa.encounter_id,
+            "ward": wa.ward,
+            "bed_id": wa.bed_id,
+            "bed_number": wa.bed.bed_number if wa.bed else None,
+            "admitted_at": wa.admitted_at,
+            "admission_notes": wa.admission_notes,
+            "discharged_at": wa.discharged_at,
+            "discharged_by": wa.discharged_by,
+            "encounter_created_at": encounter.created_at,
+            "encounter_department": encounter.department,
+        })
+    
+    return result
+
+
+@router.get("/inpatient-prescription/patient/{card_number}")
+def get_inpatient_prescriptions_by_patient_card(
+    card_number: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Get all inpatient prescriptions for a patient by card number"""
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.patient import Patient
+    from app.models.user import User as UserModel
+    
+    # Verify patient exists
+    patient = db.query(Patient).filter(Patient.card_number == card_number).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Get all ward admissions for this patient
+    # First get encounters for this patient, then get ward admissions
+    patient_encounters = db.query(Encounter).filter(
+        Encounter.patient_id == patient.id
+    ).all()
+    
+    if not patient_encounters:
+        return []
+    
+    encounter_ids = [e.id for e in patient_encounters]
+    
+    ward_admissions = db.query(WardAdmission).filter(
+        WardAdmission.encounter_id.in_(encounter_ids),
+        WardAdmission.discharged_at.is_(None)  # Only active admissions
+    ).all()
+    
+    if not ward_admissions:
+        return []
+    
+    ward_admission_ids = [wa.id for wa in ward_admissions]
+    
+    # Get all clinical reviews for these ward admissions
+    clinical_reviews = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.ward_admission_id.in_(ward_admission_ids)
+    ).all()
+    
+    if not clinical_reviews:
+        return []
+    
+    clinical_review_ids = [cr.id for cr in clinical_reviews]
+    
+    # Get all inpatient prescriptions for these clinical reviews
+    prescriptions = db.query(InpatientPrescription).filter(
+        InpatientPrescription.clinical_review_id.in_(clinical_review_ids)
+    ).order_by(InpatientPrescription.created_at.desc()).all()
+    
+    result = []
+    for p in prescriptions:
+        clinical_review = next((cr for cr in clinical_reviews if cr.id == p.clinical_review_id), None)
+        if not clinical_review:
+            continue
+        
+        ward_admission = next((wa for wa in ward_admissions if wa.id == clinical_review.ward_admission_id), None)
+        if not ward_admission:
+            continue
+        
+        # Get prescriber info
+        prescriber = db.query(UserModel).filter(UserModel.id == p.prescribed_by).first()
+        prescriber_name = prescriber.full_name if prescriber else "Unknown"
+        
+        # Get confirmer info if confirmed
+        confirmer_name = None
+        if p.confirmed_by:
+            confirmer = db.query(UserModel).filter(UserModel.id == p.confirmed_by).first()
+            confirmer_name = confirmer.full_name if confirmer else "Unknown"
+        
+        # Get dispenser info if dispensed
+        dispenser_name = None
+        if p.dispensed_by:
+            dispenser = db.query(UserModel).filter(UserModel.id == p.dispensed_by).first()
+            dispenser_name = dispenser.full_name if dispenser else "Unknown"
+        
+        result.append({
+            "id": p.id,
+            "prescription_type": "inpatient",
+            "clinical_review_id": p.clinical_review_id,
+            "ward_admission_id": ward_admission.id,
+            "encounter_id": ward_admission.encounter_id,
+            "ward": ward_admission.ward,
+            "medicine_code": p.medicine_code,
+            "medicine_name": p.medicine_name,
+            "dose": p.dose,
+            "unit": p.unit,
+            "frequency": p.frequency,
+            "frequency_value": p.frequency_value,
+            "duration": p.duration,
+            "instructions": p.instructions,
+            "quantity": p.quantity,
+            "prescribed_by": p.prescribed_by,
+            "prescriber_name": prescriber_name,
+            "confirmed_by": p.confirmed_by,
+            "confirmer_name": confirmer_name,
+            "confirmed_at": p.confirmed_at,
+            "dispensed_by": p.dispensed_by,
+            "dispenser_name": dispenser_name,
+            "is_external": bool(p.is_external) if hasattr(p, 'is_external') else False,
+            "created_at": p.created_at,
+            "is_confirmed": p.confirmed_by is not None,
+            "is_dispensed": p.dispensed_by is not None
+        })
+    
+    return result
+
+
+# Inpatient Investigation endpoints
+class InpatientInvestigationCreate(BaseModel):
+    clinical_review_id: int
+    service_type: Optional[str] = None
+    gdrg_code: str
+    procedure_name: Optional[str] = None
+    investigation_type: str  # lab, scan, xray
+    notes: Optional[str] = None
+    price: Optional[str] = None
+
+
+@router.post("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/investigations")
+def create_inpatient_investigation(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    investigation_data: InpatientInvestigationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Add an investigation to a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    investigation = InpatientInvestigation(
+        clinical_review_id=clinical_review_id,
+        service_type=investigation_data.service_type,
+        gdrg_code=investigation_data.gdrg_code,
+        procedure_name=investigation_data.procedure_name,
+        investigation_type=investigation_data.investigation_type,
+        notes=investigation_data.notes,
+        price=investigation_data.price,
+        requested_by=current_user.id
+    )
+    
+    db.add(investigation)
+    db.commit()
+    db.refresh(investigation)
+    
+    return {
+        "id": investigation.id,
+        "clinical_review_id": investigation.clinical_review_id,
+        "service_type": investigation.service_type,
+        "gdrg_code": investigation.gdrg_code,
+        "procedure_name": investigation.procedure_name,
+        "investigation_type": investigation.investigation_type,
+        "notes": investigation.notes,
+        "price": investigation.price,
+        "status": investigation.status,
+        "requested_by": investigation.requested_by,
+        "created_at": investigation.created_at,
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/investigations")
+def get_inpatient_investigations(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all investigations for a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    investigations = db.query(InpatientInvestigation).filter(
+        InpatientInvestigation.clinical_review_id == clinical_review_id
+    ).all()
+    
+    return [
+        {
+            "id": i.id,
+            "clinical_review_id": i.clinical_review_id,
+            "service_type": i.service_type,
+            "gdrg_code": i.gdrg_code,
+            "procedure_name": i.procedure_name,
+            "investigation_type": i.investigation_type,
+            "notes": i.notes,
+            "price": i.price,
+            "status": i.status,
+            "requested_by": i.requested_by,
+            "created_at": i.created_at,
+        }
+        for i in investigations
+    ]
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/investigations/{investigation_id}")
+def delete_inpatient_investigation(
+    ward_admission_id: int,
+    clinical_review_id: int,
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Delete an investigation from a clinical review"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id,
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    investigation = db.query(InpatientInvestigation).filter(
+        InpatientInvestigation.id == investigation_id,
+        InpatientInvestigation.clinical_review_id == clinical_review_id
+    ).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    db.delete(investigation)
+    db.commit()
+    return None
+
+
+@router.get("/inpatient-investigations/by-type")
+def get_inpatient_investigations_by_type(
+    investigation_type: str,  # lab, scan, xray
+    status: Optional[str] = None,  # requested, confirmed, completed, cancelled
+    search: Optional[str] = None,  # Search by card number or patient name
+    date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+):
+    """
+    Get IPD investigations by type with filters
+    Used by Lab, Scan, and X-ray pages to show IPD service requests
+    """
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.patient import Patient
+    from app.models.encounter import Encounter
+    from datetime import datetime, date as date_class
+    
+    # Validate investigation type
+    valid_types = ["lab", "scan", "xray"]
+    if investigation_type.lower() not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid investigation_type. Must be one of: {', '.join(valid_types)}")
+    
+    # Build base query with joins and eager loading
+    from sqlalchemy.orm import joinedload
+    
+    query = (
+        db.query(InpatientInvestigation)
+        .options(
+            joinedload(InpatientInvestigation.clinical_review)
+            .joinedload(InpatientClinicalReview.ward_admission)
+            .joinedload(WardAdmission.encounter)
+            .joinedload(Encounter.patient),
+            joinedload(InpatientInvestigation.clinical_review)
+            .joinedload(InpatientClinicalReview.ward_admission)
+            .joinedload(WardAdmission.bed)
+        )
+        .join(InpatientClinicalReview, InpatientInvestigation.clinical_review_id == InpatientClinicalReview.id)
+        .join(WardAdmission, InpatientClinicalReview.ward_admission_id == WardAdmission.id)
+        .join(Encounter, WardAdmission.encounter_id == Encounter.id)
+        .join(Patient, Encounter.patient_id == Patient.id)
+    )
+    
+    # Filter by investigation type
+    query = query.filter(InpatientInvestigation.investigation_type == investigation_type.lower())
+    
+    # Filter by status
+    if status:
+        valid_statuses = ["requested", "confirmed", "completed", "cancelled"]
+        if status.lower() not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+        query = query.filter(InpatientInvestigation.status == status.lower())
+    
+    # Filter by date (optional - if not provided, show all)
+    if date:
+        try:
+            filter_date = datetime.strptime(date, "%Y-%m-%d").date()
+            # Filter by date (using investigation created_at date)
+            # Use date-only comparison to avoid timezone/time precision issues
+            # For SQLite, use func.date() to extract date from datetime
+            from sqlalchemy import func
+            print(f"DEBUG: Filtering by date {date}, filter_date={filter_date}")
+            # Compare only the date part, ignoring time
+            query = query.filter(func.date(InpatientInvestigation.created_at) == filter_date)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}")
+    else:
+        print(f"DEBUG: No date filter provided - showing all investigations")
+    # If no date provided, don't filter by date (show all investigations)
+    
+    # Search by card number or patient name
+    if search:
+        search_term = f"%{search.strip()}%"
+        from sqlalchemy import or_
+        query = query.filter(
+            or_(
+                Patient.card_number.ilike(search_term),
+                Patient.name.ilike(search_term),
+                Patient.surname.ilike(search_term)
+            )
+        )
+    
+    # Order by created_at descending (newest first)
+    query = query.order_by(InpatientInvestigation.created_at.desc())
+    
+    # Debug: Print the query and count before executing
+    try:
+        # Get count before processing
+        count = query.count()
+        print(f"DEBUG get_inpatient_investigations_by_type: Query will return {count} IPD investigations")
+        print(f"DEBUG Filters: investigation_type='{investigation_type}', status={status}, date={date}, search={search}")
+        
+        # Also check total investigations of this type without filters
+        total_count = db.query(InpatientInvestigation).filter(
+            InpatientInvestigation.investigation_type == investigation_type.lower()
+        ).count()
+        print(f"DEBUG Total {investigation_type} investigations in database: {total_count}")
+    except Exception as e:
+        import traceback
+        print(f"DEBUG get_inpatient_investigations_by_type: Error counting investigations: {str(e)}")
+        print(traceback.format_exc())
+    
+    investigations = query.all()
+    print(f"DEBUG get_inpatient_investigations_by_type: Retrieved {len(investigations)} investigations from database")
+    
+    # Debug: Print first few investigation details
+    if len(investigations) > 0:
+        for i, inv in enumerate(investigations[:3]):  # Print first 3
+            from datetime import date as date_type
+            inv_date = inv.created_at.date() if inv.created_at else None
+            print(f"DEBUG Investigation {i+1}: id={inv.id}, type={inv.investigation_type}, status={inv.status}, created_at={inv.created_at}, date_part={inv_date}")
+    else:
+        # If no investigations found, check what's in the database
+        all_inv = db.query(InpatientInvestigation).filter(
+            InpatientInvestigation.investigation_type == investigation_type.lower()
+        ).limit(5).all()
+        print(f"DEBUG: No investigations matched filters. Sample investigations in DB:")
+        for inv in all_inv:
+            inv_date = inv.created_at.date() if inv.created_at else None
+            print(f"  - id={inv.id}, type={inv.investigation_type}, status={inv.status}, created_at={inv.created_at}, date_part={inv_date}")
+    
+    # Build response with patient info and user names
+    result = []
+    for inv in investigations:
+        try:
+            # Get user names
+            confirmed_by_name = None
+            if inv.confirmed_by:
+                confirmed_user = db.query(User).filter(User.id == inv.confirmed_by).first()
+                confirmed_by_name = confirmed_user.full_name if confirmed_user else None
+            
+            completed_by_name = None
+            if inv.completed_by:
+                completed_user = db.query(User).filter(User.id == inv.completed_by).first()
+                completed_by_name = completed_user.full_name if completed_user else None
+            
+            # Access relationships - they should be loaded by the joins
+            clinical_review = inv.clinical_review
+            ward_admission = clinical_review.ward_admission if clinical_review else None
+            encounter = ward_admission.encounter if ward_admission else None
+            patient = encounter.patient if encounter else None
+            
+            # Build patient name safely
+            patient_name = "Unknown"
+            patient_card_number = None
+            ward = None
+            bed_number = None
+            encounter_id = None
+            ward_admission_id = None
+            
+            if patient:
+                patient_name = f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown"
+                patient_card_number = patient.card_number
+            
+            if ward_admission:
+                ward = ward_admission.ward
+                # Get bed number from bed relationship if bed exists
+                bed_number = ward_admission.bed.bed_number if ward_admission.bed else None
+                encounter_id = ward_admission.encounter_id
+                ward_admission_id = ward_admission.id
+            
+            inv_dict = {
+                "id": inv.id,
+                "clinical_review_id": inv.clinical_review_id,
+                "ward_admission_id": ward_admission_id,
+                "encounter_id": encounter_id,
+                "gdrg_code": inv.gdrg_code,
+                "procedure_name": inv.procedure_name,
+                "investigation_type": inv.investigation_type,
+                "notes": inv.notes,
+                "price": inv.price,
+                "status": inv.status,
+                "confirmed_by": inv.confirmed_by,
+                "completed_by": inv.completed_by,
+                "cancelled_by": inv.cancelled_by,
+                "cancellation_reason": inv.cancellation_reason,
+                "cancelled_at": inv.cancelled_at,
+                "created_at": inv.created_at,
+                "patient_name": patient_name,
+                "patient_card_number": patient_card_number,
+                "encounter_date": inv.created_at,  # Use investigation created_at (request date) instead of encounter date
+                "confirmed_by_name": confirmed_by_name,
+                "completed_by_name": completed_by_name,
+                "ward": ward,
+                "bed_number": bed_number,
+                "source": "inpatient",  # Mark as IPD
+                "prescription_type": "inpatient"  # For compatibility
+            }
+            result.append(inv_dict)
+        except Exception as e:
+            # Log error but continue processing other investigations
+            import traceback
+            inv_id = inv.id if inv and hasattr(inv, 'id') else 'unknown'
+            print(f"Error processing IPD investigation {inv_id}: {str(e)}")
+            print(traceback.format_exc())
+            # Skip this investigation
+            continue
+    
+    return result
+
+
+@router.get("/inpatient-investigation/{investigation_id}")
+def get_inpatient_investigation(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head", "Doctor", "PA", "Nurse"]))
+):
+    """Get a single IPD investigation by ID"""
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    from sqlalchemy.orm import joinedload
+    
+    investigation = (
+        db.query(InpatientInvestigation)
+        .options(
+            joinedload(InpatientInvestigation.clinical_review)
+            .joinedload(InpatientClinicalReview.ward_admission)
+            .joinedload(WardAdmission.encounter)
+            .joinedload(Encounter.patient),
+            joinedload(InpatientInvestigation.clinical_review)
+            .joinedload(InpatientClinicalReview.ward_admission)
+            .joinedload(WardAdmission.bed)
+        )
+        .filter(InpatientInvestigation.id == investigation_id)
+        .first()
+    )
+    
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Get user names
+    confirmed_by_name = None
+    if investigation.confirmed_by:
+        confirmed_user = db.query(User).filter(User.id == investigation.confirmed_by).first()
+        confirmed_by_name = confirmed_user.full_name if confirmed_user else None
+    
+    completed_by_name = None
+    if investigation.completed_by:
+        completed_user = db.query(User).filter(User.id == investigation.completed_by).first()
+        completed_by_name = completed_user.full_name if completed_user else None
+    
+    # Access relationships
+    clinical_review = investigation.clinical_review
+    ward_admission = clinical_review.ward_admission if clinical_review else None
+    encounter = ward_admission.encounter if ward_admission else None
+    patient = encounter.patient if encounter else None
+    
+    # Build patient name safely
+    patient_name = "Unknown"
+    patient_card_number = None
+    ward = None
+    bed_number = None
+    encounter_id = None
+    ward_admission_id = None
+    
+    if patient:
+        patient_name = f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown"
+        patient_card_number = patient.card_number
+    
+    if ward_admission:
+        ward = ward_admission.ward
+        bed_number = ward_admission.bed.bed_number if ward_admission.bed else None
+        encounter_id = ward_admission.encounter_id
+        ward_admission_id = ward_admission.id
+    
+    return {
+        "id": investigation.id,
+        "clinical_review_id": investigation.clinical_review_id,
+        "ward_admission_id": ward_admission_id,
+        "encounter_id": encounter_id,
+        "gdrg_code": investigation.gdrg_code,
+        "procedure_name": investigation.procedure_name,
+        "investigation_type": investigation.investigation_type,
+        "notes": investigation.notes,
+        "price": investigation.price,
+        "status": investigation.status,
+        "confirmed_by": investigation.confirmed_by,
+        "completed_by": investigation.completed_by,
+        "cancelled_by": investigation.cancelled_by,
+        "cancellation_reason": investigation.cancellation_reason,
+        "cancelled_at": investigation.cancelled_at,
+        "created_at": investigation.created_at,
+        "patient_name": patient_name,
+        "patient_card_number": patient_card_number,
+        "encounter_date": investigation.created_at,
+        "confirmed_by_name": confirmed_by_name,
+        "completed_by_name": completed_by_name,
+        "ward": ward,
+        "bed_number": bed_number,
+        "source": "inpatient",
+        "prescription_type": "inpatient"
+    }
+
+
+class InpatientInvestigationConfirm(BaseModel):
+    add_to_ipd_bill: bool = True
+
+
+@router.put("/inpatient-investigation/{investigation_id}/confirm")
+def confirm_inpatient_investigation(
+    investigation_id: int,
+    confirm_data: InpatientInvestigationConfirm = Body(default=InpatientInvestigationConfirm()),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+):
+    """Confirm an IPD investigation and optionally add to IPD bill"""
+    from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    if investigation.status != InpatientInvestigationStatus.REQUESTED.value:
+        raise HTTPException(status_code=400, detail=f"Investigation is already {investigation.status}")
+    
+    # Get clinical review and ward admission
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == investigation.clinical_review_id
+    ).first()
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.id == clinical_review.ward_admission_id
+    ).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Update investigation status
+    investigation.status = InpatientInvestigationStatus.CONFIRMED.value
+    investigation.confirmed_by = current_user.id
+    
+    # Get price
+    is_insured_encounter = bool(encounter.ccc_number)
+    unit_price = 0.0
+    if investigation.gdrg_code:
+        try:
+            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter)
+        except Exception as e:
+            print(f"WARNING confirm_inpatient_investigation: Error getting price: {str(e)}")
+    
+    # If no price from price list, try to use investigation.price
+    if unit_price == 0.0 and investigation.price:
+        try:
+            unit_price = float(investigation.price)
+        except (ValueError, TypeError):
+            pass
+    
+    total_price = unit_price
+    
+    # Add to IPD bill if requested and price > 0
+    add_to_bill = confirm_data.add_to_ipd_bill if confirm_data.add_to_ipd_bill is not None else True
+    if total_price > 0 and add_to_bill:
+        # Find or create a bill for this encounter
+        existing_bill = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False  # Only use unpaid bills
+        ).first()
+        
+        if existing_bill:
+            # Check if this investigation is already in the bill
+            existing_item = db.query(BillItem).filter(
+                BillItem.bill_id == existing_bill.id,
+                BillItem.item_code == investigation.gdrg_code,
+                BillItem.item_name.like(f"%{investigation.procedure_name}%")
+            ).first()
+            
+            if not existing_item:
+                # Add bill item to existing bill
+                bill_item = BillItem(
+                    bill_id=existing_bill.id,
+                    item_code=investigation.gdrg_code or "MISC",
+                    item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                    category=investigation.investigation_type or "procedure",
+                    quantity=1,
+                    unit_price=unit_price,
+                    total_price=total_price
+                )
+                db.add(bill_item)
+                existing_bill.total_amount += total_price
+        else:
+            # Create new bill
+            bill_number = f"BILL-{random.randint(100000, 999999)}"
+            bill = Bill(
+                encounter_id=encounter.id,
+                bill_number=bill_number,
+                is_insured=is_insured_encounter,
+                total_amount=total_price,
+                created_by=current_user.id
+            )
+            db.add(bill)
+            db.flush()
+            
+            # Create bill item
+            bill_item = BillItem(
+                bill_id=bill.id,
+                item_code=investigation.gdrg_code or "MISC",
+                item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                category=investigation.investigation_type or "procedure",
+                quantity=1,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+            db.add(bill_item)
+    
+    db.commit()
+    db.refresh(investigation)
+    
+    return {
+        "investigation_id": investigation.id,
+        "status": investigation.status,
+        "message": "IPD investigation confirmed successfully"
+    }
+
+
+@router.put("/inpatient-investigation/{investigation_id}/revert-status")
+def revert_inpatient_investigation_status(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab Head", "Scan Head", "Xray Head", "Admin"]))
+):
+    """Revert IPD investigation status from completed to confirmed (to allow editing results) - Admin and Head roles only"""
+    from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
+    
+    investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Only allow reverting from completed to confirmed
+    if investigation.status != InpatientInvestigationStatus.COMPLETED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot revert status. Current status is '{investigation.status}'. Only completed investigations can be reverted."
+        )
+    
+    # Verify investigation type matches (each Head can only revert their own investigation type)
+    if current_user.role == "Lab Head" and investigation.investigation_type != "lab":
+        raise HTTPException(
+            status_code=403,
+            detail="Lab Head can only revert lab investigations"
+        )
+    elif current_user.role == "Scan Head" and investigation.investigation_type != "scan":
+        raise HTTPException(
+            status_code=403,
+            detail="Scan Head can only revert scan investigations"
+        )
+    elif current_user.role == "Xray Head" and investigation.investigation_type != "xray":
+        raise HTTPException(
+            status_code=403,
+            detail="Xray Head can only revert xray investigations"
+        )
+    
+    # Revert status to confirmed
+    investigation.status = InpatientInvestigationStatus.CONFIRMED.value
+    # Clear completed_by when reverting
+    investigation.completed_by = None
+    
+    db.commit()
+    db.refresh(investigation)
+    
+    return {"investigation_id": investigation.id, "status": investigation.status, "message": "Status reverted to confirmed"}
+
+
+class InpatientInvestigationRevertToRequested(BaseModel):
+    """Model for reverting IPD investigation from confirmed to requested"""
+    reason: str  # Reason for reverting (required)
+
+
+@router.put("/inpatient-investigation/{investigation_id}/revert-to-requested")
+def revert_inpatient_investigation_to_requested(
+    investigation_id: int,
+    revert_data: InpatientInvestigationRevertToRequested,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Revert IPD investigation status from confirmed to requested - Admin only"""
+    from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
+    from datetime import datetime
+    
+    investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Only allow reverting from confirmed to requested
+    if investigation.status != InpatientInvestigationStatus.CONFIRMED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot revert status. Current status is '{investigation.status}'. Only confirmed investigations can be reverted to requested."
+        )
+    
+    # Revert status to requested
+    investigation.status = InpatientInvestigationStatus.REQUESTED.value
+    # Clear confirmed_by when reverting
+    investigation.confirmed_by = None
+    # Store revert reason in cancellation_reason field (reusing existing field)
+    investigation.cancellation_reason = f"Reverted to requested by Admin: {revert_data.reason}"
+    investigation.cancelled_by = current_user.id
+    investigation.cancelled_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(investigation)
+    
+    return {"investigation_id": investigation.id, "status": investigation.status, "message": "Status reverted to requested"}
+
+
+class BulkConfirmInpatientInvestigations(BaseModel):
+    """Model for bulk confirming multiple IPD investigations"""
+    investigation_ids: List[int]
+    add_to_ipd_bill: bool = True  # Whether to add to IPD bill
+
+
+# Inpatient Surgery endpoints
+class InpatientSurgeryCreate(BaseModel):
+    """Request model for creating an inpatient surgery"""
+    g_drg_code: Optional[str] = None
+    surgery_name: str
+    surgery_type: Optional[str] = None
+    surgeon_name: Optional[str] = None
+    assistant_surgeon: Optional[str] = None
+    anesthesia_type: Optional[str] = None
+    surgery_date: Optional[datetime] = None
+    surgery_notes: Optional[str] = None
+
+
+class InpatientSurgeryUpdate(BaseModel):
+    """Request model for updating/completing an inpatient surgery"""
+    surgery_name: Optional[str] = None
+    surgery_type: Optional[str] = None
+    surgeon_name: Optional[str] = None
+    assistant_surgeon: Optional[str] = None
+    anesthesia_type: Optional[str] = None
+    surgery_date: Optional[datetime] = None
+    surgery_notes: Optional[str] = None
+    operative_notes: Optional[str] = None
+    post_operative_notes: Optional[str] = None
+    complications: Optional[str] = None
+    is_completed: Optional[bool] = None
+
+
+class InpatientSurgeryResponse(BaseModel):
+    """Response model for inpatient surgery"""
+    id: int
+    ward_admission_id: int
+    encounter_id: int
+    g_drg_code: Optional[str]
+    surgery_name: str
+    surgery_type: Optional[str]
+    surgeon_name: Optional[str]
+    assistant_surgeon: Optional[str]
+    anesthesia_type: Optional[str]
+    surgery_date: Optional[datetime]
+    surgery_notes: Optional[str]
+    operative_notes: Optional[str]
+    post_operative_notes: Optional[str]
+    complications: Optional[str]
+    is_completed: bool
+    completed_at: Optional[datetime]
+    completed_by: Optional[int]
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/ward-admissions/{ward_admission_id}/surgeries", response_model=InpatientSurgeryResponse, status_code=status.HTTP_201_CREATED)
+def create_inpatient_surgery(
+    ward_admission_id: int,
+    surgery_data: InpatientSurgeryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Create a new surgery record for an inpatient"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    surgery = InpatientSurgery(
+        ward_admission_id=ward_admission_id,
+        encounter_id=ward_admission.encounter_id,
+        g_drg_code=surgery_data.g_drg_code,
+        surgery_name=surgery_data.surgery_name,
+        surgery_type=surgery_data.surgery_type,
+        surgeon_name=surgery_data.surgeon_name,
+        assistant_surgeon=surgery_data.assistant_surgeon,
+        anesthesia_type=surgery_data.anesthesia_type,
+        surgery_date=surgery_data.surgery_date,
+        surgery_notes=surgery_data.surgery_notes,
+        created_by=current_user.id
+    )
+    db.add(surgery)
+    db.commit()
+    db.refresh(surgery)
+    
+    return surgery
+
+
+@router.get("/ward-admissions/{ward_admission_id}/surgeries", response_model=List[InpatientSurgeryResponse])
+def get_inpatient_surgeries(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all surgeries for a ward admission"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    surgeries = db.query(InpatientSurgery).filter(
+        InpatientSurgery.ward_admission_id == ward_admission_id
+    ).order_by(InpatientSurgery.created_at.desc()).all()
+    
+    return surgeries
+
+
+@router.get("/ward-admissions/{ward_admission_id}/surgeries/{surgery_id}", response_model=InpatientSurgeryResponse)
+def get_inpatient_surgery(
+    ward_admission_id: int,
+    surgery_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get a single surgery by ID"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    surgery = db.query(InpatientSurgery).filter(
+        InpatientSurgery.id == surgery_id,
+        InpatientSurgery.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not surgery:
+        raise HTTPException(status_code=404, detail="Surgery not found")
+    
+    return surgery
+
+
+@router.put("/ward-admissions/{ward_admission_id}/surgeries/{surgery_id}", response_model=InpatientSurgeryResponse)
+def update_inpatient_surgery(
+    ward_admission_id: int,
+    surgery_id: int,
+    surgery_data: InpatientSurgeryUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Update a surgery record (including completion)"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    from datetime import datetime
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    surgery = db.query(InpatientSurgery).filter(
+        InpatientSurgery.id == surgery_id,
+        InpatientSurgery.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not surgery:
+        raise HTTPException(status_code=404, detail="Surgery not found")
+    
+    # Track if surgery is being completed (was False, now True)
+    was_completed = surgery.is_completed
+    is_being_completed = False
+    
+    # Update fields
+    update_data = surgery_data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(surgery, field, value)
+    
+    # Handle completion
+    if surgery_data.is_completed is not None:
+        surgery.is_completed = surgery_data.is_completed
+        if surgery_data.is_completed and not surgery.completed_at:
+            surgery.completed_at = datetime.utcnow()
+            surgery.completed_by = current_user.id
+            # Check if surgery is being completed (was not completed before)
+            if not was_completed:
+                is_being_completed = True
+        elif not surgery_data.is_completed:
+            surgery.completed_at = None
+            surgery.completed_by = None
+    
+    surgery.updated_at = datetime.utcnow()
+    
+    # If surgery is being completed, create bill item
+    if is_being_completed and surgery.g_drg_code:
+        try:
+            # Get encounter to determine insurance status
+            encounter = db.query(Encounter).filter(Encounter.id == surgery.encounter_id).first()
+            if encounter:
+                is_insured = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+                
+                # Find or create an unpaid bill for this encounter
+                bill = db.query(Bill).filter(
+                    Bill.encounter_id == encounter.id,
+                    Bill.is_paid == False
+                ).first()
+                
+                if not bill:
+                    # Create new bill
+                    bill = Bill(
+                        encounter_id=encounter.id,
+                        patient_id=encounter.patient_id,
+                        is_insured=is_insured,
+                        total_amount=0.0,
+                        created_by=current_user.id
+                    )
+                    db.add(bill)
+                    db.flush()
+                
+                # Check if surgery item already exists for this surgery
+                existing_surgery_item = db.query(BillItem).filter(
+                    BillItem.bill_id == bill.id,
+                    BillItem.item_code == surgery.g_drg_code,
+                    BillItem.category == "surgery"
+                ).first()
+                
+                if not existing_surgery_item:
+                    # Get surgery price from SurgeryPrice table only (exclude procedure/day surgery prices)
+                    from app.services.price_list_service_v2 import get_surgery_price
+                    surgery_price = get_surgery_price(
+                        db,
+                        surgery.g_drg_code,
+                        is_insured=is_insured,
+                        service_type=encounter.department if encounter.department else None
+                    )
+                    
+                    if surgery_price > 0:
+                        # Create bill item for surgery
+                        surgery_item = BillItem(
+                            bill_id=bill.id,
+                            item_code=surgery.g_drg_code,
+                            item_name=f"Surgery: {surgery.surgery_name}",
+                            category="surgery",
+                            quantity=1.0,
+                            unit_price=surgery_price,
+                            total_price=surgery_price
+                        )
+                        db.add(surgery_item)
+                        bill.total_amount += surgery_price
+        except Exception as e:
+            # Log error but don't fail surgery update
+            import logging
+            logging.error(f"Failed to create bill item for completed surgery {surgery.id}: {str(e)}")
+            # Continue with surgery update even if billing fails
+    
+    db.commit()
+    db.refresh(surgery)
+    
+    return surgery
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/surgeries/{surgery_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_inpatient_surgery(
+    ward_admission_id: int,
+    surgery_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete a surgery record and its corresponding bill item if billed - Admin only"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    from app.models.bill import Bill, BillItem
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    surgery = db.query(InpatientSurgery).filter(
+        InpatientSurgery.id == surgery_id,
+        InpatientSurgery.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not surgery:
+        raise HTTPException(status_code=404, detail="Surgery not found")
+    
+    # If surgery has a g_drg_code, find and delete corresponding bill item
+    if surgery.g_drg_code:
+        # Find bill items for this surgery (by g_drg_code and category "surgery")
+        bill_items = db.query(BillItem).join(Bill).filter(
+            Bill.encounter_id == surgery.encounter_id,
+            BillItem.item_code == surgery.g_drg_code,
+            BillItem.category == "surgery"
+        ).all()
+        
+        for bill_item in bill_items:
+            bill = db.query(Bill).filter(Bill.id == bill_item.bill_id).first()
+            if bill:
+                # Subtract the bill item total from bill total
+                bill.total_amount -= bill_item.total_price
+                # Ensure bill total doesn't go negative
+                if bill.total_amount < 0:
+                    bill.total_amount = 0.0
+            db.delete(bill_item)
+    
+    # Delete the surgery record
+    db.delete(surgery)
+    db.commit()
+    return None
+
+# Additional Services endpoints (Admin-defined services for IPD)
+class AdditionalServiceCreate(BaseModel):
+    service_name: str
+    description: Optional[str] = None
+    price_per_unit: float
+    unit_type: str = "hour"  # "hour", "day", "unit"
+
+
+class AdditionalServiceUpdate(BaseModel):
+    service_name: Optional[str] = None
+    description: Optional[str] = None
+    price_per_unit: Optional[float] = None
+    unit_type: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class AdditionalServiceResponse(BaseModel):
+    id: int
+    service_name: str
+    description: Optional[str]
+    price_per_unit: float
+    unit_type: str
+    is_active: bool
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/additional-services", response_model=AdditionalServiceResponse, status_code=status.HTTP_201_CREATED)
+def create_additional_service(
+    service_data: AdditionalServiceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Create a new additional service - Admin only"""
+    from app.models.additional_service import AdditionalService
+    
+    # Check if service with same name already exists
+    existing = db.query(AdditionalService).filter(
+        AdditionalService.service_name == service_data.service_name
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Service '{service_data.service_name}' already exists"
+        )
+    
+    service = AdditionalService(
+        service_name=service_data.service_name,
+        description=service_data.description,
+        price_per_unit=service_data.price_per_unit,
+        unit_type=service_data.unit_type,
+        created_by=current_user.id
+    )
+    db.add(service)
+    db.commit()
+    db.refresh(service)
+    
+    return service
+
+
+@router.get("/additional-services", response_model=List[AdditionalServiceResponse])
+def get_additional_services(
+    active_only: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Billing"]))
+):
+    """Get all additional services"""
+    from app.models.additional_service import AdditionalService
+    
+    query = db.query(AdditionalService)
+    
+    if active_only:
+        query = query.filter(AdditionalService.is_active == True)
+    
+    services = query.order_by(AdditionalService.service_name).all()
+    return services
+
+
+@router.get("/additional-services/{service_id}", response_model=AdditionalServiceResponse)
+def get_additional_service(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Billing"]))
+):
+    """Get a single additional service"""
+    from app.models.additional_service import AdditionalService
+    
+    service = db.query(AdditionalService).filter(AdditionalService.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Additional service not found")
+    
+    return service
+
+
+@router.put("/additional-services/{service_id}", response_model=AdditionalServiceResponse)
+def update_additional_service(
+    service_id: int,
+    service_data: AdditionalServiceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update an additional service - Admin only"""
+    from app.models.additional_service import AdditionalService
+    
+    service = db.query(AdditionalService).filter(AdditionalService.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Additional service not found")
+    
+    # Check if service name is being changed and conflicts with existing
+    if service_data.service_name and service_data.service_name != service.service_name:
+        existing = db.query(AdditionalService).filter(
+            AdditionalService.service_name == service_data.service_name,
+            AdditionalService.id != service_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Service '{service_data.service_name}' already exists"
+            )
+    
+    update_data = service_data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(service, field, value)
+    
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(service)
+    
+    return service
+
+
+@router.delete("/additional-services/{service_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_additional_service(
+    service_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete (soft delete) an additional service - Admin only"""
+    from app.models.additional_service import AdditionalService
+    
+    service = db.query(AdditionalService).filter(AdditionalService.id == service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Additional service not found")
+    
+    # Soft delete by setting is_active to False
+    service.is_active = False
+    service.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return None
+
+
+# Inpatient Additional Service Usage endpoints
+class InpatientAdditionalServiceCreate(BaseModel):
+    service_id: int
+    start_time: Optional[datetime] = None  # Defaults to now if not provided
+    notes: Optional[str] = None
+
+
+class InpatientAdditionalServiceStop(BaseModel):
+    end_time: Optional[datetime] = None  # Defaults to now if not provided
+    notes: Optional[str] = None
+
+
+class InpatientAdditionalServiceResponse(BaseModel):
+    id: int
+    ward_admission_id: int
+    encounter_id: int
+    service_id: int
+    service_name: str
+    service_price_per_unit: float
+    service_unit_type: str
+    start_time: datetime
+    end_time: Optional[datetime]
+    units_used: Optional[float]
+    total_cost: Optional[float]
+    is_billed: bool
+    bill_item_id: Optional[int]
+    notes: Optional[str]
+    started_by: int
+    started_by_name: Optional[str]
+    stopped_by: Optional[int]
+    stopped_by_name: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/ward-admissions/{ward_admission_id}/additional-services", response_model=InpatientAdditionalServiceResponse, status_code=status.HTTP_201_CREATED)
+def start_additional_service(
+    ward_admission_id: int,
+    service_data: InpatientAdditionalServiceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Start an additional service for a patient"""
+    from app.models.inpatient_additional_service import InpatientAdditionalService
+    from app.models.additional_service import AdditionalService
+    from app.models.ward_admission import WardAdmission
+    from datetime import datetime
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    service = db.query(AdditionalService).filter(
+        AdditionalService.id == service_data.service_id,
+        AdditionalService.is_active == True
+    ).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Additional service not found or inactive")
+    
+    start_time = service_data.start_time or datetime.utcnow()
+    
+    patient_service = InpatientAdditionalService(
+        ward_admission_id=ward_admission_id,
+        encounter_id=ward_admission.encounter_id,
+        service_id=service_data.service_id,
+        start_time=start_time,
+        notes=service_data.notes,
+        started_by=current_user.id
+    )
+    db.add(patient_service)
+    db.commit()
+    db.refresh(patient_service)
+    
+    # Load relationships for response
+    starter = db.query(User).filter(User.id == patient_service.started_by).first()
+    
+    return {
+        "id": patient_service.id,
+        "ward_admission_id": patient_service.ward_admission_id,
+        "encounter_id": patient_service.encounter_id,
+        "service_id": patient_service.service_id,
+        "service_name": service.service_name,
+        "service_price_per_unit": service.price_per_unit,
+        "service_unit_type": service.unit_type,
+        "start_time": patient_service.start_time,
+        "end_time": patient_service.end_time,
+        "units_used": patient_service.units_used,
+        "total_cost": patient_service.total_cost,
+        "is_billed": patient_service.is_billed,
+        "bill_item_id": patient_service.bill_item_id,
+        "notes": patient_service.notes,
+        "started_by": patient_service.started_by,
+        "started_by_name": starter.full_name if starter else None,
+        "stopped_by": patient_service.stopped_by,
+        "stopped_by_name": None,
+        "created_at": patient_service.created_at,
+        "updated_at": patient_service.updated_at,
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/additional-services", response_model=List[InpatientAdditionalServiceResponse])
+def get_inpatient_additional_services(
+    ward_admission_id: int,
+    active_only: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Billing"]))
+):
+    """Get all additional services for a ward admission"""
+    from app.models.inpatient_additional_service import InpatientAdditionalService
+    from app.models.additional_service import AdditionalService
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    query = db.query(InpatientAdditionalService).filter(
+        InpatientAdditionalService.ward_admission_id == ward_admission_id
+    )
+    
+    if active_only:
+        query = query.filter(InpatientAdditionalService.end_time.is_(None))
+    
+    services = query.order_by(InpatientAdditionalService.start_time.desc()).all()
+    
+    result = []
+    for patient_service in services:
+        service = db.query(AdditionalService).filter(AdditionalService.id == patient_service.service_id).first()
+        starter = db.query(User).filter(User.id == patient_service.started_by).first()
+        stopper = db.query(User).filter(User.id == patient_service.stopped_by).first() if patient_service.stopped_by else None
+        
+        result.append({
+            "id": patient_service.id,
+            "ward_admission_id": patient_service.ward_admission_id,
+            "encounter_id": patient_service.encounter_id,
+            "service_id": patient_service.service_id,
+            "service_name": service.service_name if service else "Unknown",
+            "service_price_per_unit": service.price_per_unit if service else 0,
+            "service_unit_type": service.unit_type if service else "hour",
+            "start_time": patient_service.start_time,
+            "end_time": patient_service.end_time,
+            "units_used": patient_service.units_used,
+            "total_cost": patient_service.total_cost,
+            "is_billed": patient_service.is_billed,
+            "bill_item_id": patient_service.bill_item_id,
+            "notes": patient_service.notes,
+            "started_by": patient_service.started_by,
+            "started_by_name": starter.full_name if starter else None,
+            "stopped_by": patient_service.stopped_by,
+            "stopped_by_name": stopper.full_name if stopper else None,
+            "created_at": patient_service.created_at,
+            "updated_at": patient_service.updated_at,
+        })
+    
+    return result
+
+
+@router.put("/ward-admissions/{ward_admission_id}/additional-services/{service_usage_id}/stop", response_model=InpatientAdditionalServiceResponse)
+def stop_additional_service(
+    ward_admission_id: int,
+    service_usage_id: int,
+    stop_data: InpatientAdditionalServiceStop,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Stop an additional service and automatically bill the patient"""
+    from app.models.inpatient_additional_service import InpatientAdditionalService
+    from app.models.additional_service import AdditionalService
+    from app.models.ward_admission import WardAdmission
+    from app.models.bill import Bill, BillItem
+    from datetime import datetime, timedelta, timezone
+    import random
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    patient_service = db.query(InpatientAdditionalService).filter(
+        InpatientAdditionalService.id == service_usage_id,
+        InpatientAdditionalService.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not patient_service:
+        raise HTTPException(status_code=404, detail="Service usage not found")
+    
+    if patient_service.end_time is not None:
+        raise HTTPException(status_code=400, detail="Service has already been stopped")
+    
+    service = db.query(AdditionalService).filter(AdditionalService.id == patient_service.service_id).first()
+    if not service:
+        raise HTTPException(status_code=404, detail="Additional service not found")
+    
+    # Calculate end time - normalize to naive UTC datetime
+    if stop_data.end_time:
+        # If end_time is provided, parse it and ensure it's naive
+        if isinstance(stop_data.end_time, str):
+            # Parse ISO format datetime string
+            try:
+                end_time = datetime.fromisoformat(stop_data.end_time.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                # Fallback to simple parsing
+                end_time = datetime.strptime(stop_data.end_time.replace('Z', ''), '%Y-%m-%dT%H:%M:%S')
+        else:
+            end_time = stop_data.end_time
+        
+        # Convert to naive UTC if timezone-aware
+        if end_time.tzinfo is not None:
+            # Convert to UTC first, then remove timezone info
+            end_time = end_time.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        end_time = datetime.utcnow()
+    
+    # Ensure start_time is also naive for comparison
+    start_time = patient_service.start_time
+    if hasattr(start_time, 'tzinfo') and start_time.tzinfo is not None:
+        start_time = start_time.astimezone(timezone.utc).replace(tzinfo=None)
+    
+    # Calculate units used based on unit_type
+    time_diff = end_time - start_time
+    
+    if service.unit_type == "hour":
+        units_used = max(1, round(time_diff.total_seconds() / 3600, 2))  # Round to 2 decimals, minimum 1 hour
+    elif service.unit_type == "day":
+        units_used = max(1, round(time_diff.total_seconds() / 86400, 2))  # Round to 2 decimals, minimum 1 day
+    else:  # "unit"
+        units_used = 1
+    
+    total_cost = round(units_used * service.price_per_unit, 2)
+    
+    # Update patient service
+    patient_service.end_time = end_time
+    patient_service.units_used = units_used
+    patient_service.total_cost = total_cost
+    patient_service.stopped_by = current_user.id
+    if stop_data.notes:
+        patient_service.notes = (patient_service.notes or "") + f"\n{stop_data.notes}" if patient_service.notes else stop_data.notes
+    
+    # Auto-bill: Add to patient's bill
+    is_insured = ward_admission.ccc_number is not None and ward_admission.ccc_number.strip() != ""
+    
+    # Get or create bill for this encounter
+    bill = db.query(Bill).filter(
+        Bill.encounter_id == ward_admission.encounter_id,
+        Bill.is_paid == False
+    ).first()
+    
+    if not bill:
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=ward_admission.encounter_id,
+            bill_number=bill_number,
+            is_insured=is_insured,
+            created_by=current_user.id
+        )
+        db.add(bill)
+        db.flush()
+    
+    # Create bill item
+    bill_item = BillItem(
+        bill_id=bill.id,
+        item_code=f"ADD-SVC-{service.id}" if service.id else "MISC",
+        item_name=f"{service.service_name} ({units_used} {service.unit_type}(s))",
+        category="other",
+        quantity=units_used,
+        unit_price=service.price_per_unit,
+        total_price=total_cost
+    )
+    db.add(bill_item)
+    db.flush()
+    
+    # Link bill item to patient service
+    patient_service.bill_item_id = bill_item.id
+    patient_service.is_billed = True
+    
+    # Update bill total
+    bill.total_amount += total_cost
+    
+    db.commit()
+    db.refresh(patient_service)
+    
+    # Load relationships for response
+    starter = db.query(User).filter(User.id == patient_service.started_by).first()
+    stopper = db.query(User).filter(User.id == patient_service.stopped_by).first()
+    
+    return {
+        "id": patient_service.id,
+        "ward_admission_id": patient_service.ward_admission_id,
+        "encounter_id": patient_service.encounter_id,
+        "service_id": patient_service.service_id,
+        "service_name": service.service_name,
+        "service_price_per_unit": service.price_per_unit,
+        "service_unit_type": service.unit_type,
+        "start_time": patient_service.start_time,
+        "end_time": patient_service.end_time,
+        "units_used": patient_service.units_used,
+        "total_cost": patient_service.total_cost,
+        "is_billed": patient_service.is_billed,
+        "bill_item_id": patient_service.bill_item_id,
+        "notes": patient_service.notes,
+        "started_by": patient_service.started_by,
+        "started_by_name": starter.full_name if starter else None,
+        "stopped_by": patient_service.stopped_by,
+        "stopped_by_name": stopper.full_name if stopper else None,
+        "created_at": patient_service.created_at,
+        "updated_at": patient_service.updated_at,
+    }
+
+
+# Inventory Debit endpoints
+class InpatientInventoryDebitCreate(BaseModel):
+    product_code: str
+    product_name: str
+    quantity: float = 1.0
+    unit_price: Optional[float] = None  # If not provided, will be looked up from price list
+    notes: Optional[str] = None
+
+
+class InpatientInventoryDebitResponse(BaseModel):
+    id: int
+    ward_admission_id: int
+    encounter_id: int
+    product_code: str
+    product_name: str
+    quantity: float
+    unit_price: float
+    total_price: float
+    notes: Optional[str]
+    is_billed: bool
+    bill_item_id: Optional[int]
+    used_by: int
+    used_by_name: Optional[str]
+    used_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/ward-admissions/{ward_admission_id}/inventory-debits", response_model=InpatientInventoryDebitResponse, status_code=status.HTTP_201_CREATED)
+def create_inpatient_inventory_debit(
+    ward_admission_id: int,
+    debit_data: InpatientInventoryDebitCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Add an inventory debit (product used) for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    from app.models.encounter import Encounter
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Determine if insured based on encounter CCC number
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    # Get unit price - use provided price or look up from price list
+    if debit_data.unit_price is not None:
+        unit_price = debit_data.unit_price
+    else:
+        # Look up price from price list
+        unit_price = get_price_from_all_tables(db, debit_data.product_code, is_insured_encounter)
+        if unit_price == 0.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Product '{debit_data.product_name}' not found in price list or has no price. Please provide unit_price."
+            )
+    
+    total_price = unit_price * debit_data.quantity
+    
+    # Create inventory debit record
+    inventory_debit = InpatientInventoryDebit(
+        ward_admission_id=ward_admission_id,
+        encounter_id=ward_admission.encounter_id,
+        product_code=debit_data.product_code,
+        product_name=debit_data.product_name,
+        quantity=debit_data.quantity,
+        unit_price=unit_price,
+        total_price=total_price,
+        notes=debit_data.notes,
+        used_by=current_user.id,
+        used_at=datetime.utcnow()
+    )
+    db.add(inventory_debit)
+    db.flush()
+    
+    # Automatically add to bill
+    # Find or create a bill for this encounter
+    existing_bill = db.query(Bill).filter(
+        Bill.encounter_id == ward_admission.encounter_id,
+        Bill.is_paid == False  # Only use unpaid bills
+    ).first()
+    
+    if existing_bill:
+        # Check if this product is already in the bill
+        existing_item = db.query(BillItem).filter(
+            BillItem.bill_id == existing_bill.id,
+            BillItem.item_code == debit_data.product_code,
+            BillItem.item_name == debit_data.product_name
+        ).first()
+        
+        if not existing_item:
+            # Add bill item to existing bill
+            bill_item = BillItem(
+                bill_id=existing_bill.id,
+                item_code=debit_data.product_code,
+                item_name=f"Inventory: {debit_data.product_name}",
+                category="product",
+                quantity=debit_data.quantity,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+            db.add(bill_item)
+            db.flush()
+            existing_bill.total_amount += total_price
+            inventory_debit.bill_item_id = bill_item.id
+            inventory_debit.is_billed = True
+    else:
+        # Create new bill
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=ward_admission.encounter_id,
+            bill_number=bill_number,
+            is_insured=is_insured_encounter,
+            miscellaneous=None
+        )
+        db.add(bill)
+        db.flush()
+        
+        # Add bill item
+        bill_item = BillItem(
+            bill_id=bill.id,
+            item_code=debit_data.product_code,
+            item_name=f"Inventory: {debit_data.product_name}",
+            category="product",
+            quantity=debit_data.quantity,
+            unit_price=unit_price,
+            total_price=total_price
+        )
+        db.add(bill_item)
+        db.flush()
+        bill.total_amount = total_price
+        inventory_debit.bill_item_id = bill_item.id
+        inventory_debit.is_billed = True
+    
+    db.commit()
+    db.refresh(inventory_debit)
+    
+    # Load user for response
+    user = db.query(User).filter(User.id == inventory_debit.used_by).first()
+    
+    return {
+        "id": inventory_debit.id,
+        "ward_admission_id": inventory_debit.ward_admission_id,
+        "encounter_id": inventory_debit.encounter_id,
+        "product_code": inventory_debit.product_code,
+        "product_name": inventory_debit.product_name,
+        "quantity": inventory_debit.quantity,
+        "unit_price": inventory_debit.unit_price,
+        "total_price": inventory_debit.total_price,
+        "notes": inventory_debit.notes,
+        "is_billed": inventory_debit.is_billed,
+        "bill_item_id": inventory_debit.bill_item_id,
+        "used_by": inventory_debit.used_by,
+        "used_by_name": user.full_name if user else None,
+        "used_at": inventory_debit.used_at,
+        "created_at": inventory_debit.created_at,
+        "updated_at": inventory_debit.updated_at,
+    }
+
+
+@router.get("/ward-admissions/{ward_admission_id}/inventory-debits", response_model=List[InpatientInventoryDebitResponse])
+def get_inpatient_inventory_debits(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Billing"]))
+):
+    """Get all inventory debits for a ward admission"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    debits = db.query(InpatientInventoryDebit).filter(
+        InpatientInventoryDebit.ward_admission_id == ward_admission_id
+    ).order_by(InpatientInventoryDebit.used_at.desc()).all()
+    
+    result = []
+    for debit in debits:
+        user = db.query(User).filter(User.id == debit.used_by).first()
+        result.append({
+            "id": debit.id,
+            "ward_admission_id": debit.ward_admission_id,
+            "encounter_id": debit.encounter_id,
+            "product_code": debit.product_code,
+            "product_name": debit.product_name,
+            "quantity": debit.quantity,
+            "unit_price": debit.unit_price,
+            "total_price": debit.total_price,
+            "notes": debit.notes,
+            "is_billed": debit.is_billed,
+            "bill_item_id": debit.bill_item_id,
+            "used_by": debit.used_by,
+            "used_by_name": user.full_name if user else None,
+            "used_at": debit.used_at,
+            "created_at": debit.created_at,
+            "updated_at": debit.updated_at,
+        })
+    
+    return result
+
+
+@router.delete("/ward-admissions/{ward_admission_id}/inventory-debits/{debit_id}")
+def delete_inpatient_inventory_debit(
+    ward_admission_id: int,
+    debit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Delete an inventory debit and its corresponding bill item if billed"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    from app.models.bill import Bill, BillItem
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    debit = db.query(InpatientInventoryDebit).filter(
+        InpatientInventoryDebit.id == debit_id,
+        InpatientInventoryDebit.ward_admission_id == ward_admission_id
+    ).first()
+    
+    if not debit:
+        raise HTTPException(status_code=404, detail="Inventory debit not found")
+    
+    # If billed, delete the corresponding bill item and update bill total
+    if debit.is_billed and debit.bill_item_id:
+        bill_item = db.query(BillItem).filter(BillItem.id == debit.bill_item_id).first()
+        if bill_item:
+            bill = db.query(Bill).filter(Bill.id == bill_item.bill_id).first()
+            if bill:
+                # Subtract the bill item total from bill total
+                bill.total_amount -= bill_item.total_price
+                # Ensure bill total doesn't go negative
+                if bill.total_amount < 0:
+                    bill.total_amount = 0.0
+                db.delete(bill_item)
+    
+    # Delete the inventory debit record
+    db.delete(debit)
+    db.commit()
+    
+    return {"message": "Inventory debit and corresponding bill item deleted successfully"}
+
+
+@router.put("/inpatient-investigations/bulk-confirm")
+def bulk_confirm_inpatient_investigations(
+    bulk_data: BulkConfirmInpatientInvestigations,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+):
+    """Bulk confirm multiple IPD investigation requests"""
+    from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    if not bulk_data.investigation_ids:
+        raise HTTPException(status_code=400, detail="No investigation IDs provided")
+    
+    investigations = db.query(InpatientInvestigation).filter(
+        InpatientInvestigation.id.in_(bulk_data.investigation_ids)
+    ).all()
+    
+    if len(investigations) != len(bulk_data.investigation_ids):
+        raise HTTPException(status_code=404, detail="Some investigations not found")
+    
+    confirmed_count = 0
+    errors = []
+    
+    for investigation in investigations:
+        try:
+            # Don't allow confirming cancelled investigations
+            if investigation.status == InpatientInvestigationStatus.CANCELLED.value:
+                errors.append(f"Investigation {investigation.id} is cancelled")
+                continue
+            
+            # Don't allow confirming already confirmed or completed investigations
+            if investigation.status in [InpatientInvestigationStatus.CONFIRMED.value, InpatientInvestigationStatus.COMPLETED.value]:
+                errors.append(f"Investigation {investigation.id} is already {investigation.status}")
+                continue
+            
+            # Verify user role matches investigation type
+            if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head"]:
+                if investigation.investigation_type == "lab" and current_user.role != "Lab":
+                    errors.append(f"Only Lab staff can confirm investigation {investigation.id}")
+                    continue
+                elif investigation.investigation_type == "scan" and current_user.role != "Scan":
+                    errors.append(f"Only Scan staff can confirm investigation {investigation.id}")
+                    continue
+                elif investigation.investigation_type == "xray" and current_user.role != "Xray":
+                    errors.append(f"Only Xray staff can confirm investigation {investigation.id}")
+                    continue
+            
+            # Get clinical review and ward admission
+            clinical_review = db.query(InpatientClinicalReview).filter(
+                InpatientClinicalReview.id == investigation.clinical_review_id
+            ).first()
+            if not clinical_review:
+                errors.append(f"Clinical review not found for investigation {investigation.id}")
+                continue
+            
+            ward_admission = db.query(WardAdmission).filter(
+                WardAdmission.id == clinical_review.ward_admission_id
+            ).first()
+            if not ward_admission:
+                errors.append(f"Ward admission not found for investigation {investigation.id}")
+                continue
+            
+            encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
+            if not encounter:
+                errors.append(f"Encounter not found for investigation {investigation.id}")
+                continue
+            
+            # Confirm the investigation
+            investigation.status = InpatientInvestigationStatus.CONFIRMED.value
+            investigation.confirmed_by = current_user.id
+            
+            # Get price
+            is_insured_encounter = bool(encounter.ccc_number)
+            unit_price = 0.0
+            if investigation.gdrg_code:
+                try:
+                    unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter)
+                except Exception as e:
+                    print(f"ERROR bulk_confirm_inpatient: Failed to get price for investigation {investigation.id}: {e}")
+                    # Fallback to stored price
+                    if investigation.price:
+                        try:
+                            unit_price = float(investigation.price)
+                        except (ValueError, TypeError):
+                            unit_price = 0.0
+            else:
+                # No gdrg_code, try stored price
+                if investigation.price:
+                    try:
+                        unit_price = float(investigation.price)
+                    except (ValueError, TypeError):
+                        unit_price = 0.0
+            
+            total_price = unit_price
+            
+            # Add to IPD bill if requested and price > 0
+            if total_price > 0 and bulk_data.add_to_ipd_bill:
+                # Find or create a bill for this encounter
+                existing_bill = db.query(Bill).filter(
+                    Bill.encounter_id == encounter.id,
+                    Bill.is_paid == False  # Only use unpaid bills
+                ).first()
+                
+                if existing_bill:
+                    # Check if this investigation is already in the bill
+                    existing_item = db.query(BillItem).filter(
+                        BillItem.bill_id == existing_bill.id,
+                        BillItem.item_code == investigation.gdrg_code,
+                        BillItem.item_name.like(f"%{investigation.procedure_name}%")
+                    ).first()
+                    
+                    if not existing_item:
+                        # Add bill item to existing bill
+                        bill_item = BillItem(
+                            bill_id=existing_bill.id,
+                            item_code=investigation.gdrg_code or "MISC",
+                            item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                            category=investigation.investigation_type or "procedure",
+                            quantity=1,
+                            unit_price=unit_price,
+                            total_price=total_price
+                        )
+                        db.add(bill_item)
+                        existing_bill.total_amount += total_price
+                else:
+                    # Create new bill
+                    bill_number = f"IPD-{encounter.id}-{random.randint(1000, 9999)}"
+                    bill = Bill(
+                        encounter_id=encounter.id,
+                        bill_number=bill_number,
+                        total_amount=total_price,
+                        is_paid=False
+                    )
+                    db.add(bill)
+                    db.flush()  # Get bill.id
+                    
+                    bill_item = BillItem(
+                        bill_id=bill.id,
+                        item_code=investigation.gdrg_code or "MISC",
+                        item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                        category=investigation.investigation_type or "procedure",
+                        quantity=1,
+                        unit_price=unit_price,
+                        total_price=total_price
+                    )
+                    db.add(bill_item)
+            
+            confirmed_count += 1
+            
+        except Exception as e:
+            import traceback
+            print(f"ERROR bulk_confirm_inpatient: Error processing investigation {investigation.id}: {str(e)}")
+            print(traceback.format_exc())
+            errors.append(f"Error processing investigation {investigation.id}: {str(e)}")
+            continue
+    
+    db.commit()
+    
+    return {
+        "confirmed_count": confirmed_count,
+        "total_requested": len(bulk_data.investigation_ids),
+        "errors": errors
+    }
+
+
 class DirectAdmissionRequest(BaseModel):
     """Request for direct admission (without recommendation)"""
     patient_id: Optional[int] = None
@@ -3802,6 +7335,17 @@ def create_direct_admission(
         admitted_at=datetime.utcnow()
     )
     db.add(ward_admission)
+    db.flush()  # Flush to get ward_admission ID before committing
+    
+    # Auto-generate IPD admission bill
+    try:
+        ccc_to_use = form_data.ccc_number or encounter.ccc_number
+        _create_ipd_admission_bill(db, encounter, ccc_to_use, current_user.id)
+    except Exception as e:
+        # Log error but don't fail admission confirmation
+        import logging
+        logging.error(f"Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}")
+        # Continue with admission confirmation even if bill creation fails
     
     db.commit()
     db.refresh(admission_recommendation)

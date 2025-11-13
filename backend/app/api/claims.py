@@ -589,26 +589,65 @@ def export_claim_xml(
 @router.get("/eligible-encounters", response_model=List[EncounterWithClaimInfo])
 def get_eligible_encounters_for_claims(
     claim_type: Optional[str] = None,  # 'opd' or 'ipd'
+    start_date: Optional[str] = None,  # Filter by start date (YYYY-MM-DD)
+    end_date: Optional[str] = None,  # Filter by end date (YYYY-MM-DD)
+    claim_status: Optional[str] = None,  # Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
+    card_number: Optional[str] = None,  # Filter by patient card number
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin"]))
 ):
     """
     Get finalized encounters with CCC numbers that are eligible for claim generation.
     Only encounters with active insurance (CCC number) and finalized status are returned.
+    
+    Filters:
+    - claim_type: 'opd', 'ipd', 'other', or None for all
+    - start_date: Filter encounters finalized on or after this date (YYYY-MM-DD)
+    - end_date: Filter encounters finalized on or before this date (YYYY-MM-DD)
+    - claim_status: Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
+    - card_number: Filter by patient card number (partial match supported)
     """
     from sqlalchemy.orm import joinedload
+    from datetime import datetime
     
-    # Get finalized encounters with CCC numbers (active insurance)
-    encounters = db.query(Encounter)\
+    # Build base query
+    query = db.query(Encounter)\
         .options(joinedload(Encounter.patient))\
         .filter(
             Encounter.status == "finalized",
             Encounter.ccc_number.isnot(None),
             Encounter.ccc_number != "",
             Encounter.archived == False
-        )\
-        .order_by(Encounter.finalized_at.desc())\
-        .all()
+        )
+    
+    # Apply card number filter
+    if card_number:
+        card_number_clean = card_number.strip()
+        if card_number_clean:
+            from app.models.patient import Patient
+            query = query.join(Patient).filter(
+                Patient.card_number == card_number_clean
+            )
+    
+    # Apply date filters
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            query = query.filter(Encounter.finalized_at >= start_dt)
+        except ValueError:
+            pass  # Invalid date format, ignore filter
+    
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            # Add one day to include the entire end date
+            from datetime import timedelta
+            end_dt = end_dt + timedelta(days=1)
+            query = query.filter(Encounter.finalized_at < end_dt)
+        except ValueError:
+            pass  # Invalid date format, ignore filter
+    
+    encounters = query.order_by(Encounter.finalized_at.desc()).all()
     
     result = []
     from app.models.consultation_notes import ConsultationNotes
@@ -625,6 +664,13 @@ def get_eligible_encounters_for_claims(
             continue
         # Check if claim already exists
         claim = db.query(Claim).filter(Claim.encounter_id == encounter.id).first()
+        
+        # Apply claim status filter
+        if claim_status:
+            if claim_status == 'no_claim' and claim:
+                continue  # Skip if filter is 'no_claim' but claim exists
+            elif claim_status != 'no_claim' and (not claim or claim.status != claim_status):
+                continue  # Skip if status doesn't match
         
         # Get finalized_by username
         finalized_by_username = None

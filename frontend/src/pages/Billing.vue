@@ -2,6 +2,12 @@
   <q-page class="q-pa-md">
     <div class="text-h4 q-mb-md text-weight-bold glass-text">Billing</div>
 
+    <!-- Billing Module Tabs -->
+    <q-tabs v-model="billingModule" class="text-primary q-mb-md">
+      <q-tab name="opd" label="OPD Billing" />
+      <q-tab name="ipd" label="IPD Billing" />
+    </q-tabs>
+
     <!-- Patient Search -->
     <q-card class="q-mb-md glass-card" v-if="!patient" flat>
       <q-card-section>
@@ -49,15 +55,17 @@
             </div>
 
         <!-- Encounter Selection -->
-        <div v-if="activeEncounters.length > 0" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm">Select Encounter:</div>
+        <div v-if="filteredEncounters.length > 0" class="q-mt-md">
+          <div class="text-subtitle1 q-mb-sm">
+            {{ billingModule === 'opd' ? 'Select OPD Encounter:' : 'Select IPD Admission:' }}
+          </div>
           <q-select
             v-model="selectedEncounterId"
-            :options="activeEncounters"
+            :options="filteredEncounters"
             option-value="id"
             option-label="label"
             filled
-            label="Encounter"
+            :label="billingModule === 'opd' ? 'OPD Encounter' : 'IPD Admission'"
             emit-value
             map-options
             @update:model-value="loadEncounterData"
@@ -72,9 +80,14 @@
               Cash & Carry Encounter
             </q-badge>
           </div>
+          <div v-if="selectedWardAdmission && billingModule === 'ipd'" class="q-mt-sm">
+            <q-badge color="blue">
+              Ward: {{ selectedWardAdmission.ward }} | Bed: {{ selectedWardAdmission.bed_number || 'N/A' }}
+            </q-badge>
+          </div>
         </div>
         <div v-else class="text-grey-7 q-mt-md">
-          No active encounters found for this patient
+          {{ billingModule === 'opd' ? 'No active OPD encounters found for this patient' : 'No active IPD admissions found for this patient' }}
           </div>
         </q-card-section>
       </q-card>
@@ -205,7 +218,9 @@
       <q-card class="glass-card" flat>
         <q-card-section>
           <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Existing Bills</div>
+            <div class="text-h6 glass-text">
+              {{ billingModule === 'ipd' ? 'IPD Bills' : 'Existing Bills' }}
+            </div>
             <q-space />
             <q-btn
               color="primary"
@@ -217,8 +232,120 @@
               size="sm"
             />
           </div>
+          
+          <!-- IPD Bills Grouped by Ward Admission -->
+          <div v-if="billingModule === 'ipd' && groupedIPDBills.length > 0" class="q-mb-md">
+            <div v-for="group in groupedIPDBills" :key="group.wardAdmissionId" class="q-mb-lg">
+              <q-card flat bordered class="q-mb-md">
+                <q-card-section>
+                  <div class="row items-center q-mb-md">
+                    <div class="text-subtitle1 glass-text text-weight-bold">
+                      Ward: {{ group.ward }} | Bed: {{ group.bedNumber || 'N/A' }}
+                    </div>
+                    <q-space />
+                    <div class="text-caption text-grey-7">
+                      Admission ID: {{ group.wardAdmissionId }} | Encounter: #{{ group.encounterId }}
+                    </div>
+                  </div>
+                  <q-table
+                    :rows="group.bills"
+                    :columns="existingBillColumns"
+                    row-key="id"
+                    flat
+                    dense
+                    class="glass-table"
+                  >
+                    <template v-slot:body-cell-encounter_id="props">
+                      <q-td :props="props">
+                        <div class="text-weight-medium glass-text">#{{ props.value }}</div>
+                      </q-td>
+                    </template>
+                    <template v-slot:body-cell-services="props">
+                      <q-td :props="props">
+                        <div class="glass-text-muted" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="props.value">
+                          {{ props.value }}
+                        </div>
+                      </q-td>
+                    </template>
+                    <template v-slot:body-cell-remaining_balance="props">
+                      <q-td :props="props">
+                        <div :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'text-negative text-weight-bold' : 'text-positive'" class="glass-text">
+                          {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
+                        </div>
+                      </q-td>
+                    </template>
+                    <template v-slot:body-cell-is_paid="props">
+                      <q-td :props="props">
+                        <q-badge
+                          :color="props.value ? 'positive' : 'warning'"
+                          :label="props.value ? 'Paid' : 'Unpaid'"
+                        />
+                      </q-td>
+                    </template>
+                    <template v-slot:body-cell-actions="props">
+                      <q-td :props="props">
+                        <div class="row q-gutter-xs">
+                          <q-btn
+                            size="sm"
+                            color="info"
+                            icon="visibility"
+                            label="View"
+                            @click="viewBillDetails(props.row.id)"
+                          />
+                          <q-btn
+                            v-if="!props.row.is_paid"
+                            size="sm"
+                            color="positive"
+                            icon="receipt"
+                            label="Pay"
+                            @click="openReceiptDialog(props.row)"
+                          />
+                          <q-btn
+                            v-if="authStore.userRole === 'Admin'"
+                            size="sm"
+                            color="secondary"
+                            icon="edit"
+                            label="Edit"
+                            @click="editBill(props.row)"
+                            :loading="updatingBillId === props.row.id"
+                          >
+                            <q-tooltip>Edit bill (Admin only)</q-tooltip>
+                          </q-btn>
+                          <q-btn
+                            v-if="props.row.is_paid && authStore.userRole === 'Admin'"
+                            size="sm"
+                            color="warning"
+                            icon="undo"
+                            label="Refund"
+                            @click="refundReceipt(props.row)"
+                          />
+                          <q-btn
+                            v-if="authStore.userRole === 'Admin'"
+                            size="sm"
+                            color="negative"
+                            icon="delete"
+                            label="Delete"
+                            @click="confirmDeleteBill(props.row)"
+                          />
+                        </div>
+                      </q-td>
+                    </template>
+                  </q-table>
+                  <div class="q-mt-md text-right">
+                    <div class="text-subtitle2 text-weight-bold">
+                      Group Total: ₵{{ group.total.toFixed(2) }} | 
+                      Paid: ₵{{ group.paid.toFixed(2) }} | 
+                      Balance: ₵{{ group.balance.toFixed(2) }}
+                    </div>
+                  </div>
+                </q-card-section>
+              </q-card>
+            </div>
+          </div>
+          
+          <!-- OPD Bills (Regular Table) -->
           <q-table
-            v-if="existingBills.length > 0"
+            v-if="billingModule === 'opd' && existingBills.length > 0"
             :rows="existingBills"
             :columns="existingBillColumns"
             row-key="id"
@@ -303,8 +430,11 @@
               </q-td>
             </template>
           </q-table>
-          <div v-else-if="!loadingBills" class="text-grey-7 text-center q-pa-md">
+          <div v-if="billingModule === 'opd' && existingBills.length === 0 && !loadingBills" class="text-grey-7 text-center q-pa-md">
             No bills found for this encounter
+          </div>
+          <div v-if="billingModule === 'ipd' && groupedIPDBills.length === 0 && !loadingBills" class="text-grey-7 text-center q-pa-md">
+            No IPD bills found for this patient
           </div>
         </q-card-section>
       </q-card>
@@ -939,7 +1069,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { billingAPI, patientsAPI, encountersAPI, priceListAPI } from '../services/api';
+import { billingAPI, patientsAPI, encountersAPI, priceListAPI, consultationAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
 
@@ -948,13 +1078,16 @@ const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 
+const billingModule = ref('opd'); // 'opd' or 'ipd'
 const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
 const activeEncounters = ref([]);
+const wardAdmissions = ref([]); // Store ward admissions for IPD filtering
 
 const selectedEncounterId = ref(null);
 const selectedEncounter = ref(null);
+const selectedWardAdmission = ref(null);
 const calculatingItems = ref(false);
 const autoCalculatedItems = ref([]);
 const addingDiagnosisId = ref(null);
@@ -1027,6 +1160,67 @@ const existingBillColumns = [
   { name: 'is_paid', label: 'Status', field: 'is_paid', align: 'center' },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
+
+// Filter encounters based on billing module (OPD vs IPD)
+const filteredEncounters = computed(() => {
+  if (!activeEncounters.value || activeEncounters.value.length === 0) return [];
+  
+  if (billingModule.value === 'opd') {
+    // OPD: Show encounters that don't have ward admissions
+    const ipdEncounterIds = new Set(wardAdmissions.value.map(wa => wa.encounter_id));
+    return activeEncounters.value.filter(enc => !ipdEncounterIds.has(enc.id));
+  } else {
+    // IPD: Show encounters that have ward admissions
+    const ipdEncounterIds = new Set(wardAdmissions.value.map(wa => wa.encounter_id));
+    const ipdEncounters = activeEncounters.value.filter(enc => ipdEncounterIds.has(enc.id));
+    
+    // Enrich with ward admission info
+    return ipdEncounters.map(enc => {
+      const wardAdmission = wardAdmissions.value.find(wa => wa.encounter_id === enc.id);
+      return {
+        ...enc,
+        label: `${enc.label} | Ward: ${wardAdmission?.ward || 'N/A'} | Bed: ${wardAdmission?.bed_number || 'N/A'}`,
+        wardAdmission: wardAdmission
+      };
+    });
+  }
+});
+
+// Group IPD bills by ward admission
+const groupedIPDBills = computed(() => {
+  if (billingModule.value !== 'ipd' || !existingBills.value || existingBills.value.length === 0) {
+    return [];
+  }
+  
+  // Group bills by ward admission
+  const groups = {};
+  
+  existingBills.value.forEach(bill => {
+    const wardAdmission = wardAdmissions.value.find(wa => wa.encounter_id === bill.encounter_id);
+    if (wardAdmission) {
+      const key = wardAdmission.id;
+      if (!groups[key]) {
+        groups[key] = {
+          wardAdmissionId: wardAdmission.id,
+          encounterId: wardAdmission.encounter_id,
+          ward: wardAdmission.ward,
+          bedNumber: wardAdmission.bed_number,
+          bills: [],
+          total: 0,
+          paid: 0,
+          balance: 0
+        };
+      }
+      groups[key].bills.push(bill);
+      groups[key].total += bill.total_amount || 0;
+      groups[key].paid += bill.paid_amount || 0;
+      groups[key].balance += (bill.total_amount || 0) - (bill.paid_amount || 0);
+    }
+  });
+  
+  // Convert to array and sort by ward admission ID (most recent first)
+  return Object.values(groups).sort((a, b) => b.wardAdmissionId - a.wardAdmissionId);
+});
 
 const billDetailColumns = [
   { name: 'item_code', label: 'Code', field: 'item_code', align: 'left' },
@@ -1134,6 +1328,7 @@ const searchPatient = async () => {
     if (patients.length === 0) {
       patient.value = null;
       activeEncounters.value = [];
+      wardAdmissions.value = [];
       selectedEncounterId.value = null;
       $q.notify({
         type: 'info',
@@ -1146,6 +1341,7 @@ const searchPatient = async () => {
       // Single result - use it directly
       patient.value = patients[0];
       
+      // Load encounters
       const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
       const allEncounters = encountersResponse.data.filter(e => !e.archived);
       activeEncounters.value = allEncounters.map(e => ({
@@ -1155,14 +1351,26 @@ const searchPatient = async () => {
         ...e, // Store full encounter data
       }));
       
+      // Load ward admissions for IPD filtering
+      try {
+        const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
+        wardAdmissions.value = wardAdmissionsResponse.data || [];
+      } catch (error) {
+        console.warn('Failed to load ward admissions:', error);
+        wardAdmissions.value = [];
+      }
+      
       if (activeEncounters.value.length === 0) {
         $q.notify({
           type: 'info',
           message: 'No active encounters found for this patient',
         });
-      } else if (activeEncounters.value.length === 1) {
-        selectedEncounterId.value = activeEncounters.value[0].id;
-        selectedEncounter.value = activeEncounters.value[0];
+      } else if (filteredEncounters.value.length === 1) {
+        selectedEncounterId.value = filteredEncounters.value[0].id;
+        selectedEncounter.value = filteredEncounters.value[0];
+        if (billingModule.value === 'ipd' && filteredEncounters.value[0].wardAdmission) {
+          selectedWardAdmission.value = filteredEncounters.value[0].wardAdmission;
+        }
         await loadEncounterData();
       }
     } else {
@@ -1179,6 +1387,7 @@ const searchPatient = async () => {
   } catch (error) {
     patient.value = null;
     activeEncounters.value = [];
+    wardAdmissions.value = [];
     selectedEncounterId.value = null;
     $q.notify({
       type: 'negative',
@@ -1193,7 +1402,14 @@ const loadEncounterData = async () => {
   if (!selectedEncounterId.value) return;
   
   // Find and store the selected encounter for insurance status display
-  selectedEncounter.value = activeEncounters.value.find(e => e.id === selectedEncounterId.value);
+  selectedEncounter.value = filteredEncounters.value.find(e => e.id === selectedEncounterId.value);
+  
+  // For IPD, also store the ward admission
+  if (billingModule.value === 'ipd' && selectedEncounter.value?.wardAdmission) {
+    selectedWardAdmission.value = selectedEncounter.value.wardAdmission;
+  } else {
+    selectedWardAdmission.value = null;
+  }
   
   await loadAutoCalculatedItems();
   await loadExistingBills();
@@ -1265,64 +1481,144 @@ const addDiagnosisToBill = async (diagnosisItem) => {
 };
 
 const loadExistingBills = async () => {
-  if (!selectedEncounterId.value) return;
-
-  loadingBills.value = true;
-  try {
-    const response = await billingAPI.getEncounterBills(selectedEncounterId.value);
-    const bills = response.data || [];
+  if (billingModule.value === 'ipd') {
+    // For IPD: Load all bills for all IPD encounters (ward admissions) of the patient
+    if (!patient.value) return;
     
-    // Enrich bills with detailed information
-    const enrichedBills = await Promise.all(bills.map(async (bill) => {
-      try {
-        // Get bill details to get service information
-        const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
-        const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data;
-        
-        // Calculate remaining balance
-        const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
-        
-        // Group services by category/service group
-        const services = [];
-        if (billDetails?.bill_items) {
-          const serviceGroups = {};
-          billDetails.bill_items.forEach(item => {
-            const serviceGroup = item.service_group || item.category || 'Other';
-            if (!serviceGroups[serviceGroup]) {
-              serviceGroups[serviceGroup] = [];
-            }
-            serviceGroups[serviceGroup].push(item.item_name || item.item_code);
-          });
-          
-          Object.keys(serviceGroups).forEach(group => {
-            services.push(`${group}: ${serviceGroups[group].join(', ')}`);
-          });
-        }
-        
-        return {
-          ...bill,
-          remaining_balance: remainingBalance,
-          services: services.join('; ') || 'No services',
-          service_count: billDetails?.bill_items?.length || 0,
-        };
-      } catch (error) {
-        console.error(`Failed to load details for bill ${bill.id}:`, error);
-        const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
-        return {
-          ...bill,
-          remaining_balance: remainingBalance,
-          services: 'Details unavailable',
-          service_count: 0,
-        };
+    loadingBills.value = true;
+    try {
+      // Get all IPD encounter IDs from ward admissions
+      const ipdEncounterIds = wardAdmissions.value.map(wa => wa.encounter_id);
+      
+      if (ipdEncounterIds.length === 0) {
+        existingBills.value = [];
+        return;
       }
-    }));
-    
-    existingBills.value = enrichedBills;
-  } catch (error) {
-    console.error('Failed to load bills:', error);
-    existingBills.value = [];
-  } finally {
-    loadingBills.value = false;
+      
+      // Load bills for all IPD encounters
+      const allBillsPromises = ipdEncounterIds.map(encounterId => 
+        billingAPI.getEncounterBills(encounterId).catch(err => {
+          console.warn(`Failed to load bills for encounter ${encounterId}:`, err);
+          return { data: [] };
+        })
+      );
+      
+      const allBillsResponses = await Promise.all(allBillsPromises);
+      const allBills = allBillsResponses.flatMap(response => response.data || []);
+      
+      // Enrich bills with detailed information
+      const enrichedBills = await Promise.all(allBills.map(async (bill) => {
+        try {
+          // Get bill details to get service information
+          const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
+          const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data;
+          
+          // Calculate remaining balance
+          const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
+          
+          // Group services by category/service group
+          const services = [];
+          if (billDetails?.bill_items) {
+            const serviceGroups = {};
+            billDetails.bill_items.forEach(item => {
+              const serviceGroup = item.service_group || item.category || 'Other';
+              if (!serviceGroups[serviceGroup]) {
+                serviceGroups[serviceGroup] = [];
+              }
+              serviceGroups[serviceGroup].push(item.item_name || item.item_code);
+            });
+            
+            Object.keys(serviceGroups).forEach(group => {
+              services.push(`${group}: ${serviceGroups[group].join(', ')}`);
+            });
+          }
+          
+          return {
+            ...bill,
+            remaining_balance: remainingBalance,
+            services: services.join('; ') || 'No services',
+            service_count: billDetails?.bill_items?.length || 0,
+          };
+        } catch (error) {
+          console.error(`Failed to load details for bill ${bill.id}:`, error);
+          const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
+          return {
+            ...bill,
+            remaining_balance: remainingBalance,
+            services: 'Details unavailable',
+            service_count: 0,
+          };
+        }
+      }));
+      
+      existingBills.value = enrichedBills;
+    } catch (error) {
+      console.error('Failed to load IPD bills:', error);
+      existingBills.value = [];
+    } finally {
+      loadingBills.value = false;
+    }
+  } else {
+    // For OPD: Load bills for the selected encounter only
+    if (!selectedEncounterId.value) return;
+
+    loadingBills.value = true;
+    try {
+      const response = await billingAPI.getEncounterBills(selectedEncounterId.value);
+      const bills = response.data || [];
+      
+      // Enrich bills with detailed information
+      const enrichedBills = await Promise.all(bills.map(async (bill) => {
+        try {
+          // Get bill details to get service information
+          const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
+          const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data;
+          
+          // Calculate remaining balance
+          const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
+          
+          // Group services by category/service group
+          const services = [];
+          if (billDetails?.bill_items) {
+            const serviceGroups = {};
+            billDetails.bill_items.forEach(item => {
+              const serviceGroup = item.service_group || item.category || 'Other';
+              if (!serviceGroups[serviceGroup]) {
+                serviceGroups[serviceGroup] = [];
+              }
+              serviceGroups[serviceGroup].push(item.item_name || item.item_code);
+            });
+            
+            Object.keys(serviceGroups).forEach(group => {
+              services.push(`${group}: ${serviceGroups[group].join(', ')}`);
+            });
+          }
+          
+          return {
+            ...bill,
+            remaining_balance: remainingBalance,
+            services: services.join('; ') || 'No services',
+            service_count: billDetails?.bill_items?.length || 0,
+          };
+        } catch (error) {
+          console.error(`Failed to load details for bill ${bill.id}:`, error);
+          const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
+          return {
+            ...bill,
+            remaining_balance: remainingBalance,
+            services: 'Details unavailable',
+            service_count: 0,
+          };
+        }
+      }));
+      
+      existingBills.value = enrichedBills;
+    } catch (error) {
+      console.error('Failed to load bills:', error);
+      existingBills.value = [];
+    } finally {
+      loadingBills.value = false;
+    }
   }
 };
 
@@ -2274,13 +2570,43 @@ const clearSearch = () => {
   cardNumber.value = '';
   patient.value = null;
   activeEncounters.value = [];
+  wardAdmissions.value = [];
   selectedEncounterId.value = null;
   selectedEncounter.value = null;
+  selectedWardAdmission.value = null;
   billItems.splice(0);
   miscellaneous.value = '';
   autoCalculatedItems.value = [];
   existingBills.value = [];
 };
+
+// Watch billing module changes and reload data
+watch(billingModule, async () => {
+  // Reset selection when switching modules
+  selectedEncounterId.value = null;
+  selectedEncounter.value = null;
+  selectedWardAdmission.value = null;
+  billItems.splice(0);
+  miscellaneous.value = '';
+  autoCalculatedItems.value = [];
+  existingBills.value = [];
+  
+  // Reload ward admissions if patient is already loaded
+  if (patient.value) {
+    try {
+      const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
+      wardAdmissions.value = wardAdmissionsResponse.data || [];
+      
+      // Reload bills for the new module
+      if (billingModule.value === 'ipd') {
+        await loadExistingBills();
+      }
+    } catch (error) {
+      console.warn('Failed to reload ward admissions:', error);
+      wardAdmissions.value = [];
+    }
+  }
+});
 
 // Auto-load if encounterId is in route
 const autoLoadFromRoute = async () => {
@@ -2308,8 +2634,27 @@ const autoLoadFromRoute = async () => {
           ...e,
         }));
         
+        // Load ward admissions for IPD filtering
+        try {
+          const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
+          wardAdmissions.value = wardAdmissionsResponse.data || [];
+          
+          // Determine if this is an IPD encounter
+          const isIPD = wardAdmissions.value.some(wa => wa.encounter_id === encounterId);
+          if (isIPD) {
+            billingModule.value = 'ipd';
+            const wardAdmission = wardAdmissions.value.find(wa => wa.encounter_id === encounterId);
+            if (wardAdmission) {
+              selectedWardAdmission.value = wardAdmission;
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to load ward admissions:', error);
+          wardAdmissions.value = [];
+        }
+        
         // Set selected encounter
-        selectedEncounter.value = activeEncounters.value.find(e => e.id === encounterId);
+        selectedEncounter.value = filteredEncounters.value.find(e => e.id === encounterId);
         
         // Load encounter data
         await loadEncounterData();
