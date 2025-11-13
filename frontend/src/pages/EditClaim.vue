@@ -1,6 +1,16 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
+    <div class="row items-center q-mb-md">
+      <div class="text-h4">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
+      <q-space />
+      <q-btn
+        color="secondary"
+        label="Back to Claims"
+        icon="arrow_back"
+        @click="$router.push('/claims')"
+        outline
+      />
+    </div>
     <q-banner
       v-if="isViewMode"
       class="bg-info text-white q-mb-md"
@@ -568,15 +578,26 @@
 
       <!-- Action Buttons -->
       <div class="row q-gutter-md q-mt-md">
-        <q-btn
-          v-if="!isViewMode"
-          type="submit"
-          color="primary"
-          label="Save Claim"
-          :loading="saving"
-          :disable="claimStatus === 'finalized'"
-          class="col-12 col-md-3"
-        />
+        <!-- Edit Mode Buttons -->
+        <template v-if="!isViewMode">
+          <q-btn
+            type="submit"
+            color="secondary"
+            label="Save Draft"
+            :loading="saving"
+            :disable="claimStatus === 'finalized'"
+            class="col-12 col-md-3"
+          />
+          <q-btn
+            color="primary"
+            label="Save & Finalize"
+            :loading="saving"
+            @click="saveAndFinalize"
+            :disable="claimStatus === 'finalized'"
+            class="col-12 col-md-3"
+          />
+        </template>
+        <!-- View Mode Buttons -->
         <template v-else>
           <q-btn
             color="primary"
@@ -593,12 +614,6 @@
             class="col-12 col-md-3"
           />
         </template>
-        <q-btn
-          color="secondary"
-          label="Back"
-          @click="$router.back()"
-          class="col-12 col-md-3"
-        />
       </div>
     </q-form>
 
@@ -1003,27 +1018,27 @@ const saveAndFinalize = async (e) => {
   if (e) {
     e.preventDefault();
   }
-  // First save the claim
-  await saveClaim(e);
-  // Wait a bit to ensure save completed
-  await new Promise(resolve => setTimeout(resolve, 500));
-  // Then finalize if save was successful and not currently saving
-  if (!saving.value) {
-    try {
-      await claimsAPI.finalize(route.params.claimId);
-      $q.notify({
-        type: 'positive',
-        message: 'Claim saved and finalized successfully',
-      });
-      claimStatus.value = 'finalized';
-      isViewMode.value = false;
-      $router.push('/claims');
-    } catch (error) {
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || 'Failed to finalize claim',
-      });
-    }
+  saving.value = true;
+  try {
+    // First save the claim
+    await saveClaim(e);
+    // Wait a bit to ensure save completed
+    await new Promise(resolve => setTimeout(resolve, 500));
+    // Then finalize
+    await claimsAPI.finalize(claimId.value);
+    $q.notify({
+      type: 'positive',
+      message: 'Claim saved and finalized successfully',
+    });
+    // Navigate back to claims page
+    $router.push('/claims');
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to save and finalize claim',
+    });
+  } finally {
+    saving.value = false;
   }
 };
 
@@ -1175,6 +1190,7 @@ const saveClaim = async (e) => {
   }
   saving.value = true;
   try {
+    // Don't navigate away - just save
     // Filter out empty entries
     const diagnosesToSave = diagnosesList.value
       .filter(d => d.description && d.description.trim() !== '');

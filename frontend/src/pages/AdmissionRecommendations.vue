@@ -55,8 +55,7 @@
           flat
           :loading="loading"
           :filter="filter"
-          @request="onRequest"
-          :pagination="pagination"
+          :pagination="{ rowsPerPage: 10 }"
           class="glass-table"
         >
           <template v-slot:top>
@@ -582,14 +581,6 @@ const admissionForm = ref({
   doctor_id: null,
 });
 
-const pagination = ref({
-  sortBy: 'created_at',
-  descending: true,
-  page: 1,
-  rowsPerPage: 10,
-  rowsNumber: 0,
-});
-
 // Get unique wards from admissions
 const wardOptions = computed(() => {
   const wards = new Set();
@@ -698,7 +689,6 @@ const loadAdmissions = async () => {
     allAdmissions.value = data;
     admissions.value = data;
     
-    pagination.value.rowsNumber = filteredAdmissions.value.length;
     console.log('Loaded admissions:', allAdmissions.value.length);
   } catch (error) {
     console.error('Error loading admissions:', error);
@@ -715,13 +705,11 @@ const loadAdmissions = async () => {
 };
 
 const onWardFilterChange = () => {
-  pagination.value.rowsNumber = filteredAdmissions.value.length;
-  pagination.value.page = 1;
+  // Filter change handled by computed property
 };
 
 const onSearchChange = () => {
-  pagination.value.rowsNumber = filteredAdmissions.value.length;
-  pagination.value.page = 1;
+  // Search change handled by computed property
 };
 
 const confirmAdmission = (admission) => {
@@ -1026,14 +1014,6 @@ const viewPatient = (cardNumber) => {
 
 const viewEncounter = (encounterId) => {
   router.push(`/consultation/${encounterId}`);
-};
-
-const onRequest = (props) => {
-  const { page, rowsPerPage, sortBy, descending } = props.pagination;
-  pagination.value.page = page;
-  pagination.value.rowsPerPage = rowsPerPage;
-  pagination.value.sortBy = sortBy;
-  pagination.value.descending = descending;
 };
 
 onMounted(() => {

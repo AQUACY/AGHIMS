@@ -363,6 +363,11 @@ const regenerateClaim = (encounter) => {
   $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}`);
 };
 
+const viewClaim = (claimId) => {
+  // Navigate to edit page in view mode
+  $router.push(`/claims/edit/${claimId}?view=true`);
+};
+
 const loadFinalizedEncounters = async () => {
   loading.value = true;
   try {
