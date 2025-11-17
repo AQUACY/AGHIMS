@@ -3,17 +3,22 @@ Migration: Add other_names column to patients table (MySQL)
 """
 import pymysql
 import os
+import getpass
 from pathlib import Path
 
 
 def migrate():
     """Migration entry point called by run_migrations.py"""
-    # Get database connection details from environment
+    # Get database connection details from environment or prompt
     db_host = os.getenv('DB_HOST', 'localhost')
     db_port = int(os.getenv('DB_PORT', 3306))
     db_name = os.getenv('DB_NAME', 'hms')
     db_user = os.getenv('DB_USER', 'root')
+    
+    # Prompt for password if not set in environment
     db_password = os.getenv('DB_PASSWORD', '')
+    if not db_password:
+        db_password = getpass.getpass(f"Enter MySQL password for user '{db_user}': ")
     
     try:
         print(f"Connecting to MySQL database: {db_name}@{db_host}:{db_port}")
