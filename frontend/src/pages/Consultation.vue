@@ -887,9 +887,8 @@
                 v-model="prescriptionForm.dose"
                 filled
                 label="Dose"
-                type="number"
                 class="col-12 col-md-4"
-                hint="e.g., 500 (for 500mg), 1 (for 1 tablet/capsule)"
+                hint="e.g., 500, 1, or 20 + 120 (alphanumeric allowed)"
                 @update:model-value="calculateQuantity"
               />
               <q-select
@@ -1764,10 +1763,22 @@ const calculateQuantity = () => {
   }
   if (prescriptionForm.dose && prescriptionForm.frequency && prescriptionForm.duration) {
     try {
-      const doseNum = parseFloat(prescriptionForm.dose);
+      // Try to extract numeric value from dose (handles alphanumeric like "20 + 120")
+      // Extract first number found, or try parsing the whole string
+      const doseStr = String(prescriptionForm.dose).trim();
+      let doseNum = parseFloat(doseStr);
+      
+      // If parsing fails, try to extract first number from the string
+      if (isNaN(doseNum) || doseNum <= 0) {
+        const firstNumberMatch = doseStr.match(/\d+(\.\d+)?/);
+        if (firstNumberMatch) {
+          doseNum = parseFloat(firstNumberMatch[0]);
+        }
+      }
+      
       const frequencyValue = frequencyMapping[prescriptionForm.frequency];
       
-      if (doseNum && frequencyValue && doseNum > 0) {
+      if (doseNum && !isNaN(doseNum) && frequencyValue && doseNum > 0) {
         // Extract duration number (e.g., "7 DAYS" -> 7, "2" -> 2)
         const durationStr = prescriptionForm.duration.trim();
         let durationNum = 1;

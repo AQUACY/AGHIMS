@@ -290,10 +290,20 @@ export const consultationAPI = {
         'Content-Type': 'multipart/form-data',
       },
     }),
-  downloadScanResultAttachment: (investigationId) => 
-    api.get(`/consultation/scan-result/${investigationId}/download`, {
+  downloadScanResultAttachment: (investigationId, attachmentPath) => {
+    const url = `/consultation/scan-result/${investigationId}/download`;
+    const params = attachmentPath ? { attachment_path: attachmentPath } : {};
+    return api.get(url, {
+      params,
       responseType: 'blob',
-    }),
+    });
+  },
+  deleteScanResultAttachment: (investigationId, attachmentPath) => {
+    const url = `/consultation/scan-result/${investigationId}/attachment`;
+    return api.delete(url, {
+      params: { attachment_path: attachmentPath },
+    });
+  },
   getXrayResult: (investigationId) => 
     api.get(`/consultation/xray-result/investigation/${investigationId}`),
   createXrayResult: (formData) => 
@@ -302,10 +312,20 @@ export const consultationAPI = {
         'Content-Type': 'multipart/form-data',
       },
     }),
-  downloadXrayResultAttachment: (investigationId) => 
-    api.get(`/consultation/xray-result/${investigationId}/download`, {
+  downloadXrayResultAttachment: (investigationId, attachmentPath) => {
+    const url = `/consultation/xray-result/${investigationId}/download`;
+    const params = attachmentPath ? { attachment_path: attachmentPath } : {};
+    return api.get(url, {
+      params,
       responseType: 'blob',
-    }),
+    });
+  },
+  deleteXrayResultAttachment: (investigationId, attachmentPath) => {
+    const url = `/consultation/xray-result/${investigationId}/attachment`;
+    return api.delete(url, {
+      params: { attachment_path: attachmentPath },
+    });
+  },
   getAdmissionRecommendations: () => api.get('/consultation/admissions'),
   confirmAdmission: (admissionId, formData) => api.put(`/consultation/admissions/${admissionId}/confirm`, formData),
   revertAdmissionConfirmation: (admissionId) => api.put(`/consultation/admissions/${admissionId}/revert-confirmation`),

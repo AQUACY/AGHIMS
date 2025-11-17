@@ -39,6 +39,20 @@
         <div class="row items-center q-mb-md">
           <div class="text-h6 glass-text">Finalized Encounters</div>
           <q-space />
+          <q-btn
+            :icon="filtersLocked ? 'lock' : 'lock_open'"
+            :color="filtersLocked ? 'positive' : 'grey'"
+            flat
+            round
+            dense
+            size="sm"
+            @click="toggleFiltersLock"
+            class="q-mr-sm"
+          >
+            <q-tooltip>
+              {{ filtersLocked ? 'Filters are locked - click to unlock' : 'Click to lock filters' }}
+            </q-tooltip>
+          </q-btn>
           <q-btn-toggle
             v-model="claimType"
             toggle-color="primary"
@@ -216,6 +230,11 @@ const filterStartDate = ref('');
 const filterEndDate = ref('');
 const filterClaimStatus = ref(null);
 const filterCardNumber = ref('');
+const filtersLocked = ref(false);
+
+// LocalStorage key for locked filters
+const FILTERS_LOCK_KEY = 'claims_filters_locked';
+const FILTERS_STORAGE_KEY = 'claims_filters';
 
 const claimStatusOptions = [
   { label: 'All', value: null },
@@ -304,7 +323,66 @@ const clearFilters = () => {
   filterClaimStatus.value = null;
   filterCardNumber.value = '';
   searchEncounterId.value = '';
+  
+  // Save cleared filters if locked
+  if (filtersLocked.value) {
+    saveFiltersToStorage();
+  }
+  
   loadFinalizedEncounters();
+};
+
+const toggleFiltersLock = () => {
+  filtersLocked.value = !filtersLocked.value;
+  
+  if (filtersLocked.value) {
+    // Lock: Save current filters
+    saveFiltersToStorage();
+    localStorage.setItem(FILTERS_LOCK_KEY, 'true');
+    $q.notify({
+      type: 'positive',
+      message: 'Filters locked - they will persist when navigating',
+      timeout: 2000,
+    });
+  } else {
+    // Unlock: Clear saved filters
+    localStorage.removeItem(FILTERS_LOCK_KEY);
+    localStorage.removeItem(FILTERS_STORAGE_KEY);
+    $q.notify({
+      type: 'info',
+      message: 'Filters unlocked',
+      timeout: 2000,
+    });
+  }
+};
+
+const saveFiltersToStorage = () => {
+  const filters = {
+    claimType: claimType.value,
+    filterCardNumber: filterCardNumber.value,
+    filterStartDate: filterStartDate.value,
+    filterEndDate: filterEndDate.value,
+    filterClaimStatus: filterClaimStatus.value,
+    searchEncounterId: searchEncounterId.value,
+  };
+  localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+};
+
+const loadFiltersFromStorage = () => {
+  const savedFilters = localStorage.getItem(FILTERS_STORAGE_KEY);
+  if (savedFilters) {
+    try {
+      const filters = JSON.parse(savedFilters);
+      claimType.value = filters.claimType ?? null;
+      filterCardNumber.value = filters.filterCardNumber || '';
+      filterStartDate.value = filters.filterStartDate || '';
+      filterEndDate.value = filters.filterEndDate || '';
+      filterClaimStatus.value = filters.filterClaimStatus ?? null;
+      searchEncounterId.value = filters.searchEncounterId || '';
+    } catch (error) {
+      console.error('Failed to load saved filters:', error);
+    }
+  }
 };
 
 const generateClaim = (encounter) => {
@@ -410,19 +488,29 @@ const loadFinalizedEncounters = async () => {
   }
 };
 
-onMounted(() => {
-  loadFinalizedEncounters();
-});
-
-watch(claimType, () => {
-  loadFinalizedEncounters();
-});
-
-watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber], () => {
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
     loadFinalizedEncounters();
   }
+  
+  // Save filters if locked
+  if (filtersLocked.value) {
+    saveFiltersToStorage();
+  }
+});
+
+onMounted(() => {
+  // Check if filters are locked
+  const isLocked = localStorage.getItem(FILTERS_LOCK_KEY) === 'true';
+  filtersLocked.value = isLocked;
+  
+  // Load saved filters if locked
+  if (isLocked) {
+    loadFiltersFromStorage();
+  }
+  
+  loadFinalizedEncounters();
 });
 </script>
 

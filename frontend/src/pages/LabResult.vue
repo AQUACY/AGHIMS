@@ -53,6 +53,20 @@
             <div class="text-body1 text-weight-medium">{{ formatDate(encounter?.created_at) || 'N/A' }}</div>
           </div>
         </div>
+        <div v-if="encounterBillInfo.totalAmount !== null" class="row q-gutter-md q-mt-md">
+          <div class="col-12">
+            <div class="text-body2" :class="encounterBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
+              <q-icon name="receipt" size="14px" class="q-mr-xs" />
+              <strong>Total Bills:</strong> GHC {{ encounterBillInfo.totalAmount.toFixed(2) }} 
+              <span v-if="encounterBillInfo.remainingBalance > 0" class="text-negative">
+                | Outstanding: GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}
+              </span>
+              <span v-else>
+                | Outstanding: GHC 0.00
+              </span>
+            </div>
+          </div>
+        </div>
         <div v-if="patient.insured && patient.insurance_id" class="row q-gutter-md q-mt-md">
           <div class="col-12 col-md-3">
             <div class="text-caption text-grey-7">Insurance ID</div>
@@ -189,7 +203,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, encountersAPI, patientsAPI } from '../services/api';
+import { consultationAPI, encountersAPI, patientsAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
@@ -204,6 +218,11 @@ const labResult = ref(null);
 const loading = ref(false);
 const savingResult = ref(false);
 const editingResult = ref(false);
+const encounterBillInfo = ref({
+  totalAmount: null,
+  paidAmount: null,
+  remainingBalance: null,
+});
 
 // Check if user can edit result (Admin and Lab Head can edit completed investigations)
 const canEditResult = computed(() => {
@@ -224,6 +243,9 @@ const resultForm = ref({
 
 const loadInvestigation = async () => {
   const investigationId = route.params.investigationId;
+  const source = route.query.source; // 'opd' or 'inpatient' from query param
+  const expectedCardNumber = route.query.card_number; // Expected patient card number
+  
   if (!investigationId) {
     $q.notify({
       type: 'negative',
@@ -235,33 +257,79 @@ const loadInvestigation = async () => {
 
   loading.value = true;
   try {
-    // IMPORTANT: Check IPD FIRST to prevent ID collision issues
-    // If both OPD and IPD investigations exist with the same ID, we want IPD
     let invResponse;
     let isInpatient = false;
     
-    try {
-      // Try IPD first
-      invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
-      investigation.value = invResponse.data;
-      isInpatient = true;
-    } catch (ipdError) {
-      // If IPD fails with 404, try OPD
-      if (ipdError.response?.status === 404) {
-        try {
-          invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
-          investigation.value = invResponse.data;
-          isInpatient = false;
-        } catch (opdError) {
-          $q.notify({
-            type: 'negative',
-            message: 'Investigation not found',
-          });
-          router.push('/lab');
-          return;
+    // If source is specified in query params, use it to determine which API to call first
+    if (source === 'inpatient') {
+      // Try IPD first if source indicates inpatient
+      try {
+        invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+        investigation.value = invResponse.data;
+        isInpatient = true;
+        
+        // Verify patient card number matches if provided
+        if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+          throw new Error('Patient mismatch');
         }
-      } else {
-        throw ipdError;
+      } catch (ipdError) {
+        if (ipdError.message === 'Patient mismatch' || (expectedCardNumber && ipdError.response?.status !== 404)) {
+          // Patient doesn't match or other error - try OPD
+          try {
+            invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+            investigation.value = invResponse.data;
+            isInpatient = false;
+            
+            // Verify patient card number matches
+            if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+              throw new Error('Investigation not found for this patient');
+            }
+          } catch (opdError) {
+            $q.notify({
+              type: 'negative',
+              message: 'Investigation not found or patient mismatch',
+            });
+            router.push('/lab');
+            return;
+          }
+        } else {
+          throw ipdError;
+        }
+      }
+    } else {
+      // Default: Try OPD first (most common case)
+      try {
+        invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+        investigation.value = invResponse.data;
+        isInpatient = false;
+        
+        // Verify patient card number matches if provided
+        if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+          throw new Error('Patient mismatch');
+        }
+      } catch (opdError) {
+        // If OPD fails with 404 or patient mismatch, try IPD
+        if (opdError.response?.status === 404 || opdError.message === 'Patient mismatch') {
+          try {
+            invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+            investigation.value = invResponse.data;
+            isInpatient = true;
+            
+            // Verify patient card number matches
+            if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+              throw new Error('Investigation not found for this patient');
+            }
+          } catch (ipdError) {
+            $q.notify({
+              type: 'negative',
+              message: 'Investigation not found or patient mismatch',
+            });
+            router.push('/lab');
+            return;
+          }
+        } else {
+          throw opdError;
+        }
       }
     }
     
@@ -282,6 +350,9 @@ const loadInvestigation = async () => {
       try {
         const encounterResponse = await encountersAPI.get(investigation.value.encounter_id);
         encounter.value = encounterResponse.data;
+        
+        // Load bills for this encounter
+        await loadEncounterBills(encounter.value.id);
         
         // Verify encounter matches investigation's patient_card_number if available
         if (investigation.value.patient_card_number && encounter.value.patient_card_number) {

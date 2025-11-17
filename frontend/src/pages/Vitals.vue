@@ -120,6 +120,20 @@
               <div class="text-body2"><strong>Address:</strong> {{ selectedEncounter?.patient_address || 'N/A' }}</div>
             </div>
           </div>
+          <div v-if="encounterBillInfo.totalAmount !== null" class="row q-gutter-md q-mt-xs">
+            <div class="col-12">
+              <div class="text-body2" :class="encounterBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
+                <q-icon name="receipt" size="14px" class="q-mr-xs" />
+                <strong>Total Bills:</strong> GHC {{ encounterBillInfo.totalAmount.toFixed(2) }} 
+                <span v-if="encounterBillInfo.remainingBalance > 0" class="text-negative">
+                  | Outstanding: GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}
+                </span>
+                <span v-else>
+                  | Outstanding: GHC 0.00
+                </span>
+              </div>
+            </div>
+          </div>
         </q-card-section>
 
         <q-card-section class="q-pt-none">
@@ -275,7 +289,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { vitalsAPI, encountersAPI, patientsAPI } from '../services/api';
+import { vitalsAPI, encountersAPI, patientsAPI, billingAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 
 const $q = useQuasar();
@@ -289,6 +303,11 @@ const cardSearch = ref('');
 const showVitalsDialog = ref(false);
 const selectedEncounter = ref(null);
 const saving = ref(false);
+const encounterBillInfo = ref({
+  totalAmount: null,
+  paidAmount: null,
+  remainingBalance: null,
+});
 
 const columns = [
   { name: 'time', label: 'Time', field: 'created_at', align: 'left', sortable: true },
@@ -395,8 +414,51 @@ const loadEncounters = async () => {
   }
 };
 
+const loadEncounterBills = async (encounterId) => {
+  if (!encounterId) {
+    encounterBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
+    return;
+  }
+
+  try {
+    const billsResponse = await billingAPI.getEncounterBills(encounterId);
+    const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+    
+    let totalAmount = 0;
+    let paidAmount = 0;
+    
+    for (const bill of bills) {
+      totalAmount += bill.total_amount || 0;
+      paidAmount += bill.paid_amount || 0;
+    }
+    
+    const remainingBalance = totalAmount - paidAmount;
+    
+    encounterBillInfo.value = {
+      totalAmount: totalAmount,
+      paidAmount: paidAmount,
+      remainingBalance: remainingBalance > 0.01 ? remainingBalance : 0, // Allow small rounding differences
+    };
+  } catch (error) {
+    console.error('Error loading encounter bills:', error);
+    // Set to null to indicate error/not loaded
+    encounterBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
+  }
+};
+
 const recordVitals = async (encounter) => {
   selectedEncounter.value = encounter;
+  
+  // Load bills for this encounter
+  await loadEncounterBills(encounter.id);
   
   try {
     // Always fetch full patient details to ensure we have the latest data

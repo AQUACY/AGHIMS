@@ -53,6 +53,20 @@
             <div class="text-body1 text-weight-medium">{{ formatDate(encounter?.created_at) || 'N/A' }}</div>
           </div>
         </div>
+        <div v-if="encounterBillInfo.totalAmount !== null" class="row q-gutter-md q-mt-md">
+          <div class="col-12">
+            <div class="text-body2" :class="encounterBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
+              <q-icon name="receipt" size="14px" class="q-mr-xs" />
+              <strong>Total Bills:</strong> GHC {{ encounterBillInfo.totalAmount.toFixed(2) }} 
+              <span v-if="encounterBillInfo.remainingBalance > 0" class="text-negative">
+                | Outstanding: GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}
+              </span>
+              <span v-else>
+                | Outstanding: GHC 0.00
+              </span>
+            </div>
+          </div>
+        </div>
         <div v-if="patient.insured && patient.insurance_id" class="row q-gutter-md q-mt-md">
           <div class="col-12 col-md-3">
             <div class="text-caption text-grey-7">Insurance ID</div>
@@ -140,28 +154,69 @@
             :rules="[(val) => !!val || 'Results text is required']"
           />
           <q-file
-            v-model="resultForm.attachment"
+            v-model="resultForm.attachments"
             filled
-            label="Upload PDF/Attachment"
+            multiple
+            label="Upload PDF/Attachments"
             accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-            hint="Upload PDF, Word document, or image file"
-            @update:model-value="onFileSelected"
+            hint="Upload one or more PDF, Word document, or image files"
+            @update:model-value="onFilesSelected"
           >
             <template v-slot:prepend>
               <q-icon name="attach_file" />
             </template>
           </q-file>
-          <div v-if="resultForm.existingAttachment" class="text-caption text-grey-7 q-mt-sm">
-            Current attachment: {{ resultForm.existingAttachment.split('/').pop() }}
-            <q-btn
-              flat
-              dense
-              size="sm"
-              icon="download"
-              label="Download"
-              @click="downloadExistingAttachment"
-              class="q-ml-sm"
-            />
+          <div v-if="resultForm.attachments && resultForm.attachments.length > 0" class="q-mt-sm">
+            <div class="text-caption text-grey-7 q-mb-xs">Selected files:</div>
+            <q-list dense bordered>
+              <q-item v-for="(file, index) in resultForm.attachments" :key="index">
+                <q-item-section>
+                  <q-item-label>{{ file.name }}</q-item-label>
+                  <q-item-label caption>{{ formatFileSize(file.size) }}</q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-btn
+                    flat
+                    dense
+                    round
+                    icon="close"
+                    size="sm"
+                    @click="removeFile(index)"
+                  />
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </div>
+          <div v-if="existingAttachments && existingAttachments.length > 0" class="text-caption text-grey-7 q-mt-sm">
+            <div class="q-mb-xs">Existing attachments:</div>
+            <q-list dense bordered>
+              <q-item v-for="(attachment, index) in existingAttachments" :key="index">
+                <q-item-section>
+                  <q-item-label>{{ attachment.split('/').pop() }}</q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-btn
+                    flat
+                    dense
+                    size="sm"
+                    icon="open_in_new"
+                    label="Open"
+                    @click="downloadExistingAttachment(attachment)"
+                    class="q-mr-xs"
+                  />
+                  <q-btn
+                    flat
+                    dense
+                    size="sm"
+                    icon="delete"
+                    color="negative"
+                    @click="removeExistingAttachment(attachment, index)"
+                  >
+                    <q-tooltip>Remove attachment</q-tooltip>
+                  </q-btn>
+                </q-item-section>
+              </q-item>
+            </q-list>
           </div>
           <div class="row q-gutter-md q-mt-md">
             <q-btn
@@ -189,7 +244,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, encountersAPI, patientsAPI } from '../services/api';
+import { consultationAPI, encountersAPI, patientsAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
@@ -204,6 +259,11 @@ const scanResult = ref(null);
 const loading = ref(false);
 const savingResult = ref(false);
 const editingResult = ref(false);
+const encounterBillInfo = ref({
+  totalAmount: null,
+  paidAmount: null,
+  remainingBalance: null,
+});
 
 // Check if user can edit result (Admin and Scan Head can edit completed investigations)
 const canEditResult = computed(() => {
@@ -219,9 +279,49 @@ const canEditResult = computed(() => {
 const resultForm = ref({
   investigation_id: null,
   results_text: '',
-  attachment: null,
-  existingAttachment: null,
+  attachments: [],
 });
+const existingAttachments = ref([]);
+
+const loadEncounterBills = async (encounterId) => {
+  if (!encounterId) {
+    encounterBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
+    return;
+  }
+
+  try {
+    const billsResponse = await billingAPI.getEncounterBills(encounterId);
+    const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+    
+    let totalAmount = 0;
+    let paidAmount = 0;
+    
+    for (const bill of bills) {
+      totalAmount += bill.total_amount || 0;
+      paidAmount += bill.paid_amount || 0;
+    }
+    
+    const remainingBalance = totalAmount - paidAmount;
+    
+    encounterBillInfo.value = {
+      totalAmount: totalAmount,
+      paidAmount: paidAmount,
+      remainingBalance: remainingBalance > 0.01 ? remainingBalance : 0, // Allow small rounding differences
+    };
+  } catch (error) {
+    console.error('Error loading encounter bills:', error);
+    // Set to null to indicate error/not loaded
+    encounterBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
+  }
+};
 
 const loadInvestigation = async () => {
   const investigationId = route.params.investigationId;
@@ -234,35 +334,84 @@ const loadInvestigation = async () => {
     return;
   }
 
+  const source = route.query.source; // 'opd' or 'inpatient' from query param
+  const expectedCardNumber = route.query.card_number; // Expected patient card number
+  
   loading.value = true;
   try {
-    // IMPORTANT: Check IPD FIRST to prevent ID collision issues
-    // If both OPD and IPD investigations exist with the same ID, we want IPD
     let invResponse;
     let isInpatient = false;
     
-    try {
-      // Try IPD first
-      invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
-      investigation.value = invResponse.data;
-      isInpatient = true;
-    } catch (ipdError) {
-      // If IPD fails with 404, try OPD
-      if (ipdError.response?.status === 404) {
-        try {
-          invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
-          investigation.value = invResponse.data;
-          isInpatient = false;
-        } catch (opdError) {
-          $q.notify({
-            type: 'negative',
-            message: 'Investigation not found',
-          });
-          router.push('/scan');
-          return;
+    // If source is specified in query params, use it to determine which API to call first
+    if (source === 'inpatient') {
+      // Try IPD first if source indicates inpatient
+      try {
+        invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+        investigation.value = invResponse.data;
+        isInpatient = true;
+        
+        // Verify patient card number matches if provided
+        if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+          throw new Error('Patient mismatch');
         }
-      } else {
-        throw ipdError;
+      } catch (ipdError) {
+        if (ipdError.message === 'Patient mismatch' || (expectedCardNumber && ipdError.response?.status !== 404)) {
+          // Patient doesn't match or other error - try OPD
+          try {
+            invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+            investigation.value = invResponse.data;
+            isInpatient = false;
+            
+            // Verify patient card number matches
+            if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+              throw new Error('Investigation not found for this patient');
+            }
+          } catch (opdError) {
+            $q.notify({
+              type: 'negative',
+              message: 'Investigation not found or patient mismatch',
+            });
+            router.push('/scan');
+            return;
+          }
+        } else {
+          throw ipdError;
+        }
+      }
+    } else {
+      // Default: Try OPD first (most common case)
+      try {
+        invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+        investigation.value = invResponse.data;
+        isInpatient = false;
+        
+        // Verify patient card number matches if provided
+        if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+          throw new Error('Patient mismatch');
+        }
+      } catch (opdError) {
+        // If OPD fails with 404 or patient mismatch, try IPD
+        if (opdError.response?.status === 404 || opdError.message === 'Patient mismatch') {
+          try {
+            invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+            investigation.value = invResponse.data;
+            isInpatient = true;
+            
+            // Verify patient card number matches
+            if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+              throw new Error('Investigation not found for this patient');
+            }
+          } catch (ipdError) {
+            $q.notify({
+              type: 'negative',
+              message: 'Investigation not found or patient mismatch',
+            });
+            router.push('/scan');
+            return;
+          }
+        } else {
+          throw opdError;
+        }
       }
     }
     
@@ -283,6 +432,9 @@ const loadInvestigation = async () => {
       try {
         const encounterResponse = await encountersAPI.get(investigation.value.encounter_id);
         encounter.value = encounterResponse.data;
+        
+        // Load bills for this encounter
+        await loadEncounterBills(encounter.value.id);
         
         // Load patient from encounter to ensure correct patient
         if (encounter.value && encounter.value.patient_id) {
@@ -371,9 +523,20 @@ const loadInvestigation = async () => {
         resultForm.value = {
           investigation_id: investigation.value.id,
           results_text: existingResult.results_text || '',
-          attachment: null,
-          existingAttachment: existingResult.attachment_path || null,
+          attachments: [],
         };
+        // Parse existing attachments (can be JSON array or single string)
+        if (existingResult.attachment_path) {
+          try {
+            const parsed = JSON.parse(existingResult.attachment_path);
+            existingAttachments.value = Array.isArray(parsed) ? parsed : [existingResult.attachment_path];
+          } catch {
+            // If not JSON, treat as single attachment
+            existingAttachments.value = [existingResult.attachment_path];
+          }
+        } else {
+          existingAttachments.value = [];
+        }
       } else {
         // No result exists or mismatch - start fresh
         console.log('No matching scan result found for investigation:', investigation.value.id, 'Source:', investigation.value.source);
@@ -382,9 +545,9 @@ const loadInvestigation = async () => {
         resultForm.value = {
           investigation_id: investigation.value.id,
           results_text: '',
-          attachment: null,
-          existingAttachment: null,
+          attachments: [],
         };
+        existingAttachments.value = [];
       }
     } catch (error) {
       // No result exists yet or error loading
@@ -394,9 +557,9 @@ const loadInvestigation = async () => {
       resultForm.value = {
         investigation_id: investigation.value.id,
         results_text: '',
-        attachment: null,
-        existingAttachment: null,
+        attachments: [],
       };
+      existingAttachments.value = [];
     }
   } catch (error) {
     console.error('Failed to load investigation:', error);
@@ -410,8 +573,54 @@ const loadInvestigation = async () => {
   }
 };
 
-const onFileSelected = (file) => {
-  // File is automatically set in resultForm.attachment
+const onFilesSelected = (files) => {
+  // Files are automatically set in resultForm.attachments
+};
+
+const removeFile = (index) => {
+  resultForm.value.attachments.splice(index, 1);
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+};
+
+const removeExistingAttachment = async (attachmentPath, index) => {
+  if (!attachmentPath || !resultForm.value.investigation_id) {
+    return;
+  }
+
+  $q.dialog({
+    title: 'Confirm Removal',
+    message: `Are you sure you want to remove "${attachmentPath.split('/').pop()}"?`,
+    cancel: true,
+    persistent: true
+  }).onOk(async () => {
+    try {
+      await consultationAPI.deleteScanResultAttachment(resultForm.value.investigation_id, attachmentPath);
+      
+      // Remove from local array
+      existingAttachments.value.splice(index, 1);
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Attachment removed successfully',
+      });
+      
+      // Reload the investigation to refresh data
+      await loadInvestigation();
+    } catch (error) {
+      console.error('Remove attachment error:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to remove attachment',
+      });
+    }
+  });
 };
 
 const saveScanResult = async () => {
@@ -424,8 +633,11 @@ const saveScanResult = async () => {
     if (resultForm.value.results_text) {
       formData.append('results_text', resultForm.value.results_text);
     }
-    if (resultForm.value.attachment) {
-      formData.append('attachment', resultForm.value.attachment);
+    // Append all attachments
+    if (resultForm.value.attachments && resultForm.value.attachments.length > 0) {
+      resultForm.value.attachments.forEach((file) => {
+        formData.append('attachments', file);
+      });
     }
 
     await consultationAPI.createScanResult(formData);
@@ -433,7 +645,12 @@ const saveScanResult = async () => {
       type: 'positive',
       message: 'Scan result saved successfully',
     });
-    router.push('/scan');
+    
+    // Clear the form attachments (they've been saved)
+    resultForm.value.attachments = [];
+    
+    // Reload the investigation to show updated results
+    await loadInvestigation();
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -444,27 +661,26 @@ const saveScanResult = async () => {
   }
 };
 
-const downloadExistingAttachment = async () => {
-  if (!resultForm.value.existingAttachment || !resultForm.value.investigation_id) {
+const downloadExistingAttachment = async (attachmentPath) => {
+  if (!attachmentPath || !resultForm.value.investigation_id) {
     $q.notify({
       type: 'warning',
-      message: 'No attachment available to download',
+      message: 'No attachment available to open',
     });
     return;
   }
 
   try {
-    const response = await consultationAPI.downloadScanResultAttachment(resultForm.value.investigation_id);
+    const response = await consultationAPI.downloadScanResultAttachment(resultForm.value.investigation_id, attachmentPath);
     
+    const contentType = response.headers['content-type'] || response.headers['Content-Type'] || 'application/pdf';
     const blob = response.data instanceof Blob 
       ? response.data 
-      : new Blob([response.data], { 
-          type: response.headers['content-type'] || 'application/pdf' 
-        });
+      : new Blob([response.data], { type: contentType });
     
     const contentDisposition = response.headers['content-disposition'] || 
                                 response.headers['Content-Disposition'];
-    let filename = resultForm.value.existingAttachment.split('/').pop() || 'scan_result.pdf';
+    let filename = attachmentPath.split('/').pop() || 'scan_result.pdf';
     
     if (contentDisposition) {
       const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
@@ -473,27 +689,49 @@ const downloadExistingAttachment = async () => {
       }
     }
     
+    // Check if file is PDF or image (can be opened in browser)
+    const fileExt = filename.toLowerCase().split('.').pop();
+    const isPDF = fileExt === 'pdf' || contentType.includes('application/pdf');
+    const isImage = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(fileExt) || 
+                    contentType.startsWith('image/');
+    
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
     
-    setTimeout(() => {
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    }, 100);
-    
-    $q.notify({
-      type: 'positive',
-      message: 'File downloaded successfully',
-    });
+    if (isPDF || isImage) {
+      // Open in new tab for PDFs and images
+      window.open(url, '_blank');
+      // Revoke URL after a delay to allow browser to load it
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+      }, 1000);
+      
+      $q.notify({
+        type: 'positive',
+        message: 'File opened in new tab',
+      });
+    } else {
+      // Download other file types (doc, docx, etc.)
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 100);
+      
+      $q.notify({
+        type: 'positive',
+        message: 'File downloaded successfully',
+      });
+    }
   } catch (error) {
     console.error('Download error:', error);
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to download attachment',
+      message: error.response?.data?.detail || 'Failed to open attachment',
     });
   }
 };

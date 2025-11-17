@@ -39,6 +39,16 @@
             <div class="text-grey-7" v-if="patient.insurance_id">
               Insurance: {{ patient.insurance_id }}
             </div>
+            <div v-if="patientBillInfo.totalAmount !== null" class="text-body2 q-mt-xs" :class="patientBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
+              <q-icon name="receipt" size="14px" class="q-mr-xs" />
+              Total Bills: GHC {{ patientBillInfo.totalAmount.toFixed(2) }} 
+              <span v-if="patientBillInfo.remainingBalance > 0" class="text-negative">
+                | Outstanding: GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}
+              </span>
+              <span v-else>
+                | Outstanding: GHC 0.00
+              </span>
+            </div>
           </div>
           <q-space />
           <q-btn
@@ -1479,6 +1489,11 @@ const todaysEncounter = ref(null);
 const oldEncounters = ref([]);
 const oldEncountersExpanded = ref(false);
 const selectedEncounterId = ref(null);
+const patientBillInfo = ref({
+  totalAmount: null,
+  paidAmount: null,
+  remainingBalance: null,
+});
 const prescriptions = ref([]);
 const currentEncounter = ref(null);
 const loadingPrescriptions = ref(false);
@@ -2238,6 +2253,9 @@ const searchPatient = async () => {
     
     // Use the first patient (or exact match if available)
     patient.value = patients[0];
+
+    // Load patient bills summary
+    await loadPatientBills();
 
     // Load ward admissions for this patient
     await loadWardAdmissions();
@@ -3171,6 +3189,67 @@ const getEncounterProcedures = (encounter) => {
   return encounter.department || 'N/A';
 };
 
+const loadPatientBills = async () => {
+  if (!patient.value) {
+    patientBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
+    return;
+  }
+
+  try {
+    // Get all active encounters for this patient
+    const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
+    const allEncounters = encountersResponse.data.filter(e => !e.archived);
+    
+    if (allEncounters.length === 0) {
+      patientBillInfo.value = {
+        totalAmount: 0,
+        paidAmount: 0,
+        remainingBalance: 0,
+      };
+      return;
+    }
+
+    // Load bills for all encounters
+    let totalAmount = 0;
+    let paidAmount = 0;
+    
+    for (const encounter of allEncounters) {
+      try {
+        const billsResponse = await billingAPI.getEncounterBills(encounter.id);
+        const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+        
+        for (const bill of bills) {
+          totalAmount += bill.total_amount || 0;
+          paidAmount += bill.paid_amount || 0;
+        }
+      } catch (error) {
+        console.error(`Failed to load bills for encounter ${encounter.id}:`, error);
+        // Continue with other encounters
+      }
+    }
+    
+    const remainingBalance = totalAmount - paidAmount;
+    
+    patientBillInfo.value = {
+      totalAmount: totalAmount,
+      paidAmount: paidAmount,
+      remainingBalance: remainingBalance > 0.01 ? remainingBalance : 0, // Allow small rounding differences
+    };
+  } catch (error) {
+    console.error('Error loading patient bills:', error);
+    // Set to null to indicate error/not loaded
+    patientBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
+  }
+};
+
 const clearSearch = () => {
   cardNumber.value = '';
   patient.value = null;
@@ -3192,6 +3271,11 @@ const clearSearch = () => {
   selectedMedication.value = null;
   medicationOptions.value = [];
   allMedications.value = [];
+  patientBillInfo.value = {
+    totalAmount: null,
+    paidAmount: null,
+    remainingBalance: null,
+  };
 };
 
 // Load all staff for prescriber/dispenser names

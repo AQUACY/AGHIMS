@@ -2244,7 +2244,7 @@ class ScanResultResponse(BaseModel):
 async def create_scan_result(
     investigation_id: int = Form(...),
     results_text: Optional[str] = Form(None),
-    attachment: Optional[UploadFile] = File(None),
+    attachments: Optional[List[UploadFile]] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Scan", "Scan Head", "Admin"]))
 ):
@@ -2286,29 +2286,49 @@ async def create_scan_result(
                     detail="Only Admin and Scan Head can edit completed investigations. Please contact Scan Head to revert the status."
                 )
     
-    # Handle file upload
-    attachment_path = None
-    if attachment:
-        import os
-        import uuid
-        from pathlib import Path
-        
+    # Handle multiple file uploads
+    import os
+    import uuid
+    import json
+    from pathlib import Path
+    
+    uploaded_paths = []
+    if attachments:
         # Create uploads directory if it doesn't exist
         upload_dir = Path("uploads/scan_results")
         upload_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate unique filename
-        file_ext = Path(attachment.filename).suffix if attachment.filename else ".pdf"
-        file_name = f"{investigation_id}_{uuid.uuid4()}{file_ext}"
-        file_path = upload_dir / file_name
-        
-        # Save file - UploadFile.read() returns bytes
-        content = await attachment.read()
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-        
-        # Store relative path for serving
-        attachment_path = f"scan_results/{file_name}"
+        # Process each uploaded file
+        for attachment in attachments:
+            if attachment:
+                # Preserve original filename, but sanitize it and handle conflicts
+                original_filename = attachment.filename or "unnamed_file.pdf"
+                # Sanitize filename: remove path components and keep only safe characters
+                safe_filename = Path(original_filename).name
+                # Replace spaces and special chars that might cause issues
+                safe_filename = safe_filename.replace(' ', '_')
+                
+                # Check if file already exists and add number suffix if needed
+                base_name = Path(safe_filename).stem
+                file_ext = Path(safe_filename).suffix or ".pdf"
+                file_name = safe_filename
+                counter = 1
+                while (upload_dir / file_name).exists():
+                    file_name = f"{base_name}_{counter}{file_ext}"
+                    counter += 1
+                
+                file_path = upload_dir / file_name
+                
+                # Save file - UploadFile.read() returns bytes
+                content = await attachment.read()
+                with open(file_path, "wb") as buffer:
+                    buffer.write(content)
+                
+                # Store relative path for serving (with original filename preserved)
+                uploaded_paths.append(f"scan_results/{file_name}")
+    
+    # Determine final attachment_path (JSON array or None)
+    attachment_path = json.dumps(uploaded_paths) if uploaded_paths else None
     
     # Handle IPD and OPD investigations separately due to FK constraints
     if is_inpatient:
@@ -2321,17 +2341,25 @@ async def create_scan_result(
     if existing_result:
         # Update existing result
         existing_result.results_text = results_text
-        if attachment_path:
-            # Delete old attachment if exists
-            old_path = Path("uploads") / existing_result.attachment_path
-            if existing_result.attachment_path and old_path.exists():
-                old_path.unlink()
-            existing_result.attachment_path = attachment_path
+        if uploaded_paths:
+            # Merge with existing attachments
+            existing_attachments = []
+            if existing_result.attachment_path:
+                try:
+                    existing_attachments = json.loads(existing_result.attachment_path)
+                    if not isinstance(existing_attachments, list):
+                        existing_attachments = [existing_result.attachment_path]
+                except:
+                    # If not JSON, treat as single attachment
+                    existing_attachments = [existing_result.attachment_path]
+            # Combine existing and new attachments
+            all_attachments = existing_attachments + uploaded_paths
+            existing_result.attachment_path = json.dumps(all_attachments)
         existing_result.updated_by = current_user.id  # Track who updated
         existing_result.updated_at = datetime.utcnow()
         
         # Mark investigation as completed if results are entered
-        if results_text or attachment_path:
+        if results_text or uploaded_paths:
             if is_inpatient:
                 from app.models.inpatient_investigation import InpatientInvestigationStatus
                 investigation.status = InpatientInvestigationStatus.COMPLETED.value
@@ -2359,7 +2387,7 @@ async def create_scan_result(
         db.add(scan_result)
         
         # Mark investigation as completed if results are entered
-        if results_text or attachment_path:
+        if results_text or uploaded_paths:
             if is_inpatient:
                 from app.models.inpatient_investigation import InpatientInvestigationStatus
                 investigation.status = InpatientInvestigationStatus.COMPLETED.value
@@ -2496,23 +2524,46 @@ def get_scan_result(
 @router.get("/scan-result/{investigation_id}/download")
 def download_scan_result_attachment(
     investigation_id: int,
+    attachment_path: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Download scan result attachment file"""
     import mimetypes
+    import json
     from pathlib import Path
     
-    # Get scan result
-    result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        # Use InpatientScanResult for IPD
+        result = db.query(InpatientScanResult).filter(InpatientScanResult.investigation_id == investigation_id).first()
+    else:
+        # Use ScanResult for OPD
+        result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    
     if not result:
         raise HTTPException(status_code=404, detail="Scan result not found")
     
     if not result.attachment_path:
         raise HTTPException(status_code=404, detail="No attachment found for this scan result")
     
+    # Parse attachment_path (can be JSON array or single string)
+    attachment_paths = []
+    try:
+        parsed = json.loads(result.attachment_path)
+        attachment_paths = parsed if isinstance(parsed, list) else [result.attachment_path]
+    except:
+        attachment_paths = [result.attachment_path]
+    
+    # Use provided attachment_path or first one
+    target_path = attachment_path if attachment_path and attachment_path in attachment_paths else attachment_paths[0]
+    
     # Build full file path
-    file_path = Path("uploads") / result.attachment_path
+    file_path = Path("uploads") / target_path
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on server")
@@ -2529,14 +2580,79 @@ def download_scan_result_attachment(
     # Get filename for download
     filename = file_path.name
     
+    # Use inline for PDFs and images, attachment for others
+    is_pdf_or_image = mime_type.startswith('image/') or mime_type == 'application/pdf'
+    disposition = 'inline' if is_pdf_or_image else 'attachment'
+    
     return Response(
         content=file_content,
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
             "Content-Length": str(len(file_content))
         }
     )
+
+
+@router.delete("/scan-result/{investigation_id}/attachment")
+def delete_scan_result_attachment(
+    investigation_id: int,
+    attachment_path: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Scan", "Scan Head", "Admin"]))
+):
+    """Delete a specific attachment from scan result"""
+    import json
+    from pathlib import Path
+    
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        # Use InpatientScanResult for IPD
+        result = db.query(InpatientScanResult).filter(InpatientScanResult.investigation_id == investigation_id).first()
+    else:
+        # Use ScanResult for OPD
+        result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Scan result not found")
+    
+    if not result.attachment_path:
+        raise HTTPException(status_code=404, detail="No attachments found")
+    
+    # Parse attachment_path (can be JSON array or single string)
+    attachment_paths = []
+    try:
+        parsed = json.loads(result.attachment_path)
+        attachment_paths = parsed if isinstance(parsed, list) else [result.attachment_path]
+    except:
+        attachment_paths = [result.attachment_path]
+    
+    # Remove the specified attachment
+    if attachment_path not in attachment_paths:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    
+    attachment_paths.remove(attachment_path)
+    
+    # Delete the physical file
+    file_path = Path("uploads") / attachment_path
+    if file_path.exists():
+        file_path.unlink()
+    
+    # Update the result
+    if len(attachment_paths) == 0:
+        result.attachment_path = None
+    else:
+        result.attachment_path = json.dumps(attachment_paths)
+    
+    result.updated_by = current_user.id
+    result.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {"message": "Attachment deleted successfully"}
 
 
 # X-ray Result schemas
@@ -2568,7 +2684,7 @@ class XrayResultResponse(BaseModel):
 async def create_xray_result(
     investigation_id: int = Form(...),
     results_text: Optional[str] = Form(None),
-    attachment: Optional[UploadFile] = File(None),
+    attachments: Optional[List[UploadFile]] = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Xray", "Xray Head", "Admin"]))
 ):
@@ -2610,29 +2726,49 @@ async def create_xray_result(
                     detail="Only Admin and Xray Head can edit completed investigations. Please contact Xray Head to revert the status."
                 )
     
-    # Handle file upload
-    attachment_path = None
-    if attachment:
-        import os
-        import uuid
-        from pathlib import Path
-        
+    # Handle multiple file uploads
+    import os
+    import uuid
+    import json
+    from pathlib import Path
+    
+    uploaded_paths = []
+    if attachments:
         # Create uploads directory if it doesn't exist
         upload_dir = Path("uploads/xray_results")
         upload_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate unique filename
-        file_ext = Path(attachment.filename).suffix if attachment.filename else ".pdf"
-        file_name = f"{investigation_id}_{uuid.uuid4()}{file_ext}"
-        file_path = upload_dir / file_name
-        
-        # Save file - UploadFile.read() returns bytes
-        content = await attachment.read()
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-        
-        # Store relative path for serving
-        attachment_path = f"xray_results/{file_name}"
+        # Process each uploaded file
+        for attachment in attachments:
+            if attachment:
+                # Preserve original filename, but sanitize it and handle conflicts
+                original_filename = attachment.filename or "unnamed_file.pdf"
+                # Sanitize filename: remove path components and keep only safe characters
+                safe_filename = Path(original_filename).name
+                # Replace spaces and special chars that might cause issues
+                safe_filename = safe_filename.replace(' ', '_')
+                
+                # Check if file already exists and add number suffix if needed
+                base_name = Path(safe_filename).stem
+                file_ext = Path(safe_filename).suffix or ".pdf"
+                file_name = safe_filename
+                counter = 1
+                while (upload_dir / file_name).exists():
+                    file_name = f"{base_name}_{counter}{file_ext}"
+                    counter += 1
+                
+                file_path = upload_dir / file_name
+                
+                # Save file - UploadFile.read() returns bytes
+                content = await attachment.read()
+                with open(file_path, "wb") as buffer:
+                    buffer.write(content)
+                
+                # Store relative path for serving (with original filename preserved)
+                uploaded_paths.append(f"xray_results/{file_name}")
+    
+    # Determine final attachment_path (JSON array or None)
+    attachment_path = json.dumps(uploaded_paths) if uploaded_paths else None
     
     # Handle IPD and OPD investigations separately due to FK constraints
     if is_inpatient:
@@ -2645,17 +2781,25 @@ async def create_xray_result(
     if existing_result:
         # Update existing result
         existing_result.results_text = results_text
-        if attachment_path:
-            # Delete old attachment if exists
-            old_path = Path("uploads") / existing_result.attachment_path
-            if existing_result.attachment_path and old_path.exists():
-                old_path.unlink()
-            existing_result.attachment_path = attachment_path
+        if uploaded_paths:
+            # Merge with existing attachments
+            existing_attachments = []
+            if existing_result.attachment_path:
+                try:
+                    existing_attachments = json.loads(existing_result.attachment_path)
+                    if not isinstance(existing_attachments, list):
+                        existing_attachments = [existing_result.attachment_path]
+                except:
+                    # If not JSON, treat as single attachment
+                    existing_attachments = [existing_result.attachment_path]
+            # Combine existing and new attachments
+            all_attachments = existing_attachments + uploaded_paths
+            existing_result.attachment_path = json.dumps(all_attachments)
         existing_result.updated_by = current_user.id  # Track who updated
         existing_result.updated_at = datetime.utcnow()
         
         # Mark investigation as completed if results are entered
-        if results_text or attachment_path:
+        if results_text or uploaded_paths:
             if is_inpatient:
                 from app.models.inpatient_investigation import InpatientInvestigationStatus
                 investigation.status = InpatientInvestigationStatus.COMPLETED.value
@@ -2683,7 +2827,7 @@ async def create_xray_result(
         db.add(xray_result)
         
         # Mark investigation as completed if results are entered
-        if results_text or attachment_path:
+        if results_text or uploaded_paths:
             if is_inpatient:
                 from app.models.inpatient_investigation import InpatientInvestigationStatus
                 investigation.status = InpatientInvestigationStatus.COMPLETED.value
@@ -2820,23 +2964,46 @@ def get_xray_result(
 @router.get("/xray-result/{investigation_id}/download")
 def download_xray_result_attachment(
     investigation_id: int,
+    attachment_path: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Download x-ray result attachment file"""
     import mimetypes
+    import json
     from pathlib import Path
     
-    # Get x-ray result
-    result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        # Use InpatientXrayResult for IPD
+        result = db.query(InpatientXrayResult).filter(InpatientXrayResult.investigation_id == investigation_id).first()
+    else:
+        # Use XrayResult for OPD
+        result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    
     if not result:
         raise HTTPException(status_code=404, detail="X-ray result not found")
     
     if not result.attachment_path:
         raise HTTPException(status_code=404, detail="No attachment found for this x-ray result")
     
+    # Parse attachment_path (can be JSON array or single string)
+    attachment_paths = []
+    try:
+        parsed = json.loads(result.attachment_path)
+        attachment_paths = parsed if isinstance(parsed, list) else [result.attachment_path]
+    except:
+        attachment_paths = [result.attachment_path]
+    
+    # Use provided attachment_path or first one
+    target_path = attachment_path if attachment_path and attachment_path in attachment_paths else attachment_paths[0]
+    
     # Build full file path
-    file_path = Path("uploads") / result.attachment_path
+    file_path = Path("uploads") / target_path
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on server")
@@ -2853,14 +3020,79 @@ def download_xray_result_attachment(
     # Get filename for download
     filename = file_path.name
     
+    # Use inline for PDFs and images, attachment for others
+    is_pdf_or_image = mime_type.startswith('image/') or mime_type == 'application/pdf'
+    disposition = 'inline' if is_pdf_or_image else 'attachment'
+    
     return Response(
         content=file_content,
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
             "Content-Length": str(len(file_content))
         }
     )
+
+
+@router.delete("/xray-result/{investigation_id}/attachment")
+def delete_xray_result_attachment(
+    investigation_id: int,
+    attachment_path: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Xray", "Xray Head", "Admin"]))
+):
+    """Delete a specific attachment from xray result"""
+    import json
+    from pathlib import Path
+    
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        # Use InpatientXrayResult for IPD
+        result = db.query(InpatientXrayResult).filter(InpatientXrayResult.investigation_id == investigation_id).first()
+    else:
+        # Use XrayResult for OPD
+        result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="X-ray result not found")
+    
+    if not result.attachment_path:
+        raise HTTPException(status_code=404, detail="No attachments found")
+    
+    # Parse attachment_path (can be JSON array or single string)
+    attachment_paths = []
+    try:
+        parsed = json.loads(result.attachment_path)
+        attachment_paths = parsed if isinstance(parsed, list) else [result.attachment_path]
+    except:
+        attachment_paths = [result.attachment_path]
+    
+    # Remove the specified attachment
+    if attachment_path not in attachment_paths:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    
+    attachment_paths.remove(attachment_path)
+    
+    # Delete the physical file
+    file_path = Path("uploads") / attachment_path
+    if file_path.exists():
+        file_path.unlink()
+    
+    # Update the result
+    if len(attachment_paths) == 0:
+        result.attachment_path = None
+    else:
+        result.attachment_path = json.dumps(attachment_paths)
+    
+    result.updated_by = current_user.id
+    result.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {"message": "Attachment deleted successfully"}
 
 
 # Consultation Notes schemas
