@@ -543,7 +543,7 @@ const loadInvestigation = async () => {
         xrayResult.value = null;
         editingResult.value = false;
         resultForm.value = {
-          investigation_id: investigation.value.id,
+          investigation_id: investigation.value?.id || parseInt(route.params.investigationId),
           results_text: '',
           attachments: [],
         };
@@ -551,11 +551,11 @@ const loadInvestigation = async () => {
       }
     } catch (error) {
       // No result exists yet or error loading
-      console.log('No xray result found for investigation:', investigation.value.id, 'Source:', investigation.value?.source || 'unknown', error);
+      console.log('No xray result found for investigation:', investigation.value?.id || route.params.investigationId, 'Source:', investigation.value?.source || 'unknown', error);
       xrayResult.value = null;
       editingResult.value = false;
       resultForm.value = {
-        investigation_id: investigation.value.id,
+        investigation_id: investigation.value?.id || parseInt(route.params.investigationId),
         results_text: '',
         attachments: [],
       };
@@ -624,12 +624,22 @@ const removeExistingAttachment = async (attachmentPath, index) => {
 };
 
 const saveXrayResult = async () => {
-  if (!resultForm.value.investigation_id) return;
+  // Ensure we have a valid investigation_id
+  const investigationId = resultForm.value.investigation_id || investigation.value?.id || parseInt(route.params.investigationId);
+  
+  if (!investigationId) {
+    $q.notify({
+      type: 'negative',
+      message: 'Investigation ID is missing. Please reload the page.',
+    });
+    return;
+  }
 
   savingResult.value = true;
   try {
     const formData = new FormData();
-    formData.append('investigation_id', resultForm.value.investigation_id);
+    // Ensure investigation_id is sent as a number
+    formData.append('investigation_id', String(investigationId));
     if (resultForm.value.results_text) {
       formData.append('results_text', resultForm.value.results_text);
     }

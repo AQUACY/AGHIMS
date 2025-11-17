@@ -2251,6 +2251,18 @@ async def create_scan_result(
     """Create or update scan result with optional file attachment"""
     # IMPORTANT: Check IPD FIRST to prevent ID collision issues
     from app.models.inpatient_investigation import InpatientInvestigation
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Ensure investigation_id is an integer
+    try:
+        investigation_id = int(investigation_id)
+    except (ValueError, TypeError):
+        logger.error(f"Invalid investigation_id type: {type(investigation_id)}, value: {investigation_id}")
+        raise HTTPException(status_code=400, detail=f"Invalid investigation ID: {investigation_id}")
+    
+    logger.info(f"Creating scan result for investigation_id: {investigation_id} (type: {type(investigation_id)})")
     
     investigation = None
     is_inpatient = False
@@ -2258,13 +2270,16 @@ async def create_scan_result(
     # Check IPD first
     ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
     if ipd_investigation:
+        logger.info(f"Found IPD investigation {investigation_id}, type: {ipd_investigation.investigation_type}")
         investigation = ipd_investigation
         is_inpatient = True
     else:
         # Not IPD, check OPD
+        logger.info(f"Investigation {investigation_id} not found in IPD, checking OPD")
         investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
         if not investigation:
-            raise HTTPException(status_code=404, detail="Investigation not found")
+            logger.error(f"Investigation {investigation_id} not found in both IPD and OPD tables")
+            raise HTTPException(status_code=404, detail=f"Investigation not found: {investigation_id}")
     
     if investigation.investigation_type != "scan":
         raise HTTPException(status_code=400, detail="This endpoint is only for scan investigations")
@@ -2691,6 +2706,18 @@ async def create_xray_result(
     """Create or update x-ray result with optional file attachment"""
     # IMPORTANT: Check IPD FIRST to prevent ID collision issues
     from app.models.inpatient_investigation import InpatientInvestigation
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Ensure investigation_id is an integer
+    try:
+        investigation_id = int(investigation_id)
+    except (ValueError, TypeError):
+        logger.error(f"Invalid investigation_id type: {type(investigation_id)}, value: {investigation_id}")
+        raise HTTPException(status_code=400, detail=f"Invalid investigation ID: {investigation_id}")
+    
+    logger.info(f"Creating xray result for investigation_id: {investigation_id} (type: {type(investigation_id)})")
     
     investigation = None
     is_inpatient = False
@@ -2698,13 +2725,16 @@ async def create_xray_result(
     # Check IPD first
     ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
     if ipd_investigation:
+        logger.info(f"Found IPD investigation {investigation_id}, type: {ipd_investigation.investigation_type}")
         investigation = ipd_investigation
         is_inpatient = True
     else:
         # Not IPD, check OPD
+        logger.info(f"Investigation {investigation_id} not found in IPD, checking OPD")
         investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
         if not investigation:
-            raise HTTPException(status_code=404, detail="Investigation not found")
+            logger.error(f"Investigation {investigation_id} not found in both IPD and OPD tables")
+            raise HTTPException(status_code=404, detail=f"Investigation not found: {investigation_id}")
     
     if investigation.investigation_type != "xray":
         raise HTTPException(status_code=400, detail="This endpoint is only for x-ray investigations")
