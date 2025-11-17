@@ -256,7 +256,9 @@ def create_bill(
             unit_price = item_data.unit_price
         elif item_data.item_code:
             # Only look up price if item_code is provided
-            unit_price = get_price_from_all_tables(db, item_data.item_code, is_insured_encounter)
+            # Pass item_name as procedure_name to match exact procedure when G-DRG codes map to multiple procedures
+            unit_price = get_price_from_all_tables(db, item_data.item_code, is_insured_encounter, None, item_data.item_name)
+            print(f"DEBUG create_bill: Looked up price for item_code='{item_data.item_code}', item_name='{item_data.item_name}', is_insured={is_insured_encounter}, price={unit_price}")
         else:
             # Items without codes must have a custom price
             raise HTTPException(

@@ -1119,13 +1119,28 @@ def bulk_confirm_investigations(
                             service_type = "X-ray"
                         
                         try:
-                            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type)
+                            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
+                            print(f"DEBUG bulk_confirm: Looked up price for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
+                            
+                            # If lookup returns 0.0, it means price wasn't found
+                            if unit_price == 0.0:
+                                print(f"WARNING bulk_confirm: Price lookup returned 0.0 for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'")
+                                # Only use stored price if it exists and lookup returned 0
+                                if investigation.price:
+                                    try:
+                                        stored_price = float(investigation.price)
+                                        if stored_price > 0:
+                                            print(f"WARNING bulk_confirm: Using stored price '{stored_price}' as fallback for investigation {investigation.id}")
+                                            unit_price = stored_price
+                                    except (ValueError, TypeError):
+                                        pass
                         except Exception as e:
                             print(f"ERROR bulk_confirm: Failed to get price for investigation {investigation.id}: {e}")
-                            # Fallback to stored price
+                            # Fallback to stored price only if exception occurred
                             if investigation.price:
                                 try:
                                     unit_price = float(investigation.price)
+                                    print(f"WARNING bulk_confirm: Using stored price '{unit_price}' as fallback after exception for investigation {investigation.id}")
                                 except (ValueError, TypeError):
                                     unit_price = 0.0
                     else:
@@ -1249,10 +1264,21 @@ def create_investigation(
     price = investigation_data.price
     if not price and investigation_data.gdrg_code:
         try:
-            price_value = get_price_from_all_tables(db, investigation_data.gdrg_code, is_insured)
+            # Determine service type based on investigation type for accurate price lookup
+            service_type = None
+            if investigation_data.investigation_type == "lab":
+                service_type = "Lab"
+            elif investigation_data.investigation_type == "scan":
+                service_type = "Scan"
+            elif investigation_data.investigation_type == "xray":
+                service_type = "X-ray"
+            
+            price_value = get_price_from_all_tables(db, investigation_data.gdrg_code, is_insured, service_type, investigation_data.procedure_name)
             price = str(price_value) if price_value else None
+            print(f"DEBUG create_investigation: Looked up price for gdrg_code='{investigation_data.gdrg_code}', procedure_name='{investigation_data.procedure_name}', is_insured={is_insured}, service_type='{service_type}', price={price_value}")
         except Exception as e:
             # If price lookup fails, continue without price
+            print(f"ERROR create_investigation: Failed to get price from price list: {e}")
             price = None
     
     investigation = Investigation(
@@ -1796,16 +1822,30 @@ def confirm_investigation(
             service_type = "X-ray"
         
         # Always look up price from price list to get correct price based on insurance status
+        # Pass procedure_name to match exact procedure when G-DRG codes map to multiple procedures
         try:
-            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type)
-            print(f"DEBUG confirm_investigation: Looked up price for gdrg_code='{investigation.gdrg_code}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
+            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
+            print(f"DEBUG confirm_investigation: Looked up price for gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
+            
+            # If lookup returns 0.0, it means price wasn't found - don't use stored price, log warning
+            if unit_price == 0.0:
+                print(f"WARNING confirm_investigation: Price lookup returned 0.0 for gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
+                # Only use stored price if it exists and lookup returned 0 (price not in pricelist)
+                if investigation.price:
+                    try:
+                        stored_price = float(investigation.price)
+                        if stored_price > 0:
+                            print(f"WARNING confirm_investigation: Using stored price '{stored_price}' as fallback (price not found in pricelist)")
+                            unit_price = stored_price
+                    except (ValueError, TypeError):
+                        pass
         except Exception as e:
             print(f"ERROR confirm_investigation: Failed to get price from price list: {e}")
-            # If lookup fails, try using stored price as fallback
+            # If lookup throws exception, try using stored price as fallback
             if investigation.price:
                 try:
                     unit_price = float(investigation.price)
-                    print(f"DEBUG confirm_investigation: Using stored price as fallback: {unit_price}")
+                    print(f"DEBUG confirm_investigation: Using stored price as fallback after exception: {unit_price}")
                 except (ValueError, TypeError):
                     unit_price = 0.0
     else:
@@ -1823,26 +1863,62 @@ def confirm_investigation(
     
     total_price = unit_price  # Investigations are typically quantity 1
     
+    print(f"DEBUG confirm_investigation: unit_price={unit_price}, total_price={total_price}, encounter_id={encounter.id if encounter else None}")
+    
     # Always create/add to bill if total_price > 0
     if total_price > 0:
-        # Find or create a bill for this encounter
-        existing_bill = db.query(Bill).filter(
-            Bill.encounter_id == encounter.id,
-            Bill.is_paid == False  # Only use unpaid bills
-        ).first()
-        
-        if existing_bill:
-            # Check if this investigation is already in the bill
-            existing_item = db.query(BillItem).filter(
-                BillItem.bill_id == existing_bill.id,
-                BillItem.item_code == investigation.gdrg_code,
-                BillItem.item_name.like(f"%{investigation.procedure_name}%")
+        try:
+            # Find or create a bill for this encounter
+            existing_bill = db.query(Bill).filter(
+                Bill.encounter_id == encounter.id,
+                Bill.is_paid == False  # Only use unpaid bills
             ).first()
             
-            if not existing_item:
-                # Add bill item to existing bill
+            print(f"DEBUG confirm_investigation: existing_bill={existing_bill.id if existing_bill else None}")
+            
+            if existing_bill:
+                # Check if this investigation is already in the bill
+                existing_item = db.query(BillItem).filter(
+                    BillItem.bill_id == existing_bill.id,
+                    BillItem.item_code == investigation.gdrg_code,
+                    BillItem.item_name.like(f"%{investigation.procedure_name}%")
+                ).first()
+                
+                print(f"DEBUG confirm_investigation: existing_item={existing_item.id if existing_item else None}")
+                
+                if not existing_item:
+                    # Add bill item to existing bill
+                    bill_item = BillItem(
+                        bill_id=existing_bill.id,
+                        item_code=investigation.gdrg_code or "MISC",
+                        item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
+                        category=investigation.investigation_type or "procedure",  # Use investigation_type as category
+                        quantity=1,
+                        unit_price=unit_price,
+                        total_price=total_price
+                    )
+                    db.add(bill_item)
+                    existing_bill.total_amount += total_price
+                    print(f"DEBUG confirm_investigation: Added bill item to existing bill. New total_amount={existing_bill.total_amount}")
+                else:
+                    print(f"DEBUG confirm_investigation: Bill item already exists, skipping")
+            else:
+                # Create new bill
+                bill_number = f"BILL-{random.randint(100000, 999999)}"
+                bill = Bill(
+                    encounter_id=encounter.id,
+                    bill_number=bill_number,
+                    is_insured=is_insured_encounter,
+                    total_amount=total_price,
+                    created_by=current_user.id
+                )
+                db.add(bill)
+                db.flush()
+                print(f"DEBUG confirm_investigation: Created new bill {bill.id} with bill_number={bill_number}")
+                
+                # Create bill item
                 bill_item = BillItem(
-                    bill_id=existing_bill.id,
+                    bill_id=bill.id,
                     item_code=investigation.gdrg_code or "MISC",
                     item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
                     category=investigation.investigation_type or "procedure",  # Use investigation_type as category
@@ -1851,31 +1927,14 @@ def confirm_investigation(
                     total_price=total_price
                 )
                 db.add(bill_item)
-                existing_bill.total_amount += total_price
-        else:
-            # Create new bill
-            bill_number = f"BILL-{random.randint(100000, 999999)}"
-            bill = Bill(
-                encounter_id=encounter.id,
-                bill_number=bill_number,
-                is_insured=is_insured_encounter,
-                total_amount=total_price,
-                created_by=current_user.id
-            )
-            db.add(bill)
-            db.flush()
-            
-            # Create bill item
-            bill_item = BillItem(
-                bill_id=bill.id,
-                item_code=investigation.gdrg_code or "MISC",
-                item_name=f"Investigation: {investigation.procedure_name or investigation.gdrg_code}",
-                category=investigation.investigation_type or "procedure",  # Use investigation_type as category
-                quantity=1,
-                unit_price=unit_price,
-                total_price=total_price
-            )
-            db.add(bill_item)
+                print(f"DEBUG confirm_investigation: Created bill item with unit_price={unit_price}, total_price={total_price}")
+        except Exception as e:
+            print(f"ERROR confirm_investigation: Exception during bill creation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Don't fail the confirmation if bill creation fails, but log it
+    else:
+        print(f"WARNING confirm_investigation: Not creating bill because total_price={total_price} (must be > 0)")
     
     db.commit()
     db.refresh(investigation)
@@ -3480,12 +3539,15 @@ def _create_ipd_admission_bill(db: Session, encounter, ccc_number: Optional[str]
         
         if not existing_surgery:
             # Get surgery price (co-payment for insured, base rate for non-insured)
+            # Pass surgery_name as procedure_name to match exact surgery when G-DRG codes map to multiple procedures
             surgery_price = get_price_from_all_tables(
                 db, 
                 surgery_code, 
                 is_insured=is_insured,
-                service_type=encounter.department
+                service_type=encounter.department,
+                procedure_name=surgery_name
             )
+            print(f"DEBUG create_bill_from_encounter: Looked up surgery price for code='{surgery_code}', name='{surgery_name}', is_insured={is_insured}, service_type='{encounter.department}', price={surgery_price}")
             
             if surgery_price > 0:
                 surgery_item = BillItem(
@@ -3520,11 +3582,14 @@ def _create_ipd_admission_bill(db: Session, encounter, ccc_number: Optional[str]
                 
                 if not existing_diagnosis:
                     # Get diagnosis price (base rate for non-insured)
+                    # Pass diagnosis name as procedure_name to match exact diagnosis when G-DRG codes map to multiple procedures
                     diagnosis_price = get_price_from_all_tables(
                         db,
                         chief_diagnosis.gdrg_code,
-                        is_insured=False
+                        is_insured=False,
+                        procedure_name=chief_diagnosis.diagnosis
                     )
+                    print(f"DEBUG create_bill_from_encounter: Looked up diagnosis price for code='{chief_diagnosis.gdrg_code}', name='{chief_diagnosis.diagnosis}', price={diagnosis_price}")
                     
                     if diagnosis_price > 0:
                         diagnosis_item = BillItem(
@@ -6904,16 +6969,39 @@ def confirm_inpatient_investigation(
     unit_price = 0.0
     if investigation.gdrg_code:
         try:
-            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter)
+            # Determine service type based on investigation type for accurate price lookup
+            service_type = None
+            if investigation.investigation_type == "lab":
+                service_type = "Lab"
+            elif investigation.investigation_type == "scan":
+                service_type = "Scan"
+            elif investigation.investigation_type == "xray":
+                service_type = "X-ray"
+            
+            unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
+            print(f"DEBUG confirm_inpatient_investigation: Looked up price for gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
+            
+            # If lookup returns 0.0, it means price wasn't found
+            if unit_price == 0.0:
+                print(f"WARNING confirm_inpatient_investigation: Price lookup returned 0.0 for gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
+                # Only use stored price if it exists and lookup returned 0
+                if investigation.price:
+                    try:
+                        stored_price = float(investigation.price)
+                        if stored_price > 0:
+                            print(f"WARNING confirm_inpatient_investigation: Using stored price '{stored_price}' as fallback (price not found in pricelist)")
+                            unit_price = stored_price
+                    except (ValueError, TypeError):
+                        pass
         except Exception as e:
             print(f"WARNING confirm_inpatient_investigation: Error getting price: {str(e)}")
-    
-    # If no price from price list, try to use investigation.price
-    if unit_price == 0.0 and investigation.price:
-        try:
-            unit_price = float(investigation.price)
-        except (ValueError, TypeError):
-            pass
+            # If lookup throws exception, try using stored price as fallback
+            if investigation.price:
+                try:
+                    unit_price = float(investigation.price)
+                    print(f"DEBUG confirm_inpatient_investigation: Using stored price '{unit_price}' as fallback after exception")
+                except (ValueError, TypeError):
+                    pass
     
     total_price = unit_price
     
@@ -8968,10 +9056,33 @@ def bulk_confirm_inpatient_investigations(
             unit_price = 0.0
             if investigation.gdrg_code:
                 try:
-                    unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter)
+                    # Determine service type based on investigation type for accurate price lookup
+                    service_type = None
+                    if investigation.investigation_type == "lab":
+                        service_type = "Lab"
+                    elif investigation.investigation_type == "scan":
+                        service_type = "Scan"
+                    elif investigation.investigation_type == "xray":
+                        service_type = "X-ray"
+                    
+                    unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
+                    print(f"DEBUG bulk_confirm_inpatient: Looked up price for gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
+                    
+                    # If lookup returns 0.0, it means price wasn't found
+                    if unit_price == 0.0:
+                        print(f"WARNING bulk_confirm_inpatient: Price lookup returned 0.0 for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'")
+                        # Only use stored price if it exists and lookup returned 0
+                        if investigation.price:
+                            try:
+                                stored_price = float(investigation.price)
+                                if stored_price > 0:
+                                    print(f"WARNING bulk_confirm_inpatient: Using stored price '{stored_price}' as fallback for investigation {investigation.id}")
+                                    unit_price = stored_price
+                            except (ValueError, TypeError):
+                                pass
                 except Exception as e:
                     print(f"ERROR bulk_confirm_inpatient: Failed to get price for investigation {investigation.id}: {e}")
-                    # Fallback to stored price
+                    # Fallback to stored price only if exception occurred
                     if investigation.price:
                         try:
                             unit_price = float(investigation.price)

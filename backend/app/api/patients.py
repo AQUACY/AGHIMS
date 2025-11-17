@@ -602,8 +602,10 @@ def create_encounter(
                     if unmapped:
                         category = "drg"
             
-            # Get price for the procedure - pass service_type to get the correct price for this department/clinic
-            unit_price = get_price_from_all_tables(db, procedure_g_drg_code, is_insured_encounter, service_type)
+            # Get price for the procedure - pass service_type and procedure_name to get the correct price
+            # procedure_name helps match exact procedure when G-DRG codes map to multiple procedures
+            unit_price = get_price_from_all_tables(db, procedure_g_drg_code, is_insured_encounter, service_type, procedure_name)
+            print(f"DEBUG create_encounter: Looked up price for gdrg_code='{procedure_g_drg_code}', procedure_name='{procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
             
             # Always create bill when procedure is provided
             # If price is 0, still create bill with 0 amount (price may be added to price list later)
