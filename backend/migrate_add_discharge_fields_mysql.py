@@ -85,10 +85,24 @@ def migrate():
             print("Adding 'partially_discharged_by' column to ward_admissions table...")
             cursor.execute("""
                 ALTER TABLE ward_admissions
-                ADD COLUMN partially_discharged_by INT NULL,
-                ADD FOREIGN KEY (partially_discharged_by) REFERENCES users(id)
+                ADD COLUMN partially_discharged_by INT NULL
             """)
             print("✓ Successfully added 'partially_discharged_by' column")
+            
+            # Add foreign key constraint separately (if it doesn't exist)
+            try:
+                cursor.execute("""
+                    ALTER TABLE ward_admissions
+                    ADD CONSTRAINT fk_ward_admissions_partially_discharged_by
+                    FOREIGN KEY (partially_discharged_by) REFERENCES users(id)
+                """)
+                print("✓ Successfully added foreign key constraint for 'partially_discharged_by'")
+            except Error as fk_error:
+                # Foreign key might already exist or there might be data issues
+                if "Duplicate key name" in str(fk_error) or "already exists" in str(fk_error).lower():
+                    print("✓ Foreign key constraint already exists or could not be added (non-critical)")
+                else:
+                    print(f"⚠ Warning: Could not add foreign key constraint: {fk_error}")
         else:
             print("✓ Column 'partially_discharged_by' already exists")
         
