@@ -1,8 +1,7 @@
 """
 Migration: Add discharge outcome, condition, partial discharge fields, and final orders to ward_admissions table (MySQL)
 """
-import mysql.connector
-from mysql.connector import Error
+import pymysql
 import os
 from pathlib import Path
 
@@ -18,12 +17,13 @@ def migrate():
     
     try:
         print(f"Connecting to MySQL database: {db_name}@{db_host}:{db_port}")
-        conn = mysql.connector.connect(
+        conn = pymysql.connect(
             host=db_host,
             port=db_port,
             database=db_name,
             user=db_user,
-            password=db_password
+            password=db_password,
+            charset='utf8mb4'
         )
         cursor = conn.cursor()
         
@@ -97,7 +97,7 @@ def migrate():
                     FOREIGN KEY (partially_discharged_by) REFERENCES users(id)
                 """)
                 print("✓ Successfully added foreign key constraint for 'partially_discharged_by'")
-            except Error as fk_error:
+            except pymysql.Error as fk_error:
                 # Foreign key might already exist or there might be data issues
                 if "Duplicate key name" in str(fk_error) or "already exists" in str(fk_error).lower():
                     print("✓ Foreign key constraint already exists or could not be added (non-critical)")
@@ -121,7 +121,7 @@ def migrate():
         conn.close()
         print("\n✓ Migration completed successfully!")
         
-    except Error as e:
+    except pymysql.Error as e:
         print(f"✗ MySQL Error during migration: {str(e)}")
         import traceback
         traceback.print_exc()

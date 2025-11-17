@@ -1,8 +1,7 @@
 """
 Migration: Add other_names column to patients table (MySQL)
 """
-import mysql.connector
-from mysql.connector import Error
+import pymysql
 import os
 from pathlib import Path
 
@@ -18,12 +17,13 @@ def migrate():
     
     try:
         print(f"Connecting to MySQL database: {db_name}@{db_host}:{db_port}")
-        conn = mysql.connector.connect(
+        conn = pymysql.connect(
             host=db_host,
             port=db_port,
             database=db_name,
             user=db_user,
-            password=db_password
+            password=db_password,
+            charset='utf8mb4'
         )
         cursor = conn.cursor()
         
@@ -62,7 +62,7 @@ def migrate():
         conn.close()
         print("\n✓ Migration completed successfully!")
         
-    except Error as e:
+    except pymysql.Error as e:
         print(f"✗ MySQL Error during migration: {str(e)}")
         import traceback
         traceback.print_exc()
