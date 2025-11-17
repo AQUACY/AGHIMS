@@ -189,8 +189,8 @@
                   />
                 </template>
                 <template v-else-if="!props.row.confirmed_by">
+                  <!-- Confirm Admission button - Available to all staff (Nurse, Doctor, PA, Admin) -->
                   <q-btn
-                    v-if="isAdmin"
                     flat
                     dense
                     icon="check_circle"
@@ -201,7 +201,6 @@
                     :loading="confirmingId === props.row.id"
                   />
                   <q-btn
-                    v-if="isAdmin"
                     flat
                     dense
                     icon="cancel"
@@ -737,6 +736,7 @@ const onSearchChange = () => {
   // Search change handled by computed property
 };
 
+// Confirm admission - Available to all staff (Nurse, Doctor, PA, Admin)
 const confirmAdmission = (admission) => {
   selectedAdmissionForConfirm.value = admission;
   
