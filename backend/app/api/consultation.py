@@ -3693,6 +3693,14 @@ def revert_admission_confirmation(
     ).first()
     
     if ward_admission:
+        # Delete all related treatment sheet administrations first (to avoid foreign key constraint)
+        from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+        treatment_administrations = db.query(TreatmentSheetAdministration).filter(
+            TreatmentSheetAdministration.ward_admission_id == ward_admission.id
+        ).all()
+        for admin in treatment_administrations:
+            db.delete(admin)
+        
         # Free up the bed
         if ward_admission.bed_id:
             from app.models.bed import Bed
@@ -9636,6 +9644,14 @@ def cancel_admission(
         ).first()
         
         if ward_admission:
+            # Delete all related treatment sheet administrations first (to avoid foreign key constraint)
+            from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+            treatment_administrations = db.query(TreatmentSheetAdministration).filter(
+                TreatmentSheetAdministration.ward_admission_id == ward_admission.id
+            ).all()
+            for admin in treatment_administrations:
+                db.delete(admin)
+            
             # Delete the ward admission record
             db.delete(ward_admission)
         
@@ -9860,10 +9876,18 @@ def cancel_ward_admission(
     from datetime import datetime
     from app.models.ward_admission import WardAdmission
     from app.models.bed import Bed
+    from app.models.treatment_sheet_administration import TreatmentSheetAdministration
     
     ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
     if not ward_admission:
         raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    # Delete all related treatment sheet administrations first (to avoid foreign key constraint)
+    treatment_administrations = db.query(TreatmentSheetAdministration).filter(
+        TreatmentSheetAdministration.ward_admission_id == ward_admission_id
+    ).all()
+    for admin in treatment_administrations:
+        db.delete(admin)
     
     # Free up the bed
     if ward_admission.bed_id:
