@@ -13,6 +13,13 @@
       </div>
     </div>
 
+    <!-- Tabs for filtering by status -->
+    <q-tabs v-model="activeTab" class="text-primary q-mb-md" align="left">
+      <q-tab name="pending" label="Pending" icon="schedule" />
+      <q-tab name="confirmed" label="Confirmed Admissions" icon="check_circle" />
+      <q-tab name="rejected" label="Rejected/Cancelled" icon="cancel" />
+    </q-tabs>
+
     <!-- Loading State -->
     <q-card v-if="loading" class="glass-card" flat>
       <q-card-section class="text-center">
@@ -22,10 +29,14 @@
     </q-card>
 
     <!-- Empty State -->
-    <q-card v-else-if="!loading && admissions.length === 0" class="glass-card" flat>
+    <q-card v-else-if="!loading && filteredAdmissions.length === 0" class="glass-card" flat>
       <q-card-section class="text-center">
         <q-icon name="local_hospital" size="64px" color="grey-6" />
-        <div class="text-subtitle1 q-mt-md glass-text">No patients recommended for admission</div>
+        <div class="text-subtitle1 q-mt-md glass-text">
+          <span v-if="activeTab === 'pending'">No pending admission recommendations</span>
+          <span v-else-if="activeTab === 'confirmed'">No confirmed admissions</span>
+          <span v-else-if="activeTab === 'rejected'">No rejected or cancelled admissions</span>
+        </div>
       </q-card-section>
     </q-card>
 
@@ -34,9 +45,11 @@
       <q-card-section>
         <div class="row items-center q-mb-md">
           <div class="text-h6 glass-text">
-            Admission Recommendations 
-            <span v-if="selectedWard">({{ filteredAdmissions.length }} in {{ selectedWard }})</span>
-            <span v-else>({{ allAdmissions.length }} total)</span>
+            <span v-if="activeTab === 'pending'">Pending Admission Recommendations</span>
+            <span v-else-if="activeTab === 'confirmed'">Confirmed Admissions</span>
+            <span v-else-if="activeTab === 'rejected'">Rejected/Cancelled Admissions</span>
+            <span v-if="selectedWard"> ({{ filteredAdmissions.length }} in {{ selectedWard }})</span>
+            <span v-else> ({{ filteredAdmissions.length }} total)</span>
           </div>
           <q-space />
           <q-btn
@@ -556,6 +569,7 @@ const isAdmin = computed(() => {
 const loading = ref(false);
 const admissions = ref([]);
 const allAdmissions = ref([]); // Store all admissions before filtering
+const activeTab = ref('pending'); // 'pending', 'confirmed', 'rejected'
 const filter = ref('');
 const selectedWard = ref(null);
 const confirmingId = ref(null);
@@ -566,7 +580,7 @@ const showCancelDialog = ref(false);
 const selectedAdmissionForCancel = ref(null);
 const showConfirmDialog = ref(false);
 const selectedAdmissionForConfirm = ref(null);
-const currentTab = ref('patient-info');
+const currentTab = ref('patient-info'); // For multi-step form tabs
 const beds = ref([]);
 const doctors = ref([]);
 const loadingBeds = ref(false);
@@ -595,12 +609,23 @@ const wardOptions = computed(() => {
   }));
 });
 
-// Filter admissions based on ward and search (exclude cancelled)
+// Filter admissions based on tab, ward, and search
 const filteredAdmissions = computed(() => {
   let filtered = [...allAdmissions.value];
   
-  // Exclude cancelled admissions
-  filtered = filtered.filter(admission => admission.cancelled !== 1);
+  // Filter by active tab
+  if (activeTab.value === 'pending') {
+    // Pending: not confirmed and not cancelled
+    filtered = filtered.filter(admission => 
+      !admission.confirmed_by && admission.cancelled !== 1
+    );
+  } else if (activeTab.value === 'confirmed') {
+    // Confirmed: has confirmed_by
+    filtered = filtered.filter(admission => admission.confirmed_by !== null);
+  } else if (activeTab.value === 'rejected') {
+    // Rejected/Cancelled: cancelled === 1
+    filtered = filtered.filter(admission => admission.cancelled === 1);
+  }
   
   // Filter by ward
   if (selectedWard.value) {
@@ -985,6 +1010,8 @@ const submitAdmissionConfirmation = async () => {
     currentTab.value = 'patient-info';
     // Reload admissions to get updated status
     await loadAdmissions();
+    // Switch to confirmed tab to show the newly confirmed admission
+    activeTab.value = 'confirmed';
   } catch (error) {
     console.error('Error confirming admission:', error);
     $q.notify({

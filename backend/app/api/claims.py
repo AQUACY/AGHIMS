@@ -85,6 +85,7 @@ class EncounterWithClaimInfo(BaseModel):
     created_at: datetime
     claim_id: Optional[int] = None
     claim_status: Optional[str] = None
+    ward_admission_id: Optional[int] = None  # For IPD claims
     
     class Config:
         from_attributes = True
@@ -92,7 +93,8 @@ class EncounterWithClaimInfo(BaseModel):
 
 class ClaimCreate(BaseModel):
     """Claim creation model"""
-    encounter_id: int
+    encounter_id: Optional[int] = None  # For OPD claims
+    ward_admission_id: Optional[int] = None  # For IPD claims
     physician_id: str
     type_of_service: str = "OPD"
     type_of_attendance: Optional[str] = "EAE"
@@ -176,163 +178,444 @@ def create_claim(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin"]))
 ):
-    """Create a new claim from an encounter"""
-    encounter = db.query(Encounter).filter(Encounter.id == claim_data.encounter_id).first()
-    if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter not found")
-    
-    if encounter.status != "finalized":
-        raise HTTPException(
-            status_code=400,
-            detail="Can only create claims from finalized encounters"
-        )
-    
-    # Check if all bills are paid (ignore zero-amount unpaid bills)
-    unpaid_bills_gt_zero = db.query(Bill).filter(
-        Bill.encounter_id == encounter.id,
-        Bill.is_paid == False,
-        Bill.total_amount > 0
-    ).count()
-    
-    if unpaid_bills_gt_zero > 0:
-        raise HTTPException(
-            status_code=400,
-            detail="All bills must be paid before creating a claim"
-        )
-    
-    # Get patient info
-    patient = encounter.patient
-    
-    # Check if pharmacy items exist
-    has_pharmacy = len(encounter.prescriptions) > 0
-    
-    # Get principal GDRG from chief diagnosis
-    principal_gdrg = None
-    chief_diagnosis = db.query(Diagnosis).filter(
-        Diagnosis.encounter_id == encounter.id,
-        Diagnosis.is_chief == True
-    ).first()
-    
-    if chief_diagnosis:
-        principal_gdrg = chief_diagnosis.gdrg_code
-    
-    # Create claim
-    claim = Claim(
-        encounter_id=encounter.id,
-        claim_id=generate_claim_id(db),
-        claim_check_code=generate_claim_check_code(),
-        physician_id=claim_data.physician_id,
-        member_no=patient.insurance_id or "",
-        card_serial_no=patient.card_number or "",
-        is_dependant=False,
-        type_of_service=claim_data.type_of_service,
-        includes_pharmacy=has_pharmacy,
-        type_of_attendance=claim_data.type_of_attendance,
-        service_outcome="DISC",
-        specialty_attended=claim_data.specialty_attended,
-        principal_gdrg=principal_gdrg,
-        status=ClaimStatus.DRAFT.value,
-        created_by=current_user.id
-    )
-    
-    db.add(claim)
-    db.flush()  # Flush to get claim.id
-    
-    # Populate claim detail tables from encounter services
+    """Create a new claim from an encounter (OPD) or ward admission (IPD)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.admission import AdmissionRecommendation
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_diagnosis import InpatientDiagnosis
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.prescription import Prescription as OPDPrescription
     from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
     from app.services.price_list_service_v2 import get_price_from_all_tables
     
-    # Populate diagnoses (up to 4)
-    diagnosis_order = 0
-    for diag in encounter.diagnoses:
-        if diagnosis_order >= 4:
-            break
-        # Verify diagnosis still exists in database before referencing it
-        diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
-        claim_diag = ClaimDiagnosis(
-            claim_id=claim.id,
-            diagnosis_id=diag.id if diagnosis_exists else None,
-            description=diag.diagnosis,
-            icd10=diag.icd10,
-            gdrg_code=diag.gdrg_code or "",
-            is_chief=diag.is_chief,
-            display_order=diagnosis_order
-        )
-        db.add(claim_diag)
-        diagnosis_order += 1
+    # Determine if this is an IPD claim
+    is_ipd = claim_data.type_of_service.upper() == "IPD" or claim_data.ward_admission_id is not None
     
-    # Check for incomplete investigations
-    incomplete_investigations = [
-        inv for inv in encounter.investigations
-        if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
-    ]
-    
-    if incomplete_investigations:
-        incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot create claim. The following investigations are not completed: {incomplete_list}"
-        )
-    
-    # Populate investigations (up to 5, only completed)
-    investigation_order = 0
-    for inv in encounter.investigations:
-        if investigation_order >= 5:
-            break
-        if inv.status == "completed" and inv.gdrg_code:
-            claim_inv = ClaimInvestigation(
-                claim_id=claim.id,
-                investigation_id=inv.id,
-                description=inv.procedure_name or "",
-                gdrg_code=inv.gdrg_code,
-                service_date=inv.service_date or encounter.created_at,
-                investigation_type=inv.investigation_type,
-                display_order=investigation_order
+    if is_ipd:
+        # IPD Claim - get ward admission
+        if not claim_data.ward_admission_id:
+            raise HTTPException(status_code=400, detail="ward_admission_id is required for IPD claims")
+        
+        ward_admission = db.query(WardAdmission).filter(WardAdmission.id == claim_data.ward_admission_id).first()
+        if not ward_admission:
+            raise HTTPException(status_code=404, detail="Ward admission not found")
+        
+        if not ward_admission.discharged_at:
+            raise HTTPException(status_code=400, detail="Can only create claims for discharged patients")
+        
+        # Get the IPD encounter
+        encounter = ward_admission.encounter
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found for ward admission")
+        
+        # Get OPD encounter that led to admission (if exists)
+        opd_encounter = None
+        admission_recommendation = db.query(AdmissionRecommendation).filter(
+            AdmissionRecommendation.id == ward_admission.admission_recommendation_id
+        ).first()
+        
+        if admission_recommendation and admission_recommendation.encounter_id != ward_admission.encounter_id:
+            # Different encounter means there was an OPD encounter before admission
+            opd_encounter = db.query(Encounter).filter(Encounter.id == admission_recommendation.encounter_id).first()
+        
+        # Check if all bills are paid for the IPD encounter
+        unpaid_bills_gt_zero = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False,
+            Bill.total_amount > 0
+        ).count()
+        
+        if unpaid_bills_gt_zero > 0:
+            raise HTTPException(
+                status_code=400,
+                detail="All bills must be paid before creating a claim"
             )
-            db.add(claim_inv)
-            investigation_order += 1
-    
-    # Populate prescriptions (up to 5, only dispensed)
-    prescription_order = 0
-    for presc in encounter.prescriptions:
-        if prescription_order >= 5:
-            break
-        if presc.dispensed_by and presc.medicine_code:
-            # Get claim amount from price list
-            claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
-            
-            # Verify prescription still exists in database before referencing it
-            from app.models.prescription import Prescription
-            prescription_exists = db.query(Prescription).filter(Prescription.id == presc.id).first() is not None
-            
-            claim_presc = ClaimPrescription(
-                claim_id=claim.id,
-                prescription_id=presc.id if prescription_exists else None,
-                description=presc.medicine_name,
-                code=presc.medicine_code,
-                price=float(claim_amount) if claim_amount else 0.0,
-                quantity=presc.quantity,
-                total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
-                service_date=presc.service_date or encounter.created_at,
-                dose=presc.dose or "",
-                frequency=presc.frequency or "",
-                duration=presc.duration or "",
-                unparsed=presc.unparsed or "",
-                display_order=prescription_order
-            )
-            db.add(claim_presc)
-            prescription_order += 1
-    
-    # Populate procedures (from encounter procedure, up to 3)
-    if encounter.procedure_g_drg_code:
-        claim_proc = ClaimProcedure(
-            claim_id=claim.id,
-            description=encounter.procedure_name or "",
-            gdrg_code=encounter.procedure_g_drg_code,
-            service_date=encounter.created_at,
-            display_order=0
+        
+        patient = encounter.patient
+        
+        # Get all IPD services
+        clinical_reviews = db.query(InpatientClinicalReview).filter(
+            InpatientClinicalReview.ward_admission_id == ward_admission.id
+        ).all()
+        
+        clinical_review_ids = [cr.id for cr in clinical_reviews] if clinical_reviews else []
+        
+        # Get IPD diagnoses
+        ipd_diagnoses = []
+        if clinical_review_ids:
+            ipd_diagnoses = db.query(InpatientDiagnosis).filter(
+                InpatientDiagnosis.clinical_review_id.in_(clinical_review_ids)
+            ).order_by(InpatientDiagnosis.created_at).all()
+        
+        # Get IPD investigations
+        ipd_investigations = []
+        if clinical_review_ids:
+            ipd_investigations = db.query(InpatientInvestigation).filter(
+                InpatientInvestigation.clinical_review_id.in_(clinical_review_ids),
+                InpatientInvestigation.status == "completed"
+            ).order_by(InpatientInvestigation.created_at).all()
+        
+        # Get IPD prescriptions (dispensed only)
+        ipd_prescriptions = []
+        if clinical_review_ids:
+            ipd_prescriptions = db.query(InpatientPrescription).filter(
+                InpatientPrescription.clinical_review_id.in_(clinical_review_ids),
+                InpatientPrescription.dispensed_by.isnot(None)
+            ).order_by(InpatientPrescription.created_at).all()
+        
+        # Check if pharmacy items exist (OPD + IPD)
+        has_pharmacy = False
+        if opd_encounter:
+            has_pharmacy = len(opd_encounter.prescriptions) > 0
+        if not has_pharmacy:
+            has_pharmacy = len(ipd_prescriptions) > 0
+        
+        # Get principal GDRG from chief diagnosis (check OPD first, then IPD)
+        principal_gdrg = None
+        if opd_encounter:
+            chief_diagnosis = db.query(Diagnosis).filter(
+                Diagnosis.encounter_id == opd_encounter.id,
+                Diagnosis.is_chief == True
+            ).first()
+            if chief_diagnosis:
+                principal_gdrg = chief_diagnosis.gdrg_code
+        
+        if not principal_gdrg and ipd_diagnoses:
+            chief_ipd_diag = next((d for d in ipd_diagnoses if d.is_chief), None)
+            if chief_ipd_diag:
+                principal_gdrg = chief_ipd_diag.gdrg_code
+        
+        # Set encounter finalized_at to discharge date for IPD claims (for 2nd visit date)
+        if ward_admission.discharged_at:
+            encounter.finalized_at = ward_admission.discharged_at
+        
+        # Create claim
+        claim = Claim(
+            encounter_id=encounter.id,  # Use IPD encounter_id
+            claim_id=generate_claim_id(db),
+            claim_check_code=generate_claim_check_code(),
+            physician_id=claim_data.physician_id,
+            member_no=patient.insurance_id or "",
+            card_serial_no=patient.card_number or "",
+            is_dependant=False,
+            type_of_service="IPD",
+            includes_pharmacy=has_pharmacy,
+            type_of_attendance=claim_data.type_of_attendance,
+            service_outcome="DISC",
+            specialty_attended=claim_data.specialty_attended,
+            principal_gdrg=principal_gdrg,
+            status=ClaimStatus.DRAFT.value,
+            created_by=current_user.id
         )
-        db.add(claim_proc)
+        
+        db.add(claim)
+        db.flush()
+        
+        # Populate diagnoses: OPD first, then IPD (no limit for IPD claims - include all services)
+        diagnosis_order = 0
+        
+        # Add OPD diagnoses first
+        if opd_encounter:
+            for diag in opd_encounter.diagnoses:
+                diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
+                claim_diag = ClaimDiagnosis(
+                    claim_id=claim.id,
+                    diagnosis_id=diag.id if diagnosis_exists else None,
+                    description=diag.diagnosis,
+                    icd10=diag.icd10,
+                    gdrg_code=diag.gdrg_code or "",
+                    is_chief=diag.is_chief,
+                    display_order=diagnosis_order
+                )
+                db.add(claim_diag)
+                diagnosis_order += 1
+        
+        # Add IPD diagnoses (all of them - no limit)
+        for diag in ipd_diagnoses:
+            claim_diag = ClaimDiagnosis(
+                claim_id=claim.id,
+                diagnosis_id=None,  # IPD diagnoses don't have direct diagnosis_id reference
+                description=diag.diagnosis,
+                icd10=diag.icd10,
+                gdrg_code=diag.gdrg_code or "",
+                is_chief=diag.is_chief,
+                display_order=diagnosis_order
+            )
+            db.add(claim_diag)
+            diagnosis_order += 1
+        
+        # Populate investigations: OPD first, then IPD (no limit for IPD claims - include all services)
+        investigation_order = 0
+        
+        # Add OPD investigations first
+        if opd_encounter:
+            incomplete_opd_inv = [
+                inv for inv in opd_encounter.investigations
+                if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
+            ]
+            if incomplete_opd_inv:
+                incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_opd_inv[:10]])
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot create claim. The following OPD investigations are not completed: {incomplete_list}"
+                )
+            
+            for inv in opd_encounter.investigations:
+                if inv.status == "completed" and inv.gdrg_code:
+                    claim_inv = ClaimInvestigation(
+                        claim_id=claim.id,
+                        investigation_id=inv.id,
+                        description=inv.procedure_name or "",
+                        gdrg_code=inv.gdrg_code,
+                        service_date=inv.service_date or opd_encounter.created_at,
+                        investigation_type=inv.investigation_type,
+                        display_order=investigation_order
+                    )
+                    db.add(claim_inv)
+                    investigation_order += 1
+        
+        # Add IPD investigations (all of them - no limit)
+        for inv in ipd_investigations:
+            if inv.gdrg_code:
+                # Get clinical review for service date
+                clinical_review = next((cr for cr in clinical_reviews if cr.id == inv.clinical_review_id), None)
+                service_date = clinical_review.created_at if clinical_review else ward_admission.admitted_at
+                
+                claim_inv = ClaimInvestigation(
+                    claim_id=claim.id,
+                    investigation_id=None,  # IPD investigations use different model
+                    description=inv.procedure_name or "",
+                    gdrg_code=inv.gdrg_code,
+                    service_date=service_date,
+                    investigation_type=inv.investigation_type,
+                    display_order=investigation_order
+                )
+                db.add(claim_inv)
+                investigation_order += 1
+        
+        # Populate prescriptions: OPD first, then IPD (no limit for IPD claims - include all services)
+        prescription_order = 0
+        
+        # Add OPD prescriptions first
+        if opd_encounter:
+            for presc in opd_encounter.prescriptions:
+                if presc.dispensed_by and presc.medicine_code:
+                    claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+                    prescription_exists = db.query(OPDPrescription).filter(OPDPrescription.id == presc.id).first() is not None
+                    
+                    claim_presc = ClaimPrescription(
+                        claim_id=claim.id,
+                        prescription_id=presc.id if prescription_exists else None,
+                        description=presc.medicine_name,
+                        code=presc.medicine_code,
+                        price=float(claim_amount) if claim_amount else 0.0,
+                        quantity=presc.quantity,
+                        total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                        service_date=presc.service_date or opd_encounter.created_at,
+                        dose=presc.dose or "",
+                        frequency=presc.frequency or "",
+                        duration=presc.duration or "",
+                        unparsed=presc.unparsed or "",
+                        display_order=prescription_order
+                    )
+                    db.add(claim_presc)
+                    prescription_order += 1
+        
+        # Add IPD prescriptions (all of them - no limit)
+        for presc in ipd_prescriptions:
+            if presc.medicine_code:
+                claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+                
+                # Get clinical review for service date
+                clinical_review = next((cr for cr in clinical_reviews if cr.id == presc.clinical_review_id), None)
+                service_date = clinical_review.created_at if clinical_review else ward_admission.admitted_at
+                
+                claim_presc = ClaimPrescription(
+                    claim_id=claim.id,
+                    prescription_id=None,  # IPD prescriptions use different model
+                    description=presc.medicine_name,
+                    code=presc.medicine_code,
+                    price=float(claim_amount) if claim_amount else 0.0,
+                    quantity=presc.quantity,
+                    total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                    service_date=service_date,
+                    dose=presc.dose or "",
+                    frequency=presc.frequency or "",
+                    duration=presc.duration or "",
+                    unparsed=presc.unparsed or "",
+                    display_order=prescription_order
+                )
+                db.add(claim_presc)
+                prescription_order += 1
+        
+        # Populate procedures (from IPD encounter procedure, up to 3)
+        if encounter.procedure_g_drg_code:
+            claim_proc = ClaimProcedure(
+                claim_id=claim.id,
+                description=encounter.procedure_name or "",
+                gdrg_code=encounter.procedure_g_drg_code,
+                service_date=encounter.created_at,
+                display_order=0
+            )
+            db.add(claim_proc)
+        
+    else:
+        # OPD Claim - original logic
+        if not claim_data.encounter_id:
+            raise HTTPException(status_code=400, detail="encounter_id is required for OPD claims")
+        
+        encounter = db.query(Encounter).filter(Encounter.id == claim_data.encounter_id).first()
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found")
+        
+        if encounter.status != "finalized":
+            raise HTTPException(
+                status_code=400,
+                detail="Can only create claims from finalized encounters"
+            )
+        
+        # Check if all bills are paid (ignore zero-amount unpaid bills)
+        unpaid_bills_gt_zero = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False,
+            Bill.total_amount > 0
+        ).count()
+        
+        if unpaid_bills_gt_zero > 0:
+            raise HTTPException(
+                status_code=400,
+                detail="All bills must be paid before creating a claim"
+            )
+        
+        # Get patient info
+        patient = encounter.patient
+        
+        # Check if pharmacy items exist
+        has_pharmacy = len(encounter.prescriptions) > 0
+        
+        # Get principal GDRG from chief diagnosis
+        principal_gdrg = None
+        chief_diagnosis = db.query(Diagnosis).filter(
+            Diagnosis.encounter_id == encounter.id,
+            Diagnosis.is_chief == True
+        ).first()
+        
+        if chief_diagnosis:
+            principal_gdrg = chief_diagnosis.gdrg_code
+        
+        # Create claim
+        claim = Claim(
+            encounter_id=encounter.id,
+            claim_id=generate_claim_id(db),
+            claim_check_code=generate_claim_check_code(),
+            physician_id=claim_data.physician_id,
+            member_no=patient.insurance_id or "",
+            card_serial_no=patient.card_number or "",
+            is_dependant=False,
+            type_of_service=claim_data.type_of_service,
+            includes_pharmacy=has_pharmacy,
+            type_of_attendance=claim_data.type_of_attendance,
+            service_outcome="DISC",
+            specialty_attended=claim_data.specialty_attended,
+            principal_gdrg=principal_gdrg,
+            status=ClaimStatus.DRAFT.value,
+            created_by=current_user.id
+        )
+        
+        db.add(claim)
+        db.flush()  # Flush to get claim.id
+        
+        # Populate diagnoses (up to 4)
+        diagnosis_order = 0
+        for diag in encounter.diagnoses:
+            if diagnosis_order >= 4:
+                break
+            # Verify diagnosis still exists in database before referencing it
+            diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
+            claim_diag = ClaimDiagnosis(
+                claim_id=claim.id,
+                diagnosis_id=diag.id if diagnosis_exists else None,
+                description=diag.diagnosis,
+                icd10=diag.icd10,
+                gdrg_code=diag.gdrg_code or "",
+                is_chief=diag.is_chief,
+                display_order=diagnosis_order
+            )
+            db.add(claim_diag)
+            diagnosis_order += 1
+        
+        # Check for incomplete investigations
+        incomplete_investigations = [
+            inv for inv in encounter.investigations
+            if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
+        ]
+        
+        if incomplete_investigations:
+            incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot create claim. The following investigations are not completed: {incomplete_list}"
+            )
+        
+        # Populate investigations (up to 5, only completed)
+        investigation_order = 0
+        for inv in encounter.investigations:
+            if investigation_order >= 5:
+                break
+            if inv.status == "completed" and inv.gdrg_code:
+                claim_inv = ClaimInvestigation(
+                    claim_id=claim.id,
+                    investigation_id=inv.id,
+                    description=inv.procedure_name or "",
+                    gdrg_code=inv.gdrg_code,
+                    service_date=inv.service_date or encounter.created_at,
+                    investigation_type=inv.investigation_type,
+                    display_order=investigation_order
+                )
+                db.add(claim_inv)
+                investigation_order += 1
+        
+        # Populate prescriptions (up to 5, only dispensed)
+        prescription_order = 0
+        for presc in encounter.prescriptions:
+            if prescription_order >= 5:
+                break
+            if presc.dispensed_by and presc.medicine_code:
+                # Get claim amount from price list
+                claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+                
+                # Verify prescription still exists in database before referencing it
+                prescription_exists = db.query(OPDPrescription).filter(OPDPrescription.id == presc.id).first() is not None
+                
+                claim_presc = ClaimPrescription(
+                    claim_id=claim.id,
+                    prescription_id=presc.id if prescription_exists else None,
+                    description=presc.medicine_name,
+                    code=presc.medicine_code,
+                    price=float(claim_amount) if claim_amount else 0.0,
+                    quantity=presc.quantity,
+                    total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                    service_date=presc.service_date or encounter.created_at,
+                    dose=presc.dose or "",
+                    frequency=presc.frequency or "",
+                    duration=presc.duration or "",
+                    unparsed=presc.unparsed or "",
+                    display_order=prescription_order
+                )
+                db.add(claim_presc)
+                prescription_order += 1
+        
+        # Populate procedures (from encounter procedure, up to 3)
+        if encounter.procedure_g_drg_code:
+            claim_proc = ClaimProcedure(
+                claim_id=claim.id,
+                description=encounter.procedure_name or "",
+                gdrg_code=encounter.procedure_g_drg_code,
+                service_date=encounter.created_at,
+                display_order=0
+            )
+            db.add(claim_proc)
     
     db.commit()
     db.refresh(claim)
@@ -390,7 +673,17 @@ def regenerate_claim(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin"]))
 ):
-    """Regenerate a claim by deleting existing details and recreating from encounter"""
+    """Regenerate a claim by deleting existing details and recreating from encounter (OPD) or ward admission (IPD)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.admission import AdmissionRecommendation
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_diagnosis import InpatientDiagnosis
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.prescription import Prescription as OPDPrescription
+    from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
@@ -402,32 +695,151 @@ def regenerate_claim(
             detail="Can only regenerate claims in draft or reopened mode. Current status: " + claim.status
         )
     
-    encounter = db.query(Encounter).filter(Encounter.id == claim_data.encounter_id).first()
-    if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter not found")
+    # Determine if this is an IPD claim
+    is_ipd = claim.type_of_service.upper() == "IPD" or claim_data.ward_admission_id is not None
     
-    if encounter.status != "finalized":
-        raise HTTPException(
-            status_code=400,
-            detail="Can only regenerate claims from finalized encounters"
-        )
-    
-    # Check for incomplete investigations
-    incomplete_investigations = [
-        inv for inv in encounter.investigations
-        if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
-    ]
-    
-    if incomplete_investigations:
-        incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot regenerate claim. The following investigations are not completed: {incomplete_list}"
-        )
+    if is_ipd:
+        # IPD Claim regeneration
+        # Get ward admission - use claim_data.ward_admission_id if provided, otherwise try to find from claim
+        ward_admission_id = claim_data.ward_admission_id
+        if not ward_admission_id:
+            # Try to find ward admission from encounter
+            if claim.encounter_id:
+                ward_admission = db.query(WardAdmission).filter(
+                    WardAdmission.encounter_id == claim.encounter_id
+                ).first()
+                if ward_admission:
+                    ward_admission_id = ward_admission.id
+        
+        if not ward_admission_id:
+            raise HTTPException(status_code=400, detail="ward_admission_id is required for IPD claim regeneration")
+        
+        ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+        if not ward_admission:
+            raise HTTPException(status_code=404, detail="Ward admission not found")
+        
+        if not ward_admission.discharged_at:
+            raise HTTPException(status_code=400, detail="Can only regenerate claims for discharged patients")
+        
+        # Get the IPD encounter
+        encounter = ward_admission.encounter
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found for ward admission")
+        
+        # Set encounter finalized_at to discharge date for IPD claims (for 2nd visit date)
+        if ward_admission.discharged_at:
+            encounter.finalized_at = ward_admission.discharged_at
+        
+        # Get OPD encounter that led to admission (if exists)
+        opd_encounter = None
+        admission_recommendation = db.query(AdmissionRecommendation).filter(
+            AdmissionRecommendation.id == ward_admission.admission_recommendation_id
+        ).first()
+        
+        if admission_recommendation and admission_recommendation.encounter_id != ward_admission.encounter_id:
+            # Different encounter means there was an OPD encounter before admission
+            opd_encounter = db.query(Encounter).filter(Encounter.id == admission_recommendation.encounter_id).first()
+        
+        # Get all IPD services
+        clinical_reviews = db.query(InpatientClinicalReview).filter(
+            InpatientClinicalReview.ward_admission_id == ward_admission.id
+        ).all()
+        
+        clinical_review_ids = [cr.id for cr in clinical_reviews] if clinical_reviews else []
+        
+        # Get IPD diagnoses
+        ipd_diagnoses = []
+        if clinical_review_ids:
+            ipd_diagnoses = db.query(InpatientDiagnosis).filter(
+                InpatientDiagnosis.clinical_review_id.in_(clinical_review_ids)
+            ).order_by(InpatientDiagnosis.created_at).all()
+        
+        # Get IPD investigations
+        ipd_investigations = []
+        if clinical_review_ids:
+            ipd_investigations = db.query(InpatientInvestigation).filter(
+                InpatientInvestigation.clinical_review_id.in_(clinical_review_ids),
+                InpatientInvestigation.status == "completed"
+            ).order_by(InpatientInvestigation.created_at).all()
+        
+        # Get IPD prescriptions (dispensed only)
+        ipd_prescriptions = []
+        if clinical_review_ids:
+            ipd_prescriptions = db.query(InpatientPrescription).filter(
+                InpatientPrescription.clinical_review_id.in_(clinical_review_ids),
+                InpatientPrescription.dispensed_by.isnot(None)
+            ).order_by(InpatientPrescription.created_at).all()
+        
+        # Check if pharmacy items exist (OPD + IPD)
+        has_pharmacy = False
+        if opd_encounter:
+            has_pharmacy = len(opd_encounter.prescriptions) > 0
+        if not has_pharmacy:
+            has_pharmacy = len(ipd_prescriptions) > 0
+        
+        # Get principal GDRG from chief diagnosis (check OPD first, then IPD)
+        principal_gdrg = None
+        if opd_encounter:
+            chief_diagnosis = db.query(Diagnosis).filter(
+                Diagnosis.encounter_id == opd_encounter.id,
+                Diagnosis.is_chief == True
+            ).first()
+            if chief_diagnosis:
+                principal_gdrg = chief_diagnosis.gdrg_code
+        
+        if not principal_gdrg and ipd_diagnoses:
+            chief_ipd_diag = next((d for d in ipd_diagnoses if d.is_chief), None)
+            if chief_ipd_diag:
+                principal_gdrg = chief_ipd_diag.gdrg_code
+        
+        patient = encounter.patient
+        
+    else:
+        # OPD Claim regeneration
+        # Get encounter - use claim_data.encounter_id if provided, otherwise use claim's encounter_id
+        encounter_id = claim_data.encounter_id or claim.encounter_id
+        if not encounter_id:
+            raise HTTPException(status_code=400, detail="encounter_id is required for OPD claim regeneration")
+        
+        encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found")
+        
+        if encounter.status != "finalized":
+            raise HTTPException(
+                status_code=400,
+                detail="Can only regenerate claims from finalized encounters"
+            )
+        
+        # Check for incomplete investigations
+        incomplete_investigations = [
+            inv for inv in encounter.investigations
+            if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
+        ]
+        
+        if incomplete_investigations:
+            incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot regenerate claim. The following investigations are not completed: {incomplete_list}"
+            )
+        
+        patient = encounter.patient
+        
+        # Check if pharmacy items exist
+        has_pharmacy = len(encounter.prescriptions) > 0
+        
+        # Get principal GDRG from chief diagnosis
+        principal_gdrg = None
+        chief_diagnosis = db.query(Diagnosis).filter(
+            Diagnosis.encounter_id == encounter.id,
+            Diagnosis.is_chief == True
+        ).first()
+        
+        if chief_diagnosis:
+            principal_gdrg = chief_diagnosis.gdrg_code
     
     # Delete existing claim details
-    from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
-    
     db.query(ClaimDiagnosis).filter(ClaimDiagnosis.claim_id == claim_id).delete()
     db.query(ClaimInvestigation).filter(ClaimInvestigation.claim_id == claim_id).delete()
     db.query(ClaimPrescription).filter(ClaimPrescription.claim_id == claim_id).delete()
@@ -438,109 +850,228 @@ def regenerate_claim(
     claim.type_of_service = claim_data.type_of_service
     claim.type_of_attendance = claim_data.type_of_attendance
     claim.specialty_attended = claim_data.specialty_attended
-    
-    # Get patient info
-    patient = encounter.patient
-    
-    # Check if pharmacy items exist
-    has_pharmacy = len(encounter.prescriptions) > 0
     claim.includes_pharmacy = has_pharmacy
-    
-    # Get principal GDRG from chief diagnosis
-    principal_gdrg = None
-    chief_diagnosis = db.query(Diagnosis).filter(
-        Diagnosis.encounter_id == encounter.id,
-        Diagnosis.is_chief == True
-    ).first()
-    
-    if chief_diagnosis:
-        principal_gdrg = chief_diagnosis.gdrg_code
-    
     claim.principal_gdrg = principal_gdrg
     
     db.flush()
     
-    # Repopulate claim detail tables from encounter services
-    from app.services.price_list_service_v2 import get_price_from_all_tables
-    
-    # Populate diagnoses (up to 4)
-    diagnosis_order = 0
-    for diag in encounter.diagnoses:
-        if diagnosis_order >= 4:
-            break
-        # Verify diagnosis still exists in database before referencing it
-        diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
-        claim_diag = ClaimDiagnosis(
-            claim_id=claim.id,
-            diagnosis_id=diag.id if diagnosis_exists else None,
-            description=diag.diagnosis,
-            icd10=diag.icd10,
-            gdrg_code=diag.gdrg_code or "",
-            is_chief=diag.is_chief,
-            display_order=diagnosis_order
-        )
-        db.add(claim_diag)
-        diagnosis_order += 1
-    
-    # Populate investigations (up to 5, only completed)
-    investigation_order = 0
-    for inv in encounter.investigations:
-        if investigation_order >= 5:
-            break
-        if inv.status == "completed" and inv.gdrg_code:
-            claim_inv = ClaimInvestigation(
+    if is_ipd:
+        # IPD: Repopulate claim detail tables from OPD + IPD services
+        diagnosis_order = 0
+        
+        # Add OPD diagnoses first
+        if opd_encounter:
+            for diag in opd_encounter.diagnoses:
+                diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
+                claim_diag = ClaimDiagnosis(
+                    claim_id=claim.id,
+                    diagnosis_id=diag.id if diagnosis_exists else None,
+                    description=diag.diagnosis,
+                    icd10=diag.icd10,
+                    gdrg_code=diag.gdrg_code or "",
+                    is_chief=diag.is_chief,
+                    display_order=diagnosis_order
+                )
+                db.add(claim_diag)
+                diagnosis_order += 1
+        
+        # Add IPD diagnoses (all of them - no limit)
+        for diag in ipd_diagnoses:
+            claim_diag = ClaimDiagnosis(
                 claim_id=claim.id,
-                investigation_id=inv.id,
-                description=inv.procedure_name or "",
-                gdrg_code=inv.gdrg_code,
-                service_date=inv.service_date or encounter.created_at,
-                investigation_type=inv.investigation_type,
-                display_order=investigation_order
+                diagnosis_id=None,  # IPD diagnoses don't have direct diagnosis_id reference
+                description=diag.diagnosis,
+                icd10=diag.icd10,
+                gdrg_code=diag.gdrg_code or "",
+                is_chief=diag.is_chief,
+                display_order=diagnosis_order
             )
-            db.add(claim_inv)
-            investigation_order += 1
-    
-    # Populate prescriptions (up to 5, only dispensed)
-    prescription_order = 0
-    for presc in encounter.prescriptions:
-        if prescription_order >= 5:
-            break
-        if presc.dispensed_by and presc.medicine_code:
-            # Get claim amount from price list
-            claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
-            
-            # Verify prescription still exists in database before referencing it
-            from app.models.prescription import Prescription
-            prescription_exists = db.query(Prescription).filter(Prescription.id == presc.id).first() is not None
-            
-            claim_presc = ClaimPrescription(
+            db.add(claim_diag)
+            diagnosis_order += 1
+        
+        # Populate investigations: OPD first, then IPD (no limit)
+        investigation_order = 0
+        
+        # Add OPD investigations first
+        if opd_encounter:
+            for inv in opd_encounter.investigations:
+                if inv.status == "completed" and inv.gdrg_code:
+                    claim_amount = get_claim_amount_from_price_list(db, inv.gdrg_code, is_insured=True)
+                    claim_inv = ClaimInvestigation(
+                        claim_id=claim.id,
+                        investigation_id=inv.id,
+                        description=inv.procedure_name or "",
+                        gdrg_code=inv.gdrg_code,
+                        service_date=inv.service_date or opd_encounter.created_at,
+                        investigation_type=inv.investigation_type or "",
+                        display_order=investigation_order
+                    )
+                    db.add(claim_inv)
+                    investigation_order += 1
+        
+        # Add IPD investigations (all of them - no limit)
+        for inv in ipd_investigations:
+            if inv.gdrg_code:
+                # Get clinical review for service date
+                clinical_review = next((cr for cr in clinical_reviews if cr.id == inv.clinical_review_id), None)
+                service_date = clinical_review.created_at if clinical_review else ward_admission.admitted_at
+                
+                claim_inv = ClaimInvestigation(
+                    claim_id=claim.id,
+                    investigation_id=None,  # IPD investigations don't have direct investigation_id reference
+                    description=inv.procedure_name or "",
+                    gdrg_code=inv.gdrg_code,
+                    service_date=service_date,
+                    investigation_type=inv.investigation_type or "",
+                    display_order=investigation_order
+                )
+                db.add(claim_inv)
+                investigation_order += 1
+        
+        # Populate prescriptions: OPD first, then IPD (no limit)
+        prescription_order = 0
+        
+        # Add OPD prescriptions first
+        if opd_encounter:
+            for presc in opd_encounter.prescriptions:
+                if presc.dispensed_by and presc.medicine_code:
+                    claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+                    claim_presc = ClaimPrescription(
+                        claim_id=claim.id,
+                        prescription_id=presc.id,
+                        description=presc.medicine_name,
+                        code=presc.medicine_code,
+                        price=float(claim_amount) if claim_amount else 0.0,
+                        quantity=presc.quantity,
+                        total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                        service_date=presc.dispensed_at or opd_encounter.created_at,
+                        dose=presc.dose or "",
+                        frequency=presc.frequency or "",
+                        duration=presc.duration or "",
+                        unparsed=presc.unparsed or "",
+                        display_order=prescription_order
+                    )
+                    db.add(claim_presc)
+                    prescription_order += 1
+        
+        # Add IPD prescriptions (all of them - no limit)
+        for presc in ipd_prescriptions:
+            if presc.medicine_code:
+                claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+                
+                # Get clinical review for service date
+                clinical_review = next((cr for cr in clinical_reviews if cr.id == presc.clinical_review_id), None)
+                service_date = clinical_review.created_at if clinical_review else ward_admission.admitted_at
+                
+                claim_presc = ClaimPrescription(
+                    claim_id=claim.id,
+                    prescription_id=None,  # IPD prescriptions use different model
+                    description=presc.medicine_name,
+                    code=presc.medicine_code,
+                    price=float(claim_amount) if claim_amount else 0.0,
+                    quantity=presc.quantity,
+                    total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                    service_date=service_date,
+                    dose=presc.dose or "",
+                    frequency=presc.frequency or "",
+                    duration=presc.duration or "",
+                    unparsed=presc.unparsed or "",
+                    display_order=prescription_order
+                )
+                db.add(claim_presc)
+                prescription_order += 1
+        
+        # Populate procedures (from IPD encounter procedure)
+        if encounter.procedure_g_drg_code:
+            claim_proc = ClaimProcedure(
                 claim_id=claim.id,
-                prescription_id=presc.id if prescription_exists else None,
-                description=presc.medicine_name,
-                code=presc.medicine_code,
-                price=float(claim_amount) if claim_amount else 0.0,
-                quantity=presc.quantity,
-                total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
-                service_date=presc.service_date or encounter.created_at,
-                dose=presc.dose or "",
-                frequency=presc.frequency or "",
-                duration=presc.duration or "",
-                unparsed=presc.unparsed or "",
-                display_order=prescription_order
+                description=encounter.procedure_name or "",
+                gdrg_code=encounter.procedure_g_drg_code,
+                service_date=encounter.created_at,
+                display_order=0
             )
-            db.add(claim_presc)
-            prescription_order += 1
+            db.add(claim_proc)
     
-    # Populate procedures (from encounter procedure, up to 3)
-    if encounter.procedure_g_drg_code:
-        claim_proc = ClaimProcedure(
-            claim_id=claim.id,
-            description=encounter.procedure_name or "",
-            gdrg_code=encounter.procedure_g_drg_code,
-            service_date=encounter.created_at,
-            display_order=0
-        )
-        db.add(claim_proc)
+    else:
+        # OPD: Repopulate claim detail tables from encounter services
+        # Populate diagnoses (up to 4)
+        diagnosis_order = 0
+        for diag in encounter.diagnoses:
+            if diagnosis_order >= 4:
+                break
+            # Verify diagnosis still exists in database before referencing it
+            diagnosis_exists = db.query(Diagnosis).filter(Diagnosis.id == diag.id).first() is not None
+            claim_diag = ClaimDiagnosis(
+                claim_id=claim.id,
+                diagnosis_id=diag.id if diagnosis_exists else None,
+                description=diag.diagnosis,
+                icd10=diag.icd10,
+                gdrg_code=diag.gdrg_code or "",
+                is_chief=diag.is_chief,
+                display_order=diagnosis_order
+            )
+            db.add(claim_diag)
+            diagnosis_order += 1
+        
+        # Populate investigations (up to 5, only completed)
+        investigation_order = 0
+        for inv in encounter.investigations:
+            if investigation_order >= 5:
+                break
+            if inv.status == "completed" and inv.gdrg_code:
+                claim_inv = ClaimInvestigation(
+                    claim_id=claim.id,
+                    investigation_id=inv.id,
+                    description=inv.procedure_name or "",
+                    gdrg_code=inv.gdrg_code,
+                    service_date=inv.service_date or encounter.created_at,
+                    investigation_type=inv.investigation_type,
+                    display_order=investigation_order
+                )
+                db.add(claim_inv)
+                investigation_order += 1
+        
+        # Populate prescriptions (up to 5, only dispensed)
+        prescription_order = 0
+        for presc in encounter.prescriptions:
+            if prescription_order >= 5:
+                break
+            if presc.dispensed_by and presc.medicine_code:
+                # Get claim amount from price list
+                claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
+                
+                # Verify prescription still exists in database before referencing it
+                from app.models.prescription import Prescription
+                prescription_exists = db.query(Prescription).filter(Prescription.id == presc.id).first() is not None
+                
+                claim_presc = ClaimPrescription(
+                    claim_id=claim.id,
+                    prescription_id=presc.id if prescription_exists else None,
+                    description=presc.medicine_name,
+                    code=presc.medicine_code,
+                    price=float(claim_amount) if claim_amount else 0.0,
+                    quantity=presc.quantity,
+                    total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
+                    service_date=presc.service_date or encounter.created_at,
+                    dose=presc.dose or "",
+                    frequency=presc.frequency or "",
+                    duration=presc.duration or "",
+                    unparsed=presc.unparsed or "",
+                    display_order=prescription_order
+                )
+                db.add(claim_presc)
+                prescription_order += 1
+        
+        # Populate procedures (from encounter procedure, up to 3)
+        if encounter.procedure_g_drg_code:
+            claim_proc = ClaimProcedure(
+                claim_id=claim.id,
+                description=encounter.procedure_name or "",
+                gdrg_code=encounter.procedure_g_drg_code,
+                service_date=encounter.created_at,
+                display_order=0
+            )
+            db.add(claim_proc)
     
     db.commit()
     db.refresh(claim)
@@ -612,6 +1143,8 @@ def get_eligible_encounters_for_claims(
     Get finalized encounters with CCC numbers that are eligible for claim generation.
     Only encounters with active insurance (CCC number) and finalized status are returned.
     
+    For IPD claims, returns discharged ward admissions instead of encounters.
+    
     Filters:
     - claim_type: 'opd', 'ipd', 'other', or None for all
     - start_date: Filter encounters finalized on or after this date (YYYY-MM-DD)
@@ -622,7 +1155,31 @@ def get_eligible_encounters_for_claims(
     from sqlalchemy.orm import joinedload
     from datetime import datetime
     
-    # Build base query
+    # Handle IPD claims separately - return discharged ward admissions
+    if claim_type == 'ipd':
+        return get_eligible_ipd_ward_admissions_for_claims(
+            start_date=start_date,
+            end_date=end_date,
+            claim_status=claim_status,
+            card_number=card_number,
+            db=db,
+            current_user=current_user
+        )
+    
+    # If claim_type is None (All), we need to get both OPD and IPD
+    ipd_results = []
+    if claim_type is None:
+        # Get IPD ward admissions
+        ipd_results = get_eligible_ipd_ward_admissions_for_claims(
+            start_date=start_date,
+            end_date=end_date,
+            claim_status=claim_status,
+            card_number=card_number,
+            db=db,
+            current_user=current_user
+        )
+    
+    # Build base query for OPD encounters
     query = db.query(Encounter)\
         .options(joinedload(Encounter.patient))\
         .filter(
@@ -670,8 +1227,6 @@ def get_eligible_encounters_for_claims(
         # Apply type filter if provided
         if claim_type == 'opd' and outcome != 'discharged':
             continue
-        if claim_type == 'ipd' and outcome != 'recommended_for_admission':
-            continue
         if claim_type == 'other' and outcome in ('discharged', 'recommended_for_admission'):
             continue
         # Check if claim already exists
@@ -694,7 +1249,7 @@ def get_eligible_encounters_for_claims(
         encounter_data = {
             "id": encounter.id,
             "patient_id": encounter.patient_id,
-            "patient_name": f"{encounter.patient.name} {encounter.patient.surname or ''}".strip(),
+            "patient_name": f"{encounter.patient.name or ''} {encounter.patient.surname or ''} {encounter.patient.other_names or ''}".strip(),
             "patient_card_number": encounter.patient.card_number or "",
             "ccc_number": encounter.ccc_number,
             "status": encounter.status,
@@ -706,6 +1261,121 @@ def get_eligible_encounters_for_claims(
             "claim_status": claim.status if claim else None,
         }
         result.append(encounter_data)
+    
+    # If claim_type is None (All), combine OPD and IPD results
+    if claim_type is None:
+        result.extend(ipd_results)
+        # Sort combined results by finalized_at/discharged_at (most recent first)
+        result.sort(key=lambda x: x.get("finalized_at") or datetime.min, reverse=True)
+    
+    return result
+
+
+def get_eligible_ipd_ward_admissions_for_claims(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    claim_status: Optional[str] = None,
+    card_number: Optional[str] = None,
+    db: Session = None,
+    current_user: User = None
+):
+    """Get discharged ward admissions eligible for IPD claim generation"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.admission import AdmissionRecommendation
+    from app.models.patient import Patient
+    from sqlalchemy.orm import joinedload
+    from sqlalchemy import or_, and_
+    from datetime import datetime, timedelta
+    
+    # Build base query for discharged ward admissions
+    # Check CCC number on both ward_admission and encounter (use OR condition)
+    query = db.query(WardAdmission)\
+        .options(joinedload(WardAdmission.encounter).joinedload(Encounter.patient))\
+        .join(Encounter)\
+        .filter(
+            WardAdmission.discharged_at.isnot(None),  # Only discharged patients
+            or_(
+                # CCC number on ward admission
+                and_(
+                    WardAdmission.ccc_number.isnot(None),
+                    WardAdmission.ccc_number != ""
+                ),
+                # OR CCC number on encounter
+                and_(
+                    Encounter.ccc_number.isnot(None),
+                    Encounter.ccc_number != ""
+                )
+            )
+        )
+    
+    # Apply card number filter
+    if card_number:
+        card_number_clean = card_number.strip()
+        if card_number_clean:
+            query = query.join(Encounter).join(Patient).filter(
+                Patient.card_number == card_number_clean
+            )
+    
+    # Apply date filters (filter by discharge date)
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            query = query.filter(WardAdmission.discharged_at >= start_dt)
+        except ValueError:
+            pass
+    
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            end_dt = end_dt + timedelta(days=1)
+            query = query.filter(WardAdmission.discharged_at < end_dt)
+        except ValueError:
+            pass
+    
+    ward_admissions = query.order_by(WardAdmission.discharged_at.desc()).all()
+    
+    result = []
+    for ward_admission in ward_admissions:
+        # Check if claim already exists (by encounter_id)
+        claim = db.query(Claim).filter(Claim.encounter_id == ward_admission.encounter_id).first()
+        
+        # Apply claim status filter
+        if claim_status:
+            if claim_status == 'no_claim' and claim:
+                continue
+            elif claim_status != 'no_claim' and (not claim or claim.status != claim_status):
+                continue
+        
+        # Get patient info
+        patient = ward_admission.encounter.patient
+        encounter = ward_admission.encounter
+        
+        # Get CCC number from ward admission or encounter (prefer ward admission)
+        ccc_number = ward_admission.ccc_number or encounter.ccc_number
+        
+        # Get discharged_by username
+        discharged_by_username = None
+        if ward_admission.discharged_by:
+            discharged_user = db.query(User).filter(User.id == ward_admission.discharged_by).first()
+            if discharged_user:
+                discharged_by_username = discharged_user.username
+        
+        ward_admission_data = {
+            "id": ward_admission.encounter_id,  # Use encounter_id for compatibility
+            "ward_admission_id": ward_admission.id,  # Add ward_admission_id
+            "patient_id": patient.id,
+            "patient_name": f"{patient.name or ''} {patient.surname or ''} {patient.other_names or ''}".strip(),
+            "patient_card_number": patient.card_number or "",
+            "ccc_number": ccc_number,
+            "status": "finalized",  # Discharged ward admissions are considered finalized
+            "department": ward_admission.ward,
+            "finalized_at": ward_admission.discharged_at,  # Use discharge date
+            "finalized_by_username": discharged_by_username,
+            "created_at": ward_admission.admitted_at,
+            "claim_id": claim.id if claim else None,
+            "claim_status": claim.status if claim else None,
+        }
+        result.append(ward_admission_data)
     
     return result
 

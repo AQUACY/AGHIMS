@@ -399,7 +399,7 @@
                       />
                     </q-item-section>
                     <q-item-section>
-                      <q-item-label>{{ patient.name }} {{ patient.surname || '' }}</q-item-label>
+                      <q-item-label>{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></q-item-label>
                       <q-item-label caption>Card: {{ patient.card_number }}</q-item-label>
                     </q-item-section>
                   </q-item>

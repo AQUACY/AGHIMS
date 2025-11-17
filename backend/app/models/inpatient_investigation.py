@@ -47,6 +47,9 @@ class InpatientInvestigation(Base):
     
     # Relationships
     clinical_review = relationship("InpatientClinicalReview", back_populates="investigations")
+    lab_result = relationship("InpatientLabResult", back_populates="investigation", cascade="all, delete-orphan", uselist=False)
+    scan_result = relationship("InpatientScanResult", back_populates="investigation", cascade="all, delete-orphan", uselist=False)
+    xray_result = relationship("InpatientXrayResult", back_populates="investigation", cascade="all, delete-orphan", uselist=False)
     
     def __repr__(self):
         return f"<InpatientInvestigation {self.gdrg_code} - {self.status}>"

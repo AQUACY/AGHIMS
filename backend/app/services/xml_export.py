@@ -140,10 +140,19 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         SubElement(claim_elem, "serviceOutcome").text = claim.service_outcome or "DISC"
         
         # Service dates
-        service_date = format_datetime(encounter.created_at)
-        SubElement(claim_elem, "dateOfService").text = service_date
-        SubElement(claim_elem, "dateOfService").text = service_date
-        SubElement(claim_elem, "dateOfService").text = ""  # Third date field (optional)
+        # First date: admission/visit date
+        first_service_date = format_datetime(encounter.created_at)
+        SubElement(claim_elem, "dateOfService").text = first_service_date
+        
+        # Second date: discharge date for IPD, same as first for OPD
+        if claim.type_of_service == "IPD" and encounter.finalized_at:
+            second_service_date = format_datetime(encounter.finalized_at)
+        else:
+            second_service_date = first_service_date
+        SubElement(claim_elem, "dateOfService").text = second_service_date
+        
+        # Third date field (optional)
+        SubElement(claim_elem, "dateOfService").text = ""
         
         SubElement(claim_elem, "specialtyAttended").text = claim.specialty_attended or "OPDC"
         

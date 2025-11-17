@@ -1,7 +1,7 @@
 """
 Consultation endpoints (diagnoses, prescriptions, investigations)
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form, Response, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from pydantic import BaseModel
@@ -15,8 +15,11 @@ from app.models.diagnosis import Diagnosis
 from app.models.prescription import Prescription
 from app.models.investigation import Investigation, InvestigationStatus
 from app.models.lab_result import LabResult
+from app.models.inpatient_lab_result import InpatientLabResult
 from app.models.scan_result import ScanResult
+from app.models.inpatient_scan_result import InpatientScanResult
 from app.models.xray_result import XrayResult
+from app.models.inpatient_xray_result import InpatientXrayResult
 from app.models.consultation_notes import ConsultationNotes
 from app.models.admission import AdmissionRecommendation
 
@@ -1314,7 +1317,7 @@ def get_investigation(
         "cancellation_reason": investigation.cancellation_reason,
         "cancelled_at": investigation.cancelled_at,
         "created_at": investigation.created_at,
-        "patient_name": f"{investigation.encounter.patient.name} {investigation.encounter.patient.surname or ''}".strip(),
+        "patient_name": f"{investigation.encounter.patient.name or ''} {investigation.encounter.patient.surname or ''} {investigation.encounter.patient.other_names or ''}".strip(),
         "patient_card_number": investigation.encounter.patient.card_number,
         "encounter_date": investigation.encounter.created_at,
         "confirmed_by_name": confirmed_by_name,
@@ -1572,7 +1575,7 @@ def get_investigations_by_type(
             "cancellation_reason": inv.cancellation_reason,
             "cancelled_at": inv.cancelled_at,
             "created_at": inv.created_at,
-            "patient_name": f"{inv.encounter.patient.name} {inv.encounter.patient.surname or ''}".strip(),
+            "patient_name": f"{inv.encounter.patient.name or ''} {inv.encounter.patient.surname or ''} {inv.encounter.patient.other_names or ''}".strip(),
             "patient_card_number": inv.encounter.patient.card_number,
             "encounter_date": inv.encounter.created_at,
             "confirmed_by_name": confirmed_by_name,
@@ -1913,21 +1916,42 @@ async def create_lab_result(
     current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
 ):
     """Create or update lab result with optional file attachment"""
-    # Verify investigation exists and is a lab investigation
-    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
-    if not investigation:
-        raise HTTPException(status_code=404, detail="Investigation not found")
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    investigation = None
+    is_inpatient = False
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        investigation = ipd_investigation
+        is_inpatient = True
+    else:
+        # Not IPD, check OPD
+        investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+        if not investigation:
+            raise HTTPException(status_code=404, detail="Investigation not found")
     
     if investigation.investigation_type != "lab":
         raise HTTPException(status_code=400, detail="This endpoint is only for lab investigations")
     
     # If investigation is completed, only Admin and Lab Head can edit
-    if investigation.status == InvestigationStatus.COMPLETED.value:
-        if current_user.role not in ["Admin", "Lab Head"]:
-            raise HTTPException(
-                status_code=403,
-                detail="Only Admin and Lab Head can edit completed investigations. Please contact Lab Head to revert the status."
-            )
+    if is_inpatient:
+        from app.models.inpatient_investigation import InpatientInvestigationStatus
+        if investigation.status == InpatientInvestigationStatus.COMPLETED.value:
+            if current_user.role not in ["Admin", "Lab Head"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only Admin and Lab Head can edit completed investigations. Please contact Lab Head to revert the status."
+                )
+    else:
+        if investigation.status == InvestigationStatus.COMPLETED.value:
+            if current_user.role not in ["Admin", "Lab Head"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only Admin and Lab Head can edit completed investigations. Please contact Lab Head to revert the status."
+                )
     
     # Handle file upload
     attachment_path = None
@@ -1953,8 +1977,13 @@ async def create_lab_result(
         # Store relative path for serving
         attachment_path = f"lab_results/{file_name}"
     
-    # Check if result already exists
-    existing_result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    # Handle IPD and OPD investigations separately due to FK constraints
+    if is_inpatient:
+        # Use InpatientLabResult for IPD investigations
+        existing_result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+    else:
+        # Use LabResult for OPD investigations
+        existing_result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
     
     if existing_result:
         # Update existing result
@@ -1970,24 +1999,46 @@ async def create_lab_result(
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
-            investigation.status = InvestigationStatus.COMPLETED.value
+            if is_inpatient:
+                from app.models.inpatient_investigation import InpatientInvestigationStatus
+                investigation.status = InpatientInvestigationStatus.COMPLETED.value
+            else:
+                investigation.status = InvestigationStatus.COMPLETED.value
             investigation.completed_by = current_user.id  # Track who completed
+            # Ensure investigation is in session for update
+            db.add(investigation)
     else:
         # Create new result
-        lab_result = LabResult(
-            investigation_id=investigation_id,
-            results_text=results_text,
-            attachment_path=attachment_path,
-            entered_by=current_user.id
-        )
+        if is_inpatient:
+            lab_result = InpatientLabResult(
+                investigation_id=investigation_id,
+                results_text=results_text,
+                attachment_path=attachment_path,
+                entered_by=current_user.id
+            )
+        else:
+            lab_result = LabResult(
+                investigation_id=investigation_id,
+                results_text=results_text,
+                attachment_path=attachment_path,
+                entered_by=current_user.id
+            )
         db.add(lab_result)
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
-            investigation.status = InvestigationStatus.COMPLETED.value
+            if is_inpatient:
+                from app.models.inpatient_investigation import InpatientInvestigationStatus
+                investigation.status = InpatientInvestigationStatus.COMPLETED.value
+            else:
+                investigation.status = InvestigationStatus.COMPLETED.value
             investigation.completed_by = current_user.id  # Track who completed
+            # Ensure investigation is in session for update
+            db.add(investigation)
     
     db.commit()
+    # Refresh investigation to ensure status and completed_by are updated
+    db.refresh(investigation)
     if existing_result:
         db.refresh(existing_result)
         # Get user names for response
@@ -2031,11 +2082,72 @@ def get_lab_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get lab result for an investigation"""
-    result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
-    if not result:
+    """Get lab result for an investigation (supports both OPD and IPD investigations)"""
+    # IMPORTANT: Check if this is an IPD investigation FIRST
+    # LabResult.investigation_id has FK constraint to investigations.id (OPD only)
+    # So IPD investigation IDs cannot be stored in LabResult table
+    # We must check investigation type BEFORE querying LabResult to avoid ID collisions
+    from app.models.inpatient_investigation import InpatientInvestigation
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # ALWAYS check IPD first to prevent ID collision issues
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    
+    if ipd_investigation:
+        logger.info(f"Found IPD investigation {investigation_id}, type: {ipd_investigation.investigation_type}")
+        # This is definitely an IPD investigation - ONLY query InpatientLabResult table
+        # Do NOT fall back to OPD LabResult table even if no IPD result exists
+        if ipd_investigation.investigation_type != "lab":
+            logger.info(f"IPD investigation {investigation_id} is not a lab investigation, returning None")
+            return None
+        
+        result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+        
+        if not result:
+            # No IPD result exists - return None (do NOT check OPD table)
+            logger.info(f"No IPD lab result found for investigation {investigation_id}, returning None")
+            return None
+        
+        # Found IPD result - use it
+        logger.info(f"Found IPD lab result for investigation {investigation_id}")
+        entered_user = db.query(User).filter(User.id == result.entered_by).first()
+        updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+        
+        result_dict = {
+            "id": result.id,
+            "investigation_id": result.investigation_id,
+            "results_text": result.results_text,
+            "attachment_path": result.attachment_path,
+            "entered_by": result.entered_by,
+            "updated_by": result.updated_by,
+            "created_at": result.created_at,
+            "updated_at": result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": updated_user.full_name if updated_user else None,
+        }
+        return LabResultResponse(**result_dict)
+    
+    # Not an IPD investigation - check OPD
+    logger.info(f"Investigation {investigation_id} is not IPD, checking OPD")
+    opd_investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not opd_investigation:
+        logger.info(f"No OPD investigation found for {investigation_id}, returning None")
         return None
     
+    if opd_investigation.investigation_type != "lab":
+        logger.info(f"OPD investigation {investigation_id} is not a lab investigation, returning None")
+        return None
+    
+    # Query OPD LabResult table
+    result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    
+    if not result:
+        logger.info(f"No OPD lab result found for investigation {investigation_id}, returning None")
+        return None
+    
+    logger.info(f"Found OPD lab result for investigation {investigation_id}")
     # Get user names
     entered_user = db.query(User).filter(User.id == result.entered_by).first()
     updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
@@ -2137,21 +2249,42 @@ async def create_scan_result(
     current_user: User = Depends(require_role(["Scan", "Scan Head", "Admin"]))
 ):
     """Create or update scan result with optional file attachment"""
-    # Verify investigation exists and is a scan investigation
-    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
-    if not investigation:
-        raise HTTPException(status_code=404, detail="Investigation not found")
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    investigation = None
+    is_inpatient = False
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        investigation = ipd_investigation
+        is_inpatient = True
+    else:
+        # Not IPD, check OPD
+        investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+        if not investigation:
+            raise HTTPException(status_code=404, detail="Investigation not found")
     
     if investigation.investigation_type != "scan":
         raise HTTPException(status_code=400, detail="This endpoint is only for scan investigations")
     
     # If investigation is completed, only Admin and Scan Head can edit
-    if investigation.status == InvestigationStatus.COMPLETED.value:
-        if current_user.role not in ["Admin", "Scan Head"]:
-            raise HTTPException(
-                status_code=403,
-                detail="Only Admin and Scan Head can edit completed investigations. Please contact Scan Head to revert the status."
-            )
+    if is_inpatient:
+        from app.models.inpatient_investigation import InpatientInvestigationStatus
+        if investigation.status == InpatientInvestigationStatus.COMPLETED.value:
+            if current_user.role not in ["Admin", "Scan Head"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only Admin and Scan Head can edit completed investigations. Please contact Scan Head to revert the status."
+                )
+    else:
+        if investigation.status == InvestigationStatus.COMPLETED.value:
+            if current_user.role not in ["Admin", "Scan Head"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only Admin and Scan Head can edit completed investigations. Please contact Scan Head to revert the status."
+                )
     
     # Handle file upload
     attachment_path = None
@@ -2177,8 +2310,13 @@ async def create_scan_result(
         # Store relative path for serving
         attachment_path = f"scan_results/{file_name}"
     
-    # Check if result already exists
-    existing_result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
+    # Handle IPD and OPD investigations separately due to FK constraints
+    if is_inpatient:
+        # Use InpatientScanResult for IPD investigations
+        existing_result = db.query(InpatientScanResult).filter(InpatientScanResult.investigation_id == investigation_id).first()
+    else:
+        # Use ScanResult for OPD investigations
+        existing_result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
     
     if existing_result:
         # Update existing result
@@ -2194,29 +2332,45 @@ async def create_scan_result(
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
-            investigation.status = InvestigationStatus.COMPLETED.value
+            if is_inpatient:
+                from app.models.inpatient_investigation import InpatientInvestigationStatus
+                investigation.status = InpatientInvestigationStatus.COMPLETED.value
+            else:
+                investigation.status = InvestigationStatus.COMPLETED.value
             investigation.completed_by = current_user.id  # Track who completed
             # Ensure investigation is in session
             db.add(investigation)
     else:
         # Create new result
-        scan_result = ScanResult(
-            investigation_id=investigation_id,
-            results_text=results_text,
-            attachment_path=attachment_path,
-            entered_by=current_user.id
-        )
+        if is_inpatient:
+            scan_result = InpatientScanResult(
+                investigation_id=investigation_id,
+                results_text=results_text,
+                attachment_path=attachment_path,
+                entered_by=current_user.id
+            )
+        else:
+            scan_result = ScanResult(
+                investigation_id=investigation_id,
+                results_text=results_text,
+                attachment_path=attachment_path,
+                entered_by=current_user.id
+            )
         db.add(scan_result)
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
-            investigation.status = InvestigationStatus.COMPLETED.value
+            if is_inpatient:
+                from app.models.inpatient_investigation import InpatientInvestigationStatus
+                investigation.status = InpatientInvestigationStatus.COMPLETED.value
+            else:
+                investigation.status = InvestigationStatus.COMPLETED.value
             investigation.completed_by = current_user.id  # Track who completed
             # Ensure investigation is in session
             db.add(investigation)
     
     db.commit()
-    # Refresh investigation to ensure completed_by is updated
+    # Refresh investigation to ensure status and completed_by are updated
     db.refresh(investigation)
     if existing_result:
         db.refresh(existing_result)
@@ -2261,9 +2415,82 @@ def get_scan_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get scan result for an investigation"""
+    """Get scan result for an investigation (supports both OPD and IPD investigations)"""
+    # IMPORTANT: Check if this is an IPD investigation FIRST
+    from app.models.inpatient_investigation import InpatientInvestigation
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # ALWAYS check IPD first to prevent ID collision issues
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    
+    if ipd_investigation:
+        logger.info(f"Found IPD investigation {investigation_id}, type: {ipd_investigation.investigation_type}")
+        # This is definitely an IPD investigation - ONLY query InpatientScanResult table
+        if ipd_investigation.investigation_type != "scan":
+            logger.info(f"IPD investigation {investigation_id} is not a scan investigation, returning None")
+            return None
+        
+        result = db.query(InpatientScanResult).filter(InpatientScanResult.investigation_id == investigation_id).first()
+        
+        if not result:
+            logger.info(f"No IPD scan result found for investigation {investigation_id}, returning None")
+            return None
+        
+        logger.info(f"Found IPD scan result for investigation {investigation_id}")
+        entered_user = db.query(User).filter(User.id == result.entered_by).first()
+        updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+        
+        result_dict = {
+            "id": result.id,
+            "investigation_id": result.investigation_id,
+            "results_text": result.results_text,
+            "attachment_path": result.attachment_path,
+            "entered_by": result.entered_by,
+            "updated_by": result.updated_by,
+            "created_at": result.created_at,
+            "updated_at": result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": updated_user.full_name if updated_user else None,
+        }
+        return ScanResultResponse(**result_dict)
+    
+    # Not an IPD investigation - check OPD
+    logger.info(f"Investigation {investigation_id} is not IPD, checking OPD")
+    opd_investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not opd_investigation:
+        logger.info(f"No OPD investigation found for {investigation_id}, returning None")
+        return None
+    
+    if opd_investigation.investigation_type != "scan":
+        logger.info(f"OPD investigation {investigation_id} is not a scan investigation, returning None")
+        return None
+    
+    # Query OPD ScanResult table
     result = db.query(ScanResult).filter(ScanResult.investigation_id == investigation_id).first()
-    return result
+    
+    if not result:
+        logger.info(f"No OPD scan result found for investigation {investigation_id}, returning None")
+        return None
+    
+    logger.info(f"Found OPD scan result for investigation {investigation_id}")
+    entered_user = db.query(User).filter(User.id == result.entered_by).first()
+    updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+    
+    result_dict = {
+        "id": result.id,
+        "investigation_id": result.investigation_id,
+        "results_text": result.results_text,
+        "attachment_path": result.attachment_path,
+        "entered_by": result.entered_by,
+        "updated_by": result.updated_by,
+        "created_at": result.created_at,
+        "updated_at": result.updated_at,
+        "entered_by_name": entered_user.full_name if entered_user else None,
+        "updated_by_name": updated_user.full_name if updated_user else None,
+    }
+    return ScanResultResponse(**result_dict)
 
 
 @router.get("/scan-result/{investigation_id}/download")
@@ -2346,21 +2573,42 @@ async def create_xray_result(
     current_user: User = Depends(require_role(["Xray", "Xray Head", "Admin"]))
 ):
     """Create or update x-ray result with optional file attachment"""
-    # Verify investigation exists and is an xray investigation
-    investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
-    if not investigation:
-        raise HTTPException(status_code=404, detail="Investigation not found")
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    investigation = None
+    is_inpatient = False
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        investigation = ipd_investigation
+        is_inpatient = True
+    else:
+        # Not IPD, check OPD
+        investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+        if not investigation:
+            raise HTTPException(status_code=404, detail="Investigation not found")
     
     if investigation.investigation_type != "xray":
         raise HTTPException(status_code=400, detail="This endpoint is only for x-ray investigations")
     
     # If investigation is completed, only Admin and Xray Head can edit
-    if investigation.status == InvestigationStatus.COMPLETED.value:
-        if current_user.role not in ["Admin", "Xray Head"]:
-            raise HTTPException(
-                status_code=403,
-                detail="Only Admin and Xray Head can edit completed investigations. Please contact Xray Head to revert the status."
-            )
+    if is_inpatient:
+        from app.models.inpatient_investigation import InpatientInvestigationStatus
+        if investigation.status == InpatientInvestigationStatus.COMPLETED.value:
+            if current_user.role not in ["Admin", "Xray Head"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only Admin and Xray Head can edit completed investigations. Please contact Xray Head to revert the status."
+                )
+    else:
+        if investigation.status == InvestigationStatus.COMPLETED.value:
+            if current_user.role not in ["Admin", "Xray Head"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only Admin and Xray Head can edit completed investigations. Please contact Xray Head to revert the status."
+                )
     
     # Handle file upload
     attachment_path = None
@@ -2386,8 +2634,13 @@ async def create_xray_result(
         # Store relative path for serving
         attachment_path = f"xray_results/{file_name}"
     
-    # Check if result already exists
-    existing_result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
+    # Handle IPD and OPD investigations separately due to FK constraints
+    if is_inpatient:
+        # Use InpatientXrayResult for IPD investigations
+        existing_result = db.query(InpatientXrayResult).filter(InpatientXrayResult.investigation_id == investigation_id).first()
+    else:
+        # Use XrayResult for OPD investigations
+        existing_result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
     
     if existing_result:
         # Update existing result
@@ -2403,29 +2656,45 @@ async def create_xray_result(
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
-            investigation.status = InvestigationStatus.COMPLETED.value
+            if is_inpatient:
+                from app.models.inpatient_investigation import InpatientInvestigationStatus
+                investigation.status = InpatientInvestigationStatus.COMPLETED.value
+            else:
+                investigation.status = InvestigationStatus.COMPLETED.value
             investigation.completed_by = current_user.id  # Track who completed
             # Ensure investigation is in session
             db.add(investigation)
     else:
         # Create new result
-        xray_result = XrayResult(
-            investigation_id=investigation_id,
-            results_text=results_text,
-            attachment_path=attachment_path,
-            entered_by=current_user.id
-        )
+        if is_inpatient:
+            xray_result = InpatientXrayResult(
+                investigation_id=investigation_id,
+                results_text=results_text,
+                attachment_path=attachment_path,
+                entered_by=current_user.id
+            )
+        else:
+            xray_result = XrayResult(
+                investigation_id=investigation_id,
+                results_text=results_text,
+                attachment_path=attachment_path,
+                entered_by=current_user.id
+            )
         db.add(xray_result)
         
         # Mark investigation as completed if results are entered
         if results_text or attachment_path:
-            investigation.status = InvestigationStatus.COMPLETED.value
+            if is_inpatient:
+                from app.models.inpatient_investigation import InpatientInvestigationStatus
+                investigation.status = InpatientInvestigationStatus.COMPLETED.value
+            else:
+                investigation.status = InvestigationStatus.COMPLETED.value
             investigation.completed_by = current_user.id  # Track who completed
             # Ensure investigation is in session
             db.add(investigation)
     
     db.commit()
-    # Refresh investigation to ensure completed_by is updated
+    # Refresh investigation to ensure status and completed_by are updated
     db.refresh(investigation)
     if existing_result:
         db.refresh(existing_result)
@@ -2470,9 +2739,82 @@ def get_xray_result(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get x-ray result for an investigation"""
+    """Get x-ray result for an investigation (supports both OPD and IPD investigations)"""
+    # IMPORTANT: Check if this is an IPD investigation FIRST
+    from app.models.inpatient_investigation import InpatientInvestigation
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # ALWAYS check IPD first to prevent ID collision issues
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    
+    if ipd_investigation:
+        logger.info(f"Found IPD investigation {investigation_id}, type: {ipd_investigation.investigation_type}")
+        # This is definitely an IPD investigation - ONLY query InpatientXrayResult table
+        if ipd_investigation.investigation_type != "xray":
+            logger.info(f"IPD investigation {investigation_id} is not an xray investigation, returning None")
+            return None
+        
+        result = db.query(InpatientXrayResult).filter(InpatientXrayResult.investigation_id == investigation_id).first()
+        
+        if not result:
+            logger.info(f"No IPD xray result found for investigation {investigation_id}, returning None")
+            return None
+        
+        logger.info(f"Found IPD xray result for investigation {investigation_id}")
+        entered_user = db.query(User).filter(User.id == result.entered_by).first()
+        updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+        
+        result_dict = {
+            "id": result.id,
+            "investigation_id": result.investigation_id,
+            "results_text": result.results_text,
+            "attachment_path": result.attachment_path,
+            "entered_by": result.entered_by,
+            "updated_by": result.updated_by,
+            "created_at": result.created_at,
+            "updated_at": result.updated_at,
+            "entered_by_name": entered_user.full_name if entered_user else None,
+            "updated_by_name": updated_user.full_name if updated_user else None,
+        }
+        return XrayResultResponse(**result_dict)
+    
+    # Not an IPD investigation - check OPD
+    logger.info(f"Investigation {investigation_id} is not IPD, checking OPD")
+    opd_investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+    if not opd_investigation:
+        logger.info(f"No OPD investigation found for {investigation_id}, returning None")
+        return None
+    
+    if opd_investigation.investigation_type != "xray":
+        logger.info(f"OPD investigation {investigation_id} is not an xray investigation, returning None")
+        return None
+    
+    # Query OPD XrayResult table
     result = db.query(XrayResult).filter(XrayResult.investigation_id == investigation_id).first()
-    return result
+    
+    if not result:
+        logger.info(f"No OPD xray result found for investigation {investigation_id}, returning None")
+        return None
+    
+    logger.info(f"Found OPD xray result for investigation {investigation_id}")
+    entered_user = db.query(User).filter(User.id == result.entered_by).first()
+    updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+    
+    result_dict = {
+        "id": result.id,
+        "investigation_id": result.investigation_id,
+        "results_text": result.results_text,
+        "attachment_path": result.attachment_path,
+        "entered_by": result.entered_by,
+        "updated_by": result.updated_by,
+        "created_at": result.created_at,
+        "updated_at": result.updated_at,
+        "entered_by_name": entered_user.full_name if entered_user else None,
+        "updated_by_name": updated_user.full_name if updated_user else None,
+    }
+    return XrayResultResponse(**result_dict)
 
 
 @router.get("/xray-result/{investigation_id}/download")
@@ -3122,10 +3464,18 @@ class WardAdmissionResponse(BaseModel):
     id: int
     encounter_id: int
     ward: str
+    doctor_id: Optional[int] = None
+    doctor_name: Optional[str] = None
+    doctor_username: Optional[str] = None
     admitted_by: int
     admitted_at: datetime
     discharged_at: Optional[datetime] = None
     discharged_by: Optional[int] = None
+    discharge_outcome: Optional[str] = None
+    discharge_condition: Optional[str] = None
+    partially_discharged_at: Optional[datetime] = None
+    partially_discharged_by: Optional[int] = None
+    final_orders: Optional[str] = None
     
     # Patient and encounter details
     patient_name: Optional[str] = None
@@ -3217,6 +3567,16 @@ def get_ward_admissions(
                 if ward_admission.bed_id and ward_admission.bed:
                     bed_number = ward_admission.bed.bed_number
                 
+                # Get doctor information (doctor under whose care)
+                doctor_id = ward_admission.doctor_id
+                doctor_name = None
+                doctor_username = None
+                if doctor_id:
+                    doctor_user = db.query(User).filter(User.id == doctor_id).first()
+                    if doctor_user:
+                        doctor_name = doctor_user.full_name
+                        doctor_username = doctor_user.username
+                
                 # Debug log for emergency contact
                 print(f"Ward admission {ward_admission.id} - Patient {patient.card_number}: emergency_contact_name={emergency_contact_name}, relationship={emergency_contact_relationship}, number={emergency_contact_number}")
                 
@@ -3226,6 +3586,9 @@ def get_ward_admissions(
                     "ward": ward_admission.ward,
                     "bed_id": ward_admission.bed_id,
                     "bed_number": bed_number,
+                    "doctor_id": doctor_id,
+                    "doctor_name": doctor_name,
+                    "doctor_username": doctor_username,
                     "admitted_by": ward_admission.admitted_by,
                     "admitted_at": ward_admission.admitted_at,
                     "discharged_at": ward_admission.discharged_at,
@@ -3264,6 +3627,193 @@ def get_ward_admissions(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error fetching ward admissions: {str(e)}")
+
+
+class TransferPatientRequest(BaseModel):
+    """Request to transfer a patient between wards or beds"""
+    ward_admission_id: int
+    from_ward: str
+    to_ward: str
+    bed_id: int
+    transfer_reason: Optional[str] = None
+
+
+@router.post("/ward-admissions/transfer")
+def transfer_patient(
+    form_data: TransferPatientRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Transfer a patient between wards or beds"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    from app.models.ward_transfer import WardTransfer
+    from app.models.bed import Bed
+    
+    # Get the ward admission
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.id == form_data.ward_admission_id
+    ).first()
+    
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at:
+        raise HTTPException(status_code=400, detail="Cannot transfer a discharged patient")
+    
+    if ward_admission.death_recorded_at:
+        raise HTTPException(status_code=400, detail="Cannot transfer a deceased patient")
+    
+    # Verify bed exists and is available (only check if not a ward transfer, as bed will be checked on acceptance)
+    bed = db.query(Bed).filter(Bed.id == form_data.bed_id).first()
+    if not bed:
+        raise HTTPException(status_code=404, detail="Bed not found")
+    
+    if bed.ward != form_data.to_ward:
+        raise HTTPException(status_code=400, detail=f"Bed does not belong to ward {form_data.to_ward}")
+    
+    # Check if transferring to a different ward
+    is_ward_transfer = form_data.from_ward != form_data.to_ward
+    
+    if not is_ward_transfer:
+        # For same-ward bed transfers, check if bed is available
+        if bed.is_occupied:
+            raise HTTPException(status_code=400, detail="Bed is already occupied")
+    
+    # Check if there's already a pending transfer for this patient
+    if is_ward_transfer:
+        existing_pending_transfer = db.query(WardTransfer).filter(
+            WardTransfer.ward_admission_id == form_data.ward_admission_id,
+            WardTransfer.status == "pending"
+        ).first()
+        
+        if existing_pending_transfer:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Patient already has a pending transfer request. Please wait for it to be accepted or rejected before creating another transfer."
+            )
+    
+    if is_ward_transfer:
+        # For ward transfers, create a pending transfer record
+        # Don't update ward admission or beds yet - wait for acceptance
+        transfer = WardTransfer(
+            ward_admission_id=ward_admission.id,
+            from_ward=form_data.from_ward,
+            to_ward=form_data.to_ward,
+            transfer_reason=form_data.transfer_reason,
+            status="pending",
+            transferred_by=current_user.id,
+            transferred_at=datetime.utcnow()
+        )
+        db.add(transfer)
+        db.commit()
+        db.refresh(transfer)
+        
+        return {
+            "id": transfer.id,
+            "ward_admission_id": ward_admission.id,
+            "from_ward": form_data.from_ward,
+            "to_ward": form_data.to_ward,
+            "bed_id": form_data.bed_id,
+            "status": "pending",
+            "message": "Transfer request created. Waiting for receiving ward to accept."
+        }
+    else:
+        # For same-ward bed transfers, process immediately
+        # Free up the old bed if it exists
+        if ward_admission.bed_id:
+            old_bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
+            if old_bed:
+                old_bed.is_occupied = False
+                old_bed.updated_at = datetime.utcnow()
+        
+        # Mark new bed as occupied
+        bed.is_occupied = True
+        bed.updated_at = datetime.utcnow()
+        
+        # Update ward admission
+        ward_admission.bed_id = form_data.bed_id
+        ward_admission.updated_at = datetime.utcnow()
+        
+        # Create transfer record (auto-accepted for same-ward transfers)
+        transfer = WardTransfer(
+            ward_admission_id=ward_admission.id,
+            from_ward=form_data.from_ward,
+            to_ward=form_data.to_ward,
+            transfer_reason=form_data.transfer_reason,
+            status="accepted",
+            transferred_by=current_user.id,
+            accepted_by=current_user.id,
+            transferred_at=datetime.utcnow(),
+            accepted_at=datetime.utcnow()
+        )
+        db.add(transfer)
+        
+        db.commit()
+        db.refresh(ward_admission)
+        db.refresh(transfer)
+        db.refresh(bed)
+        
+        return {
+            "id": transfer.id,
+            "ward_admission_id": ward_admission.id,
+            "from_ward": form_data.from_ward,
+            "to_ward": form_data.to_ward,
+            "bed_id": form_data.bed_id,
+            "status": "accepted",
+            "message": "Patient transferred successfully"
+        }
+
+
+@router.get("/ward-admissions/pending-transfers")
+def get_pending_transfers(
+    ward: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get pending transfer requests for a ward"""
+    from app.models.ward_transfer import WardTransfer
+    from app.models.ward_admission import WardAdmission
+    
+    query = db.query(WardTransfer).filter(
+        WardTransfer.status == "pending"
+    )
+    
+    if ward:
+        query = query.filter(WardTransfer.to_ward == ward)
+    
+    transfers = query.options(
+        joinedload(WardTransfer.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(WardTransfer.transferrer)
+    ).order_by(WardTransfer.transferred_at.desc()).all()
+    
+    result = []
+    for transfer in transfers:
+        ward_admission = transfer.ward_admission
+        encounter = ward_admission.encounter if ward_admission else None
+        patient = encounter.patient if encounter else None
+        
+        if not patient:
+            continue
+        
+        result.append({
+            "id": transfer.id,
+            "ward_admission_id": ward_admission.id,
+            "from_ward": transfer.from_ward,
+            "to_ward": transfer.to_ward,
+            "transfer_reason": transfer.transfer_reason,
+            "status": transfer.status,
+            "transferred_by_name": transfer.transferrer.full_name if transfer.transferrer else None,
+            "transferred_at": transfer.transferred_at,
+            "patient_name": patient.name,
+            "patient_surname": patient.surname,
+            "patient_card_number": patient.card_number,
+            "patient_gender": patient.gender,
+            "current_ward": ward_admission.ward,
+            "current_bed_id": ward_admission.bed_id,
+        })
+    
+    return result
 
 
 @router.get("/ward-admissions/{ward_admission_id}", response_model=WardAdmissionResponse)
@@ -3321,16 +3871,34 @@ def get_ward_admission(
         if ward_admission.bed_id and ward_admission.bed:
             bed_number = ward_admission.bed.bed_number
         
+        # Get doctor information (doctor under whose care)
+        doctor_id = ward_admission.doctor_id
+        doctor_name = None
+        doctor_username = None
+        if doctor_id:
+            doctor_user = db.query(User).filter(User.id == doctor_id).first()
+            if doctor_user:
+                doctor_name = doctor_user.full_name
+                doctor_username = doctor_user.username
+        
         return {
             "id": ward_admission.id,
             "encounter_id": ward_admission.encounter_id,
             "ward": ward_admission.ward,
             "bed_id": ward_admission.bed_id,
             "bed_number": bed_number,
+            "doctor_id": doctor_id,
+            "doctor_name": doctor_name,
+            "doctor_username": doctor_username,
             "admitted_by": ward_admission.admitted_by,
             "admitted_at": ward_admission.admitted_at,
             "discharged_at": ward_admission.discharged_at,
             "discharged_by": ward_admission.discharged_by,
+            "discharge_outcome": ward_admission.discharge_outcome,
+            "discharge_condition": ward_admission.discharge_condition,
+            "partially_discharged_at": ward_admission.partially_discharged_at,
+            "partially_discharged_by": ward_admission.partially_discharged_by,
+            "final_orders": ward_admission.final_orders,
             "patient_name": patient.name,
             "patient_surname": patient.surname,
             "patient_other_names": patient.other_names,
@@ -3357,16 +3925,30 @@ def get_ward_admission(
         raise HTTPException(status_code=500, detail=f"Error fetching ward admission: {str(e)}")
 
 
-@router.put("/ward-admissions/{ward_admission_id}/discharge")
-def discharge_patient(
+class PartialDischargeRequest(BaseModel):
+    """Request for partial discharge"""
+    discharge_outcome: str  # discharged, absconded, referred, died, discharged_against_medical_advice
+    discharge_condition: str  # stable, cured, died, absconded
+    final_orders: Optional[str] = None  # Doctor's final orders/notes
+
+
+class FinalDischargeRequest(BaseModel):
+    """Request for final discharge"""
+    discharge_outcome: str  # discharged, absconded, referred, died, discharged_against_medical_advice
+    discharge_condition: str  # stable, cured, died, absconded
+    final_orders: Optional[str] = None  # Doctor's final orders/notes
+
+
+@router.post("/ward-admissions/{ward_admission_id}/partial-discharge")
+def partial_discharge_patient(
     ward_admission_id: int,
+    request: PartialDischargeRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
 ):
-    """Discharge a patient from the ward"""
+    """Initiate partial discharge - allows doctor to give final orders before final discharge"""
     from datetime import datetime
     from app.models.ward_admission import WardAdmission
-    from app.models.bed import Bed
     
     ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
     if not ward_admission:
@@ -3375,6 +3957,130 @@ def discharge_patient(
     if ward_admission.discharged_at is not None:
         raise HTTPException(status_code=400, detail="Patient has already been discharged")
     
+    if ward_admission.partially_discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Patient has already been partially discharged")
+    
+    # Validate outcome and condition
+    valid_outcomes = ["discharged", "absconded", "referred", "died", "discharged_against_medical_advice"]
+    valid_conditions = ["stable", "cured", "died", "absconded"]
+    
+    if request.discharge_outcome not in valid_outcomes:
+        raise HTTPException(status_code=400, detail=f"Invalid discharge outcome. Must be one of: {', '.join(valid_outcomes)}")
+    
+    if request.discharge_condition not in valid_conditions:
+        raise HTTPException(status_code=400, detail=f"Invalid discharge condition. Must be one of: {', '.join(valid_conditions)}")
+    
+    # Mark as partially discharged
+    ward_admission.partially_discharged_at = datetime.utcnow()
+    ward_admission.partially_discharged_by = current_user.id
+    ward_admission.discharge_outcome = request.discharge_outcome
+    ward_admission.discharge_condition = request.discharge_condition
+    ward_admission.final_orders = request.final_orders
+    ward_admission.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(ward_admission)
+    
+    return {
+        "id": ward_admission.id,
+        "encounter_id": ward_admission.encounter_id,
+        "ward": ward_admission.ward,
+        "partially_discharged_at": ward_admission.partially_discharged_at,
+        "partially_discharged_by": ward_admission.partially_discharged_by,
+        "discharge_outcome": ward_admission.discharge_outcome,
+        "discharge_condition": ward_admission.discharge_condition,
+        "message": "Partial discharge initiated successfully. Please ensure all bills are paid before final discharge."
+    }
+
+
+@router.post("/ward-admissions/{ward_admission_id}/revert-partial-discharge")
+def revert_partial_discharge(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Revert partial discharge - allows staff to undo partial discharge if services were missed"""
+    from app.models.ward_admission import WardAdmission
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Cannot revert partial discharge for a fully discharged patient")
+    
+    if ward_admission.partially_discharged_at is None:
+        raise HTTPException(status_code=400, detail="Patient has not been partially discharged")
+    
+    # Revert partial discharge fields
+    ward_admission.partially_discharged_at = None
+    ward_admission.partially_discharged_by = None
+    ward_admission.discharge_outcome = None
+    ward_admission.discharge_condition = None
+    ward_admission.final_orders = None
+    ward_admission.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(ward_admission)
+    
+    return {
+        "id": ward_admission.id,
+        "encounter_id": ward_admission.encounter_id,
+        "ward": ward_admission.ward,
+        "message": "Partial discharge reverted successfully. You can now add services and discharge again when ready."
+    }
+
+
+@router.put("/ward-admissions/{ward_admission_id}/discharge")
+def final_discharge_patient(
+    ward_admission_id: int,
+    request: FinalDischargeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Final discharge - checks bills are paid before completing discharge"""
+    from datetime import datetime
+    from app.models.ward_admission import WardAdmission
+    from app.models.bed import Bed
+    from app.models.bill import Bill
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    if ward_admission.discharged_at is not None:
+        raise HTTPException(status_code=400, detail="Patient has already been discharged")
+    
+    # Check if partially discharged first
+    if ward_admission.partially_discharged_at is None:
+        raise HTTPException(status_code=400, detail="Patient must be partially discharged first before final discharge")
+    
+    # Validate outcome and condition
+    valid_outcomes = ["discharged", "absconded", "referred", "died", "discharged_against_medical_advice"]
+    valid_conditions = ["stable", "cured", "died", "absconded"]
+    
+    if request.discharge_outcome not in valid_outcomes:
+        raise HTTPException(status_code=400, detail=f"Invalid discharge outcome. Must be one of: {', '.join(valid_outcomes)}")
+    
+    if request.discharge_condition not in valid_conditions:
+        raise HTTPException(status_code=400, detail=f"Invalid discharge condition. Must be one of: {', '.join(valid_conditions)}")
+    
+    # Check if all bills are paid
+    encounter = ward_admission.encounter
+    if encounter:
+        unpaid_bills = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False
+        ).all()
+        
+        if unpaid_bills:
+            total_unpaid = sum(bill.total_amount - bill.paid_amount for bill in unpaid_bills)
+            if total_unpaid > 0.01:  # Allow small rounding differences
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot discharge patient. Outstanding bills amount to GHC {total_unpaid:.2f}. All bills must be paid before discharge."
+                )
+    
     # Free up the bed
     if ward_admission.bed_id:
         bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
@@ -3382,7 +4088,13 @@ def discharge_patient(
             bed.is_occupied = False
             bed.updated_at = datetime.utcnow()
     
-    # Mark as discharged
+    # Update discharge information (in case it changed from partial discharge)
+    ward_admission.discharge_outcome = request.discharge_outcome
+    ward_admission.discharge_condition = request.discharge_condition
+    if request.final_orders:
+        ward_admission.final_orders = request.final_orders
+    
+    # Mark as fully discharged
     ward_admission.discharged_at = datetime.utcnow()
     ward_admission.discharged_by = current_user.id
     ward_admission.updated_at = datetime.utcnow()
@@ -3396,6 +4108,8 @@ def discharge_patient(
         "ward": ward_admission.ward,
         "discharged_at": ward_admission.discharged_at,
         "discharged_by": ward_admission.discharged_by,
+        "discharge_outcome": ward_admission.discharge_outcome,
+        "discharge_condition": ward_admission.discharge_condition,
         "message": "Patient discharged successfully"
     }
 
@@ -5446,6 +6160,92 @@ def get_inpatient_investigations(
     ]
 
 
+@router.get("/ward-admissions/{ward_admission_id}/investigations/all")
+def get_all_inpatient_investigations_for_ward_admission(
+    ward_admission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all investigations for a ward admission (across all clinical reviews)"""
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.inpatient_lab_result import InpatientLabResult
+    from app.models.inpatient_scan_result import InpatientScanResult
+    from app.models.inpatient_xray_result import InpatientXrayResult
+    
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    # Get all clinical reviews for this ward admission
+    clinical_reviews = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.ward_admission_id == ward_admission_id
+    ).all()
+    
+    if not clinical_reviews:
+        return []
+    
+    clinical_review_ids = [cr.id for cr in clinical_reviews]
+    
+    # Get all investigations from all clinical reviews
+    investigations = db.query(InpatientInvestigation).filter(
+        InpatientInvestigation.clinical_review_id.in_(clinical_review_ids)
+    ).order_by(InpatientInvestigation.created_at.desc()).all()
+    
+    result = []
+    for inv in investigations:
+        requester = db.query(User).filter(User.id == inv.requested_by).first()
+        confirmed_by_user = None
+        completed_by_user = None
+        
+        if inv.confirmed_by:
+            confirmed_by_user = db.query(User).filter(User.id == inv.confirmed_by).first()
+        if inv.completed_by:
+            completed_by_user = db.query(User).filter(User.id == inv.completed_by).first()
+        
+        # Check if result exists
+        has_result = False
+        if inv.investigation_type == "lab":
+            lab_result = db.query(InpatientLabResult).filter(
+                InpatientLabResult.investigation_id == inv.id
+            ).first()
+            has_result = lab_result is not None
+        elif inv.investigation_type == "scan":
+            scan_result = db.query(InpatientScanResult).filter(
+                InpatientScanResult.investigation_id == inv.id
+            ).first()
+            has_result = scan_result is not None
+        elif inv.investigation_type == "xray":
+            xray_result = db.query(InpatientXrayResult).filter(
+                InpatientXrayResult.investigation_id == inv.id
+            ).first()
+            has_result = xray_result is not None
+        
+        result.append({
+            "id": inv.id,
+            "clinical_review_id": inv.clinical_review_id,
+            "service_type": inv.service_type,
+            "gdrg_code": inv.gdrg_code,
+            "procedure_name": inv.procedure_name,
+            "investigation_type": inv.investigation_type,
+            "notes": inv.notes,
+            "price": inv.price,
+            "status": inv.status,
+            "requested_by": inv.requested_by,
+            "requested_by_name": requester.full_name if requester else None,
+            "confirmed_by": inv.confirmed_by,
+            "confirmed_by_name": confirmed_by_user.full_name if confirmed_by_user else None,
+            "completed_by": inv.completed_by,
+            "completed_by_name": completed_by_user.full_name if completed_by_user else None,
+            "has_result": has_result,
+            "created_at": inv.created_at,
+            "service_date": inv.service_date,
+        })
+    
+    return result
+
+
 @router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/investigations/{investigation_id}")
 def delete_inpatient_investigation(
     ward_admission_id: int,
@@ -5635,7 +6435,7 @@ def get_inpatient_investigations_by_type(
             ward_admission_id = None
             
             if patient:
-                patient_name = f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown"
+                patient_name = f"{patient.name or ''} {patient.surname or ''} {patient.other_names or ''}".strip() or "Unknown"
                 patient_card_number = patient.card_number
             
             if ward_admission:
@@ -6468,6 +7268,783 @@ def delete_additional_service(
     db.commit()
     
     return None
+
+
+# Blood Transfusion Type Management endpoints (Admin only)
+class BloodTransfusionTypeCreate(BaseModel):
+    type_name: str
+    description: Optional[str] = None
+    unit_price: float
+    unit_type: str = "unit"  # "unit", "pack", etc.
+
+
+class BloodTransfusionTypeUpdate(BaseModel):
+    type_name: Optional[str] = None
+    description: Optional[str] = None
+    unit_price: Optional[float] = None
+    unit_type: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class BloodTransfusionTypeResponse(BaseModel):
+    id: int
+    type_name: str
+    description: Optional[str]
+    unit_price: float
+    unit_type: str
+    is_active: bool
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/blood-transfusion-types", response_model=BloodTransfusionTypeResponse, status_code=status.HTTP_201_CREATED)
+def create_blood_transfusion_type(
+    type_data: BloodTransfusionTypeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Create a new blood transfusion type - Admin only"""
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    
+    # Check if type with same name already exists
+    existing = db.query(BloodTransfusionType).filter(
+        BloodTransfusionType.type_name == type_data.type_name
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Blood transfusion type '{type_data.type_name}' already exists"
+        )
+    
+    transfusion_type = BloodTransfusionType(
+        type_name=type_data.type_name,
+        description=type_data.description,
+        unit_price=type_data.unit_price,
+        unit_type=type_data.unit_type,
+        created_by=current_user.id
+    )
+    db.add(transfusion_type)
+    db.commit()
+    db.refresh(transfusion_type)
+    
+    return transfusion_type
+
+
+@router.get("/blood-transfusion-types", response_model=List[BloodTransfusionTypeResponse])
+def get_blood_transfusion_types(
+    active_only: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab"]))
+):
+    """Get all blood transfusion types"""
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    
+    query = db.query(BloodTransfusionType)
+    
+    if active_only:
+        query = query.filter(BloodTransfusionType.is_active == True)
+    
+    types = query.order_by(BloodTransfusionType.type_name).all()
+    return types
+
+
+@router.get("/blood-transfusion-types/{type_id}", response_model=BloodTransfusionTypeResponse)
+def get_blood_transfusion_type(
+    type_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab"]))
+):
+    """Get a specific blood transfusion type"""
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    
+    transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == type_id).first()
+    if not transfusion_type:
+        raise HTTPException(status_code=404, detail="Blood transfusion type not found")
+    
+    return transfusion_type
+
+
+@router.put("/blood-transfusion-types/{type_id}", response_model=BloodTransfusionTypeResponse)
+def update_blood_transfusion_type(
+    type_id: int,
+    type_data: BloodTransfusionTypeUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update a blood transfusion type - Admin only"""
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    
+    transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == type_id).first()
+    if not transfusion_type:
+        raise HTTPException(status_code=404, detail="Blood transfusion type not found")
+    
+    # Check if type name is being changed and conflicts with existing
+    if type_data.type_name and type_data.type_name != transfusion_type.type_name:
+        existing = db.query(BloodTransfusionType).filter(
+            BloodTransfusionType.type_name == type_data.type_name,
+            BloodTransfusionType.id != type_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Blood transfusion type '{type_data.type_name}' already exists"
+            )
+    
+    update_data = type_data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(transfusion_type, field, value)
+    
+    transfusion_type.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(transfusion_type)
+    
+    return transfusion_type
+
+
+@router.delete("/blood-transfusion-types/{type_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_blood_transfusion_type(
+    type_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete (soft delete) a blood transfusion type - Admin only"""
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    
+    transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == type_id).first()
+    if not transfusion_type:
+        raise HTTPException(status_code=404, detail="Blood transfusion type not found")
+    
+    # Soft delete by setting is_active to False
+    transfusion_type.is_active = False
+    transfusion_type.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return None
+
+
+# Blood Transfusion Request endpoints
+class BloodTransfusionRequestCreate(BaseModel):
+    ward_admission_id: int
+    encounter_id: int
+    transfusion_type_id: int
+    quantity: float = 1.0
+    request_reason: Optional[str] = None
+
+
+class BloodTransfusionRequestResponse(BaseModel):
+    id: int
+    ward_admission_id: int
+    encounter_id: int
+    transfusion_type_id: int
+    transfusion_type_name: str
+    quantity: float
+    request_reason: Optional[str]
+    status: str
+    requested_by: int
+    requested_by_name: Optional[str]
+    accepted_by: Optional[int]
+    accepted_by_name: Optional[str]
+    fulfilled_by: Optional[int]
+    fulfilled_by_name: Optional[str]
+    returned_by: Optional[int]
+    returned_by_name: Optional[str]
+    bill_item_id: Optional[int]
+    return_bill_item_id: Optional[int]
+    requested_at: datetime
+    accepted_at: Optional[datetime]
+    fulfilled_at: Optional[datetime]
+    returned_at: Optional[datetime]
+    cancelled_at: Optional[datetime]
+    cancellation_reason: Optional[str]
+    patient_name: str
+    patient_card_number: str
+    ward: str
+    unit_price: float
+    total_price: float
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/blood-transfusion-requests", response_model=BloodTransfusionRequestResponse, status_code=status.HTTP_201_CREATED)
+def create_blood_transfusion_request(
+    request_data: BloodTransfusionRequestCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Create a new blood transfusion request"""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    
+    # Verify ward admission exists
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == request_data.ward_admission_id).first()
+    if not ward_admission:
+        raise HTTPException(status_code=404, detail="Ward admission not found")
+    
+    # Verify encounter exists and matches
+    encounter = db.query(Encounter).filter(Encounter.id == request_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    if encounter.id != ward_admission.encounter_id:
+        raise HTTPException(status_code=400, detail="Encounter does not match ward admission")
+    
+    # Verify transfusion type exists and is active
+    transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == request_data.transfusion_type_id).first()
+    if not transfusion_type:
+        raise HTTPException(status_code=404, detail="Blood transfusion type not found")
+    
+    if not transfusion_type.is_active:
+        raise HTTPException(status_code=400, detail="Blood transfusion type is not active")
+    
+    # Create request
+    blood_request = BloodTransfusionRequest(
+        ward_admission_id=request_data.ward_admission_id,
+        encounter_id=request_data.encounter_id,
+        transfusion_type_id=request_data.transfusion_type_id,
+        quantity=request_data.quantity,
+        request_reason=request_data.request_reason,
+        status="pending",
+        requested_by=current_user.id
+    )
+    db.add(blood_request)
+    db.commit()
+    db.refresh(blood_request)
+    
+    # Load relationships for response
+    patient = encounter.patient
+    requester = db.query(User).filter(User.id == current_user.id).first()
+    
+    return {
+        "id": blood_request.id,
+        "ward_admission_id": blood_request.ward_admission_id,
+        "encounter_id": blood_request.encounter_id,
+        "transfusion_type_id": blood_request.transfusion_type_id,
+        "transfusion_type_name": transfusion_type.type_name,
+        "quantity": blood_request.quantity,
+        "request_reason": blood_request.request_reason,
+        "status": blood_request.status,
+        "requested_by": blood_request.requested_by,
+        "requested_by_name": requester.full_name if requester else None,
+        "accepted_by": None,
+        "accepted_by_name": None,
+        "fulfilled_by": None,
+        "fulfilled_by_name": None,
+        "returned_by": None,
+        "returned_by_name": None,
+        "bill_item_id": None,
+        "return_bill_item_id": None,
+        "requested_at": blood_request.requested_at,
+        "accepted_at": None,
+        "fulfilled_at": None,
+        "returned_at": None,
+        "cancelled_at": None,
+        "cancellation_reason": None,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip(),
+        "patient_card_number": patient.card_number or "",
+        "ward": ward_admission.ward,
+        "unit_price": transfusion_type.unit_price,
+        "total_price": transfusion_type.unit_price * blood_request.quantity,
+    }
+
+
+@router.get("/blood-transfusion-requests", response_model=List[BloodTransfusionRequestResponse])
+def get_blood_transfusion_requests(
+    status: Optional[str] = Query(None),  # Filter by status: pending, accepted, fulfilled, returned, cancelled
+    ward: Optional[str] = Query(None),  # Filter by ward
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab"]))
+):
+    """Get blood transfusion requests"""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    from app.models.ward_admission import WardAdmission
+    from sqlalchemy.orm import joinedload
+    
+    query = db.query(BloodTransfusionRequest).options(
+        joinedload(BloodTransfusionRequest.transfusion_type),
+        joinedload(BloodTransfusionRequest.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(BloodTransfusionRequest.requester),
+        joinedload(BloodTransfusionRequest.accepter),
+        joinedload(BloodTransfusionRequest.fulfiller),
+        joinedload(BloodTransfusionRequest.returner)
+    )
+    
+    if status:
+        query = query.filter(BloodTransfusionRequest.status == status)
+    
+    if ward:
+        query = query.join(WardAdmission).filter(WardAdmission.ward == ward)
+    
+    requests = query.order_by(BloodTransfusionRequest.requested_at.desc()).all()
+    
+    result = []
+    for req in requests:
+        patient = req.ward_admission.encounter.patient if req.ward_admission and req.ward_admission.encounter else None
+        if not patient:
+            continue
+        
+        result.append({
+            "id": req.id,
+            "ward_admission_id": req.ward_admission_id,
+            "encounter_id": req.encounter_id,
+            "transfusion_type_id": req.transfusion_type_id,
+            "transfusion_type_name": req.transfusion_type.type_name if req.transfusion_type else "",
+            "quantity": req.quantity,
+            "request_reason": req.request_reason,
+            "status": req.status,
+            "requested_by": req.requested_by,
+            "requested_by_name": req.requester.full_name if req.requester else None,
+            "accepted_by": req.accepted_by,
+            "accepted_by_name": req.accepter.full_name if req.accepter else None,
+            "fulfilled_by": req.fulfilled_by,
+            "fulfilled_by_name": req.fulfiller.full_name if req.fulfiller else None,
+            "returned_by": req.returned_by,
+            "returned_by_name": req.returner.full_name if req.returner else None,
+            "bill_item_id": req.bill_item_id,
+            "return_bill_item_id": req.return_bill_item_id,
+            "requested_at": req.requested_at,
+            "accepted_at": req.accepted_at,
+            "fulfilled_at": req.fulfilled_at,
+            "returned_at": req.returned_at,
+            "cancelled_at": req.cancelled_at,
+            "cancellation_reason": req.cancellation_reason,
+            "patient_name": f"{patient.name} {patient.surname or ''}".strip(),
+            "patient_card_number": patient.card_number or "",
+            "ward": req.ward_admission.ward if req.ward_admission else "",
+            "unit_price": req.transfusion_type.unit_price if req.transfusion_type else 0.0,
+            "total_price": (req.transfusion_type.unit_price * req.quantity) if req.transfusion_type else 0.0,
+        })
+    
+    return result
+
+
+@router.post("/blood-transfusion-requests/{request_id}/accept", response_model=BloodTransfusionRequestResponse)
+def accept_blood_transfusion_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Admin"]))
+):
+    """Accept a blood transfusion request - Lab only. Creates bill item. Can accept pending or returned requests."""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    from app.models.bill import Bill, BillItem
+    from app.models.encounter import Encounter
+    
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    if blood_request.status not in ["pending"]:
+        raise HTTPException(status_code=400, detail=f"Cannot accept request with status '{blood_request.status}'. Only pending requests can be accepted.")
+    
+    # If this was previously returned, we need to create a new bill item (the old one was credited)
+    # If it's a new request, create the first bill item
+    create_new_bill_item = True
+    if blood_request.bill_item_id:
+        # Check if the original bill item still exists
+        existing_bill_item = db.query(BillItem).filter(BillItem.id == blood_request.bill_item_id).first()
+        if existing_bill_item and existing_bill_item.total_price > 0:
+            # Original bill item exists and wasn't credited, reuse it
+            create_new_bill_item = False
+    
+    # Get encounter to check if patient is insured
+    encounter = db.query(Encounter).filter(Encounter.id == blood_request.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    is_insured = bool(encounter.ccc_number and encounter.ccc_number.strip())
+    
+    # Get or create bill for encounter
+    bill = db.query(Bill).filter(Bill.encounter_id == blood_request.encounter_id).first()
+    if not bill:
+        # Create new bill
+        import random
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=blood_request.encounter_id,
+            bill_number=bill_number,
+            total_amount=0.0,
+            is_insured=is_insured,
+            created_by=current_user.id
+        )
+        db.add(bill)
+        db.flush()
+    
+    # Calculate price (use base rate for cash, co-payment for insured)
+    unit_price = blood_request.transfusion_type.unit_price
+    total_price = unit_price * blood_request.quantity
+    
+    if create_new_bill_item:
+        # Create new bill item
+        bill_item = BillItem(
+            bill_id=bill.id,
+            item_code=f"BLOOD-{blood_request.transfusion_type.type_name.upper().replace(' ', '-')}",
+            item_name=f"{blood_request.transfusion_type.type_name} ({blood_request.quantity} {blood_request.transfusion_type.unit_type})",
+            category="other",
+            quantity=blood_request.quantity,
+            unit_price=unit_price,
+            total_price=total_price
+        )
+        db.add(bill_item)
+        db.flush()
+        
+        # Update bill total
+        bill.total_amount += total_price
+        db.flush()
+        
+        # Update request status
+        blood_request.status = "accepted"
+        blood_request.accepted_by = current_user.id
+        blood_request.accepted_at = datetime.utcnow()
+        blood_request.bill_item_id = bill_item.id
+    else:
+        # Reuse existing bill item - just update status
+        bill_item = db.query(BillItem).filter(BillItem.id == blood_request.bill_item_id).first()
+        # Update request status
+        blood_request.status = "accepted"
+        blood_request.accepted_by = current_user.id
+        blood_request.accepted_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(blood_request)
+    
+    # Load relationships for response
+    from sqlalchemy.orm import joinedload
+    from app.models.ward_admission import WardAdmission
+    blood_request = db.query(BloodTransfusionRequest).options(
+        joinedload(BloodTransfusionRequest.transfusion_type),
+        joinedload(BloodTransfusionRequest.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(BloodTransfusionRequest.requester),
+        joinedload(BloodTransfusionRequest.accepter)
+    ).filter(BloodTransfusionRequest.id == request_id).first()
+    
+    patient = blood_request.ward_admission.encounter.patient if blood_request.ward_admission and blood_request.ward_admission.encounter else None
+    
+    return {
+        "id": blood_request.id,
+        "ward_admission_id": blood_request.ward_admission_id,
+        "encounter_id": blood_request.encounter_id,
+        "transfusion_type_id": blood_request.transfusion_type_id,
+        "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "quantity": blood_request.quantity,
+        "request_reason": blood_request.request_reason,
+        "status": blood_request.status,
+        "requested_by": blood_request.requested_by,
+        "requested_by_name": blood_request.requester.full_name if blood_request.requester else None,
+        "accepted_by": blood_request.accepted_by,
+        "accepted_by_name": blood_request.accepter.full_name if blood_request.accepter else None,
+        "fulfilled_by": None,
+        "fulfilled_by_name": None,
+        "returned_by": None,
+        "returned_by_name": None,
+        "bill_item_id": blood_request.bill_item_id,
+        "return_bill_item_id": None,
+        "requested_at": blood_request.requested_at,
+        "accepted_at": blood_request.accepted_at,
+        "fulfilled_at": None,
+        "returned_at": None,
+        "cancelled_at": None,
+        "cancellation_reason": None,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else "",
+        "patient_card_number": patient.card_number or "" if patient else "",
+        "ward": blood_request.ward_admission.ward if blood_request.ward_admission else "",
+        "unit_price": blood_request.transfusion_type.unit_price if blood_request.transfusion_type else 0.0,
+        "total_price": (blood_request.transfusion_type.unit_price * blood_request.quantity) if blood_request.transfusion_type else 0.0,
+    }
+
+
+@router.post("/blood-transfusion-requests/{request_id}/fulfill", response_model=BloodTransfusionRequestResponse)
+def fulfill_blood_transfusion_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Admin"]))
+):
+    """Fulfill a blood transfusion request - Lab only"""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    if blood_request.status != "accepted":
+        raise HTTPException(status_code=400, detail=f"Cannot fulfill request with status '{blood_request.status}'. Must be 'accepted'.")
+    
+    blood_request.status = "fulfilled"
+    blood_request.fulfilled_by = current_user.id
+    blood_request.fulfilled_at = datetime.utcnow()
+    db.commit()
+    db.refresh(blood_request)
+    
+    # Load relationships for response
+    from sqlalchemy.orm import joinedload
+    from app.models.ward_admission import WardAdmission
+    blood_request = db.query(BloodTransfusionRequest).options(
+        joinedload(BloodTransfusionRequest.transfusion_type),
+        joinedload(BloodTransfusionRequest.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(BloodTransfusionRequest.requester),
+        joinedload(BloodTransfusionRequest.accepter),
+        joinedload(BloodTransfusionRequest.fulfiller)
+    ).filter(BloodTransfusionRequest.id == request_id).first()
+    
+    patient = blood_request.ward_admission.encounter.patient if blood_request.ward_admission and blood_request.ward_admission.encounter else None
+    
+    return {
+        "id": blood_request.id,
+        "ward_admission_id": blood_request.ward_admission_id,
+        "encounter_id": blood_request.encounter_id,
+        "transfusion_type_id": blood_request.transfusion_type_id,
+        "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "quantity": blood_request.quantity,
+        "request_reason": blood_request.request_reason,
+        "status": blood_request.status,
+        "requested_by": blood_request.requested_by,
+        "requested_by_name": blood_request.requester.full_name if blood_request.requester else None,
+        "accepted_by": blood_request.accepted_by,
+        "accepted_by_name": blood_request.accepter.full_name if blood_request.accepter else None,
+        "fulfilled_by": blood_request.fulfilled_by,
+        "fulfilled_by_name": blood_request.fulfiller.full_name if blood_request.fulfiller else None,
+        "returned_by": None,
+        "returned_by_name": None,
+        "bill_item_id": blood_request.bill_item_id,
+        "return_bill_item_id": None,
+        "requested_at": blood_request.requested_at,
+        "accepted_at": blood_request.accepted_at,
+        "fulfilled_at": blood_request.fulfilled_at,
+        "returned_at": None,
+        "cancelled_at": None,
+        "cancellation_reason": None,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else "",
+        "patient_card_number": patient.card_number or "" if patient else "",
+        "ward": blood_request.ward_admission.ward if blood_request.ward_admission else "",
+        "unit_price": blood_request.transfusion_type.unit_price if blood_request.transfusion_type else 0.0,
+        "total_price": (blood_request.transfusion_type.unit_price * blood_request.quantity) if blood_request.transfusion_type else 0.0,
+    }
+
+
+class CancelBloodRequestRequest(BaseModel):
+    cancellation_reason: Optional[str] = None
+
+
+@router.post("/blood-transfusion-requests/{request_id}/cancel", response_model=BloodTransfusionRequestResponse)
+def cancel_blood_transfusion_request(
+    request_id: int,
+    cancel_data: CancelBloodRequestRequest = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Cancel a blood transfusion request - Normal users can cancel their own requests, Admin can cancel any"""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    # Normal users can only cancel their own pending requests
+    if current_user.role != "Admin":
+        if blood_request.requested_by != current_user.id:
+            raise HTTPException(status_code=403, detail="You can only cancel your own requests")
+        if blood_request.status != "pending":
+            raise HTTPException(status_code=400, detail=f"Cannot cancel request with status '{blood_request.status}'. Only pending requests can be cancelled.")
+    else:
+        # Admin can cancel any request that hasn't been fulfilled or returned
+        if blood_request.status in ["fulfilled", "returned"]:
+            raise HTTPException(status_code=400, detail=f"Cannot cancel request with status '{blood_request.status}'")
+    
+    blood_request.status = "cancelled"
+    blood_request.cancelled_at = datetime.utcnow()
+    blood_request.cancellation_reason = cancel_data.cancellation_reason
+    db.commit()
+    db.refresh(blood_request)
+    
+    # Load relationships for response
+    from sqlalchemy.orm import joinedload
+    from app.models.ward_admission import WardAdmission
+    blood_request = db.query(BloodTransfusionRequest).options(
+        joinedload(BloodTransfusionRequest.transfusion_type),
+        joinedload(BloodTransfusionRequest.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(BloodTransfusionRequest.requester),
+        joinedload(BloodTransfusionRequest.accepter),
+        joinedload(BloodTransfusionRequest.fulfiller),
+        joinedload(BloodTransfusionRequest.returner)
+    ).filter(BloodTransfusionRequest.id == request_id).first()
+    
+    patient = blood_request.ward_admission.encounter.patient if blood_request.ward_admission and blood_request.ward_admission.encounter else None
+    
+    return {
+        "id": blood_request.id,
+        "ward_admission_id": blood_request.ward_admission_id,
+        "encounter_id": blood_request.encounter_id,
+        "transfusion_type_id": blood_request.transfusion_type_id,
+        "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "quantity": blood_request.quantity,
+        "request_reason": blood_request.request_reason,
+        "status": blood_request.status,
+        "requested_by": blood_request.requested_by,
+        "requested_by_name": blood_request.requester.full_name if blood_request.requester else None,
+        "accepted_by": blood_request.accepted_by,
+        "accepted_by_name": blood_request.accepter.full_name if blood_request.accepter else None,
+        "fulfilled_by": blood_request.fulfilled_by,
+        "fulfilled_by_name": blood_request.fulfiller.full_name if blood_request.fulfiller else None,
+        "returned_by": blood_request.returned_by,
+        "returned_by_name": blood_request.returner.full_name if blood_request.returner else None,
+        "bill_item_id": blood_request.bill_item_id,
+        "return_bill_item_id": blood_request.return_bill_item_id,
+        "requested_at": blood_request.requested_at,
+        "accepted_at": blood_request.accepted_at,
+        "fulfilled_at": blood_request.fulfilled_at,
+        "returned_at": blood_request.returned_at,
+        "cancelled_at": blood_request.cancelled_at,
+        "cancellation_reason": blood_request.cancellation_reason,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else "",
+        "patient_card_number": patient.card_number or "" if patient else "",
+        "ward": blood_request.ward_admission.ward if blood_request.ward_admission else "",
+        "unit_price": blood_request.transfusion_type.unit_price if blood_request.transfusion_type else 0.0,
+        "total_price": (blood_request.transfusion_type.unit_price * blood_request.quantity) if blood_request.transfusion_type else 0.0,
+    }
+
+
+@router.delete("/blood-transfusion-requests/{request_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_blood_transfusion_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Delete a blood transfusion request - Admin only. Permanently removes the request."""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    # Only allow deletion if request is cancelled or pending (not accepted/fulfilled/returned)
+    if blood_request.status not in ["pending", "cancelled"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete request with status '{blood_request.status}'. Only pending or cancelled requests can be deleted."
+        )
+    
+    db.delete(blood_request)
+    db.commit()
+    
+    return None
+
+
+@router.post("/blood-transfusion-requests/{request_id}/return", response_model=BloodTransfusionRequestResponse)
+def return_blood_transfusion_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Return blood transfusion - Admin only. Creates return bill item (credit). After return, request can be accepted again."""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    from app.models.bill import Bill, BillItem
+    from app.models.encounter import Encounter
+    
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    if blood_request.status not in ["accepted", "fulfilled"]:
+        raise HTTPException(status_code=400, detail=f"Cannot return request with status '{blood_request.status}'")
+    
+    # Get encounter to check if patient is insured
+    encounter = db.query(Encounter).filter(Encounter.id == blood_request.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    is_insured = bool(encounter.ccc_number and encounter.ccc_number.strip())
+    
+    # Get bill
+    bill = db.query(Bill).filter(Bill.encounter_id == blood_request.encounter_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Calculate return price (negative amount)
+    unit_price = blood_request.transfusion_type.unit_price
+    return_total_price = -(unit_price * blood_request.quantity)  # Negative for credit
+    
+    # Create return bill item (credit)
+    return_bill_item = BillItem(
+        bill_id=bill.id,
+        item_code=f"BLOOD-RETURN-{blood_request.transfusion_type.type_name.upper().replace(' ', '-')}",
+        item_name=f"Return: {blood_request.transfusion_type.type_name} ({blood_request.quantity} {blood_request.transfusion_type.unit_type})",
+        category="other",
+        quantity=blood_request.quantity,
+        unit_price=-unit_price,  # Negative unit price
+        total_price=return_total_price  # Negative total
+    )
+    db.add(return_bill_item)
+    db.flush()
+    
+    # Update bill total (subtract the return amount)
+    bill.total_amount += return_total_price  # Adding negative = subtracting
+    db.flush()
+    
+    # Update request status - set to "pending" so it can be accepted again
+    blood_request.status = "pending"
+    blood_request.returned_by = current_user.id
+    blood_request.returned_at = datetime.utcnow()
+    blood_request.return_bill_item_id = return_bill_item.id
+    # Reset accepted/fulfilled fields so it can be re-accepted
+    blood_request.accepted_by = None
+    blood_request.accepted_at = None
+    blood_request.fulfilled_by = None
+    blood_request.fulfilled_at = None
+    # Keep the original bill_item_id for reference, but we'll create a new one if accepted again
+    db.commit()
+    db.refresh(blood_request)
+    
+    # Load relationships for response
+    from sqlalchemy.orm import joinedload
+    from app.models.ward_admission import WardAdmission
+    blood_request = db.query(BloodTransfusionRequest).options(
+        joinedload(BloodTransfusionRequest.transfusion_type),
+        joinedload(BloodTransfusionRequest.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
+        joinedload(BloodTransfusionRequest.requester),
+        joinedload(BloodTransfusionRequest.accepter),
+        joinedload(BloodTransfusionRequest.fulfiller),
+        joinedload(BloodTransfusionRequest.returner)
+    ).filter(BloodTransfusionRequest.id == request_id).first()
+    
+    patient = blood_request.ward_admission.encounter.patient if blood_request.ward_admission and blood_request.ward_admission.encounter else None
+    
+    return {
+        "id": blood_request.id,
+        "ward_admission_id": blood_request.ward_admission_id,
+        "encounter_id": blood_request.encounter_id,
+        "transfusion_type_id": blood_request.transfusion_type_id,
+        "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "quantity": blood_request.quantity,
+        "request_reason": blood_request.request_reason,
+        "status": blood_request.status,
+        "requested_by": blood_request.requested_by,
+        "requested_by_name": blood_request.requester.full_name if blood_request.requester else None,
+        "accepted_by": blood_request.accepted_by,
+        "accepted_by_name": blood_request.accepter.full_name if blood_request.accepter else None,
+        "fulfilled_by": blood_request.fulfilled_by,
+        "fulfilled_by_name": blood_request.fulfiller.full_name if blood_request.fulfiller else None,
+        "returned_by": blood_request.returned_by,
+        "returned_by_name": blood_request.returner.full_name if blood_request.returner else None,
+        "bill_item_id": blood_request.bill_item_id,
+        "return_bill_item_id": blood_request.return_bill_item_id,
+        "requested_at": blood_request.requested_at,
+        "accepted_at": blood_request.accepted_at,
+        "fulfilled_at": blood_request.fulfilled_at,
+        "returned_at": blood_request.returned_at,
+        "cancelled_at": blood_request.cancelled_at,
+        "cancellation_reason": blood_request.cancellation_reason,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else "",
+        "patient_card_number": patient.card_number or "" if patient else "",
+        "ward": blood_request.ward_admission.ward if blood_request.ward_admission else "",
+        "unit_price": blood_request.transfusion_type.unit_price if blood_request.transfusion_type else 0.0,
+        "total_price": (blood_request.transfusion_type.unit_price * blood_request.quantity) if blood_request.transfusion_type else 0.0,
+    }
 
 
 # Inpatient Additional Service Usage endpoints
@@ -7587,193 +9164,6 @@ def get_daily_ward_state(
         "discharges": discharge_data,
         "deaths": death_data,
     }
-
-
-class TransferPatientRequest(BaseModel):
-    """Request to transfer a patient between wards or beds"""
-    ward_admission_id: int
-    from_ward: str
-    to_ward: str
-    bed_id: int
-    transfer_reason: Optional[str] = None
-
-
-@router.post("/ward-admissions/transfer")
-def transfer_patient(
-    form_data: TransferPatientRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
-):
-    """Transfer a patient between wards or beds"""
-    from datetime import datetime
-    from app.models.ward_admission import WardAdmission
-    from app.models.ward_transfer import WardTransfer
-    from app.models.bed import Bed
-    
-    # Get the ward admission
-    ward_admission = db.query(WardAdmission).filter(
-        WardAdmission.id == form_data.ward_admission_id
-    ).first()
-    
-    if not ward_admission:
-        raise HTTPException(status_code=404, detail="Ward admission not found")
-    
-    if ward_admission.discharged_at:
-        raise HTTPException(status_code=400, detail="Cannot transfer a discharged patient")
-    
-    if ward_admission.death_recorded_at:
-        raise HTTPException(status_code=400, detail="Cannot transfer a deceased patient")
-    
-    # Verify bed exists and is available (only check if not a ward transfer, as bed will be checked on acceptance)
-    bed = db.query(Bed).filter(Bed.id == form_data.bed_id).first()
-    if not bed:
-        raise HTTPException(status_code=404, detail="Bed not found")
-    
-    if bed.ward != form_data.to_ward:
-        raise HTTPException(status_code=400, detail=f"Bed does not belong to ward {form_data.to_ward}")
-    
-    # Check if transferring to a different ward
-    is_ward_transfer = form_data.from_ward != form_data.to_ward
-    
-    if not is_ward_transfer:
-        # For same-ward bed transfers, check if bed is available
-        if bed.is_occupied:
-            raise HTTPException(status_code=400, detail="Bed is already occupied")
-    
-    # Check if there's already a pending transfer for this patient
-    if is_ward_transfer:
-        existing_pending_transfer = db.query(WardTransfer).filter(
-            WardTransfer.ward_admission_id == form_data.ward_admission_id,
-            WardTransfer.status == "pending"
-        ).first()
-        
-        if existing_pending_transfer:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Patient already has a pending transfer request. Please wait for it to be accepted or rejected before creating another transfer."
-            )
-    
-    if is_ward_transfer:
-        # For ward transfers, create a pending transfer record
-        # Don't update ward admission or beds yet - wait for acceptance
-        transfer = WardTransfer(
-            ward_admission_id=ward_admission.id,
-            from_ward=form_data.from_ward,
-            to_ward=form_data.to_ward,
-            transfer_reason=form_data.transfer_reason,
-            status="pending",
-            transferred_by=current_user.id,
-            transferred_at=datetime.utcnow()
-        )
-        db.add(transfer)
-        db.commit()
-        db.refresh(transfer)
-        
-        return {
-            "id": transfer.id,
-            "ward_admission_id": ward_admission.id,
-            "from_ward": form_data.from_ward,
-            "to_ward": form_data.to_ward,
-            "bed_id": form_data.bed_id,
-            "status": "pending",
-            "message": "Transfer request created. Waiting for receiving ward to accept."
-        }
-    else:
-        # For same-ward bed transfers, process immediately
-        # Free up the old bed if it exists
-        if ward_admission.bed_id:
-            old_bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
-            if old_bed:
-                old_bed.is_occupied = False
-                old_bed.updated_at = datetime.utcnow()
-        
-        # Mark new bed as occupied
-        bed.is_occupied = True
-        bed.updated_at = datetime.utcnow()
-        
-        # Update ward admission
-        ward_admission.bed_id = form_data.bed_id
-        ward_admission.updated_at = datetime.utcnow()
-        
-        # Create transfer record (auto-accepted for same-ward transfers)
-        transfer = WardTransfer(
-            ward_admission_id=ward_admission.id,
-            from_ward=form_data.from_ward,
-            to_ward=form_data.to_ward,
-            transfer_reason=form_data.transfer_reason,
-            status="accepted",
-            transferred_by=current_user.id,
-            accepted_by=current_user.id,
-            transferred_at=datetime.utcnow(),
-            accepted_at=datetime.utcnow()
-        )
-        db.add(transfer)
-        
-        db.commit()
-        db.refresh(ward_admission)
-        db.refresh(transfer)
-        db.refresh(bed)
-        
-        return {
-            "id": transfer.id,
-            "ward_admission_id": ward_admission.id,
-            "from_ward": form_data.from_ward,
-            "to_ward": form_data.to_ward,
-            "bed_id": form_data.bed_id,
-            "status": "accepted",
-            "message": "Patient transferred successfully"
-        }
-
-
-@router.get("/ward-admissions/pending-transfers")
-def get_pending_transfers(
-    ward: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
-):
-    """Get pending transfer requests for a ward"""
-    from app.models.ward_transfer import WardTransfer
-    from app.models.ward_admission import WardAdmission
-    
-    query = db.query(WardTransfer).filter(
-        WardTransfer.status == "pending"
-    )
-    
-    if ward:
-        query = query.filter(WardTransfer.to_ward == ward)
-    
-    transfers = query.options(
-        joinedload(WardTransfer.ward_admission).joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
-        joinedload(WardTransfer.transferrer)
-    ).order_by(WardTransfer.transferred_at.desc()).all()
-    
-    result = []
-    for transfer in transfers:
-        ward_admission = transfer.ward_admission
-        encounter = ward_admission.encounter if ward_admission else None
-        patient = encounter.patient if encounter else None
-        
-        if not patient:
-            continue
-        
-        result.append({
-            "id": transfer.id,
-            "ward_admission_id": ward_admission.id,
-            "from_ward": transfer.from_ward,
-            "to_ward": transfer.to_ward,
-            "transfer_reason": transfer.transfer_reason,
-            "status": transfer.status,
-            "transferred_by_name": transfer.transferrer.full_name if transfer.transferrer else None,
-            "transferred_at": transfer.transferred_at,
-            "patient_name": patient.name,
-            "patient_surname": patient.surname,
-            "patient_card_number": patient.card_number,
-            "patient_gender": patient.gender,
-            "current_ward": ward_admission.ward,
-            "current_bed_id": ward_admission.bed_id,
-        })
-    
-    return result
 
 
 class AcceptTransferRequest(BaseModel):

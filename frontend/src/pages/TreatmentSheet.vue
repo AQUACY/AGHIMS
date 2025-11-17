@@ -21,7 +21,7 @@
         <div class="row q-col-gutter-md">
           <div class="col-12 col-md-2">
             <div class="text-body2">
-              <strong>NAME:</strong> {{ patientInfo.patient_name || '' }} {{ patientInfo.patient_surname || '' }}
+              <strong>NAME:</strong> {{ patientInfo.patient_name || '' }} {{ patientInfo.patient_surname || '' }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
             </div>
           </div>
           <div class="col-12 col-md-2">
@@ -347,6 +347,7 @@ const loadPatientInfo = async () => {
       patientInfo.value = {
         patient_name: admission.patient_name || '',
         patient_surname: admission.patient_surname || '',
+        patient_other_names: admission.patient_other_names || '',
         patient_gender: admission.patient_gender || 'N/A',
         patient_age: age,
         patient_card_number: admission.patient_card_number || 'N/A',

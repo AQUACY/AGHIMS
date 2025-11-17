@@ -415,7 +415,7 @@ const recordVitals = async (encounter) => {
           // Update encounter with full patient details
           selectedEncounter.value = {
             ...encounter,
-            patient_name: patient.name + (patient.surname ? ' ' + patient.surname : ''),
+            patient_name: patient.name + (patient.surname ? ' ' + patient.surname : '') + (patient.other_names ? ' ' + patient.other_names : ''),
             patient_card_number: patient.card_number,
             patient_age: patient.age,
             patient_gender: patient.gender,

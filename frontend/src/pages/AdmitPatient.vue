@@ -103,7 +103,7 @@
       <q-card class="glass-card q-mb-md" flat bordered>
         <q-card-section class="row items-center">
           <div class="text-h6 glass-text">
-            Admit Patient - {{ selectedPatient.name }} {{ selectedPatient.surname }}
+            Admit Patient - {{ selectedPatient.name }} {{ selectedPatient.surname }}<span v-if="selectedPatient.other_names"> {{ selectedPatient.other_names }}</span>
           </div>
           <q-space />
           <q-btn

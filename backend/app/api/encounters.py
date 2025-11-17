@@ -383,7 +383,7 @@ def get_encounters_by_date(
             result.append({
                 "id": encounter.id,
                 "patient_id": encounter.patient_id,
-                "patient_name": f"{encounter.patient.name} {encounter.patient.surname or ''}".strip(),
+                "patient_name": f"{encounter.patient.name or ''} {encounter.patient.surname or ''} {encounter.patient.other_names or ''}".strip(),
                 "patient_card_number": encounter.patient.card_number,
                 "patient_age": encounter.patient.age,
                 "patient_gender": encounter.patient.gender,

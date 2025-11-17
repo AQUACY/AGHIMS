@@ -359,6 +359,8 @@ const transferring = ref(false);
 const loadingBeds = ref(false);
 const availableBeds = ref([]);
 const availableBedsSameWard = ref([]);
+const hasPendingTransfer = ref(false);
+const pendingTransferInfo = ref(null);
 
 const transferForm = ref({
   ward_admission_id: null,

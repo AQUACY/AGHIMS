@@ -35,8 +35,13 @@ from app.models.inpatient_inventory_debit import InpatientInventoryDebit
 from app.models.treatment_sheet_administration import TreatmentSheetAdministration
 from app.models.ward_transfer import WardTransfer
 from app.models.lab_result import LabResult
+from app.models.inpatient_lab_result import InpatientLabResult
+from app.models.blood_transfusion_type import BloodTransfusionType
+from app.models.blood_transfusion_request import BloodTransfusionRequest
 from app.models.scan_result import ScanResult
+from app.models.inpatient_scan_result import InpatientScanResult
 from app.models.xray_result import XrayResult
+from app.models.inpatient_xray_result import InpatientXrayResult
 
 __all__ = [
     "User",
@@ -84,7 +89,12 @@ __all__ = [
     "TreatmentSheetAdministration",
     "WardTransfer",
     "LabResult",
+    "InpatientLabResult",
+    "BloodTransfusionType",
+    "BloodTransfusionRequest",
     "ScanResult",
+    "InpatientScanResult",
     "XrayResult",
+    "InpatientXrayResult",
 ]
 

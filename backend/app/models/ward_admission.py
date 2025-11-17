@@ -28,6 +28,11 @@ class WardAdmission(Base):
     death_recorded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who recorded death
     discharged_at = Column(DateTime, nullable=True)  # When patient was discharged
     discharged_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who discharged
+    discharge_outcome = Column(String(50), nullable=True)  # discharged, absconded, referred, died, discharged_against_medical_advice
+    discharge_condition = Column(String(50), nullable=True)  # stable, cured, died, absconded
+    partially_discharged_at = Column(DateTime, nullable=True)  # When partial discharge was initiated
+    partially_discharged_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who initiated partial discharge
+    final_orders = Column(Text, nullable=True)  # Doctor's final orders/notes
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -44,6 +49,7 @@ class WardAdmission(Base):
     surgeries = relationship("InpatientSurgery", back_populates="ward_admission", cascade="all, delete-orphan")
     additional_services = relationship("InpatientAdditionalService", back_populates="ward_admission", cascade="all, delete-orphan")
     inventory_debits = relationship("InpatientInventoryDebit", back_populates="ward_admission", cascade="all, delete-orphan")
+    blood_transfusion_requests = relationship("BloodTransfusionRequest", back_populates="ward_admission", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<WardAdmission {self.encounter_id} - {self.ward}>"

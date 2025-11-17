@@ -22,9 +22,16 @@
           </q-avatar>
           <div class="col">
             <div class="text-h5 text-weight-bold glass-text q-mb-xs">
-              {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}
-              <span v-if="patientInfo.patient_other_names">
-                {{ patientInfo.patient_other_names }}
+              {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
+            </div>
+            <div v-if="patientBillInfo.totalAmount !== null" class="text-body1 q-mt-xs" :class="patientBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
+              <q-icon name="receipt" size="16px" class="q-mr-xs" />
+              Total Bills: GHC {{ patientBillInfo.totalAmount.toFixed(2) }} 
+              <span v-if="patientBillInfo.remainingBalance > 0" class="text-negative">
+                | Outstanding: GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}
+              </span>
+              <span v-else>
+                | Outstanding: GHC 0.00
               </span>
             </div>
             <div class="row q-col-gutter-md q-mt-sm">
@@ -500,6 +507,15 @@
                 :disable="isDischarged"
                 class="full-width"
               />
+              <q-btn
+                flat
+                icon="bloodtype"
+                label="Request Blood"
+                color="red"
+                @click="requestBlood"
+                :disable="isDischarged"
+                class="full-width"
+              />
               <q-separator class="q-my-sm" />
               <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
                 <q-icon name="link" color="primary" class="q-mr-sm" />
@@ -550,11 +566,32 @@
                 v-if="!isDischarged"
                 flat
                 icon="exit_to_app"
-                label="Discharge Patient"
-                color="negative"
+                :label="isPartiallyDischarged ? 'Final Discharge' : 'Discharge Patient'"
+                :color="isPartiallyDischarged ? 'warning' : 'negative'"
                 @click="dischargePatient"
                 :loading="discharging"
                 class="full-width"
+              />
+              <q-banner
+                v-if="isPartiallyDischarged && !isDischarged"
+                class="bg-warning text-white q-mt-sm"
+                rounded
+              >
+                <template v-slot:avatar>
+                  <q-icon name="warning" />
+                </template>
+                <div class="text-weight-bold">Partially Discharged</div>
+                <div class="text-caption">Please ensure all bills are paid before final discharge.</div>
+              </q-banner>
+              <q-btn
+                v-if="isPartiallyDischarged && !isDischarged"
+                flat
+                icon="undo"
+                label="Revert Partial Discharge"
+                color="warning"
+                @click="revertPartialDischarge"
+                :loading="discharging"
+                class="full-width q-mt-sm"
               />
               <q-btn
                 v-if="!isDischarged"
@@ -1248,6 +1285,405 @@
             </q-card>
           </q-dialog>
 
+          <!-- Stop Additional Service Dialog -->
+          <q-dialog v-model="showStopServiceDialog" persistent>
+            <q-card style="min-width: 500px; max-width: 700px;">
+              <q-card-section>
+                <div class="text-h6 glass-text">
+                  Stop Additional Service
+                </div>
+                <div v-if="stoppingService" class="text-subtitle2 text-grey-7 q-mt-sm">
+                  Service: <span class="text-weight-bold">{{ stoppingService.service_name }}</span>
+                </div>
+              </q-card-section>
+
+              <q-card-section>
+                <div class="row q-col-gutter-md">
+                  <div class="col-12 col-md-6">
+                    <q-input
+                      v-model="stopServiceForm.end_date"
+                      filled
+                      label="Stop Date *"
+                      hint="Select the date when the service stopped"
+                      :rules="[val => !!val || 'Stop date is required']"
+                    >
+                      <template v-slot:append>
+                        <q-icon name="event" class="cursor-pointer">
+                          <q-popup-proxy cover transition-show="scale" transition-hide="scale">
+                            <q-date v-model="stopServiceForm.end_date" mask="YYYY-MM-DD">
+                              <div class="row items-center justify-end">
+                                <q-btn v-close-popup label="Close" color="primary" flat />
+                              </div>
+                            </q-date>
+                          </q-popup-proxy>
+                        </q-icon>
+                      </template>
+                    </q-input>
+                  </div>
+                  <div class="col-12 col-md-6">
+                    <q-input
+                      v-model="stopServiceForm.end_time"
+                      filled
+                      label="Stop Time *"
+                      hint="Select the time when the service stopped"
+                      :rules="[val => !!val || 'Stop time is required']"
+                    >
+                      <template v-slot:append>
+                        <q-icon name="access_time" class="cursor-pointer">
+                          <q-popup-proxy cover transition-show="scale" transition-hide="scale">
+                            <q-time v-model="stopServiceForm.end_time" mask="HH:mm" format24h>
+                              <div class="row items-center justify-end">
+                                <q-btn v-close-popup label="Close" color="primary" flat />
+                              </div>
+                            </q-time>
+                          </q-popup-proxy>
+                        </q-icon>
+                      </template>
+                    </q-input>
+                  </div>
+                </div>
+                <q-input
+                  v-model="stopServiceForm.notes"
+                  filled
+                  type="textarea"
+                  label="Notes (optional)"
+                  hint="Any additional notes about stopping this service"
+                  rows="3"
+                  class="q-mt-md"
+                />
+                <q-banner v-if="stoppingService" class="q-mt-md bg-info text-white">
+                  <template v-slot:avatar>
+                    <q-icon name="info" />
+                  </template>
+                  This will automatically bill the patient for the service usage period.
+                </q-banner>
+              </q-card-section>
+
+              <q-card-actions align="right">
+                <q-btn flat label="Cancel" color="primary" @click="showStopServiceDialog = false" />
+                <q-btn
+                  flat
+                  label="Stop Service"
+                  color="negative"
+                  @click="confirmStopService"
+                  :loading="savingAdditionalService"
+                />
+              </q-card-actions>
+            </q-card>
+          </q-dialog>
+
+          <!-- Discharge Patient Dialog -->
+          <q-dialog v-model="showDischargeDialog" persistent>
+            <q-card style="min-width: 600px; max-width: 800px;">
+              <q-card-section>
+                <div class="text-h6 glass-text">
+                  <q-icon name="exit_to_app" color="negative" class="q-mr-sm" />
+                  Discharge Patient
+                </div>
+                <div v-if="patientInfo" class="text-subtitle2 text-grey-7 q-mt-sm">
+                  Patient: <span class="text-weight-bold">{{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span></span>
+                  <br />
+                  Ward: <span class="text-weight-bold">{{ patientInfo.ward }}</span>
+                </div>
+              </q-card-section>
+
+              <q-card-section>
+                <div class="row q-col-gutter-md">
+                  <div class="col-12 col-md-6">
+                    <q-select
+                      v-model="dischargeForm.discharge_outcome"
+                      :options="dischargeOutcomeOptions"
+                      filled
+                      label="Discharge Outcome *"
+                      :rules="[val => !!val || 'Discharge outcome is required']"
+                      emit-value
+                      map-options
+                    >
+                      <template v-slot:prepend>
+                        <q-icon name="assignment" />
+                      </template>
+                    </q-select>
+                  </div>
+                  <div class="col-12 col-md-6">
+                    <q-select
+                      v-model="dischargeForm.discharge_condition"
+                      :options="dischargeConditionOptions"
+                      filled
+                      label="Patient Condition *"
+                      :rules="[val => !!val || 'Patient condition is required']"
+                      emit-value
+                      map-options
+                    >
+                      <template v-slot:prepend>
+                        <q-icon name="healing" />
+                      </template>
+                    </q-select>
+                  </div>
+                </div>
+
+                <q-input
+                  v-model="dischargeForm.final_orders"
+                  filled
+                  type="textarea"
+                  label="Final Orders / Doctor's Notes"
+                  hint="Doctor's final orders and instructions for the patient"
+                  rows="4"
+                  class="q-mt-md"
+                />
+
+                <q-banner v-if="isPartiallyDischarged" class="q-mt-md bg-warning text-white">
+                  <template v-slot:avatar>
+                    <q-icon name="warning" />
+                  </template>
+                  <div class="text-weight-bold">Partial Discharge Already Initiated</div>
+                  <div class="text-caption">You can now proceed with final discharge after ensuring all bills are paid.</div>
+                </q-banner>
+
+                <q-banner v-if="!isPartiallyDischarged" class="q-mt-md bg-info text-white">
+                  <template v-slot:avatar>
+                    <q-icon name="info" />
+                  </template>
+                  <div class="text-weight-bold">Partial Discharge</div>
+                  <div class="text-caption">This will initiate partial discharge. You'll need to complete final discharge after all bills are paid.</div>
+                </q-banner>
+
+                <q-banner v-if="hasUnpaidBills && isPartiallyDischarged" class="q-mt-md bg-negative text-white">
+                  <template v-slot:avatar>
+                    <q-icon name="error" />
+                  </template>
+                  <div class="text-weight-bold">Outstanding Bills</div>
+                  <div class="text-caption">Outstanding balance: <strong>GHC {{ unpaidBillAmount.toFixed(2) }}</strong></div>
+                  <div class="text-caption q-mt-xs">All bills must be paid before final discharge can be completed.</div>
+                  <q-btn
+                    flat
+                    dense
+                    label="Go to Billing"
+                    color="white"
+                    @click="goToBillingFromDialog"
+                    class="q-mt-sm"
+                  />
+                </q-banner>
+              </q-card-section>
+
+              <q-card-actions align="right">
+                <q-btn flat label="Cancel" color="primary" @click="showDischargeDialog = false" />
+                <q-btn
+                  v-if="!isPartiallyDischarged"
+                  flat
+                  label="Initiate Partial Discharge"
+                  color="warning"
+                  @click="initiatePartialDischarge"
+                  :loading="discharging"
+                />
+                <q-btn
+                  v-if="isPartiallyDischarged"
+                  flat
+                  label="Final Discharge"
+                  color="negative"
+                  @click="completeFinalDischarge"
+                  :loading="discharging"
+                  :disable="hasUnpaidBills"
+                />
+              </q-card-actions>
+            </q-card>
+          </q-dialog>
+
+          <!-- Investigations Dialog -->
+          <q-dialog v-model="showInvestigationsDialog" maximized>
+            <q-card>
+              <q-card-section>
+                <div class="row items-center">
+                  <q-btn flat icon="close" @click="showInvestigationsDialog = false" />
+                  <div class="text-h6 glass-text q-ml-md">
+                    <q-icon name="science" color="purple" class="q-mr-sm" />
+                    Investigations
+                  </div>
+                </div>
+              </q-card-section>
+
+              <q-card-section>
+                <q-table
+                  :rows="investigations"
+                  :columns="[
+                    { name: 'procedure_name', label: 'Investigation', field: 'procedure_name', align: 'left', sortable: true },
+                    { name: 'investigation_type', label: 'Type', field: 'investigation_type', align: 'center', sortable: true },
+                    { name: 'status', label: 'Status', field: 'status', align: 'center', sortable: true },
+                    { name: 'requested_by_name', label: 'Requested By', field: 'requested_by_name', align: 'left', sortable: true },
+                    { name: 'created_at', label: 'Requested Date', field: 'created_at', align: 'left', sortable: true },
+                    { name: 'actions', label: 'Actions', field: 'actions', align: 'center' }
+                  ]"
+                  :loading="loadingInvestigations"
+                  row-key="id"
+                  :pagination="{ rowsPerPage: 20 }"
+                  flat
+                  bordered
+                >
+                  <template v-slot:body-cell-investigation_type="props">
+                    <q-td :props="props">
+                      {{ getInvestigationTypeLabel(props.value) }}
+                    </q-td>
+                  </template>
+
+                  <template v-slot:body-cell-status="props">
+                    <q-td :props="props">
+                      <q-badge :color="getStatusColor(props.value)" :label="props.value" />
+                    </q-td>
+                  </template>
+
+                  <template v-slot:body-cell-created_at="props">
+                    <q-td :props="props">
+                      {{ formatDateTime(props.value) }}
+                    </q-td>
+                  </template>
+
+                  <template v-slot:body-cell-actions="props">
+                    <q-td :props="props">
+                      <q-btn
+                        v-if="props.row.status === 'completed' && props.row.has_result"
+                        flat
+                        dense
+                        icon="visibility"
+                        label="View Result"
+                        color="primary"
+                        size="sm"
+                        @click="viewInvestigationResult(props.row)"
+                      />
+                      <span v-else class="text-grey-6 text-caption">
+                        {{ props.row.status === 'completed' ? 'No result yet' : 'Not completed' }}
+                      </span>
+                    </q-td>
+                  </template>
+
+                  <template v-slot:no-data>
+                    <div class="full-width row justify-center items-center text-grey-6 q-pa-md">
+                      <div class="text-center">
+                        <q-icon name="science" size="48px" class="q-mb-sm" />
+                        <div class="text-body1">No investigations found</div>
+                      </div>
+                    </div>
+                  </template>
+                </q-table>
+              </q-card-section>
+
+              <q-card-actions align="right">
+                <q-btn flat label="Close" color="primary" @click="showInvestigationsDialog = false" />
+              </q-card-actions>
+            </q-card>
+          </q-dialog>
+
+          <!-- Investigation Result Dialog -->
+          <q-dialog v-model="showResultDialog" maximized>
+            <q-card>
+              <q-card-section>
+                <div class="row items-center">
+                  <q-btn flat icon="close" @click="showResultDialog = false" />
+                  <div class="text-h6 glass-text q-ml-md">
+                    <q-icon name="science" color="purple" class="q-mr-sm" />
+                    Investigation Result
+                  </div>
+                </div>
+              </q-card-section>
+
+              <q-card-section v-if="loadingResult" class="text-center q-pa-xl">
+                <q-spinner color="primary" size="3em" />
+                <div class="text-body1 q-mt-md">Loading result...</div>
+              </q-card-section>
+
+              <q-card-section v-else-if="currentResult && investigationDetails">
+                <!-- Investigation Details -->
+                <q-card class="q-mb-md glass-card" flat bordered>
+                  <q-card-section>
+                    <div class="text-h6 q-mb-md glass-text">Investigation Details</div>
+                    <div class="row q-gutter-md">
+                      <div class="col-12 col-md-6">
+                        <div class="text-caption text-grey-7">Investigation</div>
+                        <div class="text-body1 text-weight-medium">{{ investigationDetails.procedure_name || 'N/A' }}</div>
+                      </div>
+                      <div class="col-12 col-md-3">
+                        <div class="text-caption text-grey-7">Type</div>
+                        <div class="text-body1 text-weight-medium">{{ getInvestigationTypeLabel(investigationDetails.investigation_type) }}</div>
+                      </div>
+                      <div class="col-12 col-md-3">
+                        <div class="text-caption text-grey-7">G-DRG Code</div>
+                        <div class="text-body1 text-weight-medium">{{ investigationDetails.gdrg_code || 'N/A' }}</div>
+                      </div>
+                    </div>
+                    <div v-if="investigationDetails.notes" class="row q-mt-md">
+                      <div class="col-12">
+                        <div class="text-caption text-grey-7">Doctor's Notes</div>
+                        <div class="text-body2 q-pa-sm" style="background-color: rgba(255, 255, 255, 0.1); border-radius: 4px;">
+                          {{ investigationDetails.notes }}
+                        </div>
+                      </div>
+                    </div>
+                  </q-card-section>
+                </q-card>
+
+                <!-- Result Details -->
+                <q-card class="glass-card" flat bordered>
+                  <q-card-section>
+                    <div class="text-h6 q-mb-md glass-text">Result</div>
+                    
+                    <!-- Results Text -->
+                    <div v-if="currentResult.results_text" class="q-mb-md">
+                      <div class="text-caption text-grey-7 q-mb-sm">Results</div>
+                      <div class="text-body1 q-pa-md" style="background-color: rgba(255, 255, 255, 0.1); border-radius: 4px; white-space: pre-wrap;">
+                        {{ currentResult.results_text }}
+                      </div>
+                    </div>
+                    <div v-else class="q-mb-md">
+                      <q-banner class="bg-warning text-white">
+                        <template v-slot:avatar>
+                          <q-icon name="info" />
+                        </template>
+                        No text results available for this investigation.
+                      </q-banner>
+                    </div>
+
+                    <!-- Attachment -->
+                    <div v-if="currentResult.attachment_path" class="q-mt-md">
+                      <div class="text-caption text-grey-7 q-mb-sm">Attachment</div>
+                      <q-btn
+                        icon="download"
+                        label="Download Attachment"
+                        color="primary"
+                        @click="downloadResultAttachment(investigationDetails)"
+                      />
+                    </div>
+
+                    <!-- Result Metadata -->
+                    <q-separator class="q-my-md" />
+                    <div class="row q-gutter-md">
+                      <div class="col-12 col-md-4">
+                        <div class="text-caption text-grey-7">Entered By</div>
+                        <div class="text-body2 text-weight-medium">{{ currentResult.entered_by_name || 'N/A' }}</div>
+                      </div>
+                      <div class="col-12 col-md-4">
+                        <div class="text-caption text-grey-7">Entered At</div>
+                        <div class="text-body2 text-weight-medium">{{ formatDateTime(currentResult.created_at) }}</div>
+                      </div>
+                      <div v-if="currentResult.updated_by_name" class="col-12 col-md-4">
+                        <div class="text-caption text-grey-7">Last Updated By</div>
+                        <div class="text-body2 text-weight-medium">{{ currentResult.updated_by_name }}</div>
+                        <div class="text-caption text-grey-7 q-mt-xs">Updated At</div>
+                        <div class="text-body2">{{ formatDateTime(currentResult.updated_at) }}</div>
+                      </div>
+                    </div>
+                  </q-card-section>
+                </q-card>
+              </q-card-section>
+
+              <q-card-section v-else class="text-center q-pa-xl">
+                <q-icon name="error_outline" size="48px" color="negative" />
+                <div class="text-body1 q-mt-md">No result data available</div>
+              </q-card-section>
+
+              <q-card-actions align="right">
+                <q-btn flat label="Close" color="primary" @click="showResultDialog = false" />
+              </q-card-actions>
+            </q-card>
+          </q-dialog>
+
           <!-- Additional Service Dialog -->
           <q-dialog v-model="showAdditionalServiceDialog" persistent>
             <q-card style="min-width: 500px; max-width: 700px;">
@@ -1311,7 +1747,7 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, priceListAPI } from '../services/api';
+import { consultationAPI, priceListAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
@@ -1322,6 +1758,33 @@ const authStore = useAuthStore();
 const loading = ref(false);
 const patientInfo = ref(null);
 const discharging = ref(false);
+const showDischargeDialog = ref(false);
+const dischargeForm = ref({
+  discharge_outcome: '',
+  discharge_condition: '',
+  final_orders: '',
+});
+const dischargeOutcomeOptions = [
+  { label: 'Discharged', value: 'discharged' },
+  { label: 'Absconded', value: 'absconded' },
+  { label: 'Referred', value: 'referred' },
+  { label: 'Died', value: 'died' },
+  { label: 'Discharged Against Medical Advice', value: 'discharged_against_medical_advice' },
+];
+const dischargeConditionOptions = [
+  { label: 'Stable', value: 'stable' },
+  { label: 'Cured', value: 'cured' },
+  { label: 'Died', value: 'died' },
+  { label: 'Absconded', value: 'absconded' },
+];
+const unpaidBillAmount = ref(0);
+const hasUnpaidBills = ref(false);
+const isPartiallyDischarged = computed(() => patientInfo.value?.partially_discharged_at !== null && patientInfo.value?.partially_discharged_at !== undefined);
+const patientBillInfo = ref({
+  totalAmount: null,
+  paidAmount: null,
+  remainingBalance: null,
+});
 const cancelling = ref(false);
 const showAdmissionNotesDialog = ref(false);
 const admissionNotes = ref('');
@@ -1401,8 +1864,10 @@ const additionalServiceForm = ref({
   notes: '',
 });
 const stoppingService = ref(null);
+const showStopServiceDialog = ref(false);
 const stopServiceForm = ref({
-  end_time: null,
+  end_date: '',
+  end_time: '',
   notes: '',
 });
 
@@ -1505,6 +1970,9 @@ const loadPatientInfo = async () => {
         emergency_contact_relationship: patientInfo.value.emergency_contact_relationship,
         emergency_contact_number: patientInfo.value.emergency_contact_number,
       });
+      
+      // Load bill information
+      await loadPatientBills();
     } else {
       $q.notify({
         type: 'negative',
@@ -1519,6 +1987,46 @@ const loadPatientInfo = async () => {
     });
   } finally {
     loading.value = false;
+  }
+};
+
+const loadPatientBills = async () => {
+  if (!patientInfo.value?.encounter_id) {
+    patientBillInfo.value = {
+      totalAmount: 0,
+      paidAmount: 0,
+      remainingBalance: 0,
+    };
+    return;
+  }
+
+  try {
+    const billsResponse = await billingAPI.getEncounterBills(patientInfo.value.encounter_id);
+    const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+    
+    let totalAmount = 0;
+    let paidAmount = 0;
+    
+    for (const bill of bills) {
+      totalAmount += bill.total_amount || 0;
+      paidAmount += bill.paid_amount || 0;
+    }
+    
+    const remainingBalance = totalAmount - paidAmount;
+    
+    patientBillInfo.value = {
+      totalAmount: totalAmount,
+      paidAmount: paidAmount,
+      remainingBalance: remainingBalance > 0.01 ? remainingBalance : 0, // Allow small rounding differences
+    };
+  } catch (error) {
+    console.error('Error loading patient bills:', error);
+    // Set to null to indicate error/not loaded
+    patientBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null,
+    };
   }
 };
 
@@ -2046,11 +2554,151 @@ const viewPrescriptions = () => {
   }
 };
 
-const viewInvestigations = () => {
-  if (encounterId.value) {
-    router.push(`/consultation/${encounterId.value}#investigations`);
-  } else if (patientInfo.value?.encounter_id) {
-    router.push(`/consultation/${patientInfo.value.encounter_id}#investigations`);
+const showInvestigationsDialog = ref(false);
+const investigations = ref([]);
+const loadingInvestigations = ref(false);
+const showResultDialog = ref(false);
+const currentResult = ref(null);
+const loadingResult = ref(false);
+const investigationDetails = ref(null);
+
+const viewInvestigations = async () => {
+  if (!wardAdmissionId.value) {
+    $q.notify({
+      type: 'negative',
+      message: 'Ward admission ID not found',
+    });
+    return;
+  }
+  
+  try {
+    loadingInvestigations.value = true;
+    const response = await consultationAPI.getAllInpatientInvestigations(wardAdmissionId.value);
+    investigations.value = response.data || [];
+    showInvestigationsDialog.value = true;
+  } catch (error) {
+    console.error('Error loading investigations:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load investigations',
+    });
+  } finally {
+    loadingInvestigations.value = false;
+  }
+};
+
+const viewInvestigationResult = async (investigation) => {
+  if (!investigation.has_result || investigation.status !== 'completed') {
+    return;
+  }
+  
+  try {
+    loadingResult.value = true;
+    investigationDetails.value = investigation;
+    
+    let resultResponse = null;
+    if (investigation.investigation_type === 'lab') {
+      resultResponse = await consultationAPI.getLabResult(investigation.id);
+    } else if (investigation.investigation_type === 'scan') {
+      resultResponse = await consultationAPI.getScanResult(investigation.id);
+    } else if (investigation.investigation_type === 'xray') {
+      resultResponse = await consultationAPI.getXrayResult(investigation.id);
+    }
+    
+    if (resultResponse && resultResponse.data) {
+      currentResult.value = resultResponse.data;
+      showResultDialog.value = true;
+    } else {
+      $q.notify({
+        type: 'warning',
+        message: 'Result not found',
+      });
+    }
+  } catch (error) {
+    console.error('Error loading result:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load result',
+    });
+  } finally {
+    loadingResult.value = false;
+  }
+};
+
+const downloadResultAttachment = async (investigation) => {
+  try {
+    let downloadResponse = null;
+    if (investigation.investigation_type === 'lab') {
+      downloadResponse = await consultationAPI.downloadLabResultAttachment(investigation.id);
+    } else if (investigation.investigation_type === 'scan') {
+      downloadResponse = await consultationAPI.downloadScanResultAttachment(investigation.id);
+    } else if (investigation.investigation_type === 'xray') {
+      downloadResponse = await consultationAPI.downloadXrayResultAttachment(investigation.id);
+    }
+    
+    if (downloadResponse && downloadResponse.data) {
+      // Create a blob URL and trigger download
+      const contentType = downloadResponse.headers?.['content-type'] || downloadResponse.headers?.['Content-Type'] || 'application/octet-stream';
+      const blob = new Blob([downloadResponse.data], { type: contentType });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // Extract filename from Content-Disposition header or use default
+      const contentDisposition = downloadResponse.headers?.['content-disposition'] || downloadResponse.headers?.['Content-Disposition'];
+      let filename = `result_attachment_${investigation.id}`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1].replace(/['"]/g, '');
+        }
+      }
+      
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Download started',
+      });
+    }
+  } catch (error) {
+    console.error('Error downloading attachment:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to download attachment',
+    });
+  }
+};
+
+const getStatusColor = (status) => {
+  switch (status) {
+    case 'completed':
+      return 'positive';
+    case 'confirmed':
+      return 'info';
+    case 'requested':
+      return 'warning';
+    case 'cancelled':
+      return 'negative';
+    default:
+      return 'grey';
+  }
+};
+
+const getInvestigationTypeLabel = (type) => {
+  switch (type) {
+    case 'lab':
+      return 'Lab';
+    case 'scan':
+      return 'Scan';
+    case 'xray':
+      return 'X-ray';
+    default:
+      return type;
   }
 };
 
@@ -2063,6 +2711,42 @@ const viewBilling = () => {
   }
 };
 
+const goToBillingFromDialog = () => {
+  showDischargeDialog.value = false;
+  viewBilling();
+};
+
+const checkBills = async () => {
+  if (!patientInfo.value?.encounter_id) {
+    hasUnpaidBills.value = false;
+    unpaidBillAmount.value = 0;
+    return;
+  }
+
+  try {
+    const billsResponse = await billingAPI.getEncounterBills(patientInfo.value.encounter_id);
+    const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+    
+    let totalUnpaid = 0;
+    for (const bill of bills) {
+      if (!bill.is_paid) {
+        const remaining = (bill.total_amount || 0) - (bill.paid_amount || 0);
+        if (remaining > 0.01) {
+          totalUnpaid += remaining;
+        }
+      }
+    }
+    
+    hasUnpaidBills.value = totalUnpaid > 0.01;
+    unpaidBillAmount.value = totalUnpaid;
+  } catch (error) {
+    console.error('Error checking bills:', error);
+    // Don't block discharge if bill check fails, but show warning
+    hasUnpaidBills.value = false;
+    unpaidBillAmount.value = 0;
+  }
+};
+
 const viewTreatmentSheet = () => {
   if (wardAdmissionId.value) {
     router.push(`/ipd/treatment-sheet/${wardAdmissionId.value}`);
@@ -2072,26 +2756,144 @@ const viewTreatmentSheet = () => {
 const dischargePatient = async () => {
   if (!wardAdmissionId.value) return;
   
+  // Reset form
+  dischargeForm.value = {
+    discharge_outcome: patientInfo.value?.discharge_outcome || '',
+    discharge_condition: patientInfo.value?.discharge_condition || '',
+    final_orders: patientInfo.value?.final_orders || '',
+  };
+  
+  // Check bills if partially discharged
+  if (isPartiallyDischarged.value) {
+    await checkBills();
+  }
+  
+  showDischargeDialog.value = true;
+};
+
+const initiatePartialDischarge = async () => {
+  if (!dischargeForm.value.discharge_outcome || !dischargeForm.value.discharge_condition) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select both discharge outcome and patient condition',
+    });
+    return;
+  }
+
+  discharging.value = true;
+  try {
+    await consultationAPI.partialDischargePatient(wardAdmissionId.value, {
+      discharge_outcome: dischargeForm.value.discharge_outcome,
+      discharge_condition: dischargeForm.value.discharge_condition,
+      final_orders: dischargeForm.value.final_orders || null,
+    });
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Partial discharge initiated successfully. Please ensure all bills are paid before final discharge.',
+      timeout: 5000,
+    });
+    
+    // Reload patient info to get updated partial discharge status
+    await loadPatientInfo();
+    
+    // Check bills now
+    await checkBills();
+    
+    // Keep dialog open for final discharge
+  } catch (error) {
+    console.error('Error initiating partial discharge:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to initiate partial discharge',
+    });
+  } finally {
+    discharging.value = false;
+  }
+};
+
+const completeFinalDischarge = async () => {
+  if (!dischargeForm.value.discharge_outcome || !dischargeForm.value.discharge_condition) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select both discharge outcome and patient condition',
+    });
+    return;
+  }
+
+  // Check bills again before final discharge
+  await checkBills();
+  
+  if (hasUnpaidBills.value) {
+    $q.notify({
+      type: 'negative',
+      message: `Cannot discharge patient. Outstanding bills amount to GHC ${unpaidBillAmount.value.toFixed(2)}. All bills must be paid before discharge.`,
+      timeout: 5000,
+    });
+    return;
+  }
+
+  discharging.value = true;
+  try {
+    await consultationAPI.dischargePatient(wardAdmissionId.value, {
+      discharge_outcome: dischargeForm.value.discharge_outcome,
+      discharge_condition: dischargeForm.value.discharge_condition,
+      final_orders: dischargeForm.value.final_orders || null,
+    });
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Patient discharged successfully',
+    });
+    
+    showDischargeDialog.value = false;
+    // Redirect back to ward page
+    router.push('/ipd/doctor-nursing-station');
+  } catch (error) {
+    console.error('Error discharging patient:', error);
+    const errorMessage = error.response?.data?.detail || 'Failed to discharge patient';
+    
+    // If error mentions bills, check bills again
+    if (errorMessage.includes('bill') || errorMessage.includes('paid')) {
+      await checkBills();
+    }
+    
+    $q.notify({
+      type: 'negative',
+      message: errorMessage,
+      timeout: 5000,
+    });
+  } finally {
+    discharging.value = false;
+  }
+};
+
+const revertPartialDischarge = async () => {
+  if (!wardAdmissionId.value) return;
+  
   $q.dialog({
-    title: 'Discharge Patient',
-    message: `Are you sure you want to discharge ${patientInfo.value?.patient_name} ${patientInfo.value?.patient_surname} from ${patientInfo.value?.ward}?`,
+    title: 'Revert Partial Discharge',
+    message: 'Are you sure you want to revert the partial discharge? This will allow you to add more services before discharging again.',
     cancel: true,
     persistent: true
   }).onOk(async () => {
     discharging.value = true;
     try {
-      await consultationAPI.dischargePatient(wardAdmissionId.value);
+      await consultationAPI.revertPartialDischarge(wardAdmissionId.value);
+      
       $q.notify({
         type: 'positive',
-        message: 'Patient discharged successfully',
+        message: 'Partial discharge reverted successfully. You can now add services and discharge again when ready.',
+        timeout: 5000,
       });
-      // Redirect back to ward page
-      router.push('/ipd/doctor-nursing-station');
+      
+      // Reload patient info to update status
+      await loadPatientInfo();
     } catch (error) {
-      console.error('Error discharging patient:', error);
+      console.error('Error reverting partial discharge:', error);
       $q.notify({
         type: 'negative',
-        message: error.response?.data?.detail || 'Failed to discharge patient',
+        message: error.response?.data?.detail || 'Failed to revert partial discharge',
       });
     } finally {
       discharging.value = false;
@@ -2746,6 +3548,23 @@ const addInventoryDebit = () => {
   window.open(routeData.href, '_blank');
 };
 
+const requestBlood = () => {
+  if (isDischarged.value) {
+    $q.notify({
+      type: 'negative',
+      message: 'Cannot request blood for a discharged patient',
+    });
+    return;
+  }
+  // Open blood request page in new tab
+  const routeData = router.resolve({
+    name: 'BloodTransfusionRequest',
+    params: { id: wardAdmissionId.value },
+    query: { encounter_id: encounterId.value }
+  });
+  window.open(routeData.href, '_blank');
+};
+
 const addAdditionalService = async () => {
   if (isDischarged.value) {
     $q.notify({
@@ -2825,52 +3644,71 @@ const startAdditionalService = async () => {
 
 const stopAdditionalService = async (serviceUsage) => {
   stoppingService.value = serviceUsage;
+  // Set default end_date and end_time to current date and time
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
   stopServiceForm.value = {
-    end_time: new Date().toISOString().slice(0, 16),
+    end_date: `${year}-${month}-${day}`,
+    end_time: `${hours}:${minutes}`,
     notes: '',
   };
+  showStopServiceDialog.value = true;
+};
+
+const confirmStopService = async () => {
+  if (!stopServiceForm.value.end_date || !stopServiceForm.value.end_time) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please select both stop date and time',
+    });
+    return;
+  }
+
+  if (!stoppingService.value) return;
+
+  const serviceUsage = stoppingService.value;
+  savingAdditionalService.value = true;
   
-  $q.dialog({
-    title: 'Stop Additional Service',
-    message: `Stop "${serviceUsage.service_name}"? This will automatically bill the patient.`,
-    prompt: {
-      model: stopServiceForm.value.notes,
-      type: 'text',
-      label: 'Notes (optional)',
-    },
-    cancel: true,
-    persistent: true,
-  }).onOk(async (notes) => {
-    try {
-      const stopData = {
-        end_time: stopServiceForm.value.end_time 
-          ? new Date(stopServiceForm.value.end_time).toISOString()
-          : null,
-        notes: notes || null,
-      };
-      
-      await consultationAPI.stopAdditionalService(
-        wardAdmissionId.value,
-        serviceUsage.id,
-        stopData
-      );
-      
-      $q.notify({
-        type: 'positive',
-        message: 'Service stopped and billed successfully',
-      });
-      
-      await loadTableData();
-    } catch (error) {
-      console.error('Error stopping additional service:', error);
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || 'Failed to stop additional service',
-      });
-    } finally {
-      stoppingService.value = null;
-    }
-  });
+  try {
+    // Combine date and time into ISO string
+    const dateTimeString = `${stopServiceForm.value.end_date}T${stopServiceForm.value.end_time}:00`;
+    const stopData = {
+      end_time: new Date(dateTimeString).toISOString(),
+      notes: stopServiceForm.value.notes || null,
+    };
+    
+    await consultationAPI.stopAdditionalService(
+      wardAdmissionId.value,
+      serviceUsage.id,
+      stopData
+    );
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Service stopped and billed successfully',
+    });
+    
+    showStopServiceDialog.value = false;
+    await loadTableData();
+  } catch (error) {
+    console.error('Error stopping additional service:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to stop additional service',
+    });
+  } finally {
+    savingAdditionalService.value = false;
+    stoppingService.value = null;
+    stopServiceForm.value = {
+      end_date: '',
+      end_time: '',
+      notes: '',
+    };
+  }
 };
 
 const saveSurgery = async () => {

@@ -432,6 +432,36 @@
             <q-item-label>Additional Services</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'BloodTransfusionTypesManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="bloodtype" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Blood Transfusion Types</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
+          v-if="canAccess(['Lab', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'BloodTransfusionLabManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="science" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Blood Transfusion Requests</q-item-label>
+          </q-item-section>
+        </q-item>
       </q-list>
     </q-drawer>
 

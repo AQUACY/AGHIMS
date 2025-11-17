@@ -309,7 +309,12 @@ const clearFilters = () => {
 
 const generateClaim = (encounter) => {
   // Navigate to generate claim page
-  $router.push(`/claims/generate/${encounter.id}`);
+  // For IPD claims, include ward_admission_id if available
+  if (encounter.ward_admission_id) {
+    $router.push(`/claims/generate/${encounter.id}?ward_admission_id=${encounter.ward_admission_id}&type=ipd`);
+  } else {
+    $router.push(`/claims/generate/${encounter.id}`);
+  }
 };
 
 const editClaim = async (encounter) => {
@@ -360,7 +365,12 @@ const exportSingleClaim = async (claimId) => {
 
 const regenerateClaim = (encounter) => {
   // Navigate to generate claim page (will update existing claim)
-  $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}`);
+  // For IPD claims, include ward_admission_id if available
+  if (encounter.ward_admission_id) {
+    $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}&ward_admission_id=${encounter.ward_admission_id}&type=ipd`);
+  } else {
+    $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}`);
+  }
 };
 
 const viewClaim = (claimId) => {
@@ -380,6 +390,7 @@ const loadFinalizedEncounters = async () => {
     );
     finalizedEncounters.value = response.data.map(encounter => ({
       id: encounter.id,
+      ward_admission_id: encounter.ward_admission_id || null,
       patient_name: encounter.patient_name,
       patient_card_number: encounter.patient_card_number,
       ccc_number: encounter.ccc_number,

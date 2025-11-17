@@ -37,7 +37,7 @@
         <q-card-section>
         <div class="row items-center q-mb-md">
           <div>
-            <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}</div>
+            <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
             <div class="text-grey-7">Card: {{ patient.card_number }}</div>
             <div class="q-mt-xs">
               <q-badge :color="patient.insured ? 'green' : 'orange'">

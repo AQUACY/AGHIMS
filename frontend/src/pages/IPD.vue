@@ -32,8 +32,8 @@
     </q-card>
       </div>
 
-      <!-- Admit Patient Module (Admin Only) -->
-      <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+      <!-- Admit Patient Module -->
+      <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
         <q-card 
           class="glass-card module-card cursor-pointer" 
           flat 
@@ -54,8 +54,8 @@
     </q-card>
       </div>
 
-      <!-- Transfer Patient Module (Admin Only) -->
-      <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+      <!-- Transfer Patient Module -->
+      <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
         <q-card 
           class="glass-card module-card cursor-pointer" 
           flat 
@@ -76,8 +76,8 @@
         </q-card>
           </div>
 
-      <!-- Doctor/Nursing Station Module (Admin Only) -->
-      <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+      <!-- Doctor/Nursing Station Module -->
+      <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
         <q-card 
           class="glass-card module-card cursor-pointer" 
           flat 
@@ -98,8 +98,8 @@
         </q-card>
         </div>
 
-             <!-- Bed Management Module (Admin Only) -->
-             <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+             <!-- Bed Management Module -->
+             <div v-if="canAccess(['Admin'])" class="col-12 col-md-6 col-lg-3">
                <q-card 
                  class="glass-card module-card cursor-pointer" 
                  flat 
@@ -120,8 +120,8 @@
                </q-card>
              </div>
 
-             <!-- Registers Module (Admin Only) -->
-             <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+             <!-- Registers Module -->
+             <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
                <q-card 
                  class="glass-card module-card cursor-pointer" 
                  flat 
@@ -142,8 +142,8 @@
                </q-card>
              </div>
 
-             <!-- Daily Ward State Module (Admin Only) -->
-             <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+             <!-- Daily Ward State Module -->
+             <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
                <q-card 
                  class="glass-card module-card cursor-pointer" 
                  flat 
@@ -164,8 +164,8 @@
                </q-card>
              </div>
 
-             <!-- Transfer Acceptance Module (Admin Only) -->
-             <div v-if="isAdmin" class="col-12 col-md-6 col-lg-3">
+             <!-- Transfer Acceptance Module -->
+             <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
                <q-card 
                  class="glass-card module-card cursor-pointer" 
                  flat 
@@ -215,15 +215,12 @@
 
 <script setup>
 import { useRouter } from 'vue-router';
-import { computed } from 'vue';
 import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
 const authStore = useAuthStore();
 
-const isAdmin = computed(() => {
-  return authStore.user?.role === 'Admin';
-});
+const canAccess = (roles) => authStore.canAccess(roles);
 
 const navigateToModule = (path) => {
   router.push(path);

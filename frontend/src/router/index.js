@@ -160,10 +160,28 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/blood-transfusion-types',
+        name: 'BloodTransfusionTypesManagement',
+        component: () => import('../pages/BloodTransfusionTypesManagement.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin' },
+      },
+      {
         path: '/ipd/inventory-debit/:id',
         name: 'InpatientInventoryDebit',
         component: () => import('../pages/InpatientInventoryDebit.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/ipd/blood-transfusion-request/:id',
+        name: 'BloodTransfusionRequest',
+        component: () => import('../pages/BloodTransfusionRequest.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/lab/blood-transfusion-requests',
+        name: 'BloodTransfusionLabManagement',
+        component: () => import('../pages/BloodTransfusionLabManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Lab', 'Admin'] },
       },
       {
         path: '/ipd',

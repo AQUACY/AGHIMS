@@ -14,7 +14,7 @@
       <q-card class="q-mb-md">
         <q-card-section>
           <div class="row items-center q-mb-md">
-            <div class="text-h5">{{ patient.name }} {{ patient.surname || '' }}</div>
+            <div class="text-h5">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
             <q-space />
             <q-btn
               color="primary"
@@ -1294,8 +1294,118 @@ const printPatientRecords = async () => {
     // Sort encounters by date (newest first)
     encounterData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
+    // Collect IPD (ward admission) data
+    const ipdData = [];
+    
+    // Load ward admissions if not already loaded
+    if (wardAdmissions.value.length === 0) {
+      await loadWardAdmissions(patient.value.card_number);
+    }
+    
+    for (const admission of wardAdmissions.value) {
+      const ipdInfo = {
+        ...admission,
+        clinicalReviews: [],
+        diagnoses: [],
+        investigations: [],
+        prescriptions: [],
+        surgeries: [],
+        bills: [],
+        nurseNotes: [],
+        additionalServices: [],
+        nurseMidDocumentations: []
+      };
+
+      // Load ward admission details
+      try {
+        const admissionResponse = await consultationAPI.getWardAdmission(admission.id);
+        Object.assign(ipdInfo, admissionResponse.data);
+      } catch (error) {
+        console.error(`Failed to load ward admission ${admission.id}:`, error);
+      }
+
+      // Load clinical reviews
+      try {
+        const reviewsResponse = await consultationAPI.getInpatientClinicalReviews(admission.id);
+        ipdInfo.clinicalReviews = reviewsResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load clinical reviews for admission ${admission.id}:`, error);
+      }
+
+      // Load all diagnoses
+      try {
+        const diagnosesResponse = await consultationAPI.getAllInpatientDiagnoses(admission.id);
+        ipdInfo.diagnoses = diagnosesResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load diagnoses for admission ${admission.id}:`, error);
+      }
+
+      // Load all investigations
+      try {
+        const investigationsResponse = await consultationAPI.getAllInpatientInvestigations(admission.id);
+        ipdInfo.investigations = investigationsResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load investigations for admission ${admission.id}:`, error);
+      }
+
+      // Load all prescriptions
+      try {
+        const prescriptionsResponse = await consultationAPI.getAllWardAdmissionPrescriptions(admission.id);
+        ipdInfo.prescriptions = prescriptionsResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load prescriptions for admission ${admission.id}:`, error);
+      }
+
+      // Load surgeries
+      try {
+        const surgeriesResponse = await consultationAPI.getInpatientSurgeries(admission.id);
+        ipdInfo.surgeries = surgeriesResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load surgeries for admission ${admission.id}:`, error);
+      }
+
+      // Load bills for the encounter
+      if (ipdInfo.encounter_id) {
+        try {
+          const billsResponse = await billingAPI.getEncounterBills(ipdInfo.encounter_id);
+          ipdInfo.bills = billsResponse.data || [];
+        } catch (error) {
+          console.error(`Failed to load bills for IPD encounter ${ipdInfo.encounter_id}:`, error);
+        }
+      }
+
+      // Load nurse notes
+      try {
+        const nurseNotesResponse = await consultationAPI.getNurseNotes(admission.id);
+        ipdInfo.nurseNotes = nurseNotesResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load nurse notes for admission ${admission.id}:`, error);
+      }
+
+      // Load additional services
+      try {
+        const additionalServicesResponse = await consultationAPI.getInpatientAdditionalServices(admission.id, false); // Include inactive
+        ipdInfo.additionalServices = additionalServicesResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load additional services for admission ${admission.id}:`, error);
+      }
+
+      // Load nurse/mid documentation
+      try {
+        const nurseMidDocsResponse = await consultationAPI.getNurseMidDocumentations(admission.id);
+        ipdInfo.nurseMidDocumentations = nurseMidDocsResponse.data || [];
+      } catch (error) {
+        console.error(`Failed to load nurse/mid documentation for admission ${admission.id}:`, error);
+      }
+
+      ipdData.push(ipdInfo);
+    }
+
+    // Sort IPD admissions by date (newest first)
+    ipdData.sort((a, b) => new Date(b.admitted_at || b.created_at) - new Date(a.admitted_at || a.created_at));
+
     // Generate HTML
-    const html = buildPatientRecordsHtml(patient.value, encounterData);
+    const html = buildPatientRecordsHtml(patient.value, encounterData, ipdData);
     
     // Open in new window and print
     const w = window.open('', '_blank', 'width=1200,height=800');
@@ -1332,7 +1442,7 @@ const printPatientRecords = async () => {
   }
 };
 
-const buildPatientRecordsHtml = (patient, encounterData) => {
+const buildPatientRecordsHtml = (patient, encounterData, ipdData = []) => {
   const now = new Date();
 
   // Build patient biostats section
@@ -1583,6 +1693,9 @@ const buildPatientRecordsHtml = (patient, encounterData) => {
       
       .bill-summary { margin-top: 10px; padding: 10px; background-color: #f0f0f0; font-weight: bold; }
       
+      .review-section { margin: 10px 0; padding: 10px; background-color: #f9f9f9; border-left: 3px solid #0066cc; }
+      .review-section h5 { margin-bottom: 5px; color: #0066cc; }
+      
       @media print {
         .encounter-section { page-break-inside: avoid; }
         .section { page-break-inside: avoid; }
@@ -1604,9 +1717,232 @@ const buildPatientRecordsHtml = (patient, encounterData) => {
     ${biostatsHtml}
     
     <div class="section">
-      <h3 class="section-title">PATIENT ENCOUNTERS</h3>
+      <h3 class="section-title">PATIENT ENCOUNTERS (OPD)</h3>
       ${encountersHtml}
     </div>
+    
+    ${ipdData.length > 0 ? `
+    <div class="section">
+      <h3 class="section-title">INPATIENT DEPARTMENT (IPD) ADMISSIONS</h3>
+      ${ipdData.map((admission, idx) => {
+        // Build admission details HTML
+        const admissionDetailsHtml = `
+          <div class="two-column">
+            <div><strong>Ward:</strong> ${admission.ward || 'N/A'}</div>
+            <div><strong>Bed:</strong> ${admission.bed_number || 'N/A'}</div>
+            <div><strong>Admitted:</strong> ${formatDateTime(admission.admitted_at)}</div>
+            <div><strong>Discharged:</strong> ${admission.discharged_at ? formatDateTime(admission.discharged_at) : 'Not discharged'}</div>
+            ${admission.doctor_name ? `<div><strong>Doctor:</strong> ${admission.doctor_name}</div>` : ''}
+            ${admission.discharge_outcome ? `<div><strong>Discharge Outcome:</strong> ${admission.discharge_outcome}</div>` : ''}
+            ${admission.discharge_condition ? `<div><strong>Discharge Condition:</strong> ${admission.discharge_condition}</div>` : ''}
+            ${admission.final_orders ? `<div><strong>Final Orders:</strong> ${admission.final_orders}</div>` : ''}
+          </div>
+        `;
+
+        // Build clinical reviews HTML
+        let clinicalReviewsHtml = '<p class="no-data">No clinical reviews</p>';
+        if (admission.clinicalReviews && admission.clinicalReviews.length > 0) {
+          clinicalReviewsHtml = '';
+          admission.clinicalReviews.forEach((review, ridx) => {
+            clinicalReviewsHtml += `
+              <div class="review-section">
+                <h5><strong>Clinical Review #${ridx + 1}</strong> - ${formatDateTime(review.created_at)}</h5>
+                ${review.review_notes ? `<div style="white-space: pre-wrap; margin-top: 5px;">${review.review_notes}</div>` : '<p class="no-data">No notes</p>'}
+              </div>
+            `;
+          });
+        }
+
+        // Build diagnoses HTML
+        let diagnosesHtml = '<p class="no-data">No diagnoses recorded</p>';
+        if (admission.diagnoses && admission.diagnoses.length > 0) {
+          diagnosesHtml = '<ul>';
+          admission.diagnoses.forEach(diag => {
+            diagnosesHtml += `<li><strong>${diag.diagnosis || 'N/A'}</strong>${diag.icd10 ? ` (ICD-10: ${diag.icd10})` : ''}${diag.gdrg_code ? ` (GDRG: ${diag.gdrg_code})` : ''}${diag.is_chief ? ' <strong>[Chief]</strong>' : ''}</li>`;
+          });
+          diagnosesHtml += '</ul>';
+        }
+
+        // Build prescriptions HTML
+        let prescriptionsHtml = '<p class="no-data">No prescriptions</p>';
+        if (admission.prescriptions && admission.prescriptions.length > 0) {
+          prescriptionsHtml = '<table class="data-table"><thead><tr><th>#</th><th>Medication</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Quantity</th><th>Status</th></tr></thead><tbody>';
+          admission.prescriptions.forEach((pres, pidx) => {
+            prescriptionsHtml += `
+              <tr>
+                <td>${pidx + 1}</td>
+                <td>${pres.medicine_name || 'N/A'}</td>
+                <td>${pres.dose || 'N/A'}</td>
+                <td>${pres.frequency || 'N/A'}</td>
+                <td>${pres.duration || 'N/A'}</td>
+                <td>${pres.quantity || 0}</td>
+                <td>${pres.dispensed_by ? 'Dispensed' : 'Pending'}</td>
+              </tr>
+            `;
+          });
+          prescriptionsHtml += '</tbody></table>';
+        }
+
+        // Build investigations HTML
+        let investigationsHtml = '<p class="no-data">No investigations</p>';
+        if (admission.investigations && admission.investigations.length > 0) {
+          investigationsHtml = '<table class="data-table"><thead><tr><th>#</th><th>Type</th><th>Investigation</th><th>Status</th></tr></thead><tbody>';
+          admission.investigations.forEach((inv, invidx) => {
+            investigationsHtml += `
+              <tr>
+                <td>${invidx + 1}</td>
+                <td>${inv.investigation_type || 'N/A'}</td>
+                <td>${inv.procedure_name || 'N/A'}</td>
+                <td>${inv.status || 'Pending'}</td>
+              </tr>
+            `;
+          });
+          investigationsHtml += '</tbody></table>';
+        }
+
+        // Build surgeries HTML
+        let surgeriesHtml = '<p class="no-data">No surgeries recorded</p>';
+        if (admission.surgeries && admission.surgeries.length > 0) {
+          surgeriesHtml = '<table class="data-table"><thead><tr><th>#</th><th>Surgery Name</th><th>Type</th><th>Surgeon</th><th>Date</th><th>Status</th></tr></thead><tbody>';
+          admission.surgeries.forEach((surgery, sidx) => {
+            surgeriesHtml += `
+              <tr>
+                <td>${sidx + 1}</td>
+                <td>${surgery.surgery_name || 'N/A'}</td>
+                <td>${surgery.surgery_type || 'N/A'}</td>
+                <td>${surgery.surgeon_name || 'N/A'}</td>
+                <td>${surgery.surgery_date ? formatDate(surgery.surgery_date) : 'N/A'}</td>
+                <td>${surgery.is_completed ? 'Completed' : 'Pending'}</td>
+              </tr>
+            `;
+          });
+          surgeriesHtml += '</tbody></table>';
+        }
+
+        // Build bills HTML
+        let billsHtml = '<p class="no-data">No bills</p>';
+        if (admission.bills && admission.bills.length > 0) {
+          const ipdTotal = admission.bills.reduce((sum, b) => sum + (b.total_amount || 0), 0);
+          const ipdPaid = admission.bills.reduce((sum, b) => sum + (b.paid_amount || 0), 0);
+          const ipdBalance = ipdTotal - ipdPaid;
+          
+          billsHtml = `
+            <table class="data-table"><thead><tr><th>Bill ID</th><th>Total Amount</th><th>Paid Amount</th><th>Balance</th></tr></thead><tbody>
+            ${admission.bills.map(bill => `
+              <tr>
+                <td>${bill.id}</td>
+                <td>₵${(bill.total_amount || 0).toFixed(2)}</td>
+                <td>₵${(bill.paid_amount || 0).toFixed(2)}</td>
+                <td>₵${((bill.total_amount || 0) - (bill.paid_amount || 0)).toFixed(2)}</td>
+              </tr>
+            `).join('')}
+            </tbody></table>
+            <div class="bill-summary">
+              <strong>IPD Total:</strong> ₵${ipdTotal.toFixed(2)} | 
+              <strong>Paid:</strong> ₵${ipdPaid.toFixed(2)} | 
+              <strong>Balance:</strong> ₵${ipdBalance.toFixed(2)}
+            </div>
+          `;
+        }
+
+        return `
+          <div class="encounter-section">
+            <h3 class="encounter-title">IPD ADMISSION #${admission.id} - ${admission.ward || 'N/A'}</h3>
+            <div class="encounter-meta">
+              <strong>Admitted:</strong> ${formatDateTime(admission.admitted_at)} | 
+              <strong>Discharged:</strong> ${admission.discharged_at ? formatDateTime(admission.discharged_at) : 'Not discharged'}
+              ${admission.ccc_number ? ` | <strong>CCC Number:</strong> ${admission.ccc_number}` : ''}
+            </div>
+            
+            <h4 class="subsection-title">Admission Details</h4>
+            ${admissionDetailsHtml}
+            ${admission.admission_notes ? `
+              <div style="margin-top: 10px; padding: 10px; background-color: #f9f9f9; border-left: 3px solid #0066cc;">
+                <strong>Admission Notes:</strong>
+                <div style="white-space: pre-wrap; margin-top: 5px;">${admission.admission_notes}</div>
+              </div>
+            ` : ''}
+            
+            <h4 class="subsection-title">Nurse Notes</h4>
+            ${(() => {
+              let nurseNotesHtml = '<p class="no-data">No nurse notes</p>';
+              if (admission.nurseNotes && admission.nurseNotes.length > 0) {
+                nurseNotesHtml = '';
+                admission.nurseNotes.forEach((note, nidx) => {
+                  nurseNotesHtml += `
+                    <div class="review-section" style="${note.strikethrough ? 'opacity: 0.6; text-decoration: line-through;' : ''}">
+                      <h5><strong>Note #${nidx + 1}</strong> - ${formatDateTime(note.created_at)}${note.created_by_name ? ` by ${note.created_by_name}` : ''}</h5>
+                      <div style="white-space: pre-wrap; margin-top: 5px;">${note.notes || 'No content'}</div>
+                    </div>
+                  `;
+                });
+              }
+              return nurseNotesHtml;
+            })()}
+            
+            <h4 class="subsection-title">Nurse/Mid Documentation</h4>
+            ${(() => {
+              let nurseMidDocsHtml = '<p class="no-data">No nurse/mid documentation</p>';
+              if (admission.nurseMidDocumentations && admission.nurseMidDocumentations.length > 0) {
+                nurseMidDocsHtml = '<table class="data-table"><thead><tr><th>#</th><th>Type</th><th>Date</th><th>Details</th></tr></thead><tbody>';
+                admission.nurseMidDocumentations.forEach((doc, didx) => {
+                  nurseMidDocsHtml += `
+                    <tr>
+                      <td>${didx + 1}</td>
+                      <td>${doc.documentation_type || 'N/A'}</td>
+                      <td>${formatDateTime(doc.created_at)}</td>
+                      <td>${doc.details ? (doc.details.length > 100 ? doc.details.substring(0, 100) + '...' : doc.details) : 'N/A'}</td>
+                    </tr>
+                  `;
+                });
+                nurseMidDocsHtml += '</tbody></table>';
+              }
+              return nurseMidDocsHtml;
+            })()}
+            
+            <h4 class="subsection-title">Additional Services</h4>
+            ${(() => {
+              let additionalServicesHtml = '<p class="no-data">No additional services</p>';
+              if (admission.additionalServices && admission.additionalServices.length > 0) {
+                additionalServicesHtml = '<table class="data-table"><thead><tr><th>#</th><th>Service Name</th><th>Started</th><th>Stopped</th><th>Status</th></tr></thead><tbody>';
+                admission.additionalServices.forEach((service, sidx) => {
+                  additionalServicesHtml += `
+                    <tr>
+                      <td>${sidx + 1}</td>
+                      <td>${service.service_name || 'N/A'}</td>
+                      <td>${service.started_at ? formatDateTime(service.started_at) : 'N/A'}</td>
+                      <td>${service.stopped_at ? formatDateTime(service.stopped_at) : 'Active'}</td>
+                      <td>${service.stopped_at ? 'Stopped' : 'Active'}</td>
+                    </tr>
+                  `;
+                });
+                additionalServicesHtml += '</tbody></table>';
+              }
+              return additionalServicesHtml;
+            })()}
+            
+            <h4 class="subsection-title">Clinical Reviews</h4>
+            ${clinicalReviewsHtml}
+            
+            <h4 class="subsection-title">Diagnoses</h4>
+            ${diagnosesHtml}
+            
+            <h4 class="subsection-title">Prescriptions</h4>
+            ${prescriptionsHtml}
+            
+            <h4 class="subsection-title">Investigations</h4>
+            ${investigationsHtml}
+            
+            <h4 class="subsection-title">Surgeries</h4>
+            ${surgeriesHtml}
+            
+            <h4 class="subsection-title">Billing</h4>
+            ${billsHtml}
+          </div>
+        `;
+      }).join('')}
+    </div>
+    ` : ''}
     
     <div style="margin-top: 40px; text-align: center; font-size: 10px; color: #666; border-top: 1px solid #ddd; padding-top: 15px;">
       <p>This document contains the complete electronic health records for the patient.</p>

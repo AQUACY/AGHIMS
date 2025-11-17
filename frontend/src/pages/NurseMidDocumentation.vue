@@ -21,7 +21,7 @@
         <div class="row q-col-gutter-md">
           <div class="col-12 col-md-6">
             <div class="text-body2">
-              <strong>Name:</strong> {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}
+              <strong>Name:</strong> {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
             </div>
             <div class="text-body2">
               <strong>Card Number:</strong> {{ patientInfo.patient_card_number }}

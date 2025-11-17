@@ -19,6 +19,38 @@ import random
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
+def generate_unique_receipt_number(db: Session, max_attempts: int = 100) -> str:
+    """
+    Generate a unique receipt number by checking against existing receipts in the database.
+    Format: REC-XXXXXX (6-digit number)
+    """
+    for _ in range(max_attempts):
+        receipt_number = f"REC-{random.randint(100000, 999999)}"
+        # Check if receipt number already exists globally
+        existing_receipt = db.query(Receipt).filter(
+            Receipt.receipt_number == receipt_number
+        ).first()
+        
+        if not existing_receipt:
+            return receipt_number
+    
+    # If we couldn't generate a unique number after max_attempts, use timestamp-based approach
+    import time
+    timestamp = int(time.time() * 1000) % 1000000  # Last 6 digits of timestamp
+    receipt_number = f"REC-{timestamp:06d}"
+    
+    # Double-check uniqueness
+    existing_receipt = db.query(Receipt).filter(
+        Receipt.receipt_number == receipt_number
+    ).first()
+    
+    if existing_receipt:
+        # If still exists, append random suffix
+        receipt_number = f"REC-{timestamp:06d}{random.randint(10, 99)}"
+    
+    return receipt_number
+
+
 def determine_service_group(item_name: str, category: str, investigation_type: Optional[str] = None) -> str:
     """Determine service group based on item name, category, and investigation type"""
     item_name_lower = item_name.lower()
@@ -324,8 +356,8 @@ def create_receipt(
             )
             
             if not item_receipt_number:
-                # If no receipt number provided at all, generate one
-                item_receipt_number = f"REC-{random.randint(100000, 999999)}"
+                # If no receipt number provided at all, generate a unique one
+                item_receipt_number = generate_unique_receipt_number(db)
             
             if item_receipt_number not in receipts_map:
                 receipts_map[item_receipt_number] = {
@@ -337,8 +369,19 @@ def create_receipt(
             receipts_map[item_receipt_number]["total"] += receipt_item_data.amount_paid
         
         # Create receipts for each unique receipt number
-        for receipt_number, receipt_data_map in receipts_map.items():
-            # Check if receipt number already exists (for same bill)
+        for receipt_number_key, receipt_data_map in receipts_map.items():
+            receipt_number = receipt_number_key
+            
+            # Check if receipt number already exists globally (not just for this bill)
+            existing_receipt_global = db.query(Receipt).filter(
+                Receipt.receipt_number == receipt_number
+            ).first()
+            
+            if existing_receipt_global and existing_receipt_global.bill_id != bill.id:
+                # Receipt number exists for a different bill - generate a new unique one
+                receipt_number = generate_unique_receipt_number(db)
+            
+            # Check if receipt number already exists for this bill (to allow updating existing receipt)
             existing_receipt = db.query(Receipt).filter(
                 Receipt.receipt_number == receipt_number,
                 Receipt.bill_id == bill.id
@@ -382,10 +425,22 @@ def create_receipt(
                 "amount_paid": receipt_data_map["total"]
             })
     else:
-        # Full payment - use provided receipt number or generate
-        receipt_number = receipt_data.receipt_number or f"REC-{random.randint(100000, 999999)}"
+        # Full payment - use provided receipt number or generate a unique one
+        if receipt_data.receipt_number:
+            receipt_number = receipt_data.receipt_number
+            # Check if receipt number already exists globally (not just for this bill)
+            existing_receipt_global = db.query(Receipt).filter(
+                Receipt.receipt_number == receipt_number
+            ).first()
+            if existing_receipt_global:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Receipt number {receipt_number} already exists. Please use a different receipt number."
+                )
+        else:
+            receipt_number = generate_unique_receipt_number(db)
         
-        # Check if receipt number already exists
+        # Check if receipt number already exists for this bill (to allow updating existing receipt)
         existing_receipt = db.query(Receipt).filter(
             Receipt.receipt_number == receipt_number,
             Receipt.bill_id == bill.id

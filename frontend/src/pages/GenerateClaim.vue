@@ -143,6 +143,61 @@
       </q-card-section>
     </q-card>
 
+    <!-- Diagnoses Section -->
+    <q-card v-if="encounter && !loading && diagnoses.length > 0" class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">
+          Diagnoses 
+          <span v-if="isIPD" class="text-caption text-grey-7">
+            (OPD + IPD Clinical Reviews)
+          </span>
+        </div>
+        <q-table
+          :rows="diagnoses"
+          :columns="diagnosisColumns"
+          row-key="id"
+          flat
+        >
+          <template v-slot:body-cell-is_chief="props">
+            <q-td :props="props">
+              <q-badge v-if="props.value" color="primary" label="Chief" />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-source="props">
+            <q-td :props="props">
+              <q-badge 
+                v-if="props.value"
+                :color="props.value === 'opd' ? 'blue' : 'green'" 
+                :label="props.value === 'opd' ? 'OPD' : 'IPD'"
+              />
+            </q-td>
+          </template>
+        </q-table>
+      </q-card-section>
+    </q-card>
+
+    <!-- Surgeries Section (IPD only) -->
+    <q-card v-if="isIPD && encounter && !loading && surgeries.length > 0" class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">Surgeries</div>
+        <q-table
+          :rows="surgeries"
+          :columns="surgeryColumns"
+          row-key="id"
+          flat
+        >
+          <template v-slot:body-cell-is_completed="props">
+            <q-td :props="props">
+              <q-badge
+                :color="props.value ? 'green' : 'orange'"
+                :label="props.value ? 'Completed' : 'Pending'"
+              />
+            </q-td>
+          </template>
+        </q-table>
+      </q-card-section>
+    </q-card>
+
     <!-- Claim Form -->
     <q-card v-if="encounter && !loading" class="glass-card" flat>
       <q-card-section>
@@ -163,10 +218,18 @@
           <q-input
             v-model="claimForm.physician_id"
             filled
-            label="Physician ID *"
+            label="Physician ID (SNO Code) *"
+            hint="Enter physician SNO code (e.g., SNO-001)"
             lazy-rules
             :rules="[(val) => !!val || 'Required']"
-          />
+          >
+            <template v-if="isIPD && wardAdmission?.doctor_name" v-slot:append>
+              <q-tooltip>
+                Doctor under care: {{ wardAdmission.doctor_name }}
+              </q-tooltip>
+              <q-icon name="info" color="primary" />
+            </template>
+          </q-input>
           <q-select
             v-model="claimForm.type_of_service"
             :options="['OPD', 'Inpatient']"
@@ -223,14 +286,25 @@ const generating = ref(false);
 const error = ref(null);
 const isRegenerating = ref(false);
 const existingClaimId = ref(null);
+const wardAdmissionId = ref(null);
+const isIPD = ref(false);
 
 const encounter = ref(null);
+const wardAdmission = ref(null);
 const medicines = ref([]);
 const investigations = ref([]);
+const diagnoses = ref([]);
+const surgeries = ref([]);
+
+// Check if this is an IPD claim from route query
+if (route.query.ward_admission_id) {
+  wardAdmissionId.value = parseInt(route.query.ward_admission_id);
+  isIPD.value = route.query.type === 'ipd' || !!wardAdmissionId.value; // If ward_admission_id exists, it's IPD
+}
 
 const claimForm = reactive({
   physician_id: '',
-  type_of_service: 'OPD',
+  type_of_service: isIPD.value ? 'IPD' : 'OPD',
   type_of_attendance: 'EAE',
   specialty_attended: 'OPDC',
 });
@@ -257,6 +331,24 @@ const investigationColumns = [
   { name: 'investigation_type', label: 'Type', field: 'investigation_type', align: 'left' },
   { name: 'status', label: 'Status', field: 'status', align: 'center' },
   { name: 'service_date', label: 'Service Date', field: 'service_date', align: 'left', format: (val) => val ? new Date(val).toLocaleString() : '-' },
+];
+
+const diagnosisColumns = [
+  { name: 'diagnosis', label: 'Diagnosis', field: 'diagnosis', align: 'left' },
+  { name: 'icd10', label: 'ICD-10', field: 'icd10', align: 'left' },
+  { name: 'gdrg_code', label: 'GDRG Code', field: 'gdrg_code', align: 'left' },
+  { name: 'is_chief', label: 'Chief', field: 'is_chief', align: 'center' },
+  { name: 'source', label: 'Source', field: 'source', align: 'center' },
+  { name: 'created_at', label: 'Date', field: 'created_at', align: 'left', format: (val) => val ? new Date(val).toLocaleDateString() : '-' },
+];
+
+const surgeryColumns = [
+  { name: 'surgery_name', label: 'Surgery Name', field: 'surgery_name', align: 'left' },
+  { name: 'g_drg_code', label: 'G-DRG Code', field: 'g_drg_code', align: 'left' },
+  { name: 'surgery_type', label: 'Type', field: 'surgery_type', align: 'left' },
+  { name: 'surgeon_name', label: 'Surgeon', field: 'surgeon_name', align: 'left' },
+  { name: 'surgery_date', label: 'Date', field: 'surgery_date', align: 'left', format: (val) => val ? new Date(val).toLocaleDateString() : '-' },
+  { name: 'is_completed', label: 'Status', field: 'is_completed', align: 'center' },
 ];
 
 const formatDate = (dateString) => {
@@ -297,9 +389,14 @@ const loadEncounter = async () => {
     const response = await encountersAPI.get(encounterId);
     encounter.value = response.data;
     
-    // Auto-fill physician_id with finalized_by username if available (for both new and regeneration)
-    if (response.data.finalized_by_username) {
-      claimForm.physician_id = response.data.finalized_by_username;
+    // For IPD claims, load ward admission data
+    if (isIPD.value && wardAdmissionId.value) {
+      await loadWardAdmission(wardAdmissionId.value);
+    } else {
+      // Auto-fill physician_id with finalized_by username if available (for OPD)
+      if (response.data.finalized_by_username) {
+        claimForm.physician_id = response.data.finalized_by_username;
+      }
     }
     
     // Load medicines and investigations in parallel
@@ -307,6 +404,17 @@ const loadEncounter = async () => {
       loadMedicines(encounterId),
       loadInvestigations(encounterId),
     ]);
+    
+    // For IPD, also load diagnoses and surgeries
+    if (isIPD.value && wardAdmissionId.value) {
+      await Promise.all([
+        loadDiagnoses(wardAdmissionId.value),
+        loadSurgeries(wardAdmissionId.value),
+      ]);
+    } else {
+      // For OPD, load diagnoses from encounter
+      await loadOPDDiagnoses(encounterId);
+    }
   } catch (err) {
     error.value = err.response?.data?.detail || 'Failed to load encounter';
     $q.notify({
@@ -315,6 +423,54 @@ const loadEncounter = async () => {
     });
   } finally {
     loading.value = false;
+  }
+};
+
+const loadWardAdmission = async (wardAdmissionId) => {
+  try {
+    const response = await consultationAPI.getWardAdmission(wardAdmissionId);
+    wardAdmission.value = response.data;
+    
+    // Pre-fill physician_id with doctor's username (user can change to SNO code)
+    if (wardAdmission.value?.doctor_username) {
+      claimForm.physician_id = wardAdmission.value.doctor_username;
+    }
+  } catch (err) {
+    console.error('Failed to load ward admission:', err);
+    $q.notify({
+      type: 'warning',
+      message: 'Failed to load ward admission details',
+    });
+  }
+};
+
+const loadDiagnoses = async (wardAdmissionId) => {
+  try {
+    const response = await consultationAPI.getAllInpatientDiagnoses(wardAdmissionId);
+    diagnoses.value = response.data || [];
+  } catch (err) {
+    console.error('Failed to load diagnoses:', err);
+    diagnoses.value = [];
+  }
+};
+
+const loadOPDDiagnoses = async (encounterId) => {
+  try {
+    const response = await consultationAPI.getDiagnoses(encounterId);
+    diagnoses.value = response.data || [];
+  } catch (err) {
+    console.error('Failed to load OPD diagnoses:', err);
+    diagnoses.value = [];
+  }
+};
+
+const loadSurgeries = async (wardAdmissionId) => {
+  try {
+    const response = await consultationAPI.getInpatientSurgeries(wardAdmissionId);
+    surgeries.value = response.data || [];
+  } catch (err) {
+    console.error('Failed to load surgeries:', err);
+    surgeries.value = [];
   }
 };
 
@@ -357,13 +513,23 @@ const generateClaim = async () => {
   generating.value = true;
   try {
     const claimData = {
-      encounter_id: encounter.value.id,
       ...claimForm,
     };
+    
+    // For IPD claims, include ward_admission_id; for OPD, include encounter_id
+    if (isIPD.value && wardAdmissionId.value) {
+      claimData.ward_admission_id = wardAdmissionId.value;
+      claimData.type_of_service = 'IPD';
+    } else {
+      claimData.encounter_id = encounter.value.id;
+    }
 
+    let claimId;
+    
     if (isRegenerating.value && existingClaimId.value) {
       // Regenerate existing claim
-      await claimsAPI.regenerate(existingClaimId.value, claimData);
+      const response = await claimsAPI.regenerate(existingClaimId.value, claimData);
+      claimId = response.data.id;
       
       $q.notify({
         type: 'positive',
@@ -371,7 +537,8 @@ const generateClaim = async () => {
       });
     } else {
       // Create new claim
-      await claimsAPI.create(claimData);
+      const response = await claimsAPI.create(claimData);
+      claimId = response.data.id;
       
       $q.notify({
         type: 'positive',
@@ -379,7 +546,8 @@ const generateClaim = async () => {
       });
     }
 
-    router.push('/claims');
+    // Redirect to edit page instead of claims list
+    router.push(`/claims/edit/${claimId}`);
   } catch (err) {
     $q.notify({
       type: 'negative',

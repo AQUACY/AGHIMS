@@ -317,7 +317,9 @@ export const consultationAPI = {
     return api.get('/consultation/ward-admissions', { params });
   },
   getWardAdmission: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}`),
-    dischargePatient: (wardAdmissionId) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/discharge`),
+    partialDischargePatient: (wardAdmissionId, dischargeData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/partial-discharge`, dischargeData),
+    revertPartialDischarge: (wardAdmissionId) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/revert-partial-discharge`),
+    dischargePatient: (wardAdmissionId, dischargeData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/discharge`, dischargeData),
     cancelWardAdmission: (wardAdmissionId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}`),
     updateAdmissionNotes: (wardAdmissionId, notes) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/admission-notes`, { notes }),
     // Nurse Notes
@@ -353,6 +355,7 @@ export const consultationAPI = {
     // Inpatient Investigations
     createInpatientInvestigation: (wardAdmissionId, clinicalReviewId, investigationData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/investigations`, investigationData),
     getInpatientInvestigations: (wardAdmissionId, clinicalReviewId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/investigations`),
+    getAllInpatientInvestigations: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/investigations/all`),
     deleteInpatientInvestigation: (wardAdmissionId, clinicalReviewId, investigationId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}/investigations/${investigationId}`),
     // Inpatient Surgeries
     createInpatientSurgery: (wardAdmissionId, surgeryData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/surgeries`, surgeryData),
@@ -393,6 +396,25 @@ export const consultationAPI = {
     },
     acceptTransfer: (transferId, bedId) => api.post(`/consultation/ward-admissions/transfers/${transferId}/accept`, { bed_id: bedId }),
     rejectTransfer: (transferId, reason) => api.post(`/consultation/ward-admissions/transfers/${transferId}/reject`, { rejection_reason: reason }),
+    // Blood Transfusion Types (Admin)
+    createBloodTransfusionType: (typeData) => api.post('/consultation/blood-transfusion-types', typeData),
+    getBloodTransfusionTypes: (activeOnly = false) => api.get(`/consultation/blood-transfusion-types?active_only=${activeOnly}`),
+    getBloodTransfusionType: (typeId) => api.get(`/consultation/blood-transfusion-types/${typeId}`),
+    updateBloodTransfusionType: (typeId, typeData) => api.put(`/consultation/blood-transfusion-types/${typeId}`, typeData),
+    deleteBloodTransfusionType: (typeId) => api.delete(`/consultation/blood-transfusion-types/${typeId}`),
+    // Blood Transfusion Requests
+    createBloodTransfusionRequest: (requestData) => api.post('/consultation/blood-transfusion-requests', requestData),
+    getBloodTransfusionRequests: (status = null, ward = null) => {
+      const params = {};
+      if (status) params.status = status;
+      if (ward) params.ward = ward;
+      return api.get('/consultation/blood-transfusion-requests', { params });
+    },
+    acceptBloodTransfusionRequest: (requestId) => api.post(`/consultation/blood-transfusion-requests/${requestId}/accept`),
+    fulfillBloodTransfusionRequest: (requestId) => api.post(`/consultation/blood-transfusion-requests/${requestId}/fulfill`),
+    cancelBloodTransfusionRequest: (requestId, reason) => api.post(`/consultation/blood-transfusion-requests/${requestId}/cancel`, { cancellation_reason: reason }),
+    deleteBloodTransfusionRequest: (requestId) => api.delete(`/consultation/blood-transfusion-requests/${requestId}`),
+    returnBloodTransfusionRequest: (requestId) => api.post(`/consultation/blood-transfusion-requests/${requestId}/return`),
   getWards: () => api.get('/consultation/wards'),
   getBeds: (ward, availableOnly = false) => {
     const params = {};
