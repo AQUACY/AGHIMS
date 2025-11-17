@@ -33,6 +33,9 @@
           <div>
             <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
             <div class="text-grey-7">Card: {{ patient.card_number }}</div>
+            <div class="text-grey-7" v-if="patient.age">
+              Age: {{ patient.age }}
+            </div>
             <div class="text-grey-7" v-if="patient.insurance_id">
               Insurance: {{ patient.insurance_id }}
             </div>
@@ -3834,6 +3837,7 @@ const buildReceiptHtml = async () => {
       ${formatReceiptLine('Encounter ID', selectedEncounterId.value)}
       ${formatReceiptLine('Patient', `${patient.value?.name || ''} ${patient.value?.surname || ''}`.trim())}
       ${formatReceiptLine('Card', patient.value?.card_number || '')}
+      ${patient.value?.age ? formatReceiptLine('Age', patient.value.age) : ''}
       ${formatReceiptLine('Insurance', patient.value?.insurance_id || 'N/A')}
       ${formatReceiptLine('CCC', currentEncounter.value?.ccc_number || '')}
       <div class=\"clearfix\"></div>
@@ -4047,6 +4051,7 @@ const buildIPDReceiptHtml = async () => {
         ${formatReceiptLine('Encounter ID', encounterId || 'N/A')}
         ${formatReceiptLine('Patient', `${patient.value?.name || ''} ${patient.value?.surname || ''}`.trim())}
         ${formatReceiptLine('Card', patient.value?.card_number || '')}
+        ${patient.value?.age ? formatReceiptLine('Age', patient.value.age) : ''}
         ${formatReceiptLine('Insurance', patient.value?.insurance_id || 'N/A')}
         ${formatReceiptLine('CCC', cccNumber || '')}
         ${admission ? formatReceiptLine('Ward', admission.ward || '') : ''}
@@ -4224,6 +4229,7 @@ const buildExternalPrescriptionHtml = async () => {
         ${formatReceiptLine('Encounter ID', selectedEncounterId.value)}
         ${formatReceiptLine('Patient', `${patient.value?.name || ''} ${patient.value?.surname || ''}`.trim())}
         ${formatReceiptLine('Card', patient.value?.card_number || '')}
+        ${patient.value?.age ? formatReceiptLine('Age', patient.value.age) : ''}
         ${formatReceiptLine('Insurance', patient.value?.insurance_id || 'N/A')}
         ${formatReceiptLine('CCC', currentEncounter.value?.ccc_number || '')}
         <div class="clearfix"></div>
