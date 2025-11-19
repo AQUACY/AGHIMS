@@ -37,6 +37,20 @@ def migrate():
         
         print("✓ Connected to database")
         
+        # Check if table exists first
+        cursor.execute("""
+            SELECT TABLE_NAME 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_SCHEMA = %s 
+            AND TABLE_NAME = 'inpatient_inventory_debits'
+        """, (db_name,))
+        table_exists = cursor.fetchone() is not None
+        
+        if not table_exists:
+            print("⚠ Table 'inpatient_inventory_debits' does not exist. Skipping migration.")
+            print("This table may not be needed in your current setup.")
+            return
+        
         # Check if columns already exist
         cursor.execute("""
             SELECT COLUMN_NAME 
@@ -81,31 +95,43 @@ def migrate():
             print("✓ Column 'released_at' already exists")
         
         # Add foreign key constraint for released_by if it doesn't exist
-        cursor.execute("""
-            SELECT CONSTRAINT_NAME 
-            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS 
-            WHERE TABLE_SCHEMA = %s 
-            AND TABLE_NAME = 'inpatient_inventory_debits' 
-            AND CONSTRAINT_NAME = 'inpatient_inventory_debits_ibfk_released_by'
-        """, (db_name,))
-        fk_exists = cursor.fetchone()
-        
-        if not fk_exists and 'released_by' not in existing_columns:
-            print("Adding foreign key constraint for 'released_by'...")
-            try:
-                cursor.execute("""
-                    ALTER TABLE inpatient_inventory_debits 
-                    ADD CONSTRAINT inpatient_inventory_debits_ibfk_released_by 
-                    FOREIGN KEY (released_by) REFERENCES users(id)
-                """)
-                print("✓ Added foreign key constraint for 'released_by'")
-            except pymysql.err.OperationalError as e:
-                if 'Duplicate key name' in str(e) or 'already exists' in str(e):
-                    print("⚠ Foreign key constraint already exists, skipping...")
-                else:
-                    raise
-        elif fk_exists:
-            print("✓ Foreign key constraint for 'released_by' already exists")
+        # Only add FK if we just added the released_by column
+        if 'released_by' not in existing_columns:
+            cursor.execute("""
+                SELECT CONSTRAINT_NAME 
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS 
+                WHERE TABLE_SCHEMA = %s 
+                AND TABLE_NAME = 'inpatient_inventory_debits' 
+                AND CONSTRAINT_NAME = 'inpatient_inventory_debits_ibfk_released_by'
+            """, (db_name,))
+            fk_exists = cursor.fetchone() is not None
+            
+            if not fk_exists:
+                print("Adding foreign key constraint for 'released_by'...")
+                try:
+                    cursor.execute("""
+                        ALTER TABLE inpatient_inventory_debits 
+                        ADD CONSTRAINT inpatient_inventory_debits_ibfk_released_by 
+                        FOREIGN KEY (released_by) REFERENCES users(id)
+                    """)
+                    print("✓ Added foreign key constraint for 'released_by'")
+                except pymysql.err.OperationalError as e:
+                    if 'Duplicate key name' in str(e) or 'already exists' in str(e):
+                        print("⚠ Foreign key constraint already exists, skipping...")
+                    else:
+                        raise
+        else:
+            # Check if FK exists even though column already existed
+            cursor.execute("""
+                SELECT CONSTRAINT_NAME 
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS 
+                WHERE TABLE_SCHEMA = %s 
+                AND TABLE_NAME = 'inpatient_inventory_debits' 
+                AND CONSTRAINT_NAME = 'inpatient_inventory_debits_ibfk_released_by'
+            """, (db_name,))
+            fk_exists = cursor.fetchone() is not None
+            if fk_exists:
+                print("✓ Foreign key constraint for 'released_by' already exists")
         
         # Commit changes
         conn.commit()
