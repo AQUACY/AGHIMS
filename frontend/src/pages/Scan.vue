@@ -870,7 +870,8 @@ const loadAvailableServices = async () => {
     let services = [];
     
     // First, try to get procedures directly for "Scan" service type (most common case)
-    const directServiceTypes = ['Scan', 'scan', 'SCAN', 'Scanning', 'Imaging', 'Radiology'];
+    // Try multiple variations and collect all results (don't break after first match)
+    const directServiceTypes = ['Scan', 'scan', 'SCAN', 'Scanning', 'Imaging', 'Radiology', 'ECG', 'EKG'];
     
     for (const serviceType of directServiceTypes) {
       try {
@@ -878,7 +879,7 @@ const loadAvailableServices = async () => {
         if (response.data && Array.isArray(response.data) && response.data.length > 0) {
           services = services.concat(response.data);
           console.log(`Loaded ${response.data.length} procedures for service type: ${serviceType}`);
-          break; // Found services, no need to try other direct types
+          // Don't break - continue to collect all matching service types
         }
       } catch (e) {
         console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
@@ -886,50 +887,78 @@ const loadAvailableServices = async () => {
       }
     }
     
-    // If still no services, get all available service types and match
-    if (services.length === 0) {
-      let allServiceTypes = [];
+    // Remove duplicates from direct service type queries
+    if (services.length > 0) {
+      const seen = new Set();
+      services = services.filter(service => {
+        const code = service.g_drg_code;
+        if (!code || seen.has(code)) return false;
+        seen.add(code);
+        return true;
+      });
+      console.log(`After direct queries: ${services.length} unique services`);
+    }
+    
+    // Always get all available service types and match (don't skip if we already found some)
+    // This ensures we get all scan-related services, not just the first match
+    let allServiceTypes = [];
+    try {
+      const serviceTypesResponse = await priceListAPI.getServiceTypes();
+      allServiceTypes = serviceTypesResponse.data || [];
+      console.log('Available service types:', allServiceTypes);
+    } catch (e) {
+      console.warn('Failed to get service types, will try direct approach:', e);
+    }
+    
+    // Keywords to match for Scan services
+    const scanKeywords = ['scan', 'imaging', 'radiology', 'ultrasound', 'ct', 'mri', 'ecg', 'sonography', 'doppler', 'x-ray', 'xray'];
+    
+    // Find matching service types (case-insensitive)
+    let matchingServiceTypes = [];
+    if (allServiceTypes.length > 0) {
+      matchingServiceTypes = allServiceTypes.filter(st => {
+        if (!st) return false;
+        const stLower = (st || '').toLowerCase();
+        return scanKeywords.some(keyword => stLower.includes(keyword));
+      });
+      console.log('Matching service types:', matchingServiceTypes);
+    }
+    
+    // If we found matching service types, load procedures for each
+    // Skip service types we already tried in directServiceTypes
+    const alreadyTried = new Set(directServiceTypes.map(s => s.toLowerCase()));
+    for (const serviceType of matchingServiceTypes) {
+      // Skip if we already tried this service type
+      if (alreadyTried.has(serviceType.toLowerCase())) {
+        continue;
+      }
       try {
-        const serviceTypesResponse = await priceListAPI.getServiceTypes();
-        allServiceTypes = serviceTypesResponse.data || [];
-        console.log('Available service types:', allServiceTypes);
-      } catch (e) {
-        console.warn('Failed to get service types, will try direct approach:', e);
-      }
-      
-      // Keywords to match for Scan services
-      const scanKeywords = ['scan', 'imaging', 'radiology', 'ultrasound', 'ct', 'mri', 'ecg', 'sonography', 'doppler'];
-      
-      // Find matching service types (case-insensitive)
-      let matchingServiceTypes = [];
-      if (allServiceTypes.length > 0) {
-        matchingServiceTypes = allServiceTypes.filter(st => {
-          if (!st) return false;
-          const stLower = (st || '').toLowerCase();
-          return scanKeywords.some(keyword => stLower.includes(keyword));
-        });
-        console.log('Matching service types:', matchingServiceTypes);
-      }
-      
-      // If we found matching service types, load procedures for each
-      if (matchingServiceTypes.length > 0) {
-        for (const serviceType of matchingServiceTypes) {
-          try {
-            const response = await priceListAPI.getProceduresByServiceType(serviceType);
-            if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-              services = services.concat(response.data);
-              console.log(`Loaded ${response.data.length} procedures for service type: ${serviceType}`);
-            }
-          } catch (e) {
-            console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
-            continue;
-          }
+        const response = await priceListAPI.getProceduresByServiceType(serviceType);
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+          services = services.concat(response.data);
+          console.log(`Loaded ${response.data.length} procedures for service type: ${serviceType}`);
         }
+      } catch (e) {
+        console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
+        continue;
       }
     }
     
-    // If still no services found, try getting all procedures and filter client-side
-    if (services.length === 0) {
+    // Remove duplicates after collecting from all sources
+    if (services.length > 0) {
+      const seen = new Set();
+      services = services.filter(service => {
+        const code = service.g_drg_code;
+        if (!code || seen.has(code)) return false;
+        seen.add(code);
+        return true;
+      });
+      console.log(`After collecting all service types: ${services.length} unique services`);
+    }
+    
+    // If still no services found (or to catch any we might have missed), try getting all procedures and filter client-side
+    // Always try this as a fallback to ensure we get everything
+    if (services.length === 0 || services.length < 5) {  // If we have very few services, try the fallback
       try {
         console.log('Attempting to load all procedures and filter client-side...');
         const response = await priceListAPI.getProceduresByServiceType();
