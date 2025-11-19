@@ -397,6 +397,8 @@ export const consultationAPI = {
     createInpatientInventoryDebit: (wardAdmissionId, debitData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits`, debitData),
     getInpatientInventoryDebits: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits`),
     deleteInpatientInventoryDebit: (wardAdmissionId, debitId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits/${debitId}`),
+    getAllInventoryDebits: (params = {}) => api.get('/consultation/inventory-debits', { params }),
+    releaseInventoryDebit: (debitId) => api.put(`/consultation/inventory-debits/${debitId}/release`),
     // Ward Admission Transfers
     getWardAdmissionTransfers: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/transfers`),
     // Direct Admission

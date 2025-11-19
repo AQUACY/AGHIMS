@@ -370,51 +370,80 @@
             
             <!-- Patient Selection for Direct Services -->
             <div v-if="addServiceForm.isDirectService" class="q-gutter-md">
-              <q-input
-                v-model="addServiceForm.patientCardNumber"
-                filled
-                label="Patient Card Number"
-                @blur="loadPatientByCard"
-                :loading="loadingPatients"
-                :rules="[(val) => !!val || 'Card number is required for direct services']"
-              >
-                <template v-slot:append>
-                  <q-icon name="search" />
-                </template>
-              </q-input>
-              <div v-if="availablePatients.length > 0" class="q-mt-md">
-                <div class="text-subtitle2 q-mb-sm">Select Patient(s):</div>
-                <q-list bordered separator>
-                  <q-item
-                    v-for="patient in availablePatients"
-                    :key="patient.id"
-                    tag="label"
-                    v-ripple
-                  >
-                    <q-item-section avatar>
-                      <q-checkbox
-                        v-model="selectedPatients"
-                        :val="patient.id"
-                        @update:model-value="onPatientSelected"
-                      />
-                    </q-item-section>
-                    <q-item-section>
-                      <q-item-label>{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></q-item-label>
-                      <q-item-label caption>Card: {{ patient.card_number }}</q-item-label>
-                    </q-item-section>
-                  </q-item>
-                </q-list>
-                <q-banner
-                  v-if="selectedPatients.length > 1"
-                  class="bg-warning text-dark q-mt-md"
-                  rounded
+              <q-toggle
+                v-model="addServiceForm.hasCardNumber"
+                label="Patient has Card Number"
+                @update:model-value="onCardNumberToggle"
+              />
+              
+              <!-- With Card Number -->
+              <div v-if="addServiceForm.hasCardNumber">
+                <q-input
+                  v-model="addServiceForm.patientCardNumber"
+                  filled
+                  label="Patient Card Number"
+                  @blur="loadPatientByCard"
+                  :loading="loadingPatients"
                 >
-                  <template v-slot:avatar>
-                    <q-icon name="warning" color="dark" />
+                  <template v-slot:append>
+                    <q-icon name="search" />
                   </template>
-                  You can only add service for one patient at a time. Please select only one patient.
-                </q-banner>
+                </q-input>
+                <div v-if="availablePatients.length > 0" class="q-mt-md">
+                  <div class="text-subtitle2 q-mb-sm">Select Patient:</div>
+                  <q-list bordered separator>
+                    <q-item
+                      v-for="patient in availablePatients"
+                      :key="patient.id"
+                      tag="label"
+                      v-ripple
+                    >
+                      <q-item-section avatar>
+                        <q-radio
+                          v-model="selectedPatients"
+                          :val="patient.id"
+                          @update:model-value="onPatientSelected"
+                        />
+                      </q-item-section>
+                      <q-item-section>
+                        <q-item-label>{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></q-item-label>
+                        <q-item-label caption>Card: {{ patient.card_number }}</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                  </q-list>
+                </div>
               </div>
+              
+              <!-- Without Card Number (Name, Phone, Age) -->
+              <div v-else class="q-gutter-md">
+                <q-input
+                  v-model="addServiceForm.patientName"
+                  filled
+                  label="Patient Name *"
+                  :rules="[(val) => !!val || 'Name is required']"
+                />
+                <q-input
+                  v-model="addServiceForm.patientPhone"
+                  filled
+                  label="Phone Number *"
+                  :rules="[(val) => !!val || 'Phone number is required']"
+                />
+                <q-input
+                  v-model="addServiceForm.patientAge"
+                  filled
+                  type="number"
+                  label="Age *"
+                  :rules="[(val) => !!val && val > 0 || 'Age is required']"
+                />
+                <q-select
+                  v-model="addServiceForm.patientGender"
+                  :options="['Male', 'Female', 'Other']"
+                  filled
+                  label="Gender *"
+                  :rules="[(val) => !!val || 'Gender is required']"
+                />
+              </div>
+              
               <q-toggle
                 v-model="addServiceForm.isInsured"
                 label="Patient is Insured"
@@ -580,8 +609,13 @@ const addServiceForm = ref({
   procedure_name: '',
   notes: '',
   isDirectService: false,
+  hasCardNumber: true,
   patientCardNumber: '',
   patientId: null,
+  patientName: '',
+  patientPhone: '',
+  patientAge: null,
+  patientGender: '',
   isInsured: false,
   cccNumber: '',
 });
@@ -835,38 +869,61 @@ const loadAvailableServices = async () => {
     const userRole = authStore.userRole;
     let services = [];
     
-    // First, get all available service types
-    let allServiceTypes = [];
-    try {
-      const serviceTypesResponse = await priceListAPI.getServiceTypes();
-      allServiceTypes = serviceTypesResponse.data || [];
-    } catch (e) {
-      console.warn('Failed to get service types, will try direct approach:', e);
+    // First, try to get procedures directly for "Scan" service type (most common case)
+    const directServiceTypes = ['Scan', 'scan', 'SCAN', 'Scanning', 'Imaging', 'Radiology'];
+    
+    for (const serviceType of directServiceTypes) {
+      try {
+        const response = await priceListAPI.getProceduresByServiceType(serviceType);
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+          services = services.concat(response.data);
+          console.log(`Loaded ${response.data.length} procedures for service type: ${serviceType}`);
+          break; // Found services, no need to try other direct types
+        }
+      } catch (e) {
+        console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
+        continue;
+      }
     }
     
-    // Keywords to match for Scan services
-    const scanKeywords = ['scan', 'imaging', 'radiology', 'ultrasound', 'ct', 'mri', 'ecg'];
-    
-    // Find matching service types (case-insensitive)
-    let matchingServiceTypes = [];
-    if (allServiceTypes.length > 0) {
-      matchingServiceTypes = allServiceTypes.filter(st => {
-        const stLower = (st || '').toLowerCase();
-        return scanKeywords.some(keyword => stLower.includes(keyword));
-      });
-    }
-    
-    // If we found matching service types, load procedures for each
-    if (matchingServiceTypes.length > 0) {
-      for (const serviceType of matchingServiceTypes) {
-        try {
-          const response = await priceListAPI.getProceduresByServiceType(serviceType);
-          if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-            services = services.concat(response.data);
+    // If still no services, get all available service types and match
+    if (services.length === 0) {
+      let allServiceTypes = [];
+      try {
+        const serviceTypesResponse = await priceListAPI.getServiceTypes();
+        allServiceTypes = serviceTypesResponse.data || [];
+        console.log('Available service types:', allServiceTypes);
+      } catch (e) {
+        console.warn('Failed to get service types, will try direct approach:', e);
+      }
+      
+      // Keywords to match for Scan services
+      const scanKeywords = ['scan', 'imaging', 'radiology', 'ultrasound', 'ct', 'mri', 'ecg', 'sonography', 'doppler'];
+      
+      // Find matching service types (case-insensitive)
+      let matchingServiceTypes = [];
+      if (allServiceTypes.length > 0) {
+        matchingServiceTypes = allServiceTypes.filter(st => {
+          if (!st) return false;
+          const stLower = (st || '').toLowerCase();
+          return scanKeywords.some(keyword => stLower.includes(keyword));
+        });
+        console.log('Matching service types:', matchingServiceTypes);
+      }
+      
+      // If we found matching service types, load procedures for each
+      if (matchingServiceTypes.length > 0) {
+        for (const serviceType of matchingServiceTypes) {
+          try {
+            const response = await priceListAPI.getProceduresByServiceType(serviceType);
+            if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+              services = services.concat(response.data);
+              console.log(`Loaded ${response.data.length} procedures for service type: ${serviceType}`);
+            }
+          } catch (e) {
+            console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
+            continue;
           }
-        } catch (e) {
-          console.warn(`Failed to load procedures for service type ${serviceType}:`, e);
-          continue;
         }
       }
     }
@@ -874,15 +931,20 @@ const loadAvailableServices = async () => {
     // If still no services found, try getting all procedures and filter client-side
     if (services.length === 0) {
       try {
+        console.log('Attempting to load all procedures and filter client-side...');
         const response = await priceListAPI.getProceduresByServiceType();
         // Response will be grouped object
         if (response.data && typeof response.data === 'object') {
+          // Keywords to match for Scan services
+          const scanKeywords = ['scan', 'imaging', 'radiology', 'ultrasound', 'ct', 'mri', 'ecg', 'sonography', 'doppler'];
+          
           // Filter service types that match Scan keywords
           const scanKeys = Object.keys(response.data).filter(key => {
             if (!key) return false;
             const keyLower = key.toLowerCase();
             return scanKeywords.some(keyword => keyLower.includes(keyword));
           });
+          console.log('Service type keys matching scan keywords:', scanKeys);
           
           // Also check if service names contain scan keywords (for cases where service_type might be generic)
           for (const key in response.data) {
@@ -893,6 +955,7 @@ const loadAvailableServices = async () => {
               });
               if (matchingServices.length > 0) {
                 services = services.concat(matchingServices);
+                console.log(`Found ${matchingServices.length} services matching scan keywords in service type: ${key}`);
               }
             }
           }
@@ -901,6 +964,7 @@ const loadAvailableServices = async () => {
           for (const key of scanKeys) {
             if (Array.isArray(response.data[key])) {
               services = services.concat(response.data[key]);
+              console.log(`Added ${response.data[key].length} services from service type: ${key}`);
             }
           }
           
@@ -908,10 +972,11 @@ const loadAvailableServices = async () => {
           const seen = new Set();
           services = services.filter(service => {
             const code = service.g_drg_code;
-            if (seen.has(code)) return false;
+            if (!code || seen.has(code)) return false;
             seen.add(code);
             return true;
           });
+          console.log(`After deduplication: ${services.length} unique services`);
         }
       } catch (e) {
         console.error('Failed to load all procedures:', e);
@@ -921,13 +986,14 @@ const loadAvailableServices = async () => {
     availableServices.value = services;
     
     if (services.length === 0) {
+      console.error('No Scan services found after all attempts');
       $q.notify({
         type: 'warning',
         message: 'No Scan services found. Please contact admin to add Scan service types.',
         timeout: 5000,
       });
     } else {
-      console.log(`Loaded ${services.length} Scan services`);
+      console.log(`Successfully loaded ${services.length} Scan services`);
     }
   } catch (error) {
     console.error('Failed to load services:', error);
@@ -1211,6 +1277,30 @@ const onDirectServiceToggle = (value) => {
   if (value) {
     selectedPatients.value = [];
     availablePatients.value = [];
+  } else {
+    // Reset form when toggling off
+    addServiceForm.value.hasCardNumber = true;
+    addServiceForm.value.patientCardNumber = '';
+    addServiceForm.value.patientName = '';
+    addServiceForm.value.patientPhone = '';
+    addServiceForm.value.patientAge = null;
+    addServiceForm.value.patientGender = '';
+  }
+};
+
+const onCardNumberToggle = (value) => {
+  if (value) {
+    // Switching to card number mode - clear name/phone/age
+    addServiceForm.value.patientName = '';
+    addServiceForm.value.patientPhone = '';
+    addServiceForm.value.patientAge = null;
+    addServiceForm.value.patientGender = '';
+    selectedPatients.value = [];
+  } else {
+    // Switching to name/phone/age mode - clear card number
+    addServiceForm.value.patientCardNumber = '';
+    availablePatients.value = [];
+    selectedPatients.value = [];
   }
 };
 
@@ -1260,12 +1350,27 @@ const addService = async () => {
     return;
   }
   
-  if (addServiceForm.value.isDirectService && selectedPatients.value.length !== 1) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please select exactly one patient for direct service',
-    });
-    return;
+  if (addServiceForm.value.isDirectService) {
+    // Validate direct service patient info
+    if (addServiceForm.value.hasCardNumber) {
+      // Must have selected a patient from card number search
+      if (selectedPatients.value.length !== 1) {
+        $q.notify({
+          type: 'warning',
+          message: 'Please select a patient from the search results',
+        });
+        return;
+      }
+    } else {
+      // Must have name, phone, and age
+      if (!addServiceForm.value.patientName || !addServiceForm.value.patientPhone || !addServiceForm.value.patientAge || !addServiceForm.value.patientGender) {
+        $q.notify({
+          type: 'warning',
+          message: 'Please provide patient name, phone number, age, and gender',
+        });
+        return;
+      }
+    }
   }
   
   addingService.value = true;
@@ -1281,12 +1386,21 @@ const addService = async () => {
     
     if (addServiceForm.value.isDirectService) {
       // Direct service without encounter
-      const selectedPatient = availablePatients.value.find(p => p.id === selectedPatients.value[0]);
-      if (!selectedPatient) {
-        throw new Error('Selected patient not found');
+      if (addServiceForm.value.hasCardNumber) {
+        // Patient with card number
+        const selectedPatient = availablePatients.value.find(p => p.id === selectedPatients.value[0]);
+        if (!selectedPatient) {
+          throw new Error('Selected patient not found');
+        }
+        newServiceData.patient_id = selectedPatient.id;
+        newServiceData.patient_card_number = selectedPatient.card_number;
+      } else {
+        // Patient without card number - use name, phone, age
+        newServiceData.patient_name = addServiceForm.value.patientName;
+        newServiceData.patient_phone = addServiceForm.value.patientPhone;
+        newServiceData.patient_age = addServiceForm.value.patientAge;
+        newServiceData.patient_gender = addServiceForm.value.patientGender;
       }
-      newServiceData.patient_id = selectedPatient.id;
-      newServiceData.patient_card_number = selectedPatient.card_number;
       newServiceData.is_insured = addServiceForm.value.isInsured;
       newServiceData.ccc_number = addServiceForm.value.cccNumber || null;
     } else {
@@ -1310,8 +1424,13 @@ const addService = async () => {
       procedure_name: '',
       notes: '',
       isDirectService: false,
+      hasCardNumber: true,
       patientCardNumber: '',
       patientId: null,
+      patientName: '',
+      patientPhone: '',
+      patientAge: null,
+      patientGender: '',
       isInsured: false,
       cccNumber: '',
     };
@@ -1336,8 +1455,13 @@ const openAddServiceDialogForNew = async () => {
     procedure_name: '',
     notes: '',
     isDirectService: false,
+    hasCardNumber: true,
     patientCardNumber: '',
     patientId: null,
+    patientName: '',
+    patientPhone: '',
+    patientAge: null,
+    patientGender: '',
     isInsured: false,
     cccNumber: '',
   };

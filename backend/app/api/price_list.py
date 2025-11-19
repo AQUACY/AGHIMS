@@ -617,7 +617,7 @@ def search_price_items_endpoint(
 def get_procedures_by_service_type(
     service_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Scan", "Xray", "Claims"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
 ):
     """Get procedures grouped by service type. If service_type is provided, returns array. Otherwise returns grouped object."""
     from sqlalchemy import func
@@ -686,7 +686,7 @@ def search_icd10_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Scan", "Xray", "Claims"]))
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
 ):
     """Search ICD-10 codes"""
     from sqlalchemy import or_
@@ -759,7 +759,7 @@ def search_drg_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Scan", "Xray", "Claims"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
 ):
     """Search DRG codes across all sources (procedures, surgeries, unmapped DRG, and existing mappings)"""
     from sqlalchemy import or_

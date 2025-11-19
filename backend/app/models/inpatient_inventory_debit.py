@@ -22,6 +22,9 @@ class InpatientInventoryDebit(Base):
     notes = Column(Text, nullable=True)  # Optional notes
     is_billed = Column(Boolean, default=False)  # Whether added to bill
     bill_item_id = Column(Integer, nullable=True)  # Reference to bill item if billed
+    is_released = Column(Boolean, default=False)  # Whether pharmacy has released the inventory
+    released_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who released the inventory
+    released_at = Column(DateTime, nullable=True)  # When inventory was released
     used_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # User who recorded the usage
     used_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When product was used
     created_at = Column(DateTime, default=datetime.utcnow)

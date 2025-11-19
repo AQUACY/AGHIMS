@@ -274,6 +274,21 @@
             <q-item-label>Pharmacy</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'InventoryDebitManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="inventory_2" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Inventory Debits</q-item-label>
+          </q-item-section>
+        </q-item>
 
         <q-item
           v-if="canAccess(['Lab', 'Admin', 'Lab Head'])"

@@ -178,6 +178,11 @@ class InvestigationCreate(BaseModel):
     encounter_id: Optional[int] = None  # Optional for direct walk-in services
     patient_id: Optional[int] = None  # Required if encounter_id is not provided (for direct services)
     patient_card_number: Optional[str] = None  # Alternative to patient_id for direct services
+    # For patients without card number (walk-in)
+    patient_name: Optional[str] = None  # Patient name for walk-in without card
+    patient_phone: Optional[str] = None  # Patient phone for walk-in without card
+    patient_age: Optional[int] = None  # Patient age for walk-in without card
+    patient_gender: Optional[str] = None  # Patient gender for walk-in without card
     gdrg_code: str
     procedure_name: Optional[str] = None
     investigation_type: str  # lab, scan, xray
@@ -190,7 +195,7 @@ class InvestigationCreate(BaseModel):
 class InvestigationResponse(BaseModel):
     """Investigation response model"""
     id: int
-    encounter_id: int
+    encounter_id: Optional[int] = None  # Optional for direct walk-in services
     gdrg_code: str
     procedure_name: Optional[str]
     investigation_type: str
@@ -1239,26 +1244,66 @@ def create_investigation(
         is_insured = bool(encounter.ccc_number)
     # Handle direct walk-in service (without encounter)
     else:
-        # Must provide either patient_id or patient_card_number
+        # Must provide either patient_id, patient_card_number, or patient name/phone/age
         patient = None
         if investigation_data.patient_id:
             patient = db.query(Patient).filter(Patient.id == investigation_data.patient_id).first()
         elif investigation_data.patient_card_number:
             patient = db.query(Patient).filter(Patient.card_number == investigation_data.patient_card_number).first()
+        elif investigation_data.patient_name and investigation_data.patient_phone and investigation_data.patient_age:
+            # Patient without card number - create a temporary patient record
+            from app.utils.card_number import generate_card_number
+            from datetime import date, timedelta
+            
+            # Generate a card number for the new patient
+            card_number = generate_card_number(db)
+            
+            # Calculate date of birth from age (approximate)
+            today = date.today()
+            birth_year = today.year - investigation_data.patient_age
+            date_of_birth = date(birth_year, 1, 1)  # Use January 1st as approximate DOB
+            
+            # Create new patient record
+            patient = Patient(
+                name=investigation_data.patient_name,
+                surname="",  # Not provided
+                gender=investigation_data.patient_gender or "Other",
+                age=investigation_data.patient_age,
+                date_of_birth=date_of_birth,
+                card_number=card_number,
+                contact=investigation_data.patient_phone,
+                insured=investigation_data.is_insured or False,
+                ccc_number=investigation_data.ccc_number if investigation_data.is_insured else None
+            )
+            db.add(patient)
+            db.flush()  # Get patient ID without committing yet
         else:
             raise HTTPException(
                 status_code=400,
-                detail="For direct services, either patient_id or patient_card_number must be provided"
+                detail="For direct services, provide either: (1) patient_id, (2) patient_card_number, or (3) patient_name, patient_phone, and patient_age"
             )
         
         if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
+            raise HTTPException(status_code=404, detail="Patient not found or could not be created")
         
         # Use provided insurance info or patient's insurance status
         if investigation_data.is_insured is not None:
             is_insured = investigation_data.is_insured
         else:
             is_insured = patient.insured or bool(investigation_data.ccc_number)
+        
+        # Create a minimal encounter for direct services so the investigation can be linked to the patient
+        # This ensures the investigation appears in queries and maintains data consistency
+        from app.models.encounter import EncounterStatus
+        encounter = Encounter(
+            patient_id=patient.id,
+            department="Direct Service",  # Mark as direct service
+            status=EncounterStatus.DRAFT.value,  # Draft status for direct services
+            ccc_number=investigation_data.ccc_number if investigation_data.is_insured else None,
+            created_by=current_user.id
+        )
+        db.add(encounter)
+        db.flush()  # Get encounter ID without committing yet
     
     # Auto-fetch price from price list if not provided
     price = investigation_data.price
@@ -1282,7 +1327,7 @@ def create_investigation(
             price = None
     
     investigation = Investigation(
-        encounter_id=investigation_data.encounter_id,
+        encounter_id=encounter.id if encounter else investigation_data.encounter_id,
         gdrg_code=investigation_data.gdrg_code,
         procedure_name=investigation_data.procedure_name,
         investigation_type=investigation_data.investigation_type,
@@ -9016,14 +9061,23 @@ class InpatientInventoryDebitResponse(BaseModel):
     quantity: float
     unit_price: float
     total_price: float
-    notes: Optional[str]
+    notes: Optional[str] = None
     is_billed: bool
-    bill_item_id: Optional[int]
+    bill_item_id: Optional[int] = None
+    is_released: Optional[bool] = False
+    released_by: Optional[int] = None
+    released_by_name: Optional[str] = None
+    released_at: Optional[datetime] = None
     used_by: int
-    used_by_name: Optional[str]
+    used_by_name: Optional[str] = None
     used_at: datetime
     created_at: datetime
     updated_at: datetime
+    # Additional fields for pharmacy view
+    patient_name: Optional[str] = None
+    patient_card_number: Optional[str] = None
+    ward: Optional[str] = None
+    admitted_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -9191,6 +9245,12 @@ def get_inpatient_inventory_debits(
     result = []
     for debit in debits:
         user = db.query(User).filter(User.id == debit.used_by).first()
+        
+        # Get user who released (if released)
+        released_by_user = None
+        if debit.released_by:
+            released_by_user = db.query(User).filter(User.id == debit.released_by).first()
+        
         result.append({
             "id": debit.id,
             "ward_admission_id": debit.ward_admission_id,
@@ -9203,6 +9263,10 @@ def get_inpatient_inventory_debits(
             "notes": debit.notes,
             "is_billed": debit.is_billed,
             "bill_item_id": debit.bill_item_id,
+            "is_released": debit.is_released,
+            "released_by": debit.released_by,
+            "released_by_name": released_by_user.full_name if released_by_user else None,
+            "released_at": debit.released_at,
             "used_by": debit.used_by,
             "used_by_name": user.full_name if user else None,
             "used_at": debit.used_at,
@@ -9255,6 +9319,129 @@ def delete_inpatient_inventory_debit(
     db.commit()
     
     return {"message": "Inventory debit and corresponding bill item deleted successfully"}
+
+
+@router.get("/inventory-debits", response_model=List[InpatientInventoryDebitResponse])
+def get_all_inventory_debits(
+    ward: Optional[str] = None,
+    is_released: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin", "Nurse", "Doctor", "PA"]))
+):
+    """Get all inventory debits with optional ward filtering - for pharmacy staff to view and release"""
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    
+    # Build query with joins to get patient and ward information
+    query = db.query(InpatientInventoryDebit).join(
+        WardAdmission, InpatientInventoryDebit.ward_admission_id == WardAdmission.id
+    ).join(
+        Encounter, InpatientInventoryDebit.encounter_id == Encounter.id
+    ).join(
+        Patient, Encounter.patient_id == Patient.id
+    )
+    
+    # Filter by ward if provided
+    if ward:
+        query = query.filter(WardAdmission.ward == ward)
+    
+    # Filter by release status if provided
+    if is_released is not None:
+        query = query.filter(InpatientInventoryDebit.is_released == is_released)
+    
+    # Only show active admissions (not discharged)
+    query = query.filter(WardAdmission.discharged_at.is_(None))
+    
+    # Order by used_at descending (most recent first)
+    debits = query.order_by(InpatientInventoryDebit.used_at.desc()).all()
+    
+    result = []
+    for debit in debits:
+        # Get user who used the product
+        user = db.query(User).filter(User.id == debit.used_by).first()
+        
+        # Get ward admission details
+        ward_admission = db.query(WardAdmission).filter(WardAdmission.id == debit.ward_admission_id).first()
+        
+        # Get encounter and patient details
+        encounter = db.query(Encounter).filter(Encounter.id == debit.encounter_id).first()
+        patient = None
+        if encounter:
+            patient = db.query(Patient).filter(Patient.id == encounter.patient_id).first()
+        
+        # Get user who released (if released)
+        released_by_user = None
+        if debit.released_by:
+            released_by_user = db.query(User).filter(User.id == debit.released_by).first()
+        
+        result.append({
+            "id": debit.id,
+            "ward_admission_id": debit.ward_admission_id,
+            "encounter_id": debit.encounter_id,
+            "product_code": debit.product_code,
+            "product_name": debit.product_name,
+            "quantity": debit.quantity,
+            "unit_price": debit.unit_price,
+            "total_price": debit.total_price,
+            "notes": debit.notes,
+            "is_billed": debit.is_billed,
+            "bill_item_id": debit.bill_item_id,
+            "is_released": debit.is_released,
+            "released_by": debit.released_by,
+            "released_by_name": released_by_user.full_name if released_by_user else None,
+            "released_at": debit.released_at,
+            "used_by": debit.used_by,
+            "used_by_name": user.full_name if user else None,
+            "used_at": debit.used_at,
+            "created_at": debit.created_at,
+            "updated_at": debit.updated_at,
+            # Additional patient and ward information
+            "patient_name": f"{patient.surname or ''} {patient.name or ''} {patient.other_names or ''}".strip() if patient else None,
+            "patient_card_number": patient.card_number if patient else None,
+            "ward": ward_admission.ward if ward_admission else None,
+            "admitted_at": ward_admission.admitted_at if ward_admission else None,
+        })
+    
+    return result
+
+
+@router.put("/inventory-debits/{debit_id}/release")
+def release_inventory_debit(
+    debit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Release inventory debit - pharmacy staff marks inventory as released for ward administration"""
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    
+    debit = db.query(InpatientInventoryDebit).filter(InpatientInventoryDebit.id == debit_id).first()
+    if not debit:
+        raise HTTPException(status_code=404, detail="Inventory debit not found")
+    
+    if debit.is_released:
+        raise HTTPException(status_code=400, detail="Inventory debit has already been released")
+    
+    # Mark as released
+    debit.is_released = True
+    debit.released_by = current_user.id
+    debit.released_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(debit)
+    
+    # Get user who released
+    released_by_user = db.query(User).filter(User.id == debit.released_by).first()
+    
+    return {
+        "message": "Inventory debit released successfully",
+        "id": debit.id,
+        "is_released": debit.is_released,
+        "released_by": debit.released_by,
+        "released_by_name": released_by_user.full_name if released_by_user else None,
+        "released_at": debit.released_at
+    }
 
 
 @router.put("/inpatient-investigations/bulk-confirm")

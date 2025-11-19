@@ -76,6 +76,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Admin'] },
       },
       {
+        path: '/pharmacy/inventory-debits',
+        name: 'InventoryDebitManagement',
+        component: () => import('../pages/InventoryDebitManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Admin'] },
+      },
+      {
         path: '/lab',
         name: 'Lab',
         component: () => import('../pages/Lab.vue'),
