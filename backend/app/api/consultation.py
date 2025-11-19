@@ -1634,12 +1634,12 @@ def update_investigation_details(
         raise HTTPException(status_code=404, detail="Investigation not found")
     
     # Check permissions - only staff matching investigation type or Admin/Head can update
-    if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head"]:
+    if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head", "Scan"]:
         if investigation.investigation_type == "lab" and current_user.role != "Lab":
             raise HTTPException(status_code=403, detail="Only Lab staff can update lab investigations")
-        elif investigation.investigation_type == "scan" and current_user.role != "Scan":
-            raise HTTPException(status_code=403, detail="Only Scan staff can update scan investigations")
-        elif investigation.investigation_type == "xray" and current_user.role != "Xray":
+        elif investigation.investigation_type == "scan" and current_user.role != "Scan" and current_user.role != "Scan Head":
+            raise HTTPException(status_code=403, detail="Only Scan staff and Scan Head can update scan investigations")
+        elif investigation.investigation_type == "xray" and current_user.role != "Xray" and current_user.role != "Xray Head":
             raise HTTPException(status_code=403, detail="Only Xray staff can update xray investigations")
     
     # Update both gdrg_code and procedure_name together (required)
@@ -3272,8 +3272,75 @@ def create_or_update_consultation_notes(
         admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
         if notes_data.outcome == "recommended_for_admission" and notes_data.admission_ward:
             if admission:
-                admission.ward = notes_data.admission_ward
-                admission.updated_at = datetime.utcnow()
+                # If admission exists and is cancelled, delete it completely and create a new one
+                if admission.cancelled == 1:
+                    # Delete any related ward admission first (if exists)
+                    from app.models.ward_admission import WardAdmission
+                    from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+                    from app.models.bill import Bill, BillItem
+                    ward_admission = db.query(WardAdmission).filter(
+                        WardAdmission.admission_recommendation_id == admission.id
+                    ).first()
+                    if ward_admission:
+                        # Delete treatment sheet administrations first
+                        treatment_administrations = db.query(TreatmentSheetAdministration).filter(
+                            TreatmentSheetAdministration.ward_admission_id == ward_admission.id
+                        ).all()
+                        for admin in treatment_administrations:
+                            db.delete(admin)
+                        db.delete(ward_admission)
+                    
+                    # Get patient_id from the old encounter before deleting
+                    old_encounter = db.query(Encounter).filter(Encounter.id == notes_data.encounter_id).first()
+                    patient_id = old_encounter.patient_id if old_encounter else None
+                    ccc_number = old_encounter.ccc_number if old_encounter else None
+                    
+                    # Delete any unpaid bills from the cancelled admission's encounter
+                    # This ensures a fresh bill is created for readmission
+                    unpaid_bills = db.query(Bill).filter(
+                        Bill.encounter_id == notes_data.encounter_id,
+                        Bill.is_paid == False
+                    ).all()
+                    for bill in unpaid_bills:
+                        # Delete bill items first
+                        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+                        for item in bill_items:
+                            db.delete(item)
+                        db.delete(bill)
+                    
+                    # Delete the cancelled admission recommendation
+                    db.delete(admission)
+                    db.flush()
+                    
+                    # Create a new encounter for this IPD admission (not reusing old OPD encounter)
+                    from app.models.encounter import Encounter, EncounterStatus
+                    new_encounter = Encounter(
+                        patient_id=patient_id,
+                        department=notes_data.admission_ward,  # Use ward as department for IPD
+                        status=EncounterStatus.IN_CONSULTATION.value,
+                        ccc_number=ccc_number,
+                        created_by=current_user.id
+                    )
+                    db.add(new_encounter)
+                    db.flush()  # Get the new encounter ID
+                    
+                    # Create new admission recommendation with new encounter
+                    admission = AdmissionRecommendation(
+                        encounter_id=new_encounter.id,
+                        ward=notes_data.admission_ward,
+                        recommended_by=current_user.id
+                    )
+                    db.add(admission)
+                    # Update consultation notes to point to new encounter
+                    existing_notes.encounter_id = new_encounter.id
+                    # Store new encounter_id for response query
+                    final_encounter_id = new_encounter.id
+                else:
+                    # Update existing non-cancelled admission
+                    admission.ward = notes_data.admission_ward
+                    admission.recommended_by = current_user.id
+                    admission.updated_at = datetime.utcnow()
+                    final_encounter_id = notes_data.encounter_id
             else:
                 admission = AdmissionRecommendation(
                     encounter_id=notes_data.encounter_id,
@@ -3281,14 +3348,16 @@ def create_or_update_consultation_notes(
                     recommended_by=current_user.id
                 )
                 db.add(admission)
+                final_encounter_id = notes_data.encounter_id
         else:
             # If outcome changed away from admission, remove admission record if exists
             if admission:
                 db.delete(admission)
+            final_encounter_id = notes_data.encounter_id
         db.commit()
         db.refresh(existing_notes)
-        # Serialize response properly
-        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
+        # Serialize response properly - use the final encounter_id (may be new or old)
+        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == final_encounter_id).first() if notes_data.outcome == "recommended_for_admission" else None
         return {
             "id": existing_notes.id,
             "encounter_id": existing_notes.encounter_id,
@@ -3313,16 +3382,93 @@ def create_or_update_consultation_notes(
         db.add(notes)
         # Create admission recommendation if applicable
         if notes_data.outcome == "recommended_for_admission" and notes_data.admission_ward:
-            admission = AdmissionRecommendation(
-                encounter_id=notes_data.encounter_id,
-                ward=notes_data.admission_ward,
-                recommended_by=current_user.id
-            )
-            db.add(admission)
+            # Check if there's an existing admission recommendation for this encounter
+            existing_admission = db.query(AdmissionRecommendation).filter(
+                AdmissionRecommendation.encounter_id == notes_data.encounter_id
+            ).first()
+            
+            if existing_admission:
+                # If cancelled, delete it completely and create a new one
+                if existing_admission.cancelled == 1:
+                    # Delete any related ward admission first (if exists)
+                    from app.models.ward_admission import WardAdmission
+                    from app.models.treatment_sheet_administration import TreatmentSheetAdministration
+                    from app.models.bill import Bill, BillItem
+                    ward_admission = db.query(WardAdmission).filter(
+                        WardAdmission.admission_recommendation_id == existing_admission.id
+                    ).first()
+                    if ward_admission:
+                        # Delete treatment sheet administrations first
+                        treatment_administrations = db.query(TreatmentSheetAdministration).filter(
+                            TreatmentSheetAdministration.ward_admission_id == ward_admission.id
+                        ).all()
+                        for admin in treatment_administrations:
+                            db.delete(admin)
+                        db.delete(ward_admission)
+                    
+                    # Get patient_id from the old encounter before deleting
+                    old_encounter = db.query(Encounter).filter(Encounter.id == notes_data.encounter_id).first()
+                    patient_id = old_encounter.patient_id if old_encounter else None
+                    ccc_number = old_encounter.ccc_number if old_encounter else None
+                    
+                    # Delete any unpaid bills from the cancelled admission's encounter
+                    # This ensures a fresh bill is created for readmission
+                    unpaid_bills = db.query(Bill).filter(
+                        Bill.encounter_id == notes_data.encounter_id,
+                        Bill.is_paid == False
+                    ).all()
+                    for bill in unpaid_bills:
+                        # Delete bill items first
+                        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+                        for item in bill_items:
+                            db.delete(item)
+                        db.delete(bill)
+                    
+                    # Delete the cancelled admission recommendation
+                    db.delete(existing_admission)
+                    db.flush()
+                    
+                    # Create a new encounter for this IPD admission (not reusing old OPD encounter)
+                    from app.models.encounter import Encounter, EncounterStatus
+                    new_encounter = Encounter(
+                        patient_id=patient_id,
+                        department=notes_data.admission_ward,  # Use ward as department for IPD
+                        status=EncounterStatus.IN_CONSULTATION.value,
+                        ccc_number=ccc_number,
+                        created_by=current_user.id
+                    )
+                    db.add(new_encounter)
+                    db.flush()  # Get the new encounter ID
+                    
+                    # Create new admission recommendation with new encounter
+                    admission = AdmissionRecommendation(
+                        encounter_id=new_encounter.id,
+                        ward=notes_data.admission_ward,
+                        recommended_by=current_user.id
+                    )
+                    db.add(admission)
+                    # Update consultation notes to point to new encounter
+                    notes.encounter_id = new_encounter.id
+                    # Store new encounter_id for response query
+                    final_encounter_id = new_encounter.id
+                else:
+                    # Update existing non-cancelled admission
+                    existing_admission.ward = notes_data.admission_ward
+                    existing_admission.recommended_by = current_user.id
+                    existing_admission.updated_at = datetime.utcnow()
+                    final_encounter_id = notes_data.encounter_id
+            else:
+                admission = AdmissionRecommendation(
+                    encounter_id=notes_data.encounter_id,
+                    ward=notes_data.admission_ward,
+                    recommended_by=current_user.id
+                )
+                db.add(admission)
+                final_encounter_id = notes_data.encounter_id
         db.commit()
         db.refresh(notes)
-        # Serialize response properly
-        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
+        # Serialize response properly - use the final encounter_id (may be new or old)
+        admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == final_encounter_id).first()
         return {
             "id": notes.id,
             "encounter_id": notes.encounter_id,
@@ -3476,135 +3622,208 @@ def _create_ipd_admission_bill(db: Session, encounter, ccc_number: Optional[str]
     from app.models.diagnosis import Diagnosis
     from app.services.price_list_service_v2 import get_price_from_all_tables
     import random
+    import logging
     
-    # Check if patient is insured (has CCC number)
-    is_insured = ccc_number is not None and ccc_number.strip() != ""
+    logger = logging.getLogger(__name__)
     
-    # Check if there's a surgery (procedure_g_drg_code exists)
-    has_surgery = encounter.procedure_g_drg_code is not None and encounter.procedure_g_drg_code.strip() != ""
-    
-    # Find or create an unpaid bill for this encounter
-    existing_bill = db.query(Bill).filter(
-        Bill.encounter_id == encounter.id,
-        Bill.is_paid == False
-    ).first()
-    
-    if existing_bill:
-        bill = existing_bill
-    else:
-        # Create new bill
-        bill_number = f"BILL-{random.randint(100000, 999999)}"
-        bill = Bill(
-            encounter_id=encounter.id,
-            bill_number=bill_number,
-            is_insured=is_insured,
-            created_by=created_by
-        )
-        db.add(bill)
-        db.flush()
-    
-    # Add admission fee
-    admission_fee = 50.0 if is_insured else 30.0
-    
-    # Check if admission fee item already exists
-    existing_admission_fee = db.query(BillItem).filter(
-        BillItem.bill_id == bill.id,
-        BillItem.item_name.like("%Admission Fee%")
-    ).first()
-    
-    if not existing_admission_fee:
-        admission_fee_item = BillItem(
-            bill_id=bill.id,
-            item_code="IPD-ADM-FEE",
-            item_name=f"IPD Admission Fee ({'Insured' if is_insured else 'Non-Insured'})",
-            category="other",
-            quantity=1,
-            unit_price=admission_fee,
-            total_price=admission_fee
-        )
-        db.add(admission_fee_item)
-        bill.total_amount += admission_fee
-    
-    # Handle surgery or chief diagnosis
-    if has_surgery:
-        # Surgery case: Add surgery fee
-        surgery_code = encounter.procedure_g_drg_code
-        surgery_name = encounter.procedure_name or f"Surgery: {surgery_code}"
+    try:
+        # Check if patient is insured (has CCC number)
+        is_insured = ccc_number is not None and ccc_number.strip() != ""
         
-        # Check if surgery item already exists
-        existing_surgery = db.query(BillItem).filter(
-            BillItem.bill_id == bill.id,
-            BillItem.item_code == surgery_code
+        # Check if there's a surgery (procedure_g_drg_code exists)
+        has_surgery = encounter.procedure_g_drg_code is not None and encounter.procedure_g_drg_code.strip() != ""
+        
+        logger.info(f"Creating IPD admission bill for encounter {encounter.id}, is_insured={is_insured}, has_surgery={has_surgery}")
+        
+        # Find or create an unpaid bill for this encounter
+        # For readmissions (reused cancelled admissions), we want to ensure we use/create a bill
+        # Check for any unpaid bill first, but if it's paid or doesn't exist, create a new one
+        existing_bill = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False
         ).first()
         
-        if not existing_surgery:
-            # Get surgery price (co-payment for insured, base rate for non-insured)
-            # Pass surgery_name as procedure_name to match exact surgery when G-DRG codes map to multiple procedures
-            surgery_price = get_price_from_all_tables(
-                db, 
-                surgery_code, 
-                is_insured=is_insured,
-                service_type=encounter.department,
-                procedure_name=surgery_name
-            )
-            print(f"DEBUG create_bill_from_encounter: Looked up surgery price for code='{surgery_code}', name='{surgery_name}', is_insured={is_insured}, service_type='{encounter.department}', price={surgery_price}")
+        if existing_bill:
+            bill = existing_bill
+            logger.info(f"Using existing unpaid bill {bill.id} with current total_amount={bill.total_amount}")
+        else:
+            # Check if there's a paid bill - if so, we'll still create a new unpaid bill for the readmission
+            paid_bill = db.query(Bill).filter(
+                Bill.encounter_id == encounter.id,
+                Bill.is_paid == True
+            ).first()
+            if paid_bill:
+                logger.info(f"Found paid bill {paid_bill.id} from previous admission, creating new bill for readmission")
             
-            if surgery_price > 0:
-                surgery_item = BillItem(
-                    bill_id=bill.id,
-                    item_code=surgery_code,
-                    item_name=f"Surgery: {surgery_name}",
-                    category="surgery",
-                    quantity=1,
-                    unit_price=surgery_price,
-                    total_price=surgery_price
-                )
-                db.add(surgery_item)
-                bill.total_amount += surgery_price
-    else:
-        # No surgery: For non-insured, add chief diagnosis
-        if not is_insured:
-            # Find chief diagnosis
-            chief_diagnosis = db.query(Diagnosis).filter(
-                Diagnosis.encounter_id == encounter.id,
-                Diagnosis.is_chief == True,
-                Diagnosis.gdrg_code.isnot(None),
-                Diagnosis.gdrg_code != ''
+            # Create new bill for this admission/readmission
+            bill_number = f"BILL-{random.randint(100000, 999999)}"
+            bill = Bill(
+                encounter_id=encounter.id,
+                bill_number=bill_number,
+                is_insured=is_insured,
+                total_amount=0.0,  # Explicitly initialize
+                created_by=created_by
+            )
+            db.add(bill)
+            db.flush()
+            logger.info(f"Created new bill {bill.id} with bill_number={bill_number} for admission")
+    
+        # Add admission fee
+        admission_fee = 50.0 if is_insured else 30.0
+        
+        # Check if admission fee item already exists
+        existing_admission_fee = db.query(BillItem).filter(
+            BillItem.bill_id == bill.id,
+            BillItem.item_name.like("%Admission Fee%")
+        ).first()
+        
+        if not existing_admission_fee:
+            admission_fee_item = BillItem(
+                bill_id=bill.id,
+                item_code="IPD-ADM-FEE",
+                item_name=f"IPD Admission Fee ({'Insured' if is_insured else 'Non-Insured'})",
+                category="other",
+                quantity=1,
+                unit_price=admission_fee,
+                total_price=admission_fee
+            )
+            db.add(admission_fee_item)
+            bill.total_amount = (bill.total_amount or 0.0) + admission_fee
+            logger.info(f"Added admission fee: {admission_fee}, new total_amount={bill.total_amount}")
+        else:
+            logger.info(f"Admission fee already exists, skipping")
+    
+        # Handle surgery or chief diagnosis
+        if has_surgery:
+            # Surgery case: Add surgery fee
+            surgery_code = encounter.procedure_g_drg_code
+            surgery_name = encounter.procedure_name or f"Surgery: {surgery_code}"
+            
+            # Check if surgery item already exists
+            existing_surgery = db.query(BillItem).filter(
+                BillItem.bill_id == bill.id,
+                BillItem.item_code == surgery_code
             ).first()
             
-            if chief_diagnosis:
-                # Check if chief diagnosis item already exists
-                existing_diagnosis = db.query(BillItem).filter(
-                    BillItem.bill_id == bill.id,
-                    BillItem.item_code == chief_diagnosis.gdrg_code,
-                    BillItem.category == "drg"
+            if not existing_surgery:
+                # Get surgery price (co-payment for insured, base rate for non-insured)
+                # Pass surgery_name as procedure_name to match exact surgery when G-DRG codes map to multiple procedures
+                surgery_price = get_price_from_all_tables(
+                    db, 
+                    surgery_code, 
+                    is_insured=is_insured,
+                    service_type=encounter.department,
+                    procedure_name=surgery_name
+                )
+                logger.info(f"Looked up surgery price for code='{surgery_code}', name='{surgery_name}', is_insured={is_insured}, service_type='{encounter.department}', price={surgery_price}")
+                
+                if surgery_price > 0:
+                    surgery_item = BillItem(
+                        bill_id=bill.id,
+                        item_code=surgery_code,
+                        item_name=f"Surgery: {surgery_name}",
+                        category="surgery",
+                        quantity=1,
+                        unit_price=surgery_price,
+                        total_price=surgery_price
+                    )
+                    db.add(surgery_item)
+                    bill.total_amount = (bill.total_amount or 0.0) + surgery_price
+                    logger.info(f"Added surgery fee: {surgery_price}, new total_amount={bill.total_amount}")
+                else:
+                    logger.warning(f"Surgery price is 0 for code='{surgery_code}', skipping")
+            else:
+                logger.info(f"Surgery item already exists, skipping")
+        else:
+            # No surgery: For non-insured, add chief diagnosis
+            if not is_insured:
+                # Find chief diagnosis
+                chief_diagnosis = db.query(Diagnosis).filter(
+                    Diagnosis.encounter_id == encounter.id,
+                    Diagnosis.is_chief == True,
+                    Diagnosis.gdrg_code.isnot(None),
+                    Diagnosis.gdrg_code != ''
                 ).first()
                 
-                if not existing_diagnosis:
-                    # Get diagnosis price (base rate for non-insured)
-                    # Pass diagnosis name as procedure_name to match exact diagnosis when G-DRG codes map to multiple procedures
-                    diagnosis_price = get_price_from_all_tables(
-                        db,
-                        chief_diagnosis.gdrg_code,
-                        is_insured=False,
-                        procedure_name=chief_diagnosis.diagnosis
-                    )
-                    print(f"DEBUG create_bill_from_encounter: Looked up diagnosis price for code='{chief_diagnosis.gdrg_code}', name='{chief_diagnosis.diagnosis}', price={diagnosis_price}")
+                if chief_diagnosis:
+                    # Check if chief diagnosis item already exists
+                    existing_diagnosis = db.query(BillItem).filter(
+                        BillItem.bill_id == bill.id,
+                        BillItem.item_code == chief_diagnosis.gdrg_code,
+                        BillItem.category == "drg"
+                    ).first()
                     
-                    if diagnosis_price > 0:
-                        diagnosis_item = BillItem(
-                            bill_id=bill.id,
-                            item_code=chief_diagnosis.gdrg_code,
-                            item_name=f"Diagnosis: {chief_diagnosis.diagnosis}",
-                            category="drg",
-                            quantity=1,
-                            unit_price=diagnosis_price,
-                            total_price=diagnosis_price
+                    if not existing_diagnosis:
+                        # Get diagnosis price (base rate for non-insured)
+                        # Pass diagnosis name as procedure_name to match exact diagnosis when G-DRG codes map to multiple procedures
+                        diagnosis_price = get_price_from_all_tables(
+                            db,
+                            chief_diagnosis.gdrg_code,
+                            is_insured=False,
+                            procedure_name=chief_diagnosis.diagnosis
                         )
-                        db.add(diagnosis_item)
-                        bill.total_amount += diagnosis_price
-    
-    db.flush()
+                        logger.info(f"Looked up diagnosis price for code='{chief_diagnosis.gdrg_code}', name='{chief_diagnosis.diagnosis}', price={diagnosis_price}")
+                        
+                        if diagnosis_price > 0:
+                            diagnosis_item = BillItem(
+                                bill_id=bill.id,
+                                item_code=chief_diagnosis.gdrg_code,
+                                item_name=f"Diagnosis: {chief_diagnosis.diagnosis}",
+                                category="drg",
+                                quantity=1,
+                                unit_price=diagnosis_price,
+                                total_price=diagnosis_price
+                            )
+                            db.add(diagnosis_item)
+                            bill.total_amount = (bill.total_amount or 0.0) + diagnosis_price
+                            logger.info(f"Added diagnosis fee: {diagnosis_price}, new total_amount={bill.total_amount}")
+                        else:
+                            logger.warning(f"Diagnosis price is 0 for code='{chief_diagnosis.gdrg_code}', skipping")
+                    else:
+                        logger.info(f"Diagnosis item already exists, skipping")
+                else:
+                    logger.info(f"No chief diagnosis found for encounter {encounter.id}")
+        
+        # Ensure all items are flushed before recalculating
+        db.flush()
+        
+        # Ensure bill total is correct by recalculating from items
+        # This handles cases where bill might have been modified or items deleted
+        # Query items again after flush to ensure we get all items
+        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+        calculated_total = sum(item.total_price for item in bill_items)
+        bill.total_amount = calculated_total
+        
+        # Flush again to ensure total_amount is saved
+        db.flush()
+        
+        # Refresh bill to ensure we have the latest state
+        db.refresh(bill)
+        
+        logger.info(f"IPD admission bill created/updated successfully. Bill ID: {bill.id}, Total Amount: {bill.total_amount}, Items: {len(bill_items)}")
+        print(f"DEBUG: IPD admission bill created/updated. Bill ID: {bill.id}, Total: {bill.total_amount}, Items: {len(bill_items)}")
+        
+        # Verify bill was actually created with items
+        if bill.total_amount == 0 and len(bill_items) == 0:
+            logger.warning(f"WARNING: Bill {bill.id} was created but has no items and total is 0!")
+            print(f"WARNING: Bill {bill.id} was created but has no items and total is 0!")
+        elif bill.total_amount == 0 and len(bill_items) > 0:
+            logger.error(f"ERROR: Bill {bill.id} has {len(bill_items)} items but total_amount is 0! Items: {[(item.item_name, item.total_price) for item in bill_items]}")
+            print(f"ERROR: Bill {bill.id} has {len(bill_items)} items but total_amount is 0! Items: {[(item.item_name, item.total_price) for item in bill_items]}")
+            # Force recalculation one more time
+            calculated_total = sum(item.total_price for item in bill_items)
+            bill.total_amount = calculated_total
+            db.flush()
+            db.refresh(bill)
+            logger.info(f"Force-recalculated bill {bill.id} total_amount to {bill.total_amount}")
+            print(f"Force-recalculated bill {bill.id} total_amount to {bill.total_amount}")
+        
+    except Exception as e:
+        logger.error(f"Error creating IPD admission bill for encounter {encounter.id}: {str(e)}", exc_info=True)
+        print(f"ERROR in _create_ipd_admission_bill: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise  # Re-raise to let caller handle it
 
 
 class ConfirmAdmissionRequest(BaseModel):
@@ -3662,9 +3881,26 @@ def confirm_admission(
         raise HTTPException(status_code=404, detail="Doctor not found")
     
     # Get encounter to check for existing CCC
+    from app.models.encounter import EncounterStatus
     encounter = db.query(Encounter).filter(Encounter.id == admission.encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Update encounter for IPD admission
+    # Set status to IN_CONSULTATION for IPD
+    if encounter.status != EncounterStatus.IN_CONSULTATION.value:
+        encounter.status = EncounterStatus.IN_CONSULTATION.value
+        encounter.updated_at = datetime.utcnow()
+    
+    # Update encounter department to match ward
+    if encounter.department != admission.ward:
+        encounter.department = admission.ward
+        encounter.updated_at = datetime.utcnow()
+    
+    # Ensure encounter is not archived
+    if encounter.archived:
+        encounter.archived = False
+        encounter.updated_at = datetime.utcnow()
     
     # Use CCC from form or from encounter
     ccc_to_use = form_data.ccc_number or encounter.ccc_number
@@ -3708,13 +3944,43 @@ def confirm_admission(
     db.flush()  # Flush to get ward_admission ID before committing
     
     # Auto-generate IPD admission bill
+    import logging
+    logger = logging.getLogger(__name__)
     try:
+        logger.info(f"Attempting to create IPD admission bill for encounter {encounter.id}, CCC: {ccc_to_use}")
+        print(f"DEBUG: About to call _create_ipd_admission_bill for encounter {encounter.id}")
         _create_ipd_admission_bill(db, encounter, ccc_to_use, current_user.id)
+        db.flush()  # Ensure bill is saved before commit
+        
+        # Verify bill was created correctly after flush
+        from app.models.bill import Bill
+        created_bill = db.query(Bill).filter(Bill.encounter_id == encounter.id, Bill.is_paid == False).order_by(Bill.created_at.desc()).first()
+        if created_bill:
+            # Recalculate total one more time to ensure it's correct
+            from app.models.bill import BillItem
+            bill_items = db.query(BillItem).filter(BillItem.bill_id == created_bill.id).all()
+            if bill_items:
+                calculated_total = sum(item.total_price for item in bill_items)
+                if created_bill.total_amount != calculated_total:
+                    logger.warning(f"Bill {created_bill.id} total_amount mismatch: stored={created_bill.total_amount}, calculated={calculated_total}. Fixing...")
+                    print(f"WARNING: Bill {created_bill.id} total_amount mismatch: stored={created_bill.total_amount}, calculated={calculated_total}. Fixing...")
+                    created_bill.total_amount = calculated_total
+                    db.flush()
+        
+        logger.info(f"Successfully created IPD admission bill for encounter {encounter.id}")
+        print(f"DEBUG: Successfully created IPD admission bill for encounter {encounter.id}")
     except Exception as e:
         # Log error but don't fail admission confirmation
-        import logging
-        logging.error(f"Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}")
+        logger.error(f"Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}", exc_info=True)
         # Continue with admission confirmation even if bill creation fails
+        # But log it so we can investigate
+        # Also print to console for immediate visibility
+        print(f"ERROR: Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Re-raise the exception so we can see what's happening
+        # But only in development - in production we'll continue
+        # raise  # Uncomment this to see the actual error
     
     db.commit()
     db.refresh(admission)
@@ -3799,6 +4065,8 @@ class WardAdmissionResponse(BaseModel):
     id: int
     encounter_id: int
     ward: str
+    bed_id: Optional[int] = None
+    bed_number: Optional[str] = None
     doctor_id: Optional[int] = None
     doctor_name: Optional[str] = None
     doctor_username: Optional[str] = None
@@ -3899,8 +4167,14 @@ def get_ward_admissions(
                 
                 # Get bed information
                 bed_number = None
-                if ward_admission.bed_id and ward_admission.bed:
-                    bed_number = ward_admission.bed.bed_number
+                if ward_admission.bed_id:
+                    if ward_admission.bed:
+                        bed_number = ward_admission.bed.bed_number
+                        print(f"DEBUG get_ward_admissions: Ward admission {ward_admission.id} has bed_id={ward_admission.bed_id}, bed_number={bed_number}")
+                    else:
+                        print(f"DEBUG get_ward_admissions: Ward admission {ward_admission.id} has bed_id={ward_admission.bed_id} but bed relationship is None")
+                else:
+                    print(f"DEBUG get_ward_admissions: Ward admission {ward_admission.id} has no bed_id")
                 
                 # Get doctor information (doctor under whose care)
                 doctor_id = ward_admission.doctor_id
@@ -4203,8 +4477,14 @@ def get_ward_admission(
         
         # Get bed information
         bed_number = None
-        if ward_admission.bed_id and ward_admission.bed:
-            bed_number = ward_admission.bed.bed_number
+        if ward_admission.bed_id:
+            if ward_admission.bed:
+                bed_number = ward_admission.bed.bed_number
+                print(f"DEBUG get_ward_admission: Ward admission {ward_admission.id} has bed_id={ward_admission.bed_id}, bed_number={bed_number}")
+            else:
+                print(f"DEBUG get_ward_admission: Ward admission {ward_admission.id} has bed_id={ward_admission.bed_id} but bed relationship is None")
+        else:
+            print(f"DEBUG get_ward_admission: Ward admission {ward_admission.id} has no bed_id")
         
         # Get doctor information (doctor under whose care)
         doctor_id = ward_admission.doctor_id
@@ -4297,7 +4577,7 @@ def partial_discharge_patient(
     
     # Validate outcome and condition
     valid_outcomes = ["discharged", "absconded", "referred", "died", "discharged_against_medical_advice"]
-    valid_conditions = ["stable", "cured", "died", "absconded"]
+    valid_conditions = ["stable", "cured", "delivered", "improved", "not_improved", "died", "absconded"]
     
     if request.discharge_outcome not in valid_outcomes:
         raise HTTPException(status_code=400, detail=f"Invalid discharge outcome. Must be one of: {', '.join(valid_outcomes)}")
@@ -4392,7 +4672,7 @@ def final_discharge_patient(
     
     # Validate outcome and condition
     valid_outcomes = ["discharged", "absconded", "referred", "died", "discharged_against_medical_advice"]
-    valid_conditions = ["stable", "cured", "died", "absconded"]
+    valid_conditions = ["stable", "cured", "delivered", "improved", "not_improved", "died", "absconded"]
     
     if request.discharge_outcome not in valid_outcomes:
         raise HTTPException(status_code=400, detail=f"Invalid discharge outcome. Must be one of: {', '.join(valid_outcomes)}")
@@ -9232,29 +9512,17 @@ def create_direct_admission(
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     
-    # Create or get existing encounter for this admission
-    # Check for existing non-finalized encounter first
-    encounter = db.query(Encounter).filter(
-        Encounter.patient_id == patient.id,
-        Encounter.status != EncounterStatus.FINALIZED.value
-    ).order_by(Encounter.created_at.desc()).first()
-    
-    if not encounter:
-        # Create new encounter for admission
-        # Use IN_CONSULTATION status for inpatient encounters
-        encounter = Encounter(
-            patient_id=patient.id,
-            department=form_data.ward,  # Use ward as department for inpatient
-            status=EncounterStatus.IN_CONSULTATION.value,
-            ccc_number=form_data.ccc_number,
-            created_by=current_user.id
-        )
-        db.add(encounter)
-        db.flush()  # Get encounter ID
-    
-    # Update encounter CCC if provided
-    if form_data.ccc_number and not encounter.ccc_number:
-        encounter.ccc_number = form_data.ccc_number
+    # Direct admissions ALWAYS create a new encounter (never reuse existing ones)
+    # This ensures each direct admission has its own encounter that can be deleted on cancellation
+    encounter = Encounter(
+        patient_id=patient.id,
+        department=form_data.ward,  # Use ward as department for inpatient
+        status=EncounterStatus.IN_CONSULTATION.value,
+        ccc_number=form_data.ccc_number,
+        created_by=current_user.id
+    )
+    db.add(encounter)
+    db.flush()  # Get encounter ID
     
     # Update patient emergency contact if not already set
     if not patient.emergency_contact_name:
@@ -9262,7 +9530,8 @@ def create_direct_admission(
         patient.emergency_contact_relationship = form_data.emergency_contact_relationship
         patient.emergency_contact_number = form_data.emergency_contact_number
     
-    # Create admission recommendation
+    # Create new admission recommendation for direct admission
+    # Direct admissions always create fresh records (no reuse of cancelled admissions)
     admission_recommendation = AdmissionRecommendation(
         encounter_id=encounter.id,
         ward=form_data.ward,
@@ -9296,14 +9565,40 @@ def create_direct_admission(
     db.flush()  # Flush to get ward_admission ID before committing
     
     # Auto-generate IPD admission bill
+    import logging
+    logger = logging.getLogger(__name__)
     try:
         ccc_to_use = form_data.ccc_number or encounter.ccc_number
+        logger.info(f"Attempting to create IPD admission bill for encounter {encounter.id}, CCC: {ccc_to_use}")
+        print(f"DEBUG: About to call _create_ipd_admission_bill for encounter {encounter.id}")
         _create_ipd_admission_bill(db, encounter, ccc_to_use, current_user.id)
+        db.flush()  # Ensure bill is saved before commit
+        
+        # Verify bill was created correctly after flush
+        from app.models.bill import Bill
+        created_bill = db.query(Bill).filter(Bill.encounter_id == encounter.id, Bill.is_paid == False).order_by(Bill.created_at.desc()).first()
+        if created_bill:
+            # Recalculate total one more time to ensure it's correct
+            from app.models.bill import BillItem
+            bill_items = db.query(BillItem).filter(BillItem.bill_id == created_bill.id).all()
+            if bill_items:
+                calculated_total = sum(item.total_price for item in bill_items)
+                if created_bill.total_amount != calculated_total:
+                    logger.warning(f"Bill {created_bill.id} total_amount mismatch: stored={created_bill.total_amount}, calculated={calculated_total}. Fixing...")
+                    print(f"WARNING: Bill {created_bill.id} total_amount mismatch: stored={created_bill.total_amount}, calculated={calculated_total}. Fixing...")
+                    created_bill.total_amount = calculated_total
+                    db.flush()
+        
+        logger.info(f"Successfully created IPD admission bill for encounter {encounter.id}")
+        print(f"DEBUG: Successfully created IPD admission bill for encounter {encounter.id}")
     except Exception as e:
         # Log error but don't fail admission confirmation
-        import logging
-        logging.error(f"Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}")
+        logger.error(f"Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}", exc_info=True)
         # Continue with admission confirmation even if bill creation fails
+        # But log it so we can investigate
+        print(f"ERROR: Failed to create IPD admission bill for encounter {encounter.id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
     
     db.commit()
     db.refresh(admission_recommendation)
@@ -10007,18 +10302,48 @@ def cancel_ward_admission(
             bed.is_occupied = False
             bed.updated_at = datetime.utcnow()
     
-    # Revert admission recommendation confirmation
+    # Get admission recommendation and encounter
     admission = db.query(AdmissionRecommendation).filter(
         AdmissionRecommendation.id == ward_admission.admission_recommendation_id
     ).first()
     
+    encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
+    
+    # Check if this is a direct admission (no consultation notes = direct admission)
+    # Direct admissions should have their encounter deleted on cancellation
+    from app.models.consultation_notes import ConsultationNotes
+    consultation_notes = None
+    if encounter:
+        consultation_notes = db.query(ConsultationNotes).filter(
+            ConsultationNotes.encounter_id == encounter.id
+        ).first()
+    
+    # Delete all related bills and bill items for this encounter
+    from app.models.bill import Bill, BillItem
+    if encounter:
+        unpaid_bills = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False
+        ).all()
+        for bill in unpaid_bills:
+            # Delete bill items first
+            bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+            for item in bill_items:
+                db.delete(item)
+            db.delete(bill)
+    
+    # Delete admission recommendation
     if admission:
-        admission.confirmed_by = None
-        admission.confirmed_at = None
-        admission.updated_at = datetime.utcnow()
+        db.delete(admission)
     
     # Delete ward admission record
     db.delete(ward_admission)
+    
+    # If this is a direct admission (no consultation notes), delete the encounter
+    # This ensures the encounter won't be reused on readmission
+    if encounter and not consultation_notes:
+        # This is a direct admission - delete the encounter
+        db.delete(encounter)
     
     db.commit()
     

@@ -340,82 +340,91 @@
 
       <!-- Prescriptions -->
       <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Prescriptions</div>
-            <q-space />
-            <q-btn
-              flat
-              icon="history"
-              label="Show Previous"
-              color="secondary"
-              size="sm"
-              @click="showPreviousPrescriptions"
-              class="q-mr-sm"
-            />
-            <q-btn
-              color="primary"
-              label="Add Prescription"
-              @click="resetPrescriptionForm(); showPrescriptionDialog = true"
-              class="glass-button"
-            />
-          </div>
+        <q-expansion-item
+          v-model="prescriptionsExpanded"
+          icon="medication"
+          label="Prescriptions"
+          header-class="text-h6 glass-text"
+          expand-separator
+        >
+          <q-card-section>
+            <div class="row items-center q-mb-md">
+              <q-space />
+              <q-btn
+                flat
+                icon="history"
+                label="Show Previous"
+                color="secondary"
+                size="sm"
+                @click="showPreviousPrescriptions"
+                class="q-mr-sm"
+              />
+              <q-btn
+                color="primary"
+                label="Add Prescription"
+                @click="resetPrescriptionForm(); showPrescriptionDialog = true"
+                class="glass-button"
+              />
+            </div>
 
-          <q-table
-            :rows="encounterStore.encounterPrescriptions"
-            :columns="prescriptionColumns"
-            row-key="id"
-            flat
-          >
-            <template v-slot:body-cell-status="props">
-              <q-td :props="props">
-                <q-badge
-                  v-if="props.row.is_confirmed"
-                  color="positive"
-                  label="Confirmed"
-                />
-                <q-badge
-                  v-else
-                  color="warning"
-                  label="Pending"
-                />
-              </q-td>
-            </template>
-            <template v-slot:body-cell-actions="props">
-              <q-td :props="props">
-                <q-btn
-                  flat
-                  dense
-                  round
-                  icon="edit"
-                  color="primary"
-                  size="sm"
-                  @click="editPrescription(props.row)"
-                  :disable="props.row.is_confirmed"
-                >
-                  <q-tooltip>
-                    {{ props.row.is_confirmed ? 'Cannot edit confirmed prescription' : 'Edit Prescription' }}
-                  </q-tooltip>
-                </q-btn>
-                <q-btn
-                  flat
-                  dense
-                  round
-                  icon="delete"
-                  color="negative"
-                  size="sm"
-                  @click="deletePrescription(props.row)"
-                  :disable="props.row.is_confirmed"
-                  class="q-ml-xs"
-                >
-                  <q-tooltip>
-                    {{ props.row.is_confirmed ? 'Cannot delete confirmed prescription' : 'Delete Prescription' }}
-                  </q-tooltip>
-                </q-btn>
-              </q-td>
-            </template>
-          </q-table>
-        </q-card-section>
+            <q-table
+              :rows="encounterStore.encounterPrescriptions"
+              :columns="prescriptionColumns"
+              row-key="id"
+              flat
+              :rows-per-page-options="[15, 25, 50, 100]"
+              :pagination="{ rowsPerPage: 15 }"
+            >
+              <template v-slot:body-cell-status="props">
+                <q-td :props="props">
+                  <q-badge
+                    v-if="props.row.is_confirmed"
+                    color="positive"
+                    label="Confirmed"
+                  />
+                  <q-badge
+                    v-else
+                    color="warning"
+                    label="Pending"
+                  />
+                </q-td>
+              </template>
+              <template v-slot:body-cell-actions="props">
+                <q-td :props="props">
+                  <q-btn
+                    flat
+                    dense
+                    round
+                    icon="edit"
+                    color="primary"
+                    size="sm"
+                    @click="editPrescription(props.row)"
+                    :disable="props.row.is_confirmed"
+                  >
+                    <q-tooltip>
+                      {{ props.row.is_confirmed ? 'Cannot edit confirmed prescription' : 'Edit Prescription' }}
+                    </q-tooltip>
+                  </q-btn>
+                  <q-btn
+                    flat
+                    dense
+                    round
+                    icon="delete"
+                    color="negative"
+                    size="sm"
+                    @click="deletePrescription(props.row)"
+                    :disable="props.row.is_confirmed"
+                    class="q-ml-xs"
+                  >
+                    <q-tooltip>
+                      {{ props.row.is_confirmed ? 'Cannot delete confirmed prescription' : 'Delete Prescription' }}
+                    </q-tooltip>
+                  </q-btn>
+                </q-td>
+              </template>
+            </q-table>
+          </q-card-section>
+        </q-expansion-item>
       </q-card>
 
       <!-- Investigations -->
@@ -1640,6 +1649,8 @@ const getStatusColor = (status) => {
   return colors[status] || 'grey';
 };
 const finalizing = ref(false);
+
+const prescriptionsExpanded = ref(true); // Default to expanded so PAs can see prescriptions
 
 const showDiagnosisDialog = ref(false);
 const showPrescriptionDialog = ref(false);

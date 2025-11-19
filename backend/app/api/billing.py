@@ -677,9 +677,20 @@ def get_encounter_bills(
     """Get all bills for an encounter - visible to all users so they can see what patient owes"""
     # Query bills and explicitly refresh to ensure we get the latest data
     bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).order_by(Bill.created_at.desc()).all()
-    # Refresh each bill to ensure all attributes are loaded
+    
+    # Refresh each bill and recalculate total if needed
     for bill in bills:
         db.refresh(bill)
+        # Recalculate total from items if total_amount is 0 but items exist
+        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+        if bill_items and bill.total_amount == 0:
+            # Recalculate and update
+            calculated_total = sum(item.total_price for item in bill_items)
+            if calculated_total > 0:
+                bill.total_amount = calculated_total
+                db.commit()
+                db.refresh(bill)
+    
     return bills
 
 

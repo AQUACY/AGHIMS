@@ -16,7 +16,24 @@
     <!-- Ward Filter - Must select ward first -->
     <q-card v-if="!selectedWard" class="glass-card q-mb-md" flat bordered>
       <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Select Ward</div>
+        <div class="row items-center q-mb-md">
+          <div class="text-h6 glass-text">Select Ward</div>
+          <q-space />
+          <q-btn
+            flat
+            dense
+            :icon="wardLocked ? 'lock' : 'lock_open'"
+            :label="wardLocked ? 'Unlock Ward' : 'Lock Ward'"
+            :color="wardLocked ? 'positive' : 'grey'"
+            size="sm"
+            @click="toggleWardLock"
+            class="q-ml-md"
+          >
+            <q-tooltip>
+              {{ wardLocked ? 'Ward selection is locked. Click to unlock.' : 'Lock ward selection to persist across page reloads' }}
+            </q-tooltip>
+          </q-btn>
+        </div>
         <div class="row q-col-gutter-md">
           <div class="col-12 col-md-6">
             <q-select
@@ -33,6 +50,45 @@
                 <q-icon name="local_hospital" />
               </template>
             </q-select>
+          </div>
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <!-- Ward Filter with Lock - When ward is selected -->
+    <q-card v-else class="glass-card q-mb-md" flat bordered>
+      <q-card-section>
+        <div class="row items-center q-gutter-md">
+          <div class="col-12 col-md-6">
+            <q-select
+              v-model="selectedWard"
+              :options="wardOptions"
+              filled
+              dense
+              label="Select Ward"
+              emit-value
+              map-options
+              @update:model-value="onWardSelected"
+            >
+              <template v-slot:prepend>
+                <q-icon name="local_hospital" />
+              </template>
+            </q-select>
+          </div>
+          <div class="col-auto">
+            <q-btn
+              flat
+              dense
+              :icon="wardLocked ? 'lock' : 'lock_open'"
+              :label="wardLocked ? 'Unlock' : 'Lock'"
+              :color="wardLocked ? 'positive' : 'grey'"
+              size="sm"
+              @click="toggleWardLock"
+            >
+              <q-tooltip>
+                {{ wardLocked ? 'Ward selection is locked. Click to unlock.' : 'Lock ward selection to persist across page reloads' }}
+              </q-tooltip>
+            </q-btn>
           </div>
         </div>
       </q-card-section>
@@ -173,6 +229,7 @@
                 <div class="col-12">
                   <q-badge color="primary" :label="patient.ward" class="q-mr-sm" />
                   <q-badge color="info" :label="patient.encounter_service_type" />
+                  <q-badge v-if="patient.bed_number" color="accent" :label="`Bed: ${patient.bed_number}`" class="q-mr-sm" />
                 </div>
               </div>
 
@@ -331,7 +388,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI } from '../services/api';
@@ -339,12 +396,17 @@ import { consultationAPI } from '../services/api';
 const $q = useQuasar();
 const router = useRouter();
 
+// Ward lock constants
+const WARD_LOCK_KEY = 'doctor_nursing_station_ward_locked';
+const WARD_STORAGE_KEY = 'doctor_nursing_station_selected_ward';
+
 const loading = ref(false);
 const wardPatients = ref([]);
 const allWardPatients = ref([]); // Store all for getting unique wards
 const pendingTransfers = ref([]);
 const filter = ref('');
 const selectedWard = ref(null);
+const wardLocked = ref(false);
 const dischargingId = ref(null);
 const acceptingTransferId = ref(null);
 const rejectingTransferId = ref(null);
@@ -409,6 +471,15 @@ const loadWardPatients = async () => {
     
     wardPatients.value = data;
     
+    // Debug: Log bed numbers
+    console.log('DEBUG DoctorNursingStation: Loaded ward patients:', data.map(p => ({
+      id: p.id,
+      name: `${p.patient_name} ${p.patient_surname}`,
+      bed_id: p.bed_id,
+      bed_number: p.bed_number,
+      has_bed: !!p.bed_number
+    })));
+    
     // Load pending transfers for this ward
     await loadPendingTransfers();
   } catch (error) {
@@ -437,12 +508,71 @@ const loadPendingTransfers = async () => {
 
 const onWardSelected = () => {
   if (selectedWard.value) {
+    // Save ward selection if locked
+    if (wardLocked.value) {
+      saveWardToStorage();
+    }
     loadWardPatients();
   } else {
     wardPatients.value = [];
     pendingTransfers.value = [];
+    // Clear saved ward if unlocked
+    if (!wardLocked.value) {
+      localStorage.removeItem(WARD_STORAGE_KEY);
+    }
   }
 };
+
+const toggleWardLock = () => {
+  wardLocked.value = !wardLocked.value;
+  localStorage.setItem(WARD_LOCK_KEY, wardLocked.value.toString());
+  
+  if (wardLocked.value) {
+    // Lock: Save current ward selection
+    if (selectedWard.value) {
+      saveWardToStorage();
+    }
+    $q.notify({
+      type: 'positive',
+      message: 'Ward selection locked',
+      timeout: 2000,
+    });
+  } else {
+    // Unlock: Clear saved ward
+    localStorage.removeItem(WARD_STORAGE_KEY);
+    $q.notify({
+      type: 'info',
+      message: 'Ward selection unlocked',
+      timeout: 2000,
+    });
+  }
+};
+
+const saveWardToStorage = () => {
+  if (selectedWard.value) {
+    localStorage.setItem(WARD_STORAGE_KEY, selectedWard.value);
+  }
+};
+
+const loadWardFromStorage = () => {
+  const savedWard = localStorage.getItem(WARD_STORAGE_KEY);
+  const isLocked = localStorage.getItem(WARD_LOCK_KEY) === 'true';
+  
+  wardLocked.value = isLocked;
+  
+  if (isLocked && savedWard) {
+    selectedWard.value = savedWard;
+    return true; // Indicate ward was loaded
+  }
+  return false; // No ward loaded
+};
+
+// Watch for ward changes when locked
+watch(selectedWard, (newWard) => {
+  if (wardLocked.value && newWard) {
+    saveWardToStorage();
+  }
+});
 
 const dischargePatient = async (patient) => {
   $q.dialog({
@@ -592,6 +722,13 @@ onMounted(async () => {
       data = response.data.data;
     }
     allWardPatients.value = data;
+    
+    // Try to load saved ward if locked
+    const wardLoaded = loadWardFromStorage();
+    if (wardLoaded && selectedWard.value) {
+      // Ward was loaded from storage, now load patients for that ward
+      await loadWardPatients();
+    }
   } catch (error) {
     console.error('Error loading ward options:', error);
   }

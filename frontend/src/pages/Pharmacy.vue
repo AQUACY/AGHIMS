@@ -420,6 +420,8 @@
             row-key="id"
             flat
             :loading="loadingPrescriptions"
+            :rows-per-page-options="[15, 25, 50, 100]"
+            :pagination="{ rowsPerPage: 15 }"
           >
           <template v-slot:top>
             <div class="row items-center q-pa-sm">
@@ -609,6 +611,8 @@
             row-key="id"
             flat
             :loading="loadingInpatientPrescriptions"
+            :rows-per-page-options="[15, 25, 50, 100]"
+            :pagination="{ rowsPerPage: 15 }"
           >
             <template v-slot:top>
               <div class="row items-center q-pa-sm">

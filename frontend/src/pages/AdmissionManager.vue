@@ -53,6 +53,10 @@
                   <q-icon name="local_hospital" size="16px" class="q-mr-xs" />
                   Ward: <strong>{{ patientInfo.ward }}</strong>
                 </div>
+                <div v-if="patientInfo.bed_number" class="text-body2 text-secondary q-mt-xs">
+                  <q-icon name="hotel" size="16px" class="q-mr-xs" />
+                  Bed: <strong>{{ patientInfo.bed_number }}</strong>
+                </div>
                 <div class="text-body2 text-secondary q-mt-xs">
                   <q-icon name="schedule" size="16px" class="q-mr-xs" />
                   Admitted: {{ formatDateTime(patientInfo.admitted_at) }}
@@ -1774,6 +1778,9 @@ const dischargeOutcomeOptions = [
 const dischargeConditionOptions = [
   { label: 'Stable', value: 'stable' },
   { label: 'Cured', value: 'cured' },
+  { label: 'Delivered', value: 'delivered' },
+  { label: 'Improved', value: 'improved' },
+  { label: 'Not Improved', value: 'not_improved' },
   { label: 'Died', value: 'died' },
   { label: 'Absconded', value: 'absconded' },
 ];
@@ -1965,6 +1972,9 @@ const loadPatientInfo = async () => {
       console.log('Patient info loaded:', {
         id: patientInfo.value.id,
         card_number: patientInfo.value.patient_card_number,
+        bed_id: patientInfo.value.bed_id,
+        bed_number: patientInfo.value.bed_number,
+        has_bed_number: !!patientInfo.value.bed_number,
         discharged_at: patientInfo.value.discharged_at,
         emergency_contact_name: patientInfo.value.emergency_contact_name,
         emergency_contact_relationship: patientInfo.value.emergency_contact_relationship,
