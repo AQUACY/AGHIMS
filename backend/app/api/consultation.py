@@ -10,7 +10,7 @@ from datetime import datetime
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
 from app.models.user import User
-from app.models.encounter import Encounter
+from app.models.encounter import Encounter, EncounterStatus
 from app.models.diagnosis import Diagnosis
 from app.models.prescription import Prescription
 from app.models.investigation import Investigation, InvestigationStatus
@@ -3268,6 +3268,8 @@ def create_or_update_consultation_notes(
         existing_notes.follow_up_date = follow_up_date
         existing_notes.outcome = notes_data.outcome
         existing_notes.updated_at = datetime.utcnow()
+        # Initialize final_encounter_id to the current encounter_id (will be updated if new encounter is created)
+        final_encounter_id = notes_data.encounter_id
         # Handle admission recommendation
         admission = db.query(AdmissionRecommendation).filter(AdmissionRecommendation.encounter_id == notes_data.encounter_id).first()
         if notes_data.outcome == "recommended_for_admission" and notes_data.admission_ward:
@@ -3313,7 +3315,6 @@ def create_or_update_consultation_notes(
                     db.flush()
                     
                     # Create a new encounter for this IPD admission (not reusing old OPD encounter)
-                    from app.models.encounter import Encounter, EncounterStatus
                     new_encounter = Encounter(
                         patient_id=patient_id,
                         department=notes_data.admission_ward,  # Use ward as department for IPD
@@ -3380,6 +3381,8 @@ def create_or_update_consultation_notes(
             created_by=current_user.id
         )
         db.add(notes)
+        # Initialize final_encounter_id to the current encounter_id (will be updated if new encounter is created)
+        final_encounter_id = notes_data.encounter_id
         # Create admission recommendation if applicable
         if notes_data.outcome == "recommended_for_admission" and notes_data.admission_ward:
             # Check if there's an existing admission recommendation for this encounter
@@ -3429,7 +3432,6 @@ def create_or_update_consultation_notes(
                     db.flush()
                     
                     # Create a new encounter for this IPD admission (not reusing old OPD encounter)
-                    from app.models.encounter import Encounter, EncounterStatus
                     new_encounter = Encounter(
                         patient_id=patient_id,
                         department=notes_data.admission_ward,  # Use ward as department for IPD
