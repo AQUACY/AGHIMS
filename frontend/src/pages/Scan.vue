@@ -892,12 +892,16 @@ const loadAvailableServices = async () => {
     }
     
     // Remove duplicates from direct service type queries
+    // Use id as unique identifier, or combination of g_drg_code + service_name if id is not available
     if (services.length > 0) {
       const seen = new Set();
       services = services.filter(service => {
-        const code = service.g_drg_code;
-        if (!code || seen.has(code)) return false;
-        seen.add(code);
+        // Use id if available, otherwise use combination of code + name
+        const uniqueKey = service.id 
+          ? `id_${service.id}` 
+          : `${service.g_drg_code || 'no_code'}_${service.service_name || 'no_name'}`;
+        if (seen.has(uniqueKey)) return false;
+        seen.add(uniqueKey);
         return true;
       });
       console.log(`After direct queries: ${services.length} unique services`);
@@ -949,12 +953,16 @@ const loadAvailableServices = async () => {
     }
     
     // Remove duplicates after collecting from all sources
+    // Use id as unique identifier, or combination of g_drg_code + service_name if id is not available
     if (services.length > 0) {
       const seen = new Set();
       services = services.filter(service => {
-        const code = service.g_drg_code;
-        if (!code || seen.has(code)) return false;
-        seen.add(code);
+        // Use id if available, otherwise use combination of code + name
+        const uniqueKey = service.id 
+          ? `id_${service.id}` 
+          : `${service.g_drg_code || 'no_code'}_${service.service_name || 'no_name'}`;
+        if (seen.has(uniqueKey)) return false;
+        seen.add(uniqueKey);
         return true;
       });
       console.log(`After collecting all service types: ${services.length} unique services`);
@@ -1001,12 +1009,16 @@ const loadAvailableServices = async () => {
             }
           }
           
-          // Remove duplicates based on g_drg_code
+          // Remove duplicates based on id (or combination of g_drg_code + service_name)
+          // This ensures all services are kept even if they share the same g_drg_code
           const seen = new Set();
           services = services.filter(service => {
-            const code = service.g_drg_code;
-            if (!code || seen.has(code)) return false;
-            seen.add(code);
+            // Use id if available, otherwise use combination of code + name
+            const uniqueKey = service.id 
+              ? `id_${service.id}` 
+              : `${service.g_drg_code || 'no_code'}_${service.service_name || 'no_name'}`;
+            if (seen.has(uniqueKey)) return false;
+            seen.add(uniqueKey);
             return true;
           });
           console.log(`After deduplication: ${services.length} unique services`);
