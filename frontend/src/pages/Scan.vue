@@ -302,7 +302,7 @@
               filled
               :options="filteredServiceOptions"
               option-label="service_name"
-              option-value="g_drg_code"
+              :option-value="(item) => item"
               label="Search Service (start typing)"
               :loading="loadingServices"
               @update:model-value="onServiceSelected"
@@ -312,6 +312,8 @@
               @filter="filterServices"
               clearable
               hint="Start typing to search for services"
+              emit-value
+              map-options
             >
               <template v-slot:option="scope">
                 <q-item v-bind="scope.itemProps">
@@ -496,7 +498,7 @@
               filled
               :options="filteredServiceOptions"
               option-label="service_name"
-              option-value="g_drg_code"
+              :option-value="(item) => item"
               label="Search Service (start typing)"
               :loading="loadingServices"
               @update:model-value="onAddServiceSelected"
@@ -506,6 +508,8 @@
               @filter="filterServices"
               clearable
               hint="Start typing to search for services"
+              emit-value
+              map-options
             >
               <template v-slot:option="scope">
                 <q-item v-bind="scope.itemProps">
@@ -1053,7 +1057,11 @@ const openUpdateServiceDialog = async (investigation) => {
   filteredServiceOptions.value = availableServices.value;
   
   // Find and set the selected service
+  // Since multiple services can have the same g_drg_code, try to match by both code and name
   const selectedService = availableServices.value.find(
+    s => s.g_drg_code === investigation.gdrg_code && 
+         s.service_name === investigation.procedure_name
+  ) || availableServices.value.find(
     s => s.g_drg_code === investigation.gdrg_code
   );
   if (selectedService) {
