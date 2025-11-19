@@ -39,6 +39,19 @@ def migrate():
         
         print("✓ Connected to database")
         
+        # Check if table exists first
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='inpatient_inventory_debits'
+        """)
+        table_exists = cursor.fetchone() is not None
+        
+        if not table_exists:
+            print("⚠ Table 'inpatient_inventory_debits' does not exist. Skipping migration.")
+            print("This is normal if you're using MySQL in production.")
+            conn.close()
+            return
+        
         # Check if columns already exist
         cursor.execute("""
             SELECT name 
