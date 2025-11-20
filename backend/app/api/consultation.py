@@ -5017,8 +5017,8 @@ def update_nurse_mid_documentation(
     if not nurse_mid_doc:
         raise HTTPException(status_code=404, detail="Nurse mid documentation not found")
     
-    # Check permissions: user can edit their own documentation, admin can edit any
-    if current_user.role != "Admin" and nurse_mid_doc.created_by != current_user.id:
+    # Check permissions: user can edit their own documentation, admin and doctor can edit any
+    if current_user.role not in ["Admin"] and nurse_mid_doc.created_by != current_user.id:
         raise HTTPException(
             status_code=403,
             detail="You can only edit your own documentation. Admin can edit any documentation."

@@ -52,7 +52,7 @@
           <!-- Patient Problems / Diagnosis -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-              1. Patient Problems / Diagnosis *
+              1. Patient Problems / Diagnosis
             </div>
             <!-- Draft Banner -->
             <q-banner
@@ -90,7 +90,6 @@
               placeholder="Enter patient problems and diagnosis..."
               rows="4"
               hint="Auto-saved as draft"
-              :rules="[val => !!val || 'This field is required']"
               @update:model-value="autoSaveDraft('patient_problems_diagnosis')"
             />
           </div>
@@ -100,7 +99,7 @@
           <!-- Aim of Care / Objectives / Outcome Criteria -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-              2. Aim of Care / Objectives / Outcome Criteria *
+              2. Aim of Care / Objectives / Outcome Criteria
             </div>
             <!-- Draft Banner -->
             <q-banner
@@ -138,7 +137,6 @@
               placeholder="Enter aim of care, objectives, and outcome criteria..."
               rows="4"
               hint="Auto-saved as draft"
-              :rules="[val => !!val || 'This field is required']"
               @update:model-value="autoSaveDraft('aim_of_care')"
             />
           </div>
@@ -148,7 +146,7 @@
           <!-- Nursing Assessment -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-              3. Nursing Assessment *
+              3. Nursing Assessment
             </div>
             <!-- Draft Banner -->
             <q-banner
@@ -186,7 +184,6 @@
               placeholder="Enter nursing assessment..."
               rows="4"
               hint="Auto-saved as draft"
-              :rules="[val => !!val || 'This field is required']"
               @update:model-value="autoSaveDraft('nursing_assessment')"
             />
           </div>
@@ -196,7 +193,7 @@
           <!-- Nursing Orders -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-              4. Nursing Orders *
+              4. Nursing Orders
             </div>
             <!-- Draft Banner -->
             <q-banner
@@ -234,7 +231,6 @@
               placeholder="Enter nursing orders..."
               rows="4"
               hint="Auto-saved as draft"
-              :rules="[val => !!val || 'This field is required']"
               @update:model-value="autoSaveDraft('nursing_orders')"
             />
           </div>
@@ -244,7 +240,7 @@
           <!-- Nursing Intervention -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-              5. Nursing Intervention *
+              5. Nursing Intervention
             </div>
             <!-- Draft Banner -->
             <q-banner
@@ -282,7 +278,6 @@
               placeholder="Enter nursing intervention..."
               rows="4"
               hint="Auto-saved as draft"
-              :rules="[val => !!val || 'This field is required']"
               @update:model-value="autoSaveDraft('nursing_intervention')"
             />
           </div>
@@ -292,7 +287,7 @@
           <!-- Evaluation -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-              6. Evaluation *
+              6. Evaluation
             </div>
             <!-- Draft Banner -->
             <q-banner
@@ -330,7 +325,6 @@
               placeholder="Enter evaluation..."
               rows="4"
               hint="Auto-saved as draft"
-              :rules="[val => !!val || 'This field is required']"
               @update:model-value="autoSaveDraft('evaluation')"
             />
           </div>
@@ -687,9 +681,14 @@ const loadPreviousDocumentations = async () => {
 
 const canEditDocumentation = (doc) => {
   const currentUserId = authStore.user?.id;
-  const isAdmin = authStore.userRole === 'Admin';
+  const userRole = authStore.userRole;
+  const isAdmin = userRole === 'Admin';
+  const isDoctor = userRole === 'Doctor';
+  const isNurse = userRole === 'Nurse';
   const isOwner = doc.created_by === currentUserId;
-  return isAdmin || isOwner;
+  // Admin and Doctor can edit any documentation
+  // Nurse can edit their own documentation
+  return isAdmin || isDoctor || (isNurse && isOwner);
 };
 
 const editDocumentation = (doc) => {

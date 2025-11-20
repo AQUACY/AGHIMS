@@ -1007,8 +1007,9 @@
                             <div class="row items-center">
                               <div 
                                 class="col"
-                                :style="note.strikethrough === 1 ? 'text-decoration: line-through; opacity: 0.6;' : ''"
-                                v-html="note.notes"
+                                :class="getNoteClass(note)"
+                                :style="getNoteStyle(note)"
+                                v-html="processNoteHtml(note)"
                               ></div>
                               <div class="col-auto q-ml-md">
                                 <q-btn
@@ -2947,6 +2948,97 @@ const formatDate = (dateString) => {
   return date.toLocaleDateString('en-GB');
 };
 
+// Determine if a note was created during night shift (8 PM to 7:29 AM)
+const isNightShift = (dateString) => {
+  if (!dateString) return false;
+  const date = new Date(dateString);
+  // Get local time (not UTC) - JavaScript Date automatically converts UTC to local
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const timeInMinutes = hours * 60 + minutes;
+  
+  // Night shift: 8:00 PM (20:00) to 7:29 AM (7:29)
+  // Day shift: 7:30 AM (7:30) to 8:00 PM (20:00)
+  const nightShiftStart = 20 * 60; // 8:00 PM = 1200 minutes
+  const dayShiftStart = 7 * 60 + 30; // 7:30 AM = 450 minutes
+  
+  // If time is between 8 PM (20:00) and midnight (00:00), it's night shift
+  if (timeInMinutes >= nightShiftStart) {
+    return true;
+  }
+  // If time is between midnight (00:00) and 7:29 AM, it's night shift
+  if (timeInMinutes < dayShiftStart) {
+    return true;
+  }
+  // Otherwise, it's day shift (7:30 AM to 8:00 PM)
+  return false;
+};
+
+// Process HTML content to override inline color styles based on shift
+const processNoteHtml = (note) => {
+  if (!note.notes) return '';
+  
+  const nightShift = isNightShift(note.created_at);
+  const textColor = nightShift ? '#d32f2f' : '#000000'; // Red for night, black for day
+  
+  // Remove or replace inline color styles in the HTML
+  let processedHtml = note.notes;
+  
+  // Replace all inline color styles with our shift-based color
+  // This regex matches style="..." and removes/replaces color properties
+  processedHtml = processedHtml.replace(
+    /style="([^"]*)"/gi,
+    (match, styleContent) => {
+      // Remove color property from style
+      let newStyle = styleContent
+        .replace(/color\s*:\s*[^;]+;?/gi, '')
+        .replace(/;\s*;/g, ';')
+        .trim();
+      
+      // Add our shift-based color
+      newStyle = newStyle ? `${newStyle}; color: ${textColor} !important;` : `color: ${textColor} !important;`;
+      
+      return `style="${newStyle}"`;
+    }
+  );
+  
+  // Also add color to elements without style attributes
+  // Wrap the entire content in a div with the shift color
+  return `<div style="color: ${textColor} !important;">${processedHtml}</div>`;
+};
+
+// Get style for nurse note based on shift and strikethrough status
+const getNoteStyle = (note) => {
+  let style = '';
+  
+  // Build style string
+  if (note.strikethrough === 1) {
+    style += 'text-decoration: line-through; opacity: 0.6;';
+  }
+  
+  return style;
+};
+
+// Get CSS class for nurse note based on shift
+const getNoteClass = (note) => {
+  const nightShift = isNightShift(note.created_at);
+  return {
+    'night-shift-note': nightShift,
+    'day-shift-note': !nightShift,
+    'strikethrough-note': note.strikethrough === 1
+  };
+};
+
+// Debug function to check time calculation
+const debugNoteTime = (note) => {
+  if (!note.created_at) return;
+  const date = new Date(note.created_at);
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const nightShift = isNightShift(note.created_at);
+  console.log('Note time:', date.toLocaleString(), 'Hours:', hours, 'Minutes:', minutes, 'Night shift:', nightShift);
+};
+
 const formatDateTime = (dateString) => {
   if (!dateString) return 'N/A';
   const date = new Date(dateString);
@@ -3811,6 +3903,23 @@ const deleteSurgery = async (surgery) => {
 <style scoped>
 .body--light .glass-text {
   color: rgba(0, 0, 0, 0.87) !important;
+}
+
+/* Force color on nurse notes based on shift */
+.night-shift-note,
+.night-shift-note *,
+.night-shift-note p,
+.night-shift-note div,
+.night-shift-note span {
+  color: #d32f2f !important;
+}
+
+.day-shift-note,
+.day-shift-note *,
+.day-shift-note p,
+.day-shift-note div,
+.day-shift-note span {
+  color: #000000 !important;
 }
 
 .body--dark .glass-text {
