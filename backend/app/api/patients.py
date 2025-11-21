@@ -307,19 +307,27 @@ def get_patient_by_card(
     # SQLite's LIKE is case-sensitive by default, so we normalize both to uppercase
     search_term_upper = search_term.upper()
     
-    # Use func.upper() for case-insensitive comparison (works reliably with SQLite)
-    # This converts both the database column and search term to uppercase before comparing
-    # The LIKE with % wildcards will match partial strings including those with dashes
+    # Optimize: Try exact match first (much faster with index), then fallback to partial match
+    # This is much faster for exact card number searches (most common case)
     try:
+        # First try exact match (case-insensitive) - uses index, very fast
+        # For SQLite, use func.upper() for case-insensitive comparison
+        # Limit to 1 for exact match (fastest query)
+        patients = db.query(Patient).filter(
+            func.upper(Patient.card_number) == search_term_upper
+        ).limit(1).all()
+        
+        # If exact match found, return immediately (no need for partial match)
+        if patients:
+            return list(patients)
+        
+        # Only do partial match if exact match fails (slower but needed for partial searches)
+        # Limit results to improve performance
         patients = db.query(Patient).filter(
             func.upper(Patient.card_number).like(f"%{search_term_upper}%")
-        ).all()
+        ).limit(10).all()
         
-        # Debug logging (remove in production)
-        print(f"Search term: '{search_term}', Upper: '{search_term_upper}', Found: {len(patients)} patients")
-        
-        # Ensure we always return a list, even if it's empty or has one item
-        # Convert SQLAlchemy result list to Python list to ensure proper JSON serialization
+        # Ensure we always return a list, even if it's empty
         return list(patients) if patients else []
     except Exception as e:
         # Log the error and return empty list

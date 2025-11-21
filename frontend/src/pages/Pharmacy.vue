@@ -11,7 +11,7 @@
             v-model="cardNumber"
             filled
             label="Patient Card Number"
-            class="col-12 col-md-8"
+            class="col-12 col-md-6"
             @keyup.enter="searchPatient"
             :disable="loadingPatient"
           />
@@ -19,8 +19,15 @@
             color="primary"
             label="Search"
             @click="searchPatient"
-            class="col-12 col-md-4 glass-button"
+            class="col-12 col-md-3 glass-button"
             :loading="loadingPatient"
+          />
+          <q-btn
+            color="positive"
+            icon="shopping_cart"
+            label="Direct Prescription"
+            @click="openDirectPrescriptionDialog"
+            class="col-12 col-md-3"
           />
         </div>
       </q-card-section>
@@ -1121,18 +1128,33 @@
               readonly
               hint="Automatically populated"
             />
-            <q-input
-              v-model="newPrescriptionForm.dose"
-              filled
-              label="Dose *"
-              hint="e.g., 500 MG"
-              :rules="[(val) => !!val || 'Dose is required']"
-            />
-            <q-input
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="newPrescriptionForm.dose"
+                filled
+                label="Dose *"
+                hint="e.g., 500"
+                class="col"
+                :rules="[(val) => !!val || 'Dose is required']"
+              />
+              <q-select
+                v-model="newPrescriptionForm.unit"
+                filled
+                :options="unitOptions"
+                label="Unit"
+                class="col"
+                use-input
+                @filter="filterUnits"
+                @new-value="createUnit"
+                hint="e.g., MG, TAB, ML"
+              />
+            </div>
+            <q-select
               v-model="newPrescriptionForm.frequency"
               filled
+              :options="frequencyOptions"
               label="Frequency *"
-              hint="e.g., 2 DAILY"
+              hint="e.g., BDS, TDS, OD"
               :rules="[(val) => !!val || 'Frequency is required']"
             />
             <q-input
@@ -1162,6 +1184,286 @@
       </q-card>
     </q-dialog>
 
+    <!-- Direct Prescription Dialog -->
+    <q-dialog v-model="showDirectPrescriptionDialog">
+      <q-card style="min-width: 700px; max-width: 900px">
+        <q-card-section>
+          <div class="text-h6">Direct Prescription (Walk-in, no consultation)</div>
+        </q-card-section>
+        <q-card-section>
+          <q-form class="q-gutter-md">
+            <!-- Patient Selection -->
+            <div class="q-gutter-md">
+              <q-toggle
+                v-model="directPrescriptionForm.hasCardNumber"
+                label="Patient has Card Number"
+                @update:model-value="onDirectCardNumberToggle"
+              />
+              
+              <!-- With Card Number -->
+              <div v-if="directPrescriptionForm.hasCardNumber">
+                <q-input
+                  v-model="directPrescriptionForm.patientCardNumber"
+                  filled
+                  label="Patient Card Number"
+                  @input="debouncedLoadDirectPatient"
+                  @blur="loadDirectPatientByCard"
+                  @keyup.enter="loadDirectPatientByCard"
+                  :loading="loadingDirectPatients"
+                >
+                  <template v-slot:append>
+                    <q-icon name="search" />
+                  </template>
+                </q-input>
+                <div v-if="availableDirectPatients.length > 0" class="q-mt-md">
+                  <div class="text-subtitle2 q-mb-sm">Select Patient:</div>
+                  <q-list bordered separator>
+                    <q-item
+                      v-for="patient in availableDirectPatients"
+                      :key="patient.id"
+                      tag="label"
+                      v-ripple
+                    >
+                      <q-item-section avatar>
+                        <q-radio
+                          v-model="selectedDirectPatient"
+                          :val="patient.id"
+                        />
+                      </q-item-section>
+                      <q-item-section>
+                        <q-item-label>{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></q-item-label>
+                        <q-item-label caption>Card: {{ patient.card_number }}</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                  </q-list>
+                </div>
+              </div>
+              
+              <!-- Without Card Number (Name, Phone, Age/DOB) -->
+              <div v-else class="q-gutter-md">
+                <q-input
+                  v-model="directPrescriptionForm.patientFirstName"
+                  filled
+                  label="First Name *"
+                  :rules="[(val) => !!val || 'First name is required']"
+                />
+                <q-input
+                  v-model="directPrescriptionForm.patientLastName"
+                  filled
+                  label="Last Name *"
+                  :rules="[(val) => !!val || 'Last name is required']"
+                />
+                <q-input
+                  v-model="directPrescriptionForm.patientOtherNames"
+                  filled
+                  label="Other Names (Optional)"
+                />
+                <q-input
+                  v-model="directPrescriptionForm.patientPhone"
+                  filled
+                  label="Phone Number *"
+                  :rules="[(val) => !!val || 'Phone number is required']"
+                />
+                <div class="row q-gutter-md">
+                  <q-input
+                    v-model="directPrescriptionForm.patientDOB"
+                    filled
+                    type="date"
+                    label="Date of Birth *"
+                    class="col"
+                    @update:model-value="calculateAgeFromDOB"
+                    :rules="[(val) => !!val || 'Date of birth is required']"
+                  />
+                  <q-input
+                    v-model="directPrescriptionForm.patientAge"
+                    filled
+                    type="number"
+                    label="Age (Auto-calculated)"
+                    class="col"
+                    readonly
+                    hint="Calculated from date of birth"
+                  />
+                </div>
+                <q-select
+                  v-model="directPrescriptionForm.patientGender"
+                  :options="['Male', 'Female', 'Other']"
+                  filled
+                  label="Gender *"
+                  :rules="[(val) => !!val || 'Gender is required']"
+                />
+                <q-banner v-if="generatedCardNumber" class="bg-positive text-white" rounded>
+                  <template v-slot:avatar>
+                    <q-icon name="credit_card" color="white" />
+                  </template>
+                  <div class="text-weight-bold">Patient Card Number: {{ generatedCardNumber }}</div>
+                  <div class="text-caption">Please write this down for the patient to take to billing</div>
+                </q-banner>
+              </div>
+            </div>
+
+            <q-separator class="q-my-md" />
+
+            <!-- Medication Selection -->
+            <q-select
+              v-model="selectedDirectMedication"
+              filled
+              use-input
+              input-debounce="300"
+              label="Search Medication (from Pharmacy)"
+              :options="medicationOptions"
+              @filter="filterMedications"
+              @update:model-value="onDirectMedicationSelected"
+              option-value="item_code"
+              option-label="item_name"
+              emit-value
+              map-options
+              hint="Start typing to search for medications"
+              :rules="[(val) => !!val || 'Please select a medication']"
+            >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.item_name || scope.opt.product_name || scope.opt.service_name }}</q-item-label>
+                    <q-item-label v-if="scope.opt.formulation" caption class="text-grey-7">
+                      Formulation: {{ scope.opt.formulation }}
+                    </q-item-label>
+                    <q-item-label v-if="scope.opt.item_code || scope.opt.medication_code" caption class="text-grey-6">
+                      Code: {{ scope.opt.item_code || scope.opt.medication_code }}
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No medications found. Try a different search term.
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            <q-input
+              v-model="directPrescriptionForm.medicine_code"
+              filled
+              label="Medicine Code"
+              readonly
+              hint="Automatically populated"
+            />
+            <q-input
+              v-model="directPrescriptionForm.medicine_name"
+              filled
+              label="Medicine Name"
+              readonly
+              hint="Automatically populated"
+            />
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="directPrescriptionForm.dose"
+                filled
+                label="Dose *"
+                hint="e.g., 500"
+                class="col"
+                :rules="[(val) => !!val || 'Dose is required']"
+              />
+              <q-select
+                v-model="directPrescriptionForm.unit"
+                filled
+                :options="unitOptions"
+                label="Unit"
+                class="col"
+                use-input
+                @filter="filterUnits"
+                @new-value="createUnit"
+                hint="e.g., MG, TAB, ML"
+              />
+            </div>
+            <q-select
+              v-model="directPrescriptionForm.frequency"
+              filled
+              :options="frequencyOptions"
+              label="Frequency *"
+              hint="e.g., BDS, TDS, OD"
+              :rules="[(val) => !!val || 'Frequency is required']"
+            />
+            <q-input
+              v-model="directPrescriptionForm.duration"
+              filled
+              label="Duration *"
+              hint="e.g., 7 DAYS"
+              :rules="[(val) => !!val || 'Duration is required']"
+            />
+            <q-input
+              v-model.number="directPrescriptionForm.quantity"
+              filled
+              type="number"
+              label="Quantity *"
+              hint="Number of units"
+              :rules="[
+                (val) => !!val || 'Quantity is required',
+                (val) => val > 0 || 'Quantity must be greater than 0'
+              ]"
+            />
+            <q-input
+              v-model="directPrescriptionForm.instructions"
+              filled
+              type="textarea"
+              label="Instructions (Optional)"
+              rows="2"
+            />
+            <q-banner class="bg-info text-white" rounded>
+              <template v-slot:avatar>
+                <q-icon name="info" color="white" />
+              </template>
+              Direct prescriptions are billed at base rate (no co-payment). Add medications to the list below, then generate bill for patient to pay.
+            </q-banner>
+            
+            <!-- Medications List -->
+            <div v-if="directPrescriptionMedications.length > 0" class="q-mt-md">
+              <div class="text-subtitle2 q-mb-sm">Medications Added:</div>
+              <q-list bordered separator>
+                <q-item v-for="(med, index) in directPrescriptionMedications" :key="index">
+                  <q-item-section>
+                    <q-item-label>{{ med.medicine_name }} ({{ med.medicine_code }})</q-item-label>
+                    <q-item-label caption>
+                      {{ med.dose }} {{ med.unit || '' }} {{ med.frequency }} for {{ med.duration }} - Qty: {{ med.quantity }}
+                    </q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-btn
+                      flat
+                      round
+                      icon="delete"
+                      color="negative"
+                      size="sm"
+                      @click="removeDirectMedication(index)"
+                    />
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </div>
+            
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn label="Cancel" flat v-close-popup class="col" />
+              <q-btn 
+                label="Add to List" 
+                @click="addDirectMedicationToList" 
+                color="secondary" 
+                class="col" 
+                :disable="!canAddDirectMedication"
+              />
+              <q-btn 
+                label="Generate Bill" 
+                @click="generateDirectPrescriptionBill" 
+                color="primary" 
+                class="col" 
+                :loading="generatingDirectBill"
+                :disable="directPrescriptionMedications.length === 0"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
     <!-- Confirm Prescription Dialog -->
     <q-dialog v-model="showConfirmDialog">
       <q-card style="min-width: 500px; max-width: 700px">
@@ -1180,18 +1482,33 @@
 
         <q-card-section>
           <q-form @submit="confirmPrescriptionSubmit" class="q-gutter-md">
-            <q-input
-              v-model="confirmForm.dose"
-              filled
-              label="Dose *"
-              hint="e.g., 500 MG"
-              :rules="[(val) => !!val || 'Dose is required']"
-            />
-            <q-input
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="confirmForm.dose"
+                filled
+                label="Dose *"
+                hint="e.g., 500"
+                class="col"
+                :rules="[(val) => !!val || 'Dose is required']"
+              />
+              <q-select
+                v-model="confirmForm.unit"
+                filled
+                :options="unitOptions"
+                label="Unit"
+                class="col"
+                use-input
+                @filter="filterUnits"
+                @new-value="createUnit"
+                hint="e.g., MG, TAB, ML"
+              />
+            </div>
+            <q-select
               v-model="confirmForm.frequency"
               filled
+              :options="frequencyOptions"
               label="Frequency *"
-              hint="e.g., 2 DAILY"
+              hint="e.g., BDS, TDS, OD"
               :rules="[(val) => !!val || 'Frequency is required']"
             />
             <q-input
@@ -1264,18 +1581,33 @@
 
         <q-card-section>
           <q-form @submit="confirmInpatientPrescriptionSubmit" class="q-gutter-md">
-            <q-input
-              v-model="confirmInpatientForm.dose"
-              filled
-              label="Dose *"
-              hint="e.g., 500 MG"
-              :rules="[(val) => !!val || 'Dose is required']"
-            />
-            <q-input
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="confirmInpatientForm.dose"
+                filled
+                label="Dose *"
+                hint="e.g., 500"
+                class="col"
+                :rules="[(val) => !!val || 'Dose is required']"
+              />
+              <q-select
+                v-model="confirmInpatientForm.unit"
+                filled
+                :options="unitOptions"
+                label="Unit"
+                class="col"
+                use-input
+                @filter="filterUnits"
+                @new-value="createUnit"
+                hint="e.g., MG, TAB, ML"
+              />
+            </div>
+            <q-select
               v-model="confirmInpatientForm.frequency"
               filled
+              :options="frequencyOptions"
               label="Frequency *"
-              hint="e.g., 2 DAILY"
+              hint="e.g., BDS, TDS, OD"
               :rules="[(val) => !!val || 'Frequency is required']"
             />
             <q-input
@@ -1600,9 +1932,11 @@ const showDispenseDialog = ref(false);
 const showConfirmDialog = ref(false);
 const showAddPrescriptionDialog = ref(false);
 const showAddExternalPrescriptionDialog = ref(false);
+const showDirectPrescriptionDialog = ref(false);
 const showInstructionsDialog = ref(false);
 const viewingInstructions = ref(null);
 const addingPrescription = ref(false);
+const addingDirectPrescription = ref(false);
 const dispenseForm = ref({
   id: null,
   medicine_name: '',
@@ -1617,6 +1951,7 @@ const confirmForm = ref({
   medicine_name: '',
   medicine_code: '',
   dose: '',
+  unit: '',
   frequency: '',
   duration: '',
   quantity: 1,
@@ -1629,6 +1964,7 @@ const confirmInpatientForm = ref({
   medicine_name: '',
   medicine_code: '',
   dose: '',
+  unit: '',
   frequency: '',
   duration: '',
   quantity: 1,
@@ -1656,8 +1992,35 @@ const externalPrescriptionForm = ref({
   instructions: '',
 });
 const selectedMedication = ref(null);
+const selectedDirectMedication = ref(null);
 const medicationOptions = ref([]);
 const allMedications = ref([]);
+const directPrescriptionForm = ref({
+  hasCardNumber: true,
+  patientCardNumber: '',
+  patientFirstName: '',
+  patientLastName: '',
+  patientOtherNames: '',
+  patientPhone: '',
+  patientAge: null,
+  patientDOB: '',
+  patientGender: '',
+  medicine_code: '',
+  medicine_name: '',
+  dose: '',
+  frequency: '',
+  duration: '',
+  quantity: 1,
+  instructions: '',
+});
+const availableDirectPatients = ref([]);
+const selectedDirectPatient = ref(null);
+const loadingDirectPatients = ref(false);
+const directPrescriptionMedications = ref([]);
+const generatedCardNumber = ref('');
+const generatingDirectBill = ref(false);
+// Cache for patient searches to avoid redundant API calls
+const patientSearchCache = ref(new Map());
 const staffMap = ref({}); // Map of user_id -> user info for getting prescriber/dispenser names
 const prescriptionTotalAmount = ref(0);
 const loadingPrescriptionCosts = ref(false);
@@ -2110,6 +2473,7 @@ const openAddPrescriptionDialog = async () => {
         medicine_code: '',
         medicine_name: '',
         dose: '',
+        unit: '',
         frequency: '',
         duration: '',
         quantity: 1,
@@ -2145,6 +2509,7 @@ const openAddPrescriptionDialog = async () => {
       medicine_code: '',
       medicine_name: '',
       dose: '',
+      unit: '',
       frequency: '',
       duration: '',
       quantity: 1,
@@ -2204,7 +2569,7 @@ const openAddExternalPrescriptionDialog = async () => {
       console.error('Error loading clinical reviews:', error);
       $q.notify({
         type: 'negative',
-        message: error.response?.data?.detail || 'Failed to load clinical reviews',
+        message: 'Failed to load clinical reviews',
       });
     }
   } else {
@@ -2238,6 +2603,404 @@ const openAddExternalPrescriptionDialog = async () => {
     showAddExternalPrescriptionDialog.value = true;
   }
 };
+
+// Direct Prescription Functions
+const openDirectPrescriptionDialog = async () => {
+  // Load medications if not already loaded
+  if (allMedications.value.length === 0) {
+    await loadPharmacyMedications();
+  } else {
+    medicationOptions.value = allMedications.value;
+  }
+  
+  // Reset form
+  directPrescriptionForm.value = {
+    hasCardNumber: true,
+    patientCardNumber: '',
+    patientFirstName: '',
+    patientLastName: '',
+    patientOtherNames: '',
+    patientPhone: '',
+    patientAge: null,
+    patientDOB: '',
+    patientGender: '',
+    medicine_code: '',
+    medicine_name: '',
+    dose: '',
+    unit: '',
+    frequency: '',
+    duration: '',
+    quantity: 1,
+    instructions: '',
+  };
+  selectedDirectMedication.value = null;
+  selectedDirectPatient.value = null;
+  availableDirectPatients.value = [];
+  directPrescriptionMedications.value = [];
+  generatedCardNumber.value = '';
+  showDirectPrescriptionDialog.value = true;
+};
+
+const calculateAgeFromDOB = () => {
+  if (directPrescriptionForm.value.patientDOB) {
+    const today = new Date();
+    const birthDate = new Date(directPrescriptionForm.value.patientDOB);
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    directPrescriptionForm.value.patientAge = age;
+  }
+};
+
+const canAddDirectMedication = computed(() => {
+  return !!(
+    directPrescriptionForm.value.medicine_code &&
+    directPrescriptionForm.value.medicine_name &&
+    directPrescriptionForm.value.dose &&
+    directPrescriptionForm.value.frequency &&
+    directPrescriptionForm.value.duration &&
+    directPrescriptionForm.value.quantity
+  );
+});
+
+const addDirectMedicationToList = () => {
+  if (!canAddDirectMedication.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please fill in all required medication information',
+    });
+    return;
+  }
+  
+  // Add medication to list
+  directPrescriptionMedications.value.push({
+    medicine_code: directPrescriptionForm.value.medicine_code,
+    medicine_name: directPrescriptionForm.value.medicine_name,
+    dose: directPrescriptionForm.value.dose,
+    unit: directPrescriptionForm.value.unit || '',
+    frequency: directPrescriptionForm.value.frequency,
+    duration: directPrescriptionForm.value.duration,
+    quantity: directPrescriptionForm.value.quantity,
+    instructions: directPrescriptionForm.value.instructions || '',
+  });
+  
+  // Reset medication fields
+  selectedDirectMedication.value = null;
+  directPrescriptionForm.value.medicine_code = '';
+  directPrescriptionForm.value.medicine_name = '';
+  directPrescriptionForm.value.dose = '';
+  directPrescriptionForm.value.unit = '';
+  directPrescriptionForm.value.frequency = '';
+  directPrescriptionForm.value.duration = '';
+  directPrescriptionForm.value.quantity = 1;
+  directPrescriptionForm.value.instructions = '';
+  
+  $q.notify({
+    type: 'positive',
+    message: 'Medication added to list',
+  });
+};
+
+const removeDirectMedication = (index) => {
+  directPrescriptionMedications.value.splice(index, 1);
+};
+
+const generateDirectPrescriptionBill = async () => {
+  // Validate patient info
+  if (directPrescriptionForm.value.hasCardNumber) {
+    if (!selectedDirectPatient.value) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please select a patient from the search results',
+      });
+      return;
+    }
+  } else {
+    // Validate required fields for patient without card
+    if (!directPrescriptionForm.value.patientFirstName || 
+        !directPrescriptionForm.value.patientLastName || 
+        !directPrescriptionForm.value.patientPhone || 
+        !directPrescriptionForm.value.patientGender ||
+        !directPrescriptionForm.value.patientDOB ||
+        !directPrescriptionForm.value.patientAge) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please fill in all required patient information (including date of birth)',
+      });
+      return;
+    }
+  }
+  
+  if (directPrescriptionMedications.value.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please add at least one medication to the list',
+    });
+    return;
+  }
+  
+    generatingDirectBill.value = true;
+  try {
+    let patientCardNumber = '';
+    let finalCardNumber = '';
+    
+    // Create all prescriptions
+    for (const med of directPrescriptionMedications.value) {
+      const prescriptionData = {
+        ...med,
+        unit: med.unit || null,
+        instructions: med.instructions || null,
+      };
+      
+      // Add patient info
+      if (directPrescriptionForm.value.hasCardNumber) {
+        const selectedPatient = availableDirectPatients.value.find(p => p.id === selectedDirectPatient.value);
+        if (selectedPatient) {
+          prescriptionData.patient_id = selectedPatient.id;
+          prescriptionData.patient_card_number = selectedPatient.card_number;
+          finalCardNumber = selectedPatient.card_number;
+        }
+      } else {
+        prescriptionData.patient_name = `${directPrescriptionForm.value.patientFirstName} ${directPrescriptionForm.value.patientLastName}`.trim();
+        if (directPrescriptionForm.value.patientOtherNames) {
+          prescriptionData.patient_name += ` ${directPrescriptionForm.value.patientOtherNames}`;
+        }
+        prescriptionData.patient_phone = directPrescriptionForm.value.patientPhone;
+        prescriptionData.patient_age = directPrescriptionForm.value.patientAge;
+        prescriptionData.patient_dob = directPrescriptionForm.value.patientDOB;
+        prescriptionData.patient_gender = directPrescriptionForm.value.patientGender;
+      }
+      
+      // Mark as direct service
+      prescriptionData.is_direct_service = true;
+      
+      const response = await consultationAPI.createDirectPrescription(prescriptionData);
+      
+      // Capture card number from first response if patient was newly created
+      // Axios wraps response in .data
+      const responseData = response.data || response;
+      console.log('Direct prescription response:', responseData);
+      if (responseData?.patient_card_number && !patientCardNumber) {
+        patientCardNumber = responseData.patient_card_number;
+        finalCardNumber = patientCardNumber;
+        generatedCardNumber.value = patientCardNumber;
+        console.log('Captured card number:', patientCardNumber);
+      }
+    }
+    
+    // Show card number in notification if patient was newly created
+    let notificationMessage = `Successfully created ${directPrescriptionMedications.value.length} prescription(s). Bill generated.`;
+    if (finalCardNumber && !directPrescriptionForm.value.hasCardNumber) {
+      notificationMessage += ` Patient Card Number: ${finalCardNumber}. Please provide this to the patient.`;
+    }
+    notificationMessage += ' Patient can now proceed to billing.';
+    
+    $q.notify({
+      type: 'positive',
+      message: notificationMessage,
+      timeout: 8000,
+    });
+    
+    // Close dialog
+    showDirectPrescriptionDialog.value = false;
+    
+    // If patient was newly created, search for them to show in patient list
+    if (finalCardNumber && !directPrescriptionForm.value.hasCardNumber) {
+      // Set card number and search for patient
+      cardNumber.value = finalCardNumber;
+      await searchPatient();
+      
+      // Find and select the direct service encounter
+      if (patient.value) {
+        const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
+        const directEncounters = encountersResponse.data.filter(e => 
+          e.department === 'Direct Service' && !e.archived
+        ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        if (directEncounters.length > 0) {
+          // Select the most recent direct service encounter
+          // Add delay to ensure all prescriptions are committed to database
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await selectOPDEncounter(directEncounters[0].id);
+          // Force refresh prescriptions after a short delay to catch all medications
+          setTimeout(async () => {
+            if (selectedEncounterId.value === directEncounters[0].id) {
+              await loadPrescriptions();
+            }
+          }, 500);
+        }
+      }
+    } else if (finalCardNumber) {
+      // Patient with card - just search for them
+      cardNumber.value = finalCardNumber;
+      await searchPatient();
+      
+      // Find and select the direct service encounter
+      if (patient.value) {
+        const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
+        const directEncounters = encountersResponse.data.filter(e => 
+          e.department === 'Direct Service' && !e.archived
+        ).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        if (directEncounters.length > 0) {
+          // Select the most recent direct service encounter
+          // Add delay to ensure all prescriptions are committed
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await selectOPDEncounter(directEncounters[0].id);
+          // Force refresh prescriptions after a short delay
+          setTimeout(async () => {
+            if (selectedEncounterId.value === directEncounters[0].id) {
+              await loadPrescriptions();
+            }
+          }, 500);
+        }
+      }
+    }
+    
+    // Reset form
+    directPrescriptionMedications.value = [];
+    generatedCardNumber.value = '';
+    directPrescriptionForm.value = {
+      hasCardNumber: true,
+      patientCardNumber: '',
+      patientFirstName: '',
+      patientLastName: '',
+      patientOtherNames: '',
+      patientPhone: '',
+      patientAge: null,
+      patientDOB: '',
+      patientGender: '',
+      medicine_code: '',
+      medicine_name: '',
+      dose: '',
+      unit: '',
+      frequency: '',
+      duration: '',
+      quantity: 1,
+      instructions: '',
+    };
+    selectedDirectMedication.value = null;
+    selectedDirectPatient.value = null;
+    availableDirectPatients.value = [];
+  } catch (error) {
+    console.error('Error generating direct prescription bill:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to generate prescription bill',
+    });
+  } finally {
+    generatingDirectBill.value = false;
+  }
+};
+
+const onDirectCardNumberToggle = () => {
+  selectedDirectPatient.value = null;
+  availableDirectPatients.value = [];
+  directPrescriptionForm.value.patientCardNumber = '';
+};
+
+// Debounce timer for patient search
+let directPatientSearchTimer = null;
+
+const loadDirectPatientByCard = async () => {
+  const cardNumber = directPrescriptionForm.value.patientCardNumber?.trim();
+  
+  if (!cardNumber || cardNumber === '') {
+    availableDirectPatients.value = [];
+    return;
+  }
+  
+  // Don't search if card number is too short (less than 3 characters)
+  if (cardNumber.length < 3) {
+    availableDirectPatients.value = [];
+    return;
+  }
+  
+  // Check cache first (for exact matches, instant response)
+  const cacheKey = cardNumber.toUpperCase();
+  if (patientSearchCache.value.has(cacheKey)) {
+    availableDirectPatients.value = patientSearchCache.value.get(cacheKey);
+    return;
+  }
+  
+  loadingDirectPatients.value = true;
+  const startTime = performance.now();
+  try {
+    const response = await patientsAPI.getByCard(cardNumber);
+    // getByCard returns a list of patients
+    const patients = response.data || [];
+    availableDirectPatients.value = patients;
+    
+    // Cache the result for future use (only cache if we got results)
+    if (patients.length > 0) {
+      patientSearchCache.value.set(cacheKey, patients);
+      // Limit cache size to prevent memory issues (keep last 50 searches)
+      if (patientSearchCache.value.size > 50) {
+        const firstKey = patientSearchCache.value.keys().next().value;
+        patientSearchCache.value.delete(firstKey);
+      }
+    }
+    
+    const endTime = performance.now();
+    console.log(`Patient search took ${(endTime - startTime).toFixed(2)}ms`);
+    
+    if (availableDirectPatients.value.length === 0) {
+      $q.notify({
+        type: 'info',
+        message: 'No patient found with this card number',
+        timeout: 2000,
+      });
+    }
+  } catch (error) {
+    console.error('Error loading patient:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to search for patient',
+      timeout: 2000,
+    });
+    availableDirectPatients.value = [];
+  } finally {
+    loadingDirectPatients.value = false;
+  }
+};
+
+// Debounced version for input events (faster response while typing)
+const debouncedLoadDirectPatient = () => {
+  // Clear existing timer
+  if (directPatientSearchTimer) {
+    clearTimeout(directPatientSearchTimer);
+  }
+  
+  // Only search if card number is long enough (at least 4 characters for faster exact match)
+  const cardNumber = directPrescriptionForm.value.patientCardNumber?.trim();
+  if (!cardNumber || cardNumber.length < 4) {
+    availableDirectPatients.value = [];
+    return;
+  }
+  
+  // Debounce: wait 300ms after user stops typing
+  directPatientSearchTimer = setTimeout(() => {
+    loadDirectPatientByCard();
+  }, 300);
+};
+
+const onDirectMedicationSelected = (medicationCode) => {
+  if (!medicationCode) {
+    directPrescriptionForm.value.medicine_code = '';
+    directPrescriptionForm.value.medicine_name = '';
+    return;
+  }
+  
+  const medication = allMedications.value.find(m => m.item_code === medicationCode);
+  if (medication) {
+    directPrescriptionForm.value.medicine_code = medication.item_code;
+    directPrescriptionForm.value.medicine_name = medication.item_name || medication.product_name || medication.service_name;
+  }
+};
+
+// Old function removed - replaced with batch functions above
 
 // Computed property to get external prescriptions
 const externalPrescriptions = computed(() => {
@@ -2315,15 +3078,28 @@ const searchPatient = async () => {
     // Use the first patient (or exact match if available)
     patient.value = patients[0];
 
-    // Load patient bills summary
-    await loadPatientBills();
-
-    // Load ward admissions for this patient
-    await loadWardAdmissions();
-
-    // Get patient's active encounters
-    const encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
-    const allEncounters = encountersResponse.data.filter(e => !e.archived);
+    // Load critical data - encounters first (blocking), then bills/admissions in background
+    let encountersResponse;
+    try {
+      encountersResponse = await encountersAPI.getPatientEncounters(patient.value.id);
+    } catch (encounterError) {
+      // If encounters fail to load, still keep the patient but show warning
+      console.warn('Failed to load encounters:', encounterError);
+      encountersResponse = { data: [] };
+      $q.notify({
+        type: 'warning',
+        message: 'Patient found but failed to load encounters. Please try again.',
+        timeout: 3000,
+      });
+    }
+    
+    // Load bills and admissions in background (non-blocking, won't affect patient display)
+    Promise.all([
+      loadPatientBills().catch(err => console.warn('Failed to load bills:', err)),
+      loadWardAdmissions().catch(err => console.warn('Failed to load ward admissions:', err))
+    ]).catch(() => {}); // Silently handle any errors
+    
+    const allEncounters = (encountersResponse?.data || []).filter(e => !e.archived);
     
     // Separate today's encounter from old encounters
     const today = new Date();
@@ -2345,17 +3121,18 @@ const searchPatient = async () => {
     if (todaysEncounters.length > 0) {
       todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
       // Don't auto-select - let user choose
-      // Pre-fetch procedure names for today's encounter
-      getEncounterProcedures(todaysEncounter.value);
+      // Pre-fetch procedure names for today's encounter (non-blocking)
+      getEncounterProcedures(todaysEncounter.value).catch(() => {});
     } else {
       todaysEncounter.value = null;
     }
     
-    // Set old encounters and pre-fetch their procedure names
+    // Set old encounters and pre-fetch their procedure names (non-blocking)
     oldEncounters.value = oldEncs;
-    oldEncounters.value.forEach(encounter => {
-      getEncounterProcedures(encounter);
-    });
+    // Load procedure names in background without blocking
+    Promise.all(oldEncounters.value.map(encounter => 
+      getEncounterProcedures(encounter).catch(() => {})
+    )).catch(() => {});
     
     // Keep for backward compatibility
     activeEncounters.value = allEncounters.map(e => ({
@@ -2371,16 +3148,27 @@ const searchPatient = async () => {
       });
     }
   } catch (error) {
-    patient.value = null;
-    activeEncounters.value = [];
-    todaysEncounter.value = null;
-    oldEncounters.value = [];
-    selectedEncounterId.value = null;
-    prescriptions.value = [];
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Patient not found',
-    });
+    console.error('Error in searchPatient:', error);
+    // Only clear patient if we haven't successfully loaded them
+    if (!patient.value) {
+      patient.value = null;
+      activeEncounters.value = [];
+      todaysEncounter.value = null;
+      oldEncounters.value = [];
+      selectedEncounterId.value = null;
+      prescriptions.value = [];
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Patient not found',
+      });
+    } else {
+      // Patient was found but something else failed - keep patient, show warning
+      $q.notify({
+        type: 'warning',
+        message: 'Patient loaded but some data failed to load. Please refresh.',
+        timeout: 3000,
+      });
+    }
   } finally {
     loadingPatient.value = false;
   }
@@ -2395,12 +3183,22 @@ const loadPrescriptions = async () => {
   loadingPrescriptions.value = true;
   loadingData.value = true;
   try {
-    // Load OPD prescriptions only
-    const prescriptionsResponse = await consultationAPI.getPrescriptionsByPatientCard(
-      patient.value.card_number,
-      selectedEncounterId.value
-    );
-    prescriptions.value = prescriptionsResponse.data || [];
+    // Load OPD prescriptions - try direct encounter endpoint first for better reliability
+    let prescriptionsResponse;
+    try {
+      prescriptionsResponse = await consultationAPI.getPrescriptions(selectedEncounterId.value);
+      prescriptions.value = prescriptionsResponse.data || [];
+    } catch (e) {
+      // Fallback to patient card endpoint
+      console.warn('Direct endpoint failed, trying patient card endpoint:', e);
+      prescriptionsResponse = await consultationAPI.getPrescriptionsByPatientCard(
+        patient.value.card_number,
+        selectedEncounterId.value
+      );
+      prescriptions.value = prescriptionsResponse.data || [];
+    }
+    
+    console.log(`Loaded ${prescriptions.value.length} prescriptions for encounter ${selectedEncounterId.value}`);
 
     // Load encounter details (to get CCC and other fields)
     try {
@@ -2543,6 +3341,7 @@ const confirmPrescription = (prescription) => {
       medicine_name: prescription.medicine_name,
       medicine_code: prescription.medicine_code,
       dose: prescription.dose || '',
+      unit: prescription.unit || '',
       frequency: prescription.frequency || '',
       duration: prescription.duration || '',
       quantity: defaultQuantity,
@@ -2571,6 +3370,7 @@ const confirmPrescription = (prescription) => {
     medicine_name: prescription.medicine_name,
     medicine_code: prescription.medicine_code,
     dose: prescription.dose || '',
+    unit: prescription.unit || '',
     frequency: prescription.frequency || '',
     duration: prescription.duration || '',
     quantity: defaultQuantity,
@@ -2588,6 +3388,7 @@ const confirmInpatientPrescriptionSubmit = async () => {
   try {
     const confirmData = {
       dose: confirmInpatientForm.value.dose,
+      unit: confirmInpatientForm.value.unit || null,
       frequency: confirmInpatientForm.value.frequency,
       duration: confirmInpatientForm.value.duration,
       quantity: confirmInpatientForm.value.quantity,
@@ -2622,6 +3423,7 @@ const confirmPrescriptionSubmit = async () => {
   try {
     const confirmData = {
       dose: confirmForm.value.dose,
+      unit: confirmForm.value.unit || null,
       frequency: confirmForm.value.frequency,
       duration: confirmForm.value.duration,
       quantity: confirmForm.value.quantity,
@@ -3084,6 +3886,21 @@ const addPrescription = async () => {
         });
         return;
       }
+      
+      // Ensure clinical_review_id is present
+      if (!newPrescriptionForm.value.clinical_review_id) {
+        $q.notify({
+          type: 'negative',
+          message: 'Clinical review ID is missing. Please try opening the dialog again.',
+        });
+        return;
+      }
+      
+      console.log('Creating IPD prescription with:', {
+        ward_admission_id: newPrescriptionForm.value.ward_admission_id,
+        clinical_review_id: newPrescriptionForm.value.clinical_review_id,
+        medicine_code: newPrescriptionForm.value.medicine_code,
+      });
       
       await consultationAPI.createInpatientPrescription(
         newPrescriptionForm.value.ward_admission_id,
@@ -3672,7 +4489,16 @@ const selectOPDEncounter = async (encounterId) => {
   serviceType.value = 'opd';
   selectedEncounterId.value = encounterId;
   selectedWardAdmissionId.value = null;
+  // Add a small delay to ensure backend has committed all prescriptions
+  await new Promise(resolve => setTimeout(resolve, 500));
   await loadPrescriptions();
+  // Force a second refresh after a short delay to catch any late-committed prescriptions
+  setTimeout(async () => {
+    if (selectedEncounterId.value === encounterId) {
+      console.log('Refreshing prescriptions for encounter', encounterId);
+      await loadPrescriptions();
+    }
+  }, 1500);
 };
 
 // Select IPD admission

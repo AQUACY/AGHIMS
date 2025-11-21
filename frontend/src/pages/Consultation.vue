@@ -626,14 +626,45 @@
             >
               <q-card>
                 <q-card-section>
+                  <!-- Draft Banner for New Doctor Note -->
+                  <q-banner
+                    v-if="hasDoctorNoteEntryDraft('new') && newDoctorNote !== (getDoctorNoteEntryDraftValue('new') || '')"
+                    class="bg-warning text-dark q-mb-md"
+                    rounded
+                  >
+                    <template v-slot:avatar>
+                      <q-icon name="save" color="dark" />
+                    </template>
+                    <strong>Draft Available</strong>
+                    <div class="text-caption q-mt-xs">
+                      A draft was saved {{ formatDraftTime(getDoctorNoteEntryDraftTime('new')) }}. 
+                      Would you like to restore it?
+                    </div>
+                    <template v-slot:action>
+                      <q-btn
+                        flat
+                        label="Restore Draft"
+                        color="dark"
+                        @click="restoreDoctorNoteEntryDraft('new')"
+                      />
+                      <q-btn
+                        flat
+                        label="Discard"
+                        color="dark"
+                        @click="clearDoctorNoteEntryDraft('new')"
+                      />
+                    </template>
+                  </q-banner>
+                  
                   <q-input
                     v-model="newDoctorNote"
                     filled
                     type="textarea"
                     label="Doctor Notes"
                     rows="6"
-                    hint="Enter your clinical notes and observations"
+                    hint="Enter your clinical notes and observations (auto-saved as draft)"
                     :rules="[val => !!val || 'Notes are required']"
+                    @update:model-value="() => autoSaveDoctorNoteEntryDraft('new')"
                   />
                   <div class="row q-mt-md q-gutter-md">
                     <q-btn
@@ -1196,14 +1227,45 @@
           <div class="text-h6">Edit Doctor Note</div>
         </q-card-section>
         <q-card-section>
+          <!-- Draft Banner for Edit Doctor Note -->
+          <q-banner
+            v-if="editingDoctorNote.id && hasDoctorNoteEntryDraft('edit', editingDoctorNote.id) && editingDoctorNote.notes !== (getDoctorNoteEntryDraftValue('edit', editingDoctorNote.id) || '')"
+            class="bg-warning text-dark q-mb-md"
+            rounded
+          >
+            <template v-slot:avatar>
+              <q-icon name="save" color="dark" />
+            </template>
+            <strong>Draft Available</strong>
+            <div class="text-caption q-mt-xs">
+              A draft was saved {{ formatDraftTime(getDoctorNoteEntryDraftTime('edit', editingDoctorNote.id)) }}. 
+              Would you like to restore it?
+            </div>
+            <template v-slot:action>
+              <q-btn
+                flat
+                label="Restore Draft"
+                color="dark"
+                @click="restoreDoctorNoteEntryDraft('edit', editingDoctorNote.id)"
+              />
+              <q-btn
+                flat
+                label="Discard"
+                color="dark"
+                @click="clearDoctorNoteEntryDraft('edit', editingDoctorNote.id)"
+              />
+            </template>
+          </q-banner>
+          
           <q-input
             v-model="editingDoctorNote.notes"
             filled
             type="textarea"
             label="Doctor Notes"
             rows="8"
-            hint="Update your clinical notes and observations"
+            hint="Update your clinical notes and observations (auto-saved as draft)"
             :rules="[val => !!val || 'Notes are required']"
+            @update:model-value="() => editingDoctorNote.id && autoSaveDoctorNoteEntryDraft('edit', editingDoctorNote.id)"
           />
           <div class="row q-mt-md q-gutter-md">
             <q-btn label="Save" color="primary" @click="saveEditedDoctorNote" :loading="savingDoctorNote" />
@@ -2119,6 +2181,151 @@ const clearDraft = (field) => {
   }
 };
 
+// Auto-save draft functionality for doctor note entries (separate from main doctor_notes)
+const doctorNoteEntryDraftTimers = ref({});
+const DOCTOR_NOTE_ENTRY_DRAFT_SAVE_DELAY = 2000; // Save after 2 seconds of no typing
+
+// Get draft storage key for doctor note entries
+const getDoctorNoteEntryDraftKey = (type, noteId = null) => {
+  const encounterId = encounterStore.currentEncounter?.id;
+  if (!encounterId) return null;
+  // For new notes, use 'new'. For editing, use the note ID
+  const identifier = noteId ? `edit_${noteId}` : 'new';
+  return `doctor_note_entry_draft_${encounterId}_${type}_${identifier}`;
+};
+
+// Auto-save draft for doctor note entries (debounced)
+const autoSaveDoctorNoteEntryDraft = (type, noteId = null) => {
+  const encounterId = encounterStore.currentEncounter?.id;
+  if (!encounterId) {
+    console.warn('No encounter ID for doctor note entry draft save');
+    return;
+  }
+  
+  const identifier = noteId ? `edit_${noteId}` : 'new';
+  const timerKey = `${type}_${identifier}`;
+  
+  // Clear existing timer
+  if (doctorNoteEntryDraftTimers.value[timerKey]) {
+    clearTimeout(doctorNoteEntryDraftTimers.value[timerKey]);
+  }
+  
+  // Set new timer
+  doctorNoteEntryDraftTimers.value[timerKey] = setTimeout(() => {
+    const key = getDoctorNoteEntryDraftKey(type, noteId);
+    if (!key) {
+      console.warn(`No draft key for doctor note entry: ${type}_${identifier}`);
+      return;
+    }
+    
+    let value = '';
+    if (type === 'new') {
+      value = newDoctorNote.value || '';
+    } else if (type === 'edit') {
+      value = editingDoctorNote.value?.notes || '';
+    }
+    
+    if (value && value.toString().trim()) {
+      const draftData = {
+        value: value,
+        timestamp: Date.now(),
+        encounterId: encounterId,
+        noteId: noteId
+      };
+      localStorage.setItem(key, JSON.stringify(draftData));
+      console.log(`Draft saved for doctor note entry ${type}_${identifier}:`, draftData);
+    } else {
+      // Remove draft if empty
+      localStorage.removeItem(key);
+    }
+  }, DOCTOR_NOTE_ENTRY_DRAFT_SAVE_DELAY);
+};
+
+// Check if draft exists for doctor note entries
+const hasDoctorNoteEntryDraft = (type, noteId = null) => {
+  const key = getDoctorNoteEntryDraftKey(type, noteId);
+  if (!key) return false;
+  const draft = localStorage.getItem(key);
+  if (!draft) return false;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    // Check if draft is for current encounter
+    return draftData.encounterId === encounterStore.currentEncounter?.id;
+  } catch {
+    return false;
+  }
+};
+
+// Get draft time for doctor note entries
+const getDoctorNoteEntryDraftTime = (type, noteId = null) => {
+  const key = getDoctorNoteEntryDraftKey(type, noteId);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    return draftData.timestamp;
+  } catch {
+    return null;
+  }
+};
+
+// Get draft value for doctor note entries
+const getDoctorNoteEntryDraftValue = (type, noteId = null) => {
+  const key = getDoctorNoteEntryDraftKey(type, noteId);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.encounterId === encounterStore.currentEncounter?.id) {
+      return draftData.value;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+// Restore draft for doctor note entries
+const restoreDoctorNoteEntryDraft = (type, noteId = null) => {
+  const key = getDoctorNoteEntryDraftKey(type, noteId);
+  if (!key) return;
+  
+  const draft = localStorage.getItem(key);
+  if (!draft) return;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.value) {
+      if (type === 'new') {
+        newDoctorNote.value = draftData.value;
+      } else if (type === 'edit') {
+        editingDoctorNote.value.notes = draftData.value;
+      }
+      $q.notify({
+        type: 'positive',
+        message: 'Draft restored successfully',
+        position: 'top',
+        timeout: 2000
+      });
+    }
+  } catch (error) {
+    console.error('Failed to restore doctor note entry draft:', error);
+  }
+};
+
+// Clear draft for doctor note entries
+const clearDoctorNoteEntryDraft = (type, noteId = null) => {
+  const key = getDoctorNoteEntryDraftKey(type, noteId);
+  if (key) {
+    localStorage.removeItem(key);
+  }
+};
+
 // Load drafts when dialog opens
 const loadDraftsWhenDialogOpens = (field) => {
   if (hasDraft(field)) {
@@ -2311,6 +2518,21 @@ const openEditDoctorNote = (note) => {
 
 // Close edit dialog
 const closeEditDoctorNoteDialog = () => {
+  // Clear any pending draft save timers
+  if (editingDoctorNote.value.id) {
+    const timerKey = `edit_edit_${editingDoctorNote.value.id}`;
+    if (doctorNoteEntryDraftTimers.value[timerKey]) {
+      clearTimeout(doctorNoteEntryDraftTimers.value[timerKey]);
+    }
+  }
+  // Clear all timers to be safe
+  Object.keys(doctorNoteEntryDraftTimers.value).forEach(key => {
+    if (doctorNoteEntryDraftTimers.value[key]) {
+      clearTimeout(doctorNoteEntryDraftTimers.value[key]);
+    }
+  });
+  doctorNoteEntryDraftTimers.value = {};
+  
   editDoctorNoteDialog.value = false;
   editingDoctorNote.value = { id: null, notes: '' };
 };
@@ -2331,6 +2553,9 @@ const saveEditedDoctorNote = async () => {
     await consultationAPI.updateDoctorNoteEntry(editingDoctorNote.value.id, {
       notes: editingDoctorNote.value.notes
     });
+    
+    // Clear draft after successful save
+    clearDoctorNoteEntryDraft('edit', editingDoctorNote.value.id);
     
     $q.notify({
       type: 'positive',
@@ -2372,6 +2597,9 @@ const saveNewDoctorNote = async () => {
       notes: newDoctorNote.value
     });
     
+    // Clear draft after successful save
+    clearDoctorNoteEntryDraft('new');
+    
     $q.notify({
       type: 'positive',
       message: 'Doctor note added successfully',
@@ -2395,6 +2623,13 @@ const saveNewDoctorNote = async () => {
 
 // Cancel adding new doctor note
 const cancelAddDoctorNote = () => {
+  // Clear any pending draft save timers
+  const timerKey = 'new_new';
+  if (doctorNoteEntryDraftTimers.value[timerKey]) {
+    clearTimeout(doctorNoteEntryDraftTimers.value[timerKey]);
+  }
+  doctorNoteEntryDraftTimers.value = {};
+  
   newDoctorNote.value = '';
   showAddDoctorNote.value = false;
 };

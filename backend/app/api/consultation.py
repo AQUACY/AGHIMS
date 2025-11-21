@@ -133,6 +133,7 @@ class PrescriptionResponse(BaseModel):
     created_at: datetime
     is_dispensed: bool = False
     is_confirmed: bool = False
+    patient_card_number: Optional[str] = None  # For direct prescriptions - card number of newly created patient
     
     class Config:
         from_attributes = True
@@ -464,6 +465,260 @@ def create_prescription(
         )
 
 
+class DirectPrescriptionCreate(BaseModel):
+    """Direct prescription creation model (walk-in, no consultation)"""
+    medicine_code: str
+    medicine_name: str
+    dose: Optional[str] = None
+    unit: Optional[str] = None
+    frequency: Optional[str] = None
+    frequency_value: Optional[int] = None
+    duration: Optional[str] = None
+    instructions: Optional[str] = None
+    quantity: Optional[int] = None
+    unparsed: Optional[str] = None
+    # Patient identification - either patient_id, patient_card_number, or patient details
+    patient_id: Optional[int] = None
+    patient_card_number: Optional[str] = None
+    patient_name: Optional[str] = None  # Full name (first + last + other)
+    patient_phone: Optional[str] = None
+    patient_age: Optional[int] = None
+    patient_dob: Optional[str] = None  # Date of birth (YYYY-MM-DD)
+    patient_gender: Optional[str] = None
+    is_direct_service: Optional[bool] = True  # Always True for direct prescriptions
+
+
+@router.post("/prescription/direct", response_model=PrescriptionResponse, status_code=status.HTTP_201_CREATED)
+def create_direct_prescription(
+    prescription_data: DirectPrescriptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+):
+    """Create a direct prescription (walk-in, no consultation). Always uses base_rate pricing (no co-payment)."""
+    from app.models.patient import Patient
+    from app.models.encounter import Encounter, EncounterStatus
+    from app.utils.card_number import generate_card_number
+    from datetime import date, datetime
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    from app.models.bill import Bill, BillItem, Receipt
+    import random
+    
+    # Get or create patient
+    patient = None
+    if prescription_data.patient_id:
+        patient = db.query(Patient).filter(Patient.id == prescription_data.patient_id).first()
+    elif prescription_data.patient_card_number:
+        patient = db.query(Patient).filter(Patient.card_number == prescription_data.patient_card_number).first()
+    elif prescription_data.patient_name and prescription_data.patient_phone:
+        # Patient without card number - create a temporary patient record
+        # Parse patient name (first name, last name, other names)
+        name_parts = prescription_data.patient_name.strip().split()
+        first_name = name_parts[0] if name_parts else ""
+        last_name = name_parts[1] if len(name_parts) > 1 else ""
+        other_names = " ".join(name_parts[2:]) if len(name_parts) > 2 else ""
+        
+        # Calculate date of birth
+        date_of_birth = None
+        if prescription_data.patient_dob:
+            try:
+                date_of_birth = datetime.strptime(prescription_data.patient_dob, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        elif prescription_data.patient_age:
+            # Calculate approximate DOB from age
+            today = date.today()
+            birth_year = today.year - prescription_data.patient_age
+            date_of_birth = date(birth_year, 1, 1)  # Use January 1st as approximate DOB
+        
+        # Generate a card number for the new patient
+        card_number = generate_card_number(db)
+        
+        # Create new patient record
+        patient = Patient(
+            name=first_name,
+            surname=last_name,
+            other_names=other_names if other_names else None,
+            gender=prescription_data.patient_gender or "Other",
+            age=prescription_data.patient_age,
+            date_of_birth=date_of_birth,
+            card_number=card_number,
+            contact=prescription_data.patient_phone,
+            insured=False,  # Direct prescriptions are always cash (base_rate)
+            ccc_number=None
+        )
+        db.add(patient)
+        db.flush()  # Get patient ID without committing yet
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="For direct prescriptions, provide either: (1) patient_id, (2) patient_card_number, or (3) patient_name and patient_phone"
+        )
+    
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found or could not be created")
+    
+    # Check if there's an existing unpaid direct service encounter for this patient
+    # Reuse it to group all prescriptions together
+    encounter = db.query(Encounter).filter(
+        Encounter.patient_id == patient.id,
+        Encounter.department == "Direct Service",
+        Encounter.status == EncounterStatus.DRAFT.value
+    ).order_by(Encounter.created_at.desc()).first()
+    
+    # If no existing encounter, create a new one
+    if not encounter:
+        encounter = Encounter(
+            patient_id=patient.id,
+            department="Direct Service",  # Mark as direct service
+            status=EncounterStatus.DRAFT.value,  # Draft status for direct services
+            ccc_number=None,  # Direct prescriptions are always cash (no insurance)
+            created_by=current_user.id
+        )
+        db.add(encounter)
+        db.flush()  # Get encounter ID without committing yet
+    
+    # Get frequency value from mapping if frequency is provided
+    frequency_value = None
+    if prescription_data.frequency:
+        frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
+    
+    # Auto-calculate quantity if not provided
+    quantity = prescription_data.quantity
+    if (not quantity or quantity <= 0) and prescription_data.dose and frequency_value and prescription_data.duration:
+        try:
+            dose_num = float(prescription_data.dose)
+            if dose_num > 0:
+                # Extract duration number
+                duration_str = prescription_data.duration.strip() if prescription_data.duration else ""
+                duration_num = 1
+                if duration_str:
+                    try:
+                        direct_num = float(duration_str)
+                        if direct_num > 0:
+                            duration_num = int(direct_num)
+                    except ValueError:
+                        import re
+                        duration_match = re.search(r'\d+', duration_str)
+                        if duration_match:
+                            duration_num = int(duration_match.group())
+                
+                # Convert dose to units based on unit type
+                units_per_dose = dose_num
+                unit = prescription_data.unit.strip().upper() if prescription_data.unit else ""
+                if unit == "MG":
+                    units_per_dose = dose_num / 100.0
+                elif unit == "MCG":
+                    units_per_dose = dose_num / 1000.0
+                
+                # Calculate: units per dose × frequency per day × number of days
+                calculated_quantity = int(units_per_dose * frequency_value * duration_num)
+                if calculated_quantity > 0:
+                    quantity = calculated_quantity
+        except (ValueError, TypeError):
+            pass
+    
+    # Ensure quantity is set
+    if not quantity or quantity <= 0:
+        quantity = 1
+    
+    # Create prescription
+    prescription_dict = {
+        'encounter_id': encounter.id,
+        'medicine_code': prescription_data.medicine_code,
+        'medicine_name': prescription_data.medicine_name,
+        'dose': prescription_data.dose,
+        'unit': prescription_data.unit,
+        'frequency': prescription_data.frequency,
+        'frequency_value': frequency_value,
+        'duration': prescription_data.duration,
+        'instructions': prescription_data.instructions,
+        'quantity': quantity,
+        'unparsed': prescription_data.unparsed,
+        'is_external': 0,  # Not external, will be dispensed here
+    }
+    
+    prescription = Prescription(**prescription_dict, prescribed_by=current_user.id)
+    db.add(prescription)
+    db.flush()  # Get prescription ID
+    
+    # Auto-confirm direct prescriptions (client pays first, then dispensed later)
+    # Direct prescriptions are always base_rate (no co-payment)
+    is_insured = False  # Always False for direct prescriptions
+    unit_price = get_price_from_all_tables(db, prescription.medicine_code, is_insured)
+    
+    # Auto-confirm (but NOT auto-dispense - client must pay first)
+    prescription.confirmed_by = current_user.id
+    prescription.confirmed_at = datetime.utcnow()
+    
+    # Create bill item for the prescription (base_rate pricing)
+    # Find or create an unpaid bill for this encounter
+    existing_bill = db.query(Bill).filter(
+        Bill.encounter_id == encounter.id,
+        Bill.is_paid == False
+    ).first()
+    
+    if not existing_bill:
+        # Generate unique bill number
+        max_attempts = 100
+        bill_number = None
+        for _ in range(max_attempts):
+            candidate = f"BILL-{random.randint(100000, 999999)}"
+            existing_bill_check = db.query(Bill).filter(
+                Bill.bill_number == candidate
+            ).first()
+            if not existing_bill_check:
+                bill_number = candidate
+                break
+        
+        if not bill_number:
+            # Fallback: use timestamp-based approach
+            import time
+            timestamp = int(time.time() * 1000) % 1000000
+            bill_number = f"BILL-{timestamp:06d}"
+        
+        bill = Bill(
+            encounter_id=encounter.id,
+            bill_number=bill_number,
+            total_amount=0.0,  # Will be calculated from items
+            is_paid=False,
+            created_by=current_user.id
+        )
+        db.add(bill)
+        db.flush()
+    else:
+        bill = existing_bill
+    
+    # Add prescription as bill item
+    total_price = unit_price * prescription.quantity
+    bill_item = BillItem(
+        bill_id=bill.id,
+        item_name=prescription.medicine_name,
+        item_code=prescription.medicine_code,
+        category="product",  # Pharmacy items are products
+        quantity=prescription.quantity,
+        unit_price=unit_price,
+        total_price=total_price
+    )
+    db.add(bill_item)
+    
+    # Update bill total
+    bill.total_amount = (bill.total_amount or 0.0) + total_price
+    
+    db.commit()
+    db.refresh(prescription)
+    
+    # Return prescription with patient card number if it was newly created
+    response = add_prescriber_info_to_response(prescription, db)
+    
+    # Add patient card number to response if patient was newly created
+    if patient and not prescription_data.patient_id and not prescription_data.patient_card_number:
+        # Patient was newly created, include card number in response
+        # Update the response object directly
+        response.patient_card_number = patient.card_number
+    
+    return response
+
+
 def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionResponse:
     """Helper function to add prescriber and dispenser information to a prescription response"""
     # Get prescriber information
@@ -519,8 +774,10 @@ def get_prescriptions(
     current_user: User = Depends(get_current_user)
 ):
     """Get all prescriptions for an encounter"""
-    # Query prescriptions with prescriber information
-    prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).all()
+    # Query prescriptions with prescriber information, ordered by creation time
+    prescriptions = db.query(Prescription).filter(
+        Prescription.encounter_id == encounter_id
+    ).order_by(Prescription.created_at.desc()).all()
     
     result = []
     for p in prescriptions:
@@ -5791,7 +6048,7 @@ def delete_inpatient_diagnosis(
 
 # Inpatient Prescription endpoints
 class InpatientPrescriptionCreate(BaseModel):
-    clinical_review_id: int
+    # clinical_review_id is in the URL path, not needed in body
     medicine_code: str
     medicine_name: str
     dose: Optional[str] = None

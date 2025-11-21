@@ -186,6 +186,7 @@ export const consultationAPI = {
   deleteDiagnosis: (diagnosisId) => api.delete(`/consultation/diagnosis/${diagnosisId}`),
   getDiagnoses: (encounterId) => api.get(`/consultation/diagnosis/encounter/${encounterId}`),
   createPrescription: (data) => api.post('/consultation/prescription', data),
+  createDirectPrescription: (data) => api.post('/consultation/prescription/direct', data),
   updatePrescription: (prescriptionId, data) => api.put(`/consultation/prescription/${prescriptionId}`, data),
   deletePrescription: (prescriptionId) => api.delete(`/consultation/prescription/${prescriptionId}`),
   getPrescriptions: (encounterId) => api.get(`/consultation/prescription/encounter/${encounterId}`),

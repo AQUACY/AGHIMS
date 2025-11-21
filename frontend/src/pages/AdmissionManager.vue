@@ -633,19 +633,55 @@
               </q-card-section>
 
               <q-card-section>
+                <!-- Draft Banner for Documentation -->
+                <q-banner
+                  v-if="hasDocumentationDraft(currentDocumentationType) && admissionNotes !== (getDocumentationDraftValue(currentDocumentationType) || '')"
+                  class="bg-warning text-dark q-mb-md"
+                  rounded
+                >
+                  <template v-slot:avatar>
+                    <q-icon name="save" color="dark" />
+                  </template>
+                  <strong>Draft Available</strong>
+                  <div class="text-caption q-mt-xs">
+                    A draft was saved {{ formatDraftTime(getDocumentationDraftTime(currentDocumentationType)) }}. 
+                    Would you like to restore it?
+                  </div>
+                  <template v-slot:action>
+                    <q-btn
+                      flat
+                      label="Restore Draft"
+                      color="dark"
+                      @click="restoreDocumentationDraft(currentDocumentationType)"
+                    />
+                    <q-btn
+                      flat
+                      label="Discard"
+                      color="dark"
+                      @click="clearDocumentationDraft(currentDocumentationType); $q.notify({ type: 'info', message: 'Draft discarded', position: 'top', timeout: 2000 })"
+                    />
+                  </template>
+                </q-banner>
+                
                 <q-input
                   v-model="admissionNotes"
                   filled
                   type="textarea"
                   label="Notes"
-                  :hint="`Enter ${documentationTypeLabels[currentDocumentationType]?.toLowerCase() || 'notes'} for this patient`"
+                  :hint="`Enter ${documentationTypeLabels[currentDocumentationType]?.toLowerCase() || 'notes'} for this patient (auto-saved as draft)`"
                   rows="10"
                   autofocus
+                  @update:model-value="() => currentDocumentationType && autoSaveDocumentationDraft(currentDocumentationType)"
                 />
               </q-card-section>
 
               <q-card-actions align="right">
-                <q-btn flat label="Cancel" color="primary" @click="showAdmissionNotesDialog = false" />
+                <q-btn 
+                  flat 
+                  label="Cancel" 
+                  color="primary" 
+                  @click="cancelDocumentationDialog" 
+                />
                 <q-btn
                   flat
                   label="Save"
@@ -855,6 +891,49 @@
                   
                   <q-separator class="q-mb-md" />
                   
+                  <!-- Draft Banner for Nurse Notes -->
+                  <q-banner
+                    v-if="currentTableType === 'nurses_notes' && (
+                      (hasNurseNoteDraft('note_date') && tableItemData.note_date !== (getNurseNoteDraftValue('note_date') || '')) ||
+                      (hasNurseNoteDraft('note_hour') && tableItemData.note_hour !== (getNurseNoteDraftValue('note_hour') || '')) ||
+                      (hasNurseNoteDraft('notes') && tableItemData.notes !== (getNurseNoteDraftValue('notes') || ''))
+                    )"
+                    class="bg-warning text-dark q-mb-md"
+                    rounded
+                  >
+                    <template v-slot:avatar>
+                      <q-icon name="save" color="dark" />
+                    </template>
+                    <strong>Draft Available</strong>
+                    <div class="text-caption q-mt-xs">
+                      A draft was saved 
+                      <span v-if="getNurseNoteDraftTime('notes')">
+                        {{ formatDraftTime(getNurseNoteDraftTime('notes')) }}
+                      </span>
+                      <span v-else-if="getNurseNoteDraftTime('note_date')">
+                        {{ formatDraftTime(getNurseNoteDraftTime('note_date')) }}
+                      </span>
+                      <span v-else-if="getNurseNoteDraftTime('note_hour')">
+                        {{ formatDraftTime(getNurseNoteDraftTime('note_hour')) }}
+                      </span>
+                      . Would you like to restore it?
+                    </div>
+                    <template v-slot:action>
+                      <q-btn
+                        flat
+                        label="Restore All"
+                        color="dark"
+                        @click="restoreNurseNoteDraft('note_date'); restoreNurseNoteDraft('note_hour'); restoreNurseNoteDraft('notes')"
+                      />
+                      <q-btn
+                        flat
+                        label="Discard"
+                        color="dark"
+                        @click="clearAllNurseNoteDrafts(); $q.notify({ type: 'info', message: 'Draft discarded', position: 'top', timeout: 2000 })"
+                      />
+                    </template>
+                  </q-banner>
+                  
                   <div class="row q-col-gutter-md q-mb-md">
                     <div class="col-12 col-md-6">
                       <q-input
@@ -863,6 +942,7 @@
                         type="date"
                         label="Date *"
                         :rules="[val => !!val || 'Date is required']"
+                        @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('note_date')"
                       />
                     </div>
                     <div class="col-12 col-md-6">
@@ -872,6 +952,7 @@
                         type="time"
                         label="Hour *"
                         :rules="[val => !!val || 'Hour is required']"
+                        @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('note_hour')"
                       />
                     </div>
                   </div>
@@ -973,6 +1054,7 @@
                     }"
                     min-height="200px"
                     :rules="[val => !!val || 'Notes are required']"
+                    @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('notes')"
                   />
                   <q-input
                     v-else
@@ -1073,7 +1155,7 @@
                   color="warning" 
                   @click="clearVitalForm" 
                 />
-                <q-btn flat label="Cancel" color="primary" @click="showTableItemDialog = false" />
+                <q-btn flat label="Cancel" color="primary" @click="cancelTableItemDialog" />
                 <q-btn
                   flat
                   :label="(currentTableType === 'vitals' && editingVitalId) ? 'Update' : 'Save'"
@@ -1826,6 +1908,293 @@ const editingVitalId = ref(null);
 const nurseNoteEditor = ref(null);
 const selectedTextColor = ref('#000000');
 const selectedBgColor = ref('#FFFFFF');
+
+// Auto-save draft functionality for nurse notes
+const draftSaveTimers = ref({});
+const DRAFT_SAVE_DELAY = 2000; // Save after 2 seconds of no typing
+
+// Get draft storage key
+const getNurseNoteDraftKey = (field) => {
+  const admissionId = wardAdmissionId.value;
+  if (!admissionId) return null;
+  return `nurse_note_draft_${admissionId}_${field}`;
+};
+
+// Auto-save draft (debounced)
+const autoSaveNurseNoteDraft = (field) => {
+  const admissionId = wardAdmissionId.value;
+  if (!admissionId) {
+    console.warn('No ward admission ID for draft save');
+    return;
+  }
+  
+  // Clear existing timer
+  if (draftSaveTimers.value[field]) {
+    clearTimeout(draftSaveTimers.value[field]);
+  }
+  
+  // Set new timer
+  draftSaveTimers.value[field] = setTimeout(() => {
+    const key = getNurseNoteDraftKey(field);
+    if (!key) {
+      console.warn(`No draft key for field: ${field}`);
+      return;
+    }
+    
+    const value = tableItemData.value[field] || '';
+    if (value && value.toString().trim()) {
+      const draftData = {
+        value: value,
+        timestamp: Date.now(),
+        admissionId: admissionId
+      };
+      localStorage.setItem(key, JSON.stringify(draftData));
+      console.log(`Draft saved for ${field}:`, draftData);
+    } else {
+      // Remove draft if empty
+      localStorage.removeItem(key);
+    }
+  }, DRAFT_SAVE_DELAY);
+};
+
+// Check if draft exists
+const hasNurseNoteDraft = (field) => {
+  const key = getNurseNoteDraftKey(field);
+  if (!key) return false;
+  const draft = localStorage.getItem(key);
+  if (!draft) return false;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    // Check if draft is for current admission
+    return draftData.admissionId === wardAdmissionId.value;
+  } catch {
+    return false;
+  }
+};
+
+// Get draft time
+const getNurseNoteDraftTime = (field) => {
+  const key = getNurseNoteDraftKey(field);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    return draftData.timestamp;
+  } catch {
+    return null;
+  }
+};
+
+// Get draft value
+const getNurseNoteDraftValue = (field) => {
+  const key = getNurseNoteDraftKey(field);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.admissionId === wardAdmissionId.value) {
+      return draftData.value;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+// Format draft time
+const formatDraftTime = (timestamp) => {
+  if (!timestamp) return '';
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(minutes / 60);
+  
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  
+  const date = new Date(timestamp);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+// Restore draft
+const restoreNurseNoteDraft = (field) => {
+  const key = getNurseNoteDraftKey(field);
+  if (!key) return;
+  
+  const draft = localStorage.getItem(key);
+  if (!draft) return;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.value) {
+      tableItemData.value[field] = draftData.value;
+      $q.notify({
+        type: 'positive',
+        message: 'Draft restored successfully',
+        position: 'top',
+        timeout: 2000
+      });
+    }
+  } catch (error) {
+    console.error('Failed to restore draft:', error);
+  }
+};
+
+// Clear draft
+const clearNurseNoteDraft = (field) => {
+  const key = getNurseNoteDraftKey(field);
+  if (key) {
+    localStorage.removeItem(key);
+  }
+};
+
+// Clear all nurse note drafts
+const clearAllNurseNoteDrafts = () => {
+  clearNurseNoteDraft('note_date');
+  clearNurseNoteDraft('note_hour');
+  clearNurseNoteDraft('notes');
+};
+
+// Auto-save draft functionality for documentation (doctor's notes, etc.)
+const documentationDraftSaveTimers = ref({});
+const DOCUMENTATION_DRAFT_SAVE_DELAY = 2000; // Save after 2 seconds of no typing
+
+// Get draft storage key for documentation
+const getDocumentationDraftKey = (type) => {
+  const admissionId = wardAdmissionId.value;
+  if (!admissionId || !type) return null;
+  return `documentation_draft_${admissionId}_${type}`;
+};
+
+// Auto-save draft for documentation (debounced)
+const autoSaveDocumentationDraft = (type) => {
+  const admissionId = wardAdmissionId.value;
+  if (!admissionId || !type) {
+    console.warn('No ward admission ID or type for draft save');
+    return;
+  }
+  
+  // Clear existing timer
+  if (documentationDraftSaveTimers.value[type]) {
+    clearTimeout(documentationDraftSaveTimers.value[type]);
+  }
+  
+  // Set new timer
+  documentationDraftSaveTimers.value[type] = setTimeout(() => {
+    const key = getDocumentationDraftKey(type);
+    if (!key) {
+      console.warn(`No draft key for type: ${type}`);
+      return;
+    }
+    
+    const value = admissionNotes.value || '';
+    if (value && value.toString().trim()) {
+      const draftData = {
+        value: value,
+        timestamp: Date.now(),
+        admissionId: admissionId,
+        type: type
+      };
+      localStorage.setItem(key, JSON.stringify(draftData));
+      console.log(`Draft saved for ${type}:`, draftData);
+    } else {
+      // Remove draft if empty
+      localStorage.removeItem(key);
+    }
+  }, DOCUMENTATION_DRAFT_SAVE_DELAY);
+};
+
+// Check if draft exists for documentation
+const hasDocumentationDraft = (type) => {
+  const key = getDocumentationDraftKey(type);
+  if (!key) return false;
+  const draft = localStorage.getItem(key);
+  if (!draft) return false;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    // Check if draft is for current admission and type
+    return draftData.admissionId === wardAdmissionId.value && draftData.type === type;
+  } catch {
+    return false;
+  }
+};
+
+// Get draft time for documentation
+const getDocumentationDraftTime = (type) => {
+  const key = getDocumentationDraftKey(type);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    return draftData.timestamp;
+  } catch {
+    return null;
+  }
+};
+
+// Get draft value for documentation
+const getDocumentationDraftValue = (type) => {
+  const key = getDocumentationDraftKey(type);
+  if (!key) return null;
+  const draft = localStorage.getItem(key);
+  if (!draft) return null;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.admissionId === wardAdmissionId.value && draftData.type === type) {
+      return draftData.value;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+// Restore draft for documentation
+const restoreDocumentationDraft = (type) => {
+  const key = getDocumentationDraftKey(type);
+  if (!key) return;
+  
+  const draft = localStorage.getItem(key);
+  if (!draft) return;
+  
+  try {
+    const draftData = JSON.parse(draft);
+    if (draftData.value) {
+      admissionNotes.value = draftData.value;
+      $q.notify({
+        type: 'positive',
+        message: 'Draft restored successfully',
+        position: 'top',
+        timeout: 2000
+      });
+    }
+  } catch (error) {
+    console.error('Failed to restore draft:', error);
+  }
+};
+
+// Clear draft for documentation
+const clearDocumentationDraft = (type) => {
+  const key = getDocumentationDraftKey(type);
+  if (key) {
+    localStorage.removeItem(key);
+  }
+};
 
 // Vitals graph state
 const showVitalsGraphDialog = ref(false);
@@ -3045,8 +3414,22 @@ const formatDateTime = (dateString) => {
   return date.toLocaleString('en-GB');
 };
 
+const cancelDocumentationDialog = () => {
+  // Clear any pending draft save timers
+  Object.keys(documentationDraftSaveTimers.value).forEach(type => {
+    if (documentationDraftSaveTimers.value[type]) {
+      clearTimeout(documentationDraftSaveTimers.value[type]);
+    }
+  });
+  documentationDraftSaveTimers.value = {};
+  
+  // Close dialog
+  showAdmissionNotesDialog.value = false;
+};
+
 const openDocumentationDialog = (type, currentValue) => {
   currentDocumentationType.value = type;
+  // Don't auto-restore drafts - let user choose via banner
   admissionNotes.value = currentValue || '';
   showAdmissionNotesDialog.value = true;
 };
@@ -3057,6 +3440,10 @@ const saveDocumentation = async () => {
   savingNotes.value = true;
   try {
     await consultationAPI.updateAdmissionNotes(wardAdmissionId.value, admissionNotes.value);
+    
+    // Clear draft after successful save
+    clearDocumentationDraft(currentDocumentationType.value);
+    
     $q.notify({
       type: 'positive',
       message: `${documentationTypeLabels[currentDocumentationType.value]} saved successfully`,
@@ -3182,10 +3569,11 @@ const openTableItemDialog = async (type, item) => {
         };
         editingVitalId.value = null;
     } else if (type === 'nurses_notes') {
-      // Initialize with current date and time
+      // Initialize with current date and time (don't auto-restore drafts - let user choose)
       const now = new Date();
       const dateStr = now.toISOString().split('T')[0];
       const timeStr = now.toTimeString().split(' ')[0].substring(0, 5);
+      
       tableItemData.value = {
         note_date: dateStr,
         note_hour: timeStr,
@@ -3234,6 +3622,40 @@ const applyBgColor = () => {
       console.error('Error applying background color:', error);
     }
   }
+};
+
+const cancelTableItemDialog = (event) => {
+  // Prevent any default behavior
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  
+  // Don't allow canceling while saving
+  if (savingTableItem.value) {
+    return;
+  }
+  
+  // Clear any pending draft save timers
+  Object.keys(draftSaveTimers.value).forEach(field => {
+    if (draftSaveTimers.value[field]) {
+      clearTimeout(draftSaveTimers.value[field]);
+    }
+  });
+  draftSaveTimers.value = {};
+  
+  // Reset form data
+  tableItemData.value = {};
+  currentTableType.value = '';
+  editingClinicalReviewId.value = null;
+  editingVitalId.value = null;
+  
+  // Reset color pickers for nurse notes
+  selectedTextColor.value = '#000000';
+  selectedBgColor.value = '#FFFFFF';
+  
+  // Close dialog
+  showTableItemDialog.value = false;
 };
 
 const saveTableItem = async () => {
@@ -3289,6 +3711,12 @@ const saveTableItem = async () => {
       type: 'positive',
       message: `${documentationTypeLabels[currentTableType.value]} ${isUpdating ? 'updated' : 'saved'} successfully`,
     });
+    
+    // Clear drafts after successful save (only for nurse notes)
+    if (currentTableType.value === 'nurses_notes') {
+      clearAllNurseNoteDrafts();
+    }
+    
     showTableItemDialog.value = false;
     editingClinicalReviewId.value = null;
     editingVitalId.value = null;
