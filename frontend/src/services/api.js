@@ -201,6 +201,10 @@ export const consultationAPI = {
     api.put(`/consultation/investigation/${investigationId}/cancel`, data),
   getConsultationNotes: (encounterId) => api.get(`/consultation/notes/encounter/${encounterId}`),
   saveConsultationNotes: (data) => api.post('/consultation/notes', data),
+  // Doctor note entries endpoints
+  getDoctorNoteEntries: (encounterId) => api.get(`/consultation/encounters/${encounterId}/doctor-notes`),
+  createDoctorNoteEntry: (encounterId, data) => api.post(`/consultation/encounters/${encounterId}/doctor-notes`, data),
+  updateDoctorNoteEntry: (noteId, data) => api.put(`/consultation/doctor-notes/${noteId}`, data),
   getPrescriptionsByPatientCard: (cardNumber, encounterId) => 
     api.get(`/consultation/prescription/patient/${cardNumber}/encounter/${encounterId}`),
   confirmPrescription: (prescriptionId, data = null) => {

@@ -48,6 +48,7 @@ class Encounter(Base):
     vitals = relationship("Vital", back_populates="encounter", uselist=False, cascade="all, delete-orphan")
     diagnoses = relationship("Diagnosis", back_populates="encounter", cascade="all, delete-orphan")
     prescriptions = relationship("Prescription", back_populates="encounter", cascade="all, delete-orphan")
+    doctor_note_entries = relationship("DoctorNoteEntry", back_populates="encounter", cascade="all, delete-orphan")
     investigations = relationship("Investigation", back_populates="encounter", cascade="all, delete-orphan")
     bills = relationship("Bill", back_populates="encounter", cascade="all, delete-orphan")
     claims = relationship("Claim", back_populates="encounter", cascade="all, delete-orphan")

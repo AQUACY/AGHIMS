@@ -22,6 +22,7 @@ from app.models.xray_result import XrayResult
 from app.models.inpatient_xray_result import InpatientXrayResult
 from app.models.consultation_notes import ConsultationNotes
 from app.models.admission import AdmissionRecommendation
+from app.models.doctor_note_entry import DoctorNoteEntry
 
 router = APIRouter(prefix="/consultation", tags=["consultation"])
 
@@ -3528,6 +3529,152 @@ def create_or_update_consultation_notes(
             "updated_at": notes.updated_at,
         }
 
+
+# Doctor Note Entry endpoints
+class DoctorNoteEntryCreate(BaseModel):
+    """Doctor note entry creation model"""
+    encounter_id: int
+    notes: str
+
+
+class DoctorNoteEntryUpdate(BaseModel):
+    """Doctor note entry update model"""
+    notes: str
+
+
+class DoctorNoteEntryResponse(BaseModel):
+    """Doctor note entry response model"""
+    id: int
+    encounter_id: int
+    notes: str
+    created_by: int
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.get("/encounters/{encounter_id}/doctor-notes", response_model=List[DoctorNoteEntryResponse])
+def get_doctor_note_entries(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all doctor note entries for an encounter"""
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    doctor_notes = db.query(DoctorNoteEntry).filter(
+        DoctorNoteEntry.encounter_id == encounter_id
+    ).order_by(DoctorNoteEntry.created_at.asc()).all()
+    
+    result = []
+    for note in doctor_notes:
+        creator = db.query(User).filter(User.id == note.created_by).first()
+        result.append({
+            "id": note.id,
+            "encounter_id": note.encounter_id,
+            "notes": note.notes,
+            "created_by": note.created_by,
+            "created_by_name": creator.full_name if creator else None,
+            "created_at": note.created_at,
+            "updated_at": note.updated_at,
+        })
+    
+    return result
+
+
+@router.post("/encounters/{encounter_id}/doctor-notes", response_model=DoctorNoteEntryResponse, status_code=status.HTTP_201_CREATED)
+def create_doctor_note_entry(
+    encounter_id: int,
+    note_data: DoctorNoteEntryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
+):
+    """Create a new doctor note entry for an encounter"""
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Check if encounter is finalized - cannot add notes to finalized encounters
+    if encounter.status == EncounterStatus.FINALIZED.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot add doctor notes to a finalized consultation"
+        )
+    
+    # Verify encounter_id matches
+    if note_data.encounter_id != encounter_id:
+        raise HTTPException(status_code=400, detail="Encounter ID mismatch")
+    
+    doctor_note = DoctorNoteEntry(
+        encounter_id=encounter_id,
+        notes=note_data.notes,
+        created_by=current_user.id
+    )
+    
+    db.add(doctor_note)
+    db.commit()
+    db.refresh(doctor_note)
+    
+    creator = db.query(User).filter(User.id == doctor_note.created_by).first()
+    return {
+        "id": doctor_note.id,
+        "encounter_id": doctor_note.encounter_id,
+        "notes": doctor_note.notes,
+        "created_by": doctor_note.created_by,
+        "created_by_name": creator.full_name if creator else None,
+        "created_at": doctor_note.created_at,
+        "updated_at": doctor_note.updated_at,
+    }
+
+
+@router.put("/doctor-notes/{note_id}", response_model=DoctorNoteEntryResponse)
+def update_doctor_note_entry(
+    note_id: int,
+    note_data: DoctorNoteEntryUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
+):
+    """Update a doctor note entry (only by the creator)"""
+    doctor_note = db.query(DoctorNoteEntry).filter(DoctorNoteEntry.id == note_id).first()
+    if not doctor_note:
+        raise HTTPException(status_code=404, detail="Doctor note entry not found")
+    
+    # Check if user is the creator (or admin)
+    if doctor_note.created_by != current_user.id and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=403,
+            detail="You can only update your own doctor notes"
+        )
+    
+    # Check if encounter is finalized
+    encounter = db.query(Encounter).filter(Encounter.id == doctor_note.encounter_id).first()
+    if encounter and encounter.status == EncounterStatus.FINALIZED.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update doctor notes for a finalized consultation"
+        )
+    
+    doctor_note.notes = note_data.notes
+    doctor_note.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(doctor_note)
+    
+    creator = db.query(User).filter(User.id == doctor_note.created_by).first()
+    return {
+        "id": doctor_note.id,
+        "encounter_id": doctor_note.encounter_id,
+        "notes": doctor_note.notes,
+        "created_by": doctor_note.created_by,
+        "created_by_name": creator.full_name if creator else None,
+        "created_at": doctor_note.created_at,
+        "updated_at": doctor_note.updated_at,
+    }
 
 
 # Admission recommendations endpoints

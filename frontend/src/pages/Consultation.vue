@@ -565,17 +565,97 @@
           <div class="row items-center q-mb-md">
             <div class="text-h6 glass-text">Doctor Notes</div>
             <q-space />
-            <q-btn
-              flat
-              icon="edit"
-              label="Edit"
-              color="primary"
-              @click="openEditDoctorNotes"
-              :disable="readonly"
-            />
           </div>
-          <div class="text-body1" style="white-space: pre-wrap;">
-            {{ consultationNotes?.doctor_notes || 'No doctor notes recorded.' }}
+          
+          <!-- Existing Doctor Notes List -->
+          <div v-if="doctorNoteEntries.length > 0" class="q-mb-md">
+            <q-list bordered separator>
+              <q-item
+                v-for="note in doctorNoteEntries"
+                :key="note.id"
+                class="q-pa-md"
+              >
+                <q-item-section>
+                  <q-item-label>
+                    <div class="text-body1" style="white-space: pre-wrap;">
+                      {{ note.notes }}
+                    </div>
+                  </q-item-label>
+                  <q-item-label caption>
+                    <div class="row items-center q-gutter-sm q-mt-sm">
+                      <div>
+                        <q-icon name="person" size="14px" class="q-mr-xs" />
+                        {{ note.created_by_name || 'Unknown' }}
+                      </div>
+                      <div>
+                        <q-icon name="schedule" size="14px" class="q-mr-xs" />
+                        {{ formatDateTime(note.created_at) }}
+                        <span v-if="note.updated_at && note.updated_at !== note.created_at">
+                          (Updated: {{ formatDateTime(note.updated_at) }})
+                        </span>
+                      </div>
+                    </div>
+                  </q-item-label>
+                </q-item-section>
+                <q-item-section side v-if="canEditDoctorNote(note) && !readonly">
+                  <q-btn
+                    flat
+                    dense
+                    icon="edit"
+                    color="primary"
+                    size="sm"
+                    @click="openEditDoctorNote(note)"
+                    label="Edit"
+                  />
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </div>
+          <div v-else class="text-center text-secondary q-pa-md">
+            No doctor notes recorded yet.
+          </div>
+          
+          <!-- Add New Doctor Note Section -->
+          <q-separator class="q-my-md" v-if="doctorNoteEntries.length > 0" />
+          <div v-if="!readonly">
+            <q-expansion-item
+              v-model="showAddDoctorNote"
+              icon="add"
+              label="Add Doctor Note"
+              header-class="text-primary"
+            >
+              <q-card>
+                <q-card-section>
+                  <q-input
+                    v-model="newDoctorNote"
+                    filled
+                    type="textarea"
+                    label="Doctor Notes"
+                    rows="6"
+                    hint="Enter your clinical notes and observations"
+                    :rules="[val => !!val || 'Notes are required']"
+                  />
+                  <div class="row q-mt-md q-gutter-md">
+                    <q-btn
+                      label="Save"
+                      color="primary"
+                      @click="saveNewDoctorNote"
+                      :loading="savingDoctorNote"
+                      :disable="!newDoctorNote || !newDoctorNote.trim()"
+                    />
+                    <q-btn
+                      label="Cancel"
+                      flat
+                      @click="cancelAddDoctorNote"
+                    />
+                  </div>
+                </q-card-section>
+              </q-card>
+            </q-expansion-item>
+          </div>
+          <div v-else class="text-caption text-secondary q-mt-sm">
+            <q-icon name="info" size="14px" class="q-mr-xs" />
+            Consultation is finalized. Cannot add or edit notes.
           </div>
         </q-card-section>
       </q-card>
@@ -1109,7 +1189,31 @@
       </q-card>
     </q-dialog>
 
-    <!-- Doctor Notes Dialog -->
+    <!-- Edit Doctor Note Dialog -->
+    <q-dialog v-model="editDoctorNoteDialog">
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="text-h6">Edit Doctor Note</div>
+        </q-card-section>
+        <q-card-section>
+          <q-input
+            v-model="editingDoctorNote.notes"
+            filled
+            type="textarea"
+            label="Doctor Notes"
+            rows="8"
+            hint="Update your clinical notes and observations"
+            :rules="[val => !!val || 'Notes are required']"
+          />
+          <div class="row q-mt-md q-gutter-md">
+            <q-btn label="Save" color="primary" @click="saveEditedDoctorNote" :loading="savingDoctorNote" />
+            <q-btn label="Cancel" flat @click="closeEditDoctorNoteDialog" />
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Old Doctor Notes Dialog (kept for backward compatibility but not used) -->
     <!-- DRG Code Selection Dialog -->
     <q-dialog v-model="showDrgSelectionDialog">
       <q-card style="min-width: 500px; max-width: 700px">
@@ -1849,6 +1953,12 @@ const paidAmount = ref(0);
 const remainingBalance = computed(() => Math.max(0, totalBillAmount.value - paidAmount.value));
 const editPresentingComplaints = ref(false);
 const editDoctorNotes = ref(false);
+const editDoctorNoteDialog = ref(false);
+const showAddDoctorNote = ref(false);
+const newDoctorNote = ref('');
+const savingDoctorNote = ref(false);
+const doctorNoteEntries = ref([]);
+const editingDoctorNote = ref({ id: null, notes: '' });
 const editFollowUpDate = ref(false);
 const notesForm = reactive({
   encounter_id: null,
@@ -2158,6 +2268,7 @@ const loadEncounter = async () => {
     
     // Load consultation notes
     await loadConsultationNotes();
+    await loadDoctorNoteEntries();
     
     // Load bill total
     await loadBillTotal();
@@ -2168,6 +2279,124 @@ const loadEncounter = async () => {
   } finally {
     loadingEncounter.value = false;
   }
+};
+
+// Load doctor note entries
+const loadDoctorNoteEntries = async () => {
+  if (!encounterStore.currentEncounter?.id) return;
+  
+  try {
+    const response = await consultationAPI.getDoctorNoteEntries(encounterStore.currentEncounter.id);
+    doctorNoteEntries.value = response.data || [];
+  } catch (error) {
+    console.error('Error loading doctor note entries:', error);
+    doctorNoteEntries.value = [];
+  }
+};
+
+// Check if user can edit a doctor note
+const canEditDoctorNote = (note) => {
+  const currentUserId = authStore.user?.id;
+  return note.created_by === currentUserId;
+};
+
+// Open edit dialog for a doctor note
+const openEditDoctorNote = (note) => {
+  editingDoctorNote.value = {
+    id: note.id,
+    notes: note.notes
+  };
+  editDoctorNoteDialog.value = true;
+};
+
+// Close edit dialog
+const closeEditDoctorNoteDialog = () => {
+  editDoctorNoteDialog.value = false;
+  editingDoctorNote.value = { id: null, notes: '' };
+};
+
+// Save edited doctor note
+const saveEditedDoctorNote = async () => {
+  if (!editingDoctorNote.value.id || !editingDoctorNote.value.notes?.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter notes',
+      position: 'top',
+    });
+    return;
+  }
+  
+  savingDoctorNote.value = true;
+  try {
+    await consultationAPI.updateDoctorNoteEntry(editingDoctorNote.value.id, {
+      notes: editingDoctorNote.value.notes
+    });
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Doctor note updated successfully',
+      position: 'top',
+    });
+    
+    await loadDoctorNoteEntries();
+    closeEditDoctorNoteDialog();
+  } catch (error) {
+    console.error('Error updating doctor note:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to update doctor note',
+      position: 'top',
+    });
+  } finally {
+    savingDoctorNote.value = false;
+  }
+};
+
+// Save new doctor note
+const saveNewDoctorNote = async () => {
+  if (!encounterStore.currentEncounter?.id) return;
+  
+  if (!newDoctorNote.value?.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter notes',
+      position: 'top',
+    });
+    return;
+  }
+  
+  savingDoctorNote.value = true;
+  try {
+    await consultationAPI.createDoctorNoteEntry(encounterStore.currentEncounter.id, {
+      encounter_id: encounterStore.currentEncounter.id,
+      notes: newDoctorNote.value
+    });
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Doctor note added successfully',
+      position: 'top',
+    });
+    
+    newDoctorNote.value = '';
+    showAddDoctorNote.value = false;
+    await loadDoctorNoteEntries();
+  } catch (error) {
+    console.error('Error creating doctor note:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to add doctor note',
+      position: 'top',
+    });
+  } finally {
+    savingDoctorNote.value = false;
+  }
+};
+
+// Cancel adding new doctor note
+const cancelAddDoctorNote = () => {
+  newDoctorNote.value = '';
+  showAddDoctorNote.value = false;
 };
 
 const loadConsultationNotes = async () => {
@@ -2266,6 +2495,7 @@ const saveConsultationNotes = async () => {
         position: 'top',
       });
     await loadConsultationNotes();
+    await loadDoctorNoteEntries();
     editPresentingComplaints.value = false;
     editDoctorNotes.value = false;
     editFollowUpDate.value = false;
