@@ -1855,7 +1855,7 @@ const frequencyMapping = {
 };
 
 const frequencyOptions = Object.keys(frequencyMapping);
-const unitOptions = ref(['MG', 'ML', 'TAB', 'CAP', 'G', 'MCG', 'IU', 'UNITS', 'DROPS', 'SACHET']);
+const unitOptions = ref(['MG', 'ML', 'TAB', 'CAP', 'G', 'MCG', 'IU', 'UNITS', 'DROPS', 'SACHET', 'MU']);
 
 // Create unit if not in list
 const createUnit = (val, done) => {

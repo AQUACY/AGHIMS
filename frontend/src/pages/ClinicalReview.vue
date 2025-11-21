@@ -486,7 +486,7 @@ const prescriptionForm = ref({
   quantity: 0,
 });
 const frequencyOptions = ['OD', 'BDS', 'TDS', 'QDS', 'Nocte', 'PRN', 'Stat'];
-const unitOptions = ['MG', 'ML', 'TAB', 'CAP', 'G', 'MCG', 'IU', 'UNITS', 'DROPS', 'SACHET'];
+const unitOptions = ['MG', 'ML', 'TAB', 'CAP', 'G', 'MCG', 'IU', 'UNITS', 'DROPS', 'SACHET', 'MU'];
 
 // Investigations
 const investigations = ref([]);
