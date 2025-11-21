@@ -475,7 +475,18 @@
           <template v-slot:body-cell-medicine_name="props">
             <q-td :props="props">
               <div class="row items-center q-gutter-xs">
-                <span>{{ props.value }}</span>
+                <span v-if="props.row.is_dispensed && props.row.dispenser_name && props.row.service_date">
+                  <q-tooltip>
+                    <div class="text-body2">
+                      <div class="text-weight-medium">Dispensed by:</div>
+                      <div>{{ props.row.dispenser_name }}</div>
+                      <div class="text-weight-medium q-mt-xs">Dispensed on:</div>
+                      <div>{{ formatDateTime(props.row.service_date) }}</div>
+                    </div>
+                  </q-tooltip>
+                  {{ props.value }}
+                </span>
+                <span v-else>{{ props.value }}</span>
                 <q-badge v-if="props.row.is_external" color="orange" label="External" />
                 <q-badge v-if="props.row.prescription_type === 'inpatient' || props.row.source === 'inpatient'" color="purple" label="IPD" />
               </div>
@@ -663,7 +674,18 @@
             <template v-slot:body-cell-medicine_name="props">
               <q-td :props="props">
                 <div class="row items-center q-gutter-xs">
-                  <span>{{ props.value }}</span>
+                  <span v-if="props.row.is_dispensed && props.row.dispenser_name && props.row.service_date">
+                    <q-tooltip>
+                      <div class="text-body2">
+                        <div class="text-weight-medium">Dispensed by:</div>
+                        <div>{{ props.row.dispenser_name }}</div>
+                        <div class="text-weight-medium q-mt-xs">Dispensed on:</div>
+                        <div>{{ formatDateTime(props.row.service_date) }}</div>
+                      </div>
+                    </q-tooltip>
+                    {{ props.value }}
+                  </span>
+                  <span v-else>{{ props.value }}</span>
                   <q-badge color="purple" label="IPD" />
                 </div>
               </q-td>
@@ -3196,6 +3218,19 @@ const formatDate = (dateString) => {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
+  });
+};
+
+const formatDateTime = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
   });
 };
 

@@ -6158,6 +6158,7 @@ def get_all_inpatient_prescriptions_for_pharmacy(
             "confirmed_at": p.confirmed_at,
             "dispensed_by": p.dispensed_by,
             "dispenser_name": dispenser_name,
+            "service_date": p.service_date,  # Add service_date for dispensed date/time
             "is_external": bool(p.is_external) if hasattr(p, 'is_external') else False,
             "created_at": p.created_at,
             "is_confirmed": p.confirmed_by is not None,
