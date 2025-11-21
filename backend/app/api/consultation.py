@@ -5803,6 +5803,19 @@ class InpatientPrescriptionCreate(BaseModel):
     unparsed: Optional[str] = None
 
 
+class InpatientPrescriptionUpdate(BaseModel):
+    """Inpatient prescription update model (clinical_review_id not required for updates)"""
+    medicine_code: str
+    medicine_name: str
+    dose: Optional[str] = None
+    unit: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    instructions: Optional[str] = None
+    quantity: int = 0
+    unparsed: Optional[str] = None
+
+
 @router.post("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions")
 def create_inpatient_prescription(
     ward_admission_id: int,
@@ -6597,6 +6610,114 @@ def return_inpatient_prescription(
         "dispensed_by": None,
         "service_date": prescription.service_date.isoformat() if prescription.service_date else None,
         "message": "Inpatient prescription returned successfully"
+    }
+
+
+@router.put("/inpatient-prescription/{prescription_id}", response_model=dict)
+def update_inpatient_prescription(
+    prescription_id: int,
+    prescription_data: InpatientPrescriptionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Pharmacy", "Pharmacy Head"]))
+):
+    """Update an inpatient prescription"""
+    from app.models.inpatient_prescription import InpatientPrescription
+    
+    prescription = db.query(InpatientPrescription).filter(InpatientPrescription.id == prescription_id).first()
+    if not prescription:
+        raise HTTPException(status_code=404, detail="Inpatient prescription not found")
+    
+    # Prevent editing if prescription is confirmed by pharmacy staff
+    # Only Admin can override this restriction
+    if prescription.confirmed_by is not None and current_user.role != "Admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot edit prescription that has been confirmed by pharmacy staff. Contact admin if changes are needed."
+        )
+    
+    # Get frequency value from mapping if frequency is provided
+    frequency_value = None
+    if prescription_data.frequency:
+        frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
+    
+    # Auto-calculate quantity based on pharmacist logic
+    quantity = prescription_data.quantity
+    if (not quantity or quantity <= 0) and prescription_data.dose and prescription_data.frequency and prescription_data.duration:
+        try:
+            # Extract numeric value from dose
+            dose_str = str(prescription_data.dose).strip()
+            try:
+                dose_num = float(dose_str) if dose_str else 0
+            except (ValueError, TypeError):
+                dose_num = 0
+            
+            # If parsing fails, try to extract first number
+            if dose_num <= 0:
+                import re
+                first_number_match = re.search(r'\d+(\.\d+)?', dose_str)
+                if first_number_match:
+                    dose_num = float(first_number_match.group())
+            
+            frequency_value_for_calc = frequency_value or FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), 1)
+            
+            if dose_num and dose_num > 0 and frequency_value_for_calc:
+                # Extract duration number
+                duration_str = str(prescription_data.duration).strip()
+                duration_num = 1
+                try:
+                    direct_num = float(duration_str)
+                    if direct_num > 0:
+                        duration_num = int(direct_num)
+                except (ValueError, TypeError):
+                    import re
+                    duration_match = re.search(r'\d+', duration_str)
+                    if duration_match:
+                        duration_num = int(duration_match.group())
+                
+                # Convert dose to units based on unit type
+                units_per_dose = dose_num
+                if prescription_data.unit and prescription_data.unit.upper() == 'MG':
+                    units_per_dose = dose_num / 100
+                elif prescription_data.unit and prescription_data.unit.upper() == 'MCG':
+                    units_per_dose = dose_num / 1000
+                
+                # Calculate: units per dose × frequency per day × number of days
+                calculated_quantity = int(units_per_dose * frequency_value_for_calc * duration_num)
+                if calculated_quantity > 0:
+                    quantity = calculated_quantity
+        except Exception:
+            pass
+    
+    # Ensure quantity is set
+    if not quantity or quantity <= 0:
+        quantity = 1
+    
+    # Update prescription fields
+    prescription.medicine_code = prescription_data.medicine_code
+    prescription.medicine_name = prescription_data.medicine_name
+    prescription.dose = prescription_data.dose
+    prescription.unit = prescription_data.unit
+    prescription.frequency = prescription_data.frequency
+    prescription.frequency_value = frequency_value
+    prescription.duration = prescription_data.duration
+    prescription.instructions = prescription_data.instructions
+    prescription.quantity = quantity
+    prescription.unparsed = prescription_data.unparsed
+    
+    db.commit()
+    db.refresh(prescription)
+    
+    return {
+        "id": prescription.id,
+        "medicine_code": prescription.medicine_code,
+        "medicine_name": prescription.medicine_name,
+        "dose": prescription.dose,
+        "unit": prescription.unit,
+        "frequency": prescription.frequency,
+        "duration": prescription.duration,
+        "quantity": prescription.quantity,
+        "instructions": prescription.instructions,
+        "message": "Inpatient prescription updated successfully"
     }
 
 

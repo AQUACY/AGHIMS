@@ -237,6 +237,8 @@ export const consultationAPI = {
     api.put(`/consultation/inpatient-prescription/${prescriptionId}/dispense`, data),
   returnInpatientPrescription: (prescriptionId) => 
     api.put(`/consultation/inpatient-prescription/${prescriptionId}/return`),
+  updateInpatientPrescription: (prescriptionId, data) => 
+    api.put(`/consultation/inpatient-prescription/${prescriptionId}`, data),
   getInvestigationsByPatientCard: (cardNumber, encounterId, investigationType = null) => {
     const url = `/consultation/investigation/patient/${cardNumber}/encounter/${encounterId}`;
     const params = investigationType ? { investigation_type: investigationType } : {};

@@ -358,7 +358,26 @@
         <div class="row items-center q-mb-md">
           <div class="text-h6">Prescriptions</div>
           <q-space />
+          <!-- Filter Toggle -->
+          <q-btn-toggle
+            v-model="prescriptionFilter"
+            toggle-color="primary"
+            :options="[
+              { label: 'All', value: 'all' },
+              { label: 'New Prescriptions', value: 'new' }
+            ]"
+            class="q-mr-md"
+          />
           <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized" />
+          <q-btn
+            v-if="newlyDispensedPrescriptions.size > 0"
+            color="positive"
+            icon="print"
+            label="Print Newly Dispensed"
+            @click="printNewlyDispensed"
+            :disable="(serviceType === 'opd' && !selectedEncounterId) || (serviceType === 'ipd' && !selectedWardAdmissionId) || !patient"
+            class="q-mr-sm"
+          />
           <q-btn
             color="secondary"
             icon="print"
@@ -412,10 +431,10 @@
           />
         </div>
         <!-- OPD Prescriptions Section -->
-        <div v-if="serviceType === 'opd' && prescriptions.length > 0" class="q-mb-md">
+        <div v-if="serviceType === 'opd' && filteredPrescriptions.length > 0" class="q-mb-md">
           <div class="text-h6 q-mb-sm">OPD Prescriptions</div>
           <q-table
-            :rows="prescriptions"
+            :rows="filteredPrescriptions"
             :columns="columns"
             row-key="id"
             flat
@@ -554,7 +573,7 @@
                   <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
                 </q-btn>
                 <q-btn
-                  v-if="!props.row.is_dispensed && !props.row.is_external && props.row.is_confirmed && (props.row.prescription_type === 'inpatient' || props.row.source === 'inpatient' || canDispense(props.row))"
+                  v-if="!props.row.is_dispensed && !props.row.is_external && props.row.is_confirmed"
                   size="sm"
                   color="positive"
                   label="Dispense"
@@ -600,13 +619,13 @@
         </div>
 
         <!-- IPD Prescriptions Section -->
-        <div v-if="serviceType === 'ipd' && inpatientPrescriptions.length > 0" class="q-mb-md">
+        <div v-if="serviceType === 'ipd' && filteredInpatientPrescriptions.length > 0" class="q-mb-md">
           <div class="text-h6 q-mb-sm">IPD Prescriptions</div>
           <div class="text-caption text-info q-mb-sm">
             IPD medications can be dispensed but must be added to IPD bill to be charged at discharge.
           </div>
           <q-table
-            :rows="inpatientPrescriptions"
+            :rows="filteredInpatientPrescriptions"
             :columns="inpatientColumns"
             row-key="id"
             flat
@@ -698,6 +717,19 @@
                     @click="viewInstructions(props.row)"
                     title="View Instructions"
                   />
+                  <!-- Edit button for Admin, Pharmacy, and Pharmacy Head (even if confirmed) - for IPD prescriptions -->
+                  <q-btn
+                    v-if="authStore.userRole === 'Admin' || authStore.userRole === 'Pharmacy' || authStore.userRole === 'Pharmacy Head'"
+                    size="sm"
+                    color="secondary"
+                    icon="edit"
+                    label="Edit"
+                    @click="editPrescription(props.row)"
+                    :loading="updatingPrescriptionId === props.row.id"
+                    :disable="confirmingInpatient !== null || dispensingInpatient !== null || returningId !== null || unconfirmingInpatient !== null"
+                  >
+                    <q-tooltip>Edit prescription</q-tooltip>
+                  </q-btn>
                   <q-btn
                     v-if="!props.row.is_confirmed && !props.row.is_dispensed"
                     size="sm"
@@ -1498,6 +1530,8 @@ const patientBillInfo = ref({
   paidAmount: null,
   remainingBalance: null,
 });
+const prescriptionFilter = ref('all'); // 'all' or 'new' (undispensed)
+const newlyDispensedPrescriptions = ref(new Set()); // Track IDs of newly dispensed prescriptions in this session
 const prescriptions = ref([]);
 const currentEncounter = ref(null);
 const loadingPrescriptions = ref(false);
@@ -1530,6 +1564,7 @@ const editPrescriptionForm = ref({
   duration: '',
   quantity: 1,
   instructions: '',
+  isInpatient: false, // Track if this is an inpatient prescription
 });
 const selectedPrescriptions = ref([]);
 const selectedInpatientPrescriptions = ref([]);
@@ -2686,6 +2721,10 @@ const dispenseInpatientPrescriptionDirect = async (prescription) => {
   dispensingInpatient.value = prescription.id;
   try {
     await consultationAPI.dispenseInpatientPrescription(prescription.id);
+    
+    // Track this as newly dispensed
+    newlyDispensedPrescriptions.value.add(prescription.id);
+    
     $q.notify({
       type: 'positive',
       message: 'Inpatient prescription dispensed successfully',
@@ -2718,6 +2757,10 @@ const confirmDispense = async () => {
     };
 
     await consultationAPI.dispensePrescription(dispenseForm.value.id, dispenseData);
+    
+    // Track this as newly dispensed
+    newlyDispensedPrescriptions.value.add(dispenseForm.value.id);
+    
     $q.notify({
       type: 'positive',
       message: 'Prescription marked as dispensed',
@@ -2863,10 +2906,13 @@ const deleteExternalPrescription = async (prescription) => {
 };
 
 const editPrescription = (prescription) => {
+  // Determine if this is an inpatient prescription
+  const isInpatient = prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient';
+  
   // Populate form with current prescription data
   editPrescriptionForm.value = {
     id: prescription.id,
-    encounter_id: prescription.encounter_id,
+    encounter_id: prescription.encounter_id || prescription.ward_admission_id, // Use ward_admission_id for IPD if encounter_id not available
     medicine_code: prescription.medicine_code,
     medicine_name: prescription.medicine_name,
     dose: prescription.dose || '',
@@ -2875,6 +2921,7 @@ const editPrescription = (prescription) => {
     duration: prescription.duration || '',
     quantity: prescription.quantity || 1,
     instructions: prescription.instructions || '',
+    isInpatient: isInpatient, // Track if this is an inpatient prescription
   };
   showEditPrescriptionDialog.value = true;
 };
@@ -2885,7 +2932,6 @@ const updatePrescriptionSubmit = async () => {
   updatingPrescriptionId.value = editPrescriptionForm.value.id;
   try {
     const updateData = {
-      encounter_id: editPrescriptionForm.value.encounter_id,
       medicine_code: editPrescriptionForm.value.medicine_code,
       medicine_name: editPrescriptionForm.value.medicine_name,
       dose: editPrescriptionForm.value.dose,
@@ -2896,7 +2942,17 @@ const updatePrescriptionSubmit = async () => {
       instructions: editPrescriptionForm.value.instructions || null,
     };
 
-    await consultationAPI.updatePrescription(editPrescriptionForm.value.id, updateData);
+    // Add encounter_id for OPD prescriptions only
+    if (!editPrescriptionForm.value.isInpatient) {
+      updateData.encounter_id = editPrescriptionForm.value.encounter_id;
+    }
+
+    // Use appropriate API endpoint based on prescription type
+    if (editPrescriptionForm.value.isInpatient) {
+      await consultationAPI.updateInpatientPrescription(editPrescriptionForm.value.id, updateData);
+    } else {
+      await consultationAPI.updatePrescription(editPrescriptionForm.value.id, updateData);
+    }
     $q.notify({
       type: 'positive',
       message: 'Prescription updated successfully',
@@ -3435,6 +3491,24 @@ watch(() => route.query.encounterId, (newEncounterId) => {
 
 const dispensedPrescriptions = computed(() => (prescriptions.value || []).filter(p => p.is_dispensed));
 
+// Filter prescriptions based on selected filter
+const filteredPrescriptions = computed(() => {
+  if (prescriptionFilter.value === 'new') {
+    // Show only undispensed prescriptions (newly prescribed)
+    return prescriptions.value.filter(p => !p.is_dispensed && !p.is_external);
+  }
+  return prescriptions.value;
+});
+
+// Filter IPD prescriptions
+const filteredInpatientPrescriptions = computed(() => {
+  if (prescriptionFilter.value === 'new') {
+    // Show only undispensed prescriptions (newly prescribed)
+    return inpatientPrescriptions.value.filter(p => !p.is_dispensed);
+  }
+  return inpatientPrescriptions.value;
+});
+
 const isFinalized = computed(() => {
   return currentEncounter.value?.status === 'finalized';
 });
@@ -3791,6 +3865,10 @@ const dispenseInpatientPrescription = async (prescription) => {
   dispensingInpatient.value = prescription.id;
   try {
     await consultationAPI.dispenseInpatientPrescription(prescription.id);
+    
+    // Track this as newly dispensed
+    newlyDispensedPrescriptions.value.add(prescription.id);
+    
     $q.notify({
       type: 'positive',
       message: 'Inpatient prescription dispensed successfully',
@@ -3818,7 +3896,7 @@ const formatReceiptLine = (label, value) => {
   return `<div><span class=\"lbl\">${label}</span><span class=\"val\">${value}</span></div>`;
 };
 
-const buildReceiptHtml = async () => {
+const buildReceiptHtml = async (onlyNewlyDispensed = false) => {
   // Ensure staff is loaded before building receipt
   if (Object.keys(staffMap.value).length === 0) {
     await loadStaff();
@@ -3831,8 +3909,22 @@ const buildReceiptHtml = async () => {
   // Check if encounter is insured (has CCC number)
   const isInsured = !!(currentEncounter.value?.ccc_number);
   
+  // Filter prescriptions - if onlyNewlyDispensed is true, only include newly dispensed ones
+  let prescriptionsToPrint = dispensedPrescriptions.value;
+  if (onlyNewlyDispensed) {
+    prescriptionsToPrint = dispensedPrescriptions.value.filter(p => newlyDispensedPrescriptions.value.has(p.id));
+  }
+  
+  if (prescriptionsToPrint.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: onlyNewlyDispensed ? 'No newly dispensed medications to print' : 'No dispensed medications to print',
+    });
+    return null;
+  }
+  
   // Build items HTML with unit costs and total costs, and calculate grand total
-  const itemsDataPromises = dispensedPrescriptions.value.map(async (p, idx) => {
+  const itemsDataPromises = prescriptionsToPrint.map(async (p, idx) => {
     const unitCost = await getMedicationPrice(p.medicine_code, isInsured);
     const quantity = p.quantity || 0;
     const totalCost = unitCost * quantity;
@@ -3866,7 +3958,7 @@ const buildReceiptHtml = async () => {
   const grandTotal = itemsData.reduce((sum, item) => sum + item.totalCost, 0);
   
   // Get prescriber name from first dispensed prescription
-  const firstPrescription = dispensedPrescriptions.value[0];
+  const firstPrescription = prescriptionsToPrint[0];
   const prescriberId = firstPrescription?.prescribed_by;
   const prescriberName = firstPrescription?.prescriber_name || 
                          (prescriberId ? (staffMap.value[prescriberId] || 'N/A') : 'N/A');
@@ -3962,7 +4054,7 @@ const buildReceiptHtml = async () => {
   </html>`;
 };
 
-const buildIPDReceiptHtml = async () => {
+const buildIPDReceiptHtml = async (onlyNewlyDispensed = false) => {
   // Ensure staff is loaded before building receipt
   if (Object.keys(staffMap.value).length === 0) {
     await loadStaff();
@@ -4037,8 +4129,19 @@ const buildIPDReceiptHtml = async () => {
     }
   }
   
-  // Get dispensed IPD prescriptions
-  const dispensedIPD = inpatientPrescriptions.value.filter(p => p.is_dispensed);
+  // Get dispensed IPD prescriptions - filter if onlyNewlyDispensed is true
+  let dispensedIPD = inpatientPrescriptions.value.filter(p => p.is_dispensed);
+  if (onlyNewlyDispensed) {
+    dispensedIPD = dispensedIPD.filter(p => newlyDispensedPrescriptions.value.has(p.id));
+  }
+  
+  if (dispensedIPD.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: onlyNewlyDispensed ? 'No newly dispensed medications to print' : 'No dispensed medications to print',
+    });
+    return null;
+  }
   
   // Build items HTML with unit costs and total costs, and calculate grand total
   const itemsDataPromises = dispensedIPD.map(async (p, idx) => {
@@ -4178,6 +4281,62 @@ const buildIPDReceiptHtml = async () => {
     </div>
   </body>
   </html>`;
+};
+
+// Print newly dispensed medications
+const printNewlyDispensed = async () => {
+  if (newlyDispensedPrescriptions.value.size === 0) {
+    $q.notify({ type: 'warning', message: 'No newly dispensed medications to print' });
+    return;
+  }
+  
+  if (serviceType.value === 'ipd') {
+    // Print IPD newly dispensed
+    if (!selectedWardAdmissionId.value || !patient.value) {
+      $q.notify({ type: 'warning', message: 'Select IPD admission first' });
+      return;
+    }
+    
+    // Ensure staff is loaded
+    if (Object.keys(staffMap.value).length === 0) {
+      await loadStaff();
+    }
+    
+    const receiptHtml = await buildIPDReceiptHtml(true);
+    if (!receiptHtml) return;
+    const w = window.open('', '_blank', 'width=420,height=800');
+    if (!w) return;
+    w.document.open();
+    w.document.write(receiptHtml);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
+    
+    // Clear newly dispensed after printing
+    newlyDispensedPrescriptions.value.clear();
+  } else {
+    // Print OPD newly dispensed
+    if (!selectedEncounterId.value || !patient.value) {
+      $q.notify({ type: 'warning', message: 'Select encounter first' });
+      return;
+    }
+    
+    // Ensure staff is loaded
+    if (Object.keys(staffMap.value).length === 0) {
+      await loadStaff();
+    }
+    
+    const receiptHtml = await buildReceiptHtml(true);
+    if (!receiptHtml) return;
+    const w = window.open('', '_blank', 'width=420,height=800');
+    if (!w) return;
+    w.document.open();
+    w.document.write(receiptHtml);
+    w.document.close();
+    setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
+    
+    // Clear newly dispensed after printing
+    newlyDispensedPrescriptions.value.clear();
+  }
 };
 
 const printBillCard = async () => {
