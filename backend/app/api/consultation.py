@@ -3,6 +3,7 @@ Consultation endpoints (diagnoses, prescriptions, investigations)
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form, Response, Query
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import Optional, List
@@ -25,6 +26,191 @@ from app.models.admission import AdmissionRecommendation
 from app.models.doctor_note_entry import DoctorNoteEntry
 
 router = APIRouter(prefix="/consultation", tags=["consultation"])
+
+
+def _generate_and_store_sample_id(db: Session, investigation, entered_by_user_id: int):
+    """
+    Generate a sample ID for a lab investigation and create a minimal lab_result record.
+    This allows staff to write the ID on the sample and feed it into the analyzer before payment.
+    """
+    from app.models.lab_result import LabResult
+    from app.models.inpatient_lab_result import InpatientLabResult
+    from datetime import datetime
+    import json
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Check if lab_result already exists and has a sample_no
+        # First determine if this is OPD or IPD
+        from app.models.inpatient_investigation import InpatientInvestigation
+        
+        if isinstance(investigation, InpatientInvestigation):
+            # IPD investigation - check IPD lab results only
+            existing_ipd_result = db.query(InpatientLabResult).filter(
+                InpatientLabResult.investigation_id == investigation.id
+            ).first()
+            
+            if existing_ipd_result and existing_ipd_result.template_data:
+                existing_template_data = existing_ipd_result.template_data
+                if isinstance(existing_template_data, dict):
+                    if existing_template_data.get('sample_no'):
+                        logger.info(f"IPD investigation {investigation.id} already has sample_no: {existing_template_data.get('sample_no')}")
+                        return  # Sample ID already exists
+                else:
+                    try:
+                        template_data = json.loads(existing_template_data)
+                        if template_data.get('sample_no'):
+                            logger.info(f"IPD investigation {investigation.id} already has sample_no: {template_data.get('sample_no')}")
+                            return  # Sample ID already exists
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        else:
+            # OPD investigation - check OPD lab results only
+            existing_opd_result = db.query(LabResult).filter(
+                LabResult.investigation_id == investigation.id
+            ).first()
+            
+            if existing_opd_result and existing_opd_result.template_data:
+                existing_template_data = existing_opd_result.template_data
+                if isinstance(existing_template_data, dict):
+                    if existing_template_data.get('sample_no'):
+                        logger.info(f"OPD investigation {investigation.id} already has sample_no: {existing_template_data.get('sample_no')}")
+                        return  # Sample ID already exists
+                else:
+                    try:
+                        template_data = json.loads(existing_template_data)
+                        if template_data.get('sample_no'):
+                            logger.info(f"OPD investigation {investigation.id} already has sample_no: {template_data.get('sample_no')}")
+                            return  # Sample ID already exists
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        
+        # Generate sample ID
+        now = datetime.utcnow()
+        year = now.year % 100  # Last 2 digits of year (e.g., 25 for 2025)
+        month = now.month
+        
+        # Format: YYMM
+        year_month_prefix = f"{year:02d}{month:02d}"
+        
+        # Find the highest sample number for this year/month from all lab results
+        max_sample_num = 0
+        
+        # Check OPD lab results
+        opd_results = db.query(LabResult).filter(
+            LabResult.template_data.isnot(None)
+        ).all()
+        
+        for result in opd_results:
+            if result.template_data:
+                try:
+                    template_data = result.template_data if isinstance(result.template_data, dict) else json.loads(result.template_data)
+                    sample_no = template_data.get('sample_no', '')
+                    if sample_no and len(sample_no) == 8 and sample_no[:4] == year_month_prefix:
+                        try:
+                            sample_num = int(sample_no[4:])
+                            if sample_num > max_sample_num:
+                                max_sample_num = sample_num
+                        except ValueError:
+                            pass
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        # Check IPD lab results
+        ipd_results = db.query(InpatientLabResult).filter(
+            InpatientLabResult.template_data.isnot(None)
+        ).all()
+        
+        for result in ipd_results:
+            if result.template_data:
+                try:
+                    template_data = result.template_data if isinstance(result.template_data, dict) else json.loads(result.template_data)
+                    sample_no = template_data.get('sample_no', '')
+                    if sample_no and len(sample_no) == 8 and sample_no[:4] == year_month_prefix:
+                        try:
+                            sample_num = int(sample_no[4:])
+                            if sample_num > max_sample_num:
+                                max_sample_num = sample_num
+                        except ValueError:
+                            pass
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        # Generate next sample number
+        next_sample_num = max_sample_num + 1
+        
+        # Format: YYMMNNNNN (8 digits total)
+        sample_id = f"{year_month_prefix}{next_sample_num:05d}"
+        
+        # Create or update lab_result record with sample ID
+        template_data = {
+            "sample_no": sample_id,
+            "field_values": {},
+            "messages": {},
+            "validated_by": ""
+        }
+        
+        # Check if investigation is OPD or IPD by checking the type
+        if isinstance(investigation, InpatientInvestigation):
+            # IPD investigation
+            existing_lab_result = db.query(InpatientLabResult).filter(
+                InpatientLabResult.investigation_id == investigation.id
+            ).first()
+            
+            if existing_lab_result:
+                # Update existing record
+                if existing_lab_result.template_data:
+                    existing_data = existing_lab_result.template_data if isinstance(existing_lab_result.template_data, dict) else json.loads(existing_lab_result.template_data)
+                    existing_data['sample_no'] = sample_id
+                    existing_lab_result.template_data = existing_data
+                    logger.info(f"Updated IPD lab_result with sample_id={sample_id} for investigation_id={investigation.id}")
+                else:
+                    existing_lab_result.template_data = template_data
+                    logger.info(f"Set IPD lab_result template_data with sample_id={sample_id} for investigation_id={investigation.id}")
+            else:
+                # Create new record
+                lab_result = InpatientLabResult(
+                    investigation_id=investigation.id,
+                    template_data=template_data,
+                    entered_by=entered_by_user_id
+                )
+                db.add(lab_result)
+                db.flush()  # Flush to ensure the record is created in the database
+                logger.info(f"Created IPD lab_result with sample_id={sample_id} for investigation_id={investigation.id}")
+        else:
+            # OPD investigation (Investigation model)
+            existing_lab_result = db.query(LabResult).filter(
+                LabResult.investigation_id == investigation.id
+            ).first()
+            
+            if existing_lab_result:
+                # Update existing record
+                if existing_lab_result.template_data:
+                    existing_data = existing_lab_result.template_data if isinstance(existing_lab_result.template_data, dict) else json.loads(existing_lab_result.template_data)
+                    existing_data['sample_no'] = sample_id
+                    existing_lab_result.template_data = existing_data
+                    logger.info(f"Updated OPD lab_result with sample_id={sample_id} for investigation_id={investigation.id}")
+                else:
+                    existing_lab_result.template_data = template_data
+                    logger.info(f"Set OPD lab_result template_data with sample_id={sample_id} for investigation_id={investigation.id}")
+            else:
+                # Create new record
+                lab_result = LabResult(
+                    investigation_id=investigation.id,
+                    template_data=template_data,
+                    entered_by=entered_by_user_id
+                )
+                db.add(lab_result)
+                db.flush()  # Flush to ensure the record is created in the database
+                logger.info(f"Created OPD lab_result with sample_id={sample_id} for investigation_id={investigation.id}")
+    
+    except Exception as e:
+        logger.error(f"Error generating and storing sample ID for investigation {investigation.id}: {str(e)}", exc_info=True)
+        # Don't raise - allow investigation confirmation to continue even if sample ID generation fails
+        # The sample ID can be generated later when results are entered
+
 
 # Frequency mapping for prescriptions
 FREQUENCY_MAPPING = {
@@ -1359,6 +1545,10 @@ def bulk_confirm_investigations(
             investigation.status = InvestigationStatus.CONFIRMED.value
             investigation.confirmed_by = current_user.id
             
+            # Generate and store sample ID for lab investigations
+            if investigation.investigation_type == "lab":
+                _generate_and_store_sample_id(db, investigation, current_user.id)
+            
             # Generate bill if investigation has an encounter
             if investigation.encounter_id:
                 from app.models.bill import Bill, BillItem
@@ -2110,6 +2300,10 @@ def confirm_investigation(
     investigation.status = InvestigationStatus.CONFIRMED.value
     investigation.confirmed_by = current_user.id
     
+    # Generate and store sample ID for lab investigations
+    if investigation.investigation_type == "lab":
+        _generate_and_store_sample_id(db, investigation, current_user.id)
+    
     # Get price for the investigation (co-pay for insured, base rate for cash)
     # Always look up price from price list to ensure correct pricing based on current insurance status
     unit_price = 0.0
@@ -2255,7 +2449,9 @@ class LabResultResponse(BaseModel):
     """Lab result response model"""
     id: int
     investigation_id: int
+    template_id: Optional[int] = None
     results_text: Optional[str]
+    template_data: Optional[dict] = None  # Structured template data
     attachment_path: Optional[str]
     entered_by: int
     updated_by: Optional[int] = None
@@ -2269,15 +2465,23 @@ class LabResultResponse(BaseModel):
         from_attributes = True
 
 
-@router.post("/lab-result", response_model=LabResultResponse, status_code=status.HTTP_201_CREATED)
-async def create_lab_result(
-    investigation_id: int = Form(...),
-    results_text: Optional[str] = Form(None),
-    attachment: Optional[UploadFile] = File(None),
+@router.post("/lab-result/sample-id", response_model=LabResultResponse, status_code=status.HTTP_200_OK)
+def save_sample_id(
+    investigation_id: int = Body(...),
+    sample_no: str = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
 ):
-    """Create or update lab result with optional file attachment"""
+    """
+    Save sample ID for a lab investigation without payment check.
+    This is the only data that can be saved before payment.
+    """
+    import json
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saving sample_no={sample_no} for investigation_id={investigation_id}")
+    
     # IMPORTANT: Check IPD FIRST to prevent ID collision issues
     from app.models.inpatient_investigation import InpatientInvestigation
     
@@ -2297,6 +2501,257 @@ async def create_lab_result(
     
     if investigation.investigation_type != "lab":
         raise HTTPException(status_code=400, detail="This endpoint is only for lab investigations")
+    
+    # Create or update lab_result record with just the sample ID
+    template_data = {
+        "sample_no": sample_no,
+        "field_values": {},
+        "messages": {},
+        "validated_by": ""
+    }
+    
+    result = None
+    if is_inpatient:
+        # IPD investigation
+        existing_lab_result = db.query(InpatientLabResult).filter(
+            InpatientLabResult.investigation_id == investigation_id
+        ).first()
+        
+        if existing_lab_result:
+            # Update existing record
+            if existing_lab_result.template_data:
+                existing_data = existing_lab_result.template_data if isinstance(existing_lab_result.template_data, dict) else json.loads(existing_lab_result.template_data)
+                # Create a new dict to ensure SQLAlchemy detects the change
+                updated_data = existing_data.copy()
+                updated_data['sample_no'] = sample_no
+                existing_lab_result.template_data = updated_data
+                flag_modified(existing_lab_result, 'template_data')  # Tell SQLAlchemy the JSON column changed
+            else:
+                existing_lab_result.template_data = template_data
+                flag_modified(existing_lab_result, 'template_data')  # Tell SQLAlchemy the JSON column changed
+            result = existing_lab_result
+        else:
+            # Create new record
+            lab_result = InpatientLabResult(
+                investigation_id=investigation_id,
+                template_data=template_data,
+                entered_by=current_user.id
+            )
+            db.add(lab_result)
+            result = lab_result
+    else:
+        # OPD investigation
+        existing_lab_result = db.query(LabResult).filter(
+            LabResult.investigation_id == investigation_id
+        ).first()
+        
+        if existing_lab_result:
+            # Update existing record
+            if existing_lab_result.template_data:
+                existing_data = existing_lab_result.template_data if isinstance(existing_lab_result.template_data, dict) else json.loads(existing_lab_result.template_data)
+                # Create a new dict to ensure SQLAlchemy detects the change
+                updated_data = existing_data.copy()
+                updated_data['sample_no'] = sample_no
+                existing_lab_result.template_data = updated_data
+                flag_modified(existing_lab_result, 'template_data')  # Tell SQLAlchemy the JSON column changed
+            else:
+                existing_lab_result.template_data = template_data
+                flag_modified(existing_lab_result, 'template_data')  # Tell SQLAlchemy the JSON column changed
+            result = existing_lab_result
+        else:
+            # Create new record
+            lab_result = LabResult(
+                investigation_id=investigation_id,
+                template_data=template_data,
+                entered_by=current_user.id
+            )
+            db.add(lab_result)
+            result = lab_result
+    
+    try:
+        db.commit()
+        db.refresh(result)  # Refresh to get the latest data from database
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving sample ID: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save sample ID: {str(e)}")
+    
+    if not result:
+        raise HTTPException(status_code=500, detail="Failed to save sample ID")
+    
+    # Verify sample_no was saved correctly
+    # Query fresh from database to ensure we have the latest data
+    if is_inpatient:
+        fresh_result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+    else:
+        fresh_result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    
+    if fresh_result:
+        result = fresh_result
+    
+    saved_sample_no = None
+    if result.template_data:
+        if isinstance(result.template_data, dict):
+            saved_sample_no = result.template_data.get('sample_no', '')
+        else:
+            try:
+                saved_data = json.loads(result.template_data)
+                saved_sample_no = saved_data.get('sample_no', '')
+            except:
+                pass
+    
+    logger.info(f"Sample ID save attempt. investigation_id={investigation_id}, input_sample_no={sample_no}, saved_sample_no={saved_sample_no}, template_data={result.template_data}")
+    
+    # Only raise error if we explicitly tried to save but it didn't work
+    # Allow empty sample_no if it wasn't in the original data (edge case)
+    if saved_sample_no != sample_no:
+        logger.error(f"ERROR: Sample ID mismatch. Expected={sample_no}, Got={saved_sample_no}. Template data: {result.template_data}")
+        # Don't raise error - just log it. The sample_no might still be saved but not yet visible
+        # Return the result anyway so frontend can check
+    
+    # Get user names
+    entered_user = db.query(User).filter(User.id == result.entered_by).first()
+    updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+    
+    result_dict = {
+        "id": result.id,
+        "investigation_id": result.investigation_id,
+        "template_id": result.template_id,
+        "results_text": result.results_text,
+        "template_data": result.template_data,
+        "attachment_path": result.attachment_path,
+        "entered_by": result.entered_by,
+        "updated_by": result.updated_by,
+        "created_at": result.created_at,
+        "updated_at": result.updated_at,
+        "entered_by_name": entered_user.full_name if entered_user else None,
+        "updated_by_name": updated_user.full_name if updated_user else None,
+    }
+    return LabResultResponse(**result_dict)
+
+
+@router.post("/lab-result", response_model=LabResultResponse, status_code=status.HTTP_201_CREATED)
+async def create_lab_result(
+    investigation_id: int = Form(...),
+    results_text: Optional[str] = Form(None),
+    template_id: Optional[int] = Form(None),
+    template_data: Optional[str] = Form(None),  # JSON string
+    attachment: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
+):
+    """Create or update lab result with optional file attachment and template data"""
+    import json
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.lab_result_template import LabResultTemplate
+    
+    investigation = None
+    is_inpatient = False
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        investigation = ipd_investigation
+        is_inpatient = True
+    else:
+        # Not IPD, check OPD
+        investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+        if not investigation:
+            raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    if investigation.investigation_type != "lab":
+        raise HTTPException(status_code=400, detail="This endpoint is only for lab investigations")
+    
+    # Check payment status for OPD investigations (IPD doesn't require payment check)
+    if not is_inpatient:
+        from app.models.bill import Bill, BillItem
+        from app.models.encounter import Encounter
+        
+        # Get encounter for this investigation
+        encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
+        
+        if encounter:
+            # Check if patient is insured (has CCC number) - insured patients may have 0 bills
+            is_insured = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+            
+            # Find bill items for this investigation
+            bills = db.query(Bill).filter(Bill.encounter_id == encounter.id).all()
+            investigation_paid = False
+            investigation_free = False
+            
+            for bill in bills:
+                for bill_item in bill.bill_items:
+                    # Match by G-DRG code or procedure name
+                    matches_code = bill_item.item_code == investigation.gdrg_code
+                    investigation_name = investigation.procedure_name or ''
+                    investigation_code = investigation.gdrg_code or ''
+                    matches_name = bill_item.item_name and (
+                        investigation_name in bill_item.item_name or
+                        investigation_code in bill_item.item_name or
+                        f"Investigation: {investigation_name}" in bill_item.item_name or
+                        f"Investigation: {investigation_code}" in bill_item.item_name
+                    )
+                    
+                    if matches_code or matches_name:
+                        total_price = bill_item.total_price or 0
+                        if total_price == 0:
+                            investigation_free = True
+                            investigation_paid = True
+                        else:
+                            remaining_balance = bill_item.remaining_balance if bill_item.remaining_balance is not None else (total_price - (bill_item.amount_paid or 0))
+                            is_paid = bill_item.is_paid if bill_item.is_paid is not None else (remaining_balance <= 0.01)
+                            if is_paid:
+                                investigation_paid = True
+                        break
+                
+                if investigation_paid:
+                    break
+            
+            # If no bill item found and patient is not insured, require payment
+            if not investigation_paid and not investigation_free:
+                if not is_insured:
+                    raise HTTPException(
+                        status_code=402,
+                        detail="Payment required. This investigation must be paid for before results can be entered. Please process payment at the billing desk."
+                    )
+                # For insured patients without bill items, allow (might be fully covered)
+    
+    # Parse template_data if provided
+    parsed_template_data = None
+    if template_data:
+        try:
+            parsed_template_data = json.loads(template_data)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in template_data")
+    
+    # Validate template_id if provided
+    if template_id:
+        template = db.query(LabResultTemplate).filter(
+            LabResultTemplate.id == template_id,
+            LabResultTemplate.is_active == 1
+        ).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found or inactive")
+        # If template_data is provided, ensure template procedure_name matches
+        if parsed_template_data and investigation.procedure_name and template.procedure_name != investigation.procedure_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template procedure name ({template.procedure_name}) does not match investigation procedure name ({investigation.procedure_name})"
+            )
+    elif parsed_template_data:
+        # If template_data is provided but no template_id, try to find template by procedure name
+        if investigation.procedure_name:
+            template = db.query(LabResultTemplate).filter(
+                LabResultTemplate.procedure_name == investigation.procedure_name,
+                LabResultTemplate.is_active == 1
+            ).first()
+            if template:
+                template_id = template.id
     
     # If investigation is completed, only Admin and Lab Head can edit
     if is_inpatient:
@@ -2350,6 +2805,57 @@ async def create_lab_result(
     if existing_result:
         # Update existing result
         existing_result.results_text = results_text
+        if template_id is not None:
+            existing_result.template_id = template_id
+        if parsed_template_data is not None:
+            # Merge with existing template_data to preserve sample_no and other fields
+            if existing_result.template_data:
+                existing_data = existing_result.template_data if isinstance(existing_result.template_data, dict) else json.loads(existing_result.template_data)
+                # ALWAYS preserve sample_no from existing data if it exists and is non-empty
+                # Sample ID should never be overwritten with empty value
+                existing_sample_no = existing_data.get('sample_no', '')
+                new_sample_no = parsed_template_data.get('sample_no', '')
+                # IMPORTANT: If new sample_no is provided and non-empty, ALWAYS use it
+                # This allows users to regenerate sample IDs if needed
+                if new_sample_no and isinstance(new_sample_no, str) and new_sample_no.strip() != '':
+                    # New one is provided and non-empty, use it (even if existing one exists)
+                    parsed_template_data['sample_no'] = new_sample_no.strip()
+                    logger.info(f"Using new sample_no={new_sample_no} for investigation_id={investigation_id} (replacing existing={existing_sample_no})")
+                elif existing_sample_no and isinstance(existing_sample_no, str) and existing_sample_no.strip() != '':
+                    # No new sample_no provided, preserve existing one
+                    parsed_template_data['sample_no'] = existing_sample_no
+                    logger.info(f"Preserved existing sample_no={existing_sample_no} for investigation_id={investigation_id}")
+                else:
+                    # Neither exists, leave it empty (will be generated later if needed)
+                    logger.info(f"No sample_no provided or existing for investigation_id={investigation_id}")
+                # Merge field_values - new values override existing ones, but keep existing if new is empty
+                if 'field_values' in existing_data and existing_data['field_values']:
+                    if 'field_values' not in parsed_template_data:
+                        parsed_template_data['field_values'] = existing_data['field_values'].copy()
+                    elif parsed_template_data['field_values']:
+                        # Merge: start with existing, then update with new non-empty values
+                        merged_field_values = existing_data['field_values'].copy()
+                        for key, value in parsed_template_data['field_values'].items():
+                            if value is not None and value != '':
+                                merged_field_values[key] = value
+                        parsed_template_data['field_values'] = merged_field_values
+                    else:
+                        # New field_values is empty dict, keep existing
+                        parsed_template_data['field_values'] = existing_data['field_values'].copy()
+                # Merge messages similarly
+                if 'messages' in existing_data and existing_data['messages']:
+                    if 'messages' not in parsed_template_data:
+                        parsed_template_data['messages'] = existing_data['messages'].copy()
+                    elif parsed_template_data['messages']:
+                        merged_messages = existing_data['messages'].copy()
+                        for key, value in parsed_template_data['messages'].items():
+                            if value is not None and value != '':
+                                merged_messages[key] = value
+                        parsed_template_data['messages'] = merged_messages
+                    else:
+                        # New messages is empty dict, keep existing
+                        parsed_template_data['messages'] = existing_data['messages'].copy()
+            existing_result.template_data = parsed_template_data
         if attachment_path:
             # Delete old attachment if exists
             old_path = Path("uploads") / existing_result.attachment_path
@@ -2360,7 +2866,7 @@ async def create_lab_result(
         existing_result.updated_at = datetime.utcnow()
         
         # Mark investigation as completed if results are entered
-        if results_text or attachment_path:
+        if results_text or parsed_template_data or attachment_path:
             if is_inpatient:
                 from app.models.inpatient_investigation import InpatientInvestigationStatus
                 investigation.status = InpatientInvestigationStatus.COMPLETED.value
@@ -2374,21 +2880,25 @@ async def create_lab_result(
         if is_inpatient:
             lab_result = InpatientLabResult(
                 investigation_id=investigation_id,
+                template_id=template_id,
                 results_text=results_text,
+                template_data=parsed_template_data,
                 attachment_path=attachment_path,
                 entered_by=current_user.id
             )
         else:
             lab_result = LabResult(
                 investigation_id=investigation_id,
+                template_id=template_id,
                 results_text=results_text,
+                template_data=parsed_template_data,
                 attachment_path=attachment_path,
                 entered_by=current_user.id
             )
         db.add(lab_result)
         
         # Mark investigation as completed if results are entered
-        if results_text or attachment_path:
+        if results_text or parsed_template_data or attachment_path:
             if is_inpatient:
                 from app.models.inpatient_investigation import InpatientInvestigationStatus
                 investigation.status = InpatientInvestigationStatus.COMPLETED.value
@@ -2409,7 +2919,9 @@ async def create_lab_result(
         result_dict = {
             "id": existing_result.id,
             "investigation_id": existing_result.investigation_id,
+            "template_id": existing_result.template_id,
             "results_text": existing_result.results_text,
+            "template_data": existing_result.template_data,
             "attachment_path": existing_result.attachment_path,
             "entered_by": existing_result.entered_by,
             "updated_by": existing_result.updated_by,
@@ -2426,7 +2938,9 @@ async def create_lab_result(
         result_dict = {
             "id": lab_result.id,
             "investigation_id": lab_result.investigation_id,
+            "template_id": lab_result.template_id,
             "results_text": lab_result.results_text,
+            "template_data": lab_result.template_data,
             "attachment_path": lab_result.attachment_path,
             "entered_by": lab_result.entered_by,
             "updated_by": lab_result.updated_by,
@@ -2480,7 +2994,9 @@ def get_lab_result(
         result_dict = {
             "id": result.id,
             "investigation_id": result.investigation_id,
+            "template_id": result.template_id,
             "results_text": result.results_text,
+            "template_data": result.template_data,
             "attachment_path": result.attachment_path,
             "entered_by": result.entered_by,
             "updated_by": result.updated_by,
@@ -2517,7 +3033,9 @@ def get_lab_result(
     result_dict = {
         "id": result.id,
         "investigation_id": result.investigation_id,
+        "template_id": result.template_id,
         "results_text": result.results_text,
+        "template_data": result.template_data,
         "attachment_path": result.attachment_path,
         "entered_by": result.entered_by,
         "updated_by": result.updated_by,
@@ -2527,6 +3045,60 @@ def get_lab_result(
         "updated_by_name": updated_user.full_name if updated_user else None,
     }
     return LabResultResponse(**result_dict)
+
+
+@router.get("/lab-result/investigation/{investigation_id}/template")
+def get_lab_result_template_for_investigation(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get the active template for a lab investigation's procedure name"""
+    from app.models.inpatient_investigation import InpatientInvestigation
+    from app.models.lab_result_template import LabResultTemplate
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        investigation = ipd_investigation
+    else:
+        investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
+        if not investigation:
+            raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    if investigation.investigation_type != "lab":
+        return None
+    
+    # Get template for this procedure name
+    if not investigation.procedure_name:
+        return None
+    
+    template = db.query(LabResultTemplate).filter(
+        LabResultTemplate.procedure_name == investigation.procedure_name,
+        LabResultTemplate.is_active == 1
+    ).first()
+    
+    if not template:
+        return None
+    
+    # Get user names
+    created_user = db.query(User).filter(User.id == template.created_by).first()
+    updated_user = db.query(User).filter(User.id == template.updated_by).first() if template.updated_by else None
+    
+    return {
+        "id": template.id,
+        "g_drg_code": template.g_drg_code,
+        "procedure_name": template.procedure_name,
+        "template_name": template.template_name,
+        "template_structure": template.template_structure,
+        "created_by": template.created_by,
+        "updated_by": template.updated_by,
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+        "is_active": template.is_active,
+        "created_by_name": created_user.full_name if created_user else None,
+        "updated_by_name": updated_user.full_name if updated_user else None,
+    }
 
 
 @router.get("/lab-result/{investigation_id}/download")
@@ -7816,6 +8388,10 @@ def confirm_inpatient_investigation(
     # Update investigation status
     investigation.status = InpatientInvestigationStatus.CONFIRMED.value
     investigation.confirmed_by = current_user.id
+    
+    # Generate and store sample ID for lab investigations
+    if investigation.investigation_type == "lab":
+        _generate_and_store_sample_id(db, investigation, current_user.id)
     
     # Get price
     is_insured_encounter = bool(encounter.ccc_number)

@@ -18,6 +18,7 @@ from app.models.icd10_drg_mapping import ICD10DRGMapping
 from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
 from app.models.consultation_notes import ConsultationNotes
+from app.models.doctor_note_entry import DoctorNoteEntry
 from app.models.admission import AdmissionRecommendation
 from app.models.ward_admission import WardAdmission
 from app.models.bed import Bed
@@ -36,6 +37,7 @@ from app.models.treatment_sheet_administration import TreatmentSheetAdministrati
 from app.models.ward_transfer import WardTransfer
 from app.models.lab_result import LabResult
 from app.models.inpatient_lab_result import InpatientLabResult
+from app.models.lab_result_template import LabResultTemplate
 from app.models.blood_transfusion_type import BloodTransfusionType
 from app.models.blood_transfusion_request import BloodTransfusionRequest
 from app.models.scan_result import ScanResult
@@ -72,6 +74,7 @@ __all__ = [
     "ClaimPrescription",
     "ClaimProcedure",
     "ConsultationNotes",
+    "DoctorNoteEntry",
     "AdmissionRecommendation",
     "WardAdmission",
     "Bed",
@@ -90,6 +93,7 @@ __all__ = [
     "WardTransfer",
     "LabResult",
     "InpatientLabResult",
+    "LabResultTemplate",
     "BloodTransfusionType",
     "BloodTransfusionRequest",
     "ScanResult",

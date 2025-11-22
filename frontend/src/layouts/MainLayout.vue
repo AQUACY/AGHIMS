@@ -307,6 +307,22 @@
         </q-item>
 
         <q-item
+          v-if="canAccess(['Lab Head', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'LabTemplates' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="description" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Lab Templates</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
           v-if="canAccess(['Scan', 'Scan Head', 'Admin'])"
           clickable
           v-ripple

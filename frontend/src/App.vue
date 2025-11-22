@@ -321,5 +321,61 @@ body {
 .text-grey-9 {
   color: #212121 !important;
 }
+
+/* Global print styles - Hide all navigation and page elements when printing lab results */
+@media print {
+  /* Hide all layout elements */
+  .q-layout > .q-header,
+  .q-layout > .q-drawer,
+  .q-layout > .q-footer,
+  .q-toolbar,
+  .app-background,
+  nav,
+  header:not(.print-header),
+  aside {
+    display: none !important;
+  }
+  
+  /* Show only the lab result content */
+  body {
+    background: white !important;
+    margin: 0;
+    padding: 0;
+  }
+  
+  #app {
+    background: white !important;
+  }
+  
+  /* Ensure lab result viewer is visible and properly positioned */
+  .lab-result-viewer,
+  .lab-result-container {
+    position: relative !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 20px !important;
+    background: white !important;
+  }
+  
+  /* Hide all buttons and navigation elements */
+  .q-btn,
+  button:not(.print-header button),
+  .row.items-center,
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Show only the print header and content */
+  .print-header {
+    display: block !important;
+  }
+  
+  /* Hide dialog overlays when printing */
+  .q-dialog,
+  .q-menu {
+    display: none !important;
+  }
+}
 </style>
 

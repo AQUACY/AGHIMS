@@ -18,7 +18,9 @@ from app.api import (
     billing,
     claims,
     price_list,
-    staff
+    staff,
+    lab_templates,
+    analyzer
 )
 from app.core.database import engine, Base
 import traceback
@@ -162,6 +164,8 @@ app.include_router(billing.router, prefix="/api")
 app.include_router(claims.router, prefix="/api")
 app.include_router(price_list.router, prefix="/api")
 app.include_router(staff.router, prefix="/api")
+app.include_router(lab_templates.router, prefix="/api")
+app.include_router(analyzer.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")
@@ -183,4 +187,41 @@ def root():
 def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+# Startup event: Start analyzer server if enabled
+@app.on_event("startup")
+async def startup_event():
+    """Startup event handler"""
+    print("=" * 70)
+    print("Application Startup - Initializing Analyzer Server...")
+    print("=" * 70)
+    try:
+        from app.services.analyzer_server import start_analyzer_server
+        from app.core.config import settings
+        
+        print(f"Analyzer enabled: {settings.ANALYZER_ENABLED}")
+        if settings.ANALYZER_ENABLED:
+            print("Starting analyzer server...")
+            start_analyzer_server()
+            print("Analyzer server startup initiated")
+        else:
+            print("Analyzer server is disabled (ANALYZER_ENABLED=false)")
+    except Exception as e:
+        print(f"ERROR: Failed to start analyzer server: {e}")
+        import traceback
+        traceback.print_exc()
+    print("=" * 70)
+
+
+# Shutdown event: Stop analyzer server
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown event handler"""
+    print("Application Shutdown - Stopping Analyzer Server...")
+    try:
+        from app.services.analyzer_server import stop_analyzer_server
+        stop_analyzer_server()
+    except Exception as e:
+        print(f"ERROR: Failed to stop analyzer server: {e}")
 

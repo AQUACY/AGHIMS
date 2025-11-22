@@ -94,6 +94,18 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Lab', 'Lab Head', 'Admin'] },
       },
       {
+        path: '/lab/templates',
+        name: 'LabTemplates',
+        component: () => import('../pages/LabTemplates.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Lab Head', 'Admin'] },
+      },
+      {
+        path: '/lab/results/formatted/:investigationId',
+        name: 'FormattedLabResult',
+        component: () => import('../pages/FormattedLabResult.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'PA', 'Admin', 'Lab', 'Lab Head'] },
+      },
+      {
         path: '/scan',
         name: 'Scan',
         component: () => import('../pages/Scan.vue'),

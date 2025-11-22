@@ -34,3 +34,6 @@ Thumbs.db
 # Logs
 *.log
 
+# Analyzer raw data
+analyzer_raw_data/
+

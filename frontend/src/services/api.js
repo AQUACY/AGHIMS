@@ -279,6 +279,11 @@ export const consultationAPI = {
     api.put(`/consultation/investigation/${investigationId}/revert-to-requested`, { reason }),
   getLabResult: (investigationId) => 
     api.get(`/consultation/lab-result/investigation/${investigationId}`),
+  saveSampleId: (investigationId, sampleId) =>
+    api.post('/consultation/lab-result/sample-id', {
+      investigation_id: investigationId,
+      sample_no: sampleId,
+    }),
   createLabResult: (formData) => 
     api.post('/consultation/lab-result', formData, {
       headers: {
@@ -289,6 +294,8 @@ export const consultationAPI = {
     api.get(`/consultation/lab-result/${investigationId}/download`, {
       responseType: 'blob',
     }),
+  getLabResultTemplateForInvestigation: (investigationId) =>
+    api.get(`/consultation/lab-result/investigation/${investigationId}/template`),
   getScanResult: (investigationId) => 
     api.get(`/consultation/scan-result/investigation/${investigationId}`),
   createScanResult: (formData) => 
@@ -607,6 +614,35 @@ export const staffAPI = {
     return api.post(`/staff/import?default_password=${encodeURIComponent(defaultPassword)}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+  },
+};
+
+// Lab Templates API
+export const labTemplatesAPI = {
+  getAll: (procedure_name = null, g_drg_code = null, is_active = null) => {
+    const params = {};
+    if (procedure_name) params.procedure_name = procedure_name;
+    if (g_drg_code) params.g_drg_code = g_drg_code;
+    if (is_active !== null) params.is_active = is_active;
+    return api.get('/lab-templates', { params });
+  },
+  getByProcedure: (procedure_name) => 
+    api.get(`/lab-templates/by-procedure/${encodeURIComponent(procedure_name)}`),
+  getAvailableProcedures: () => 
+    api.get('/lab-templates/available-procedures'),
+  get: (templateId) => 
+    api.get(`/lab-templates/${templateId}`),
+  create: (data) => 
+    api.post('/lab-templates', data),
+  update: (templateId, data) => 
+    api.put(`/lab-templates/${templateId}`, data),
+  delete: (templateId) => 
+    api.delete(`/lab-templates/${templateId}`),
+  generateSampleId: (source = null, investigationId = null) => {
+    const params = {};
+    if (source) params.source = source;
+    if (investigationId) params.investigation_id = investigationId;
+    return api.get('/lab-templates/generate-sample-id', { params });
   },
 };
 

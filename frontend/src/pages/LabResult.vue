@@ -144,15 +144,121 @@
           This investigation is completed. Only Admin and Lab Head can edit completed investigations. Please contact Lab Head to revert the status if changes are needed.
         </q-banner>
         <q-form @submit="saveLabResult" class="q-gutter-md">
-          <q-input
-            v-model="resultForm.results_text"
-            filled
-            type="textarea"
-            rows="10"
-            label="Results Text"
-            hint="Enter lab results from analyzer"
-            :rules="[(val) => !!val || 'Results text is required']"
-          />
+          <!-- Sample ID Field - Always at the top, always enabled -->
+          <div class="row q-gutter-md q-mb-md">
+            <div class="col-12 col-md-8">
+              <q-input
+                v-model="templateData.sample_no"
+                filled
+                label="Sample ID"
+                hint="Pre-generated sample ID for analyzer mapping (e.g., 251100001)"
+                :disable="generatingSampleId"
+              >
+                <template v-slot:prepend>
+                  <q-icon name="qr_code" />
+                </template>
+              </q-input>
+            </div>
+            <div class="col-12 col-md-4 flex flex-center">
+              <q-btn
+                label="Generate Sample ID"
+                color="primary"
+                icon="refresh"
+                :loading="generatingSampleId"
+                @click="generateAndSaveSampleId"
+                class="full-width"
+              />
+            </div>
+          </div>
+          
+          <!-- Template-based form -->
+          <div v-if="usingTemplate && template">
+            <div class="text-subtitle2 q-mb-md text-grey-7">
+              Using template: {{ template.template_name }} ({{ template.procedure_name }})
+            </div>
+            
+            <!-- Template fields grouped by group -->
+            <template v-for="group in getTemplateGroups()" :key="group">
+              <div v-if="group" class="text-subtitle1 q-mt-md q-mb-sm glass-text">{{ group }}</div>
+              <div class="row q-gutter-md">
+                <template v-for="field in getTemplateFieldsByGroup(group)" :key="field.name">
+                  <div class="col-12 col-md-6">
+                    <q-input
+                      v-model.number="templateData.field_values[field.name]"
+                      filled
+                      :label="field.label"
+                      :hint="`${field.unit || ''} ${getReferenceRange(field)}`"
+                      :type="field.type === 'numeric' ? 'number' : 'text'"
+                      step="0.01"
+                      :disable="!canEnterResults"
+                    >
+                      <template v-slot:append v-if="isOutOfRange(field, templateData.field_values[field.name])">
+                        <q-icon name="warning" color="negative" />
+                      </template>
+                    </q-input>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- Message fields -->
+            <div v-if="template.template_structure.message_fields && template.template_structure.message_fields.length > 0" class="q-mt-md">
+              <div class="text-subtitle1 q-mb-sm glass-text">Messages</div>
+              <template v-for="msgField in template.template_structure.message_fields" :key="msgField.name">
+                <q-input
+                  v-model="templateData.messages[msgField.name]"
+                  filled
+                  :type="msgField.type === 'textarea' ? 'textarea' : 'text'"
+                  :rows="msgField.type === 'textarea' ? 3 : 1"
+                  :label="msgField.label || msgField.name"
+                  class="q-mb-md"
+                />
+              </template>
+            </div>
+
+            <!-- Payment Warning -->
+            <q-banner
+              v-if="!canEnterResults"
+              class="bg-negative text-white q-mb-md"
+              rounded
+            >
+              <template v-slot:avatar>
+                <q-icon name="payment" />
+              </template>
+              <strong>Payment Required</strong>
+              <div class="text-caption q-mt-xs">
+                This investigation must be paid for before results can be entered. Please process payment at the billing desk.
+              </div>
+            </q-banner>
+            
+            <!-- Additional fields -->
+            <div class="row q-gutter-md q-mt-md">
+              <div class="col-12 col-md-6">
+                <q-input
+                  v-model="templateData.validated_by"
+                  filled
+                  label="Validated By"
+                  hint="Name of person validating the results"
+                  :disable="!canEnterResults"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Default form (no template) -->
+          <div v-else>
+            <q-input
+              v-model="resultForm.results_text"
+              filled
+              type="textarea"
+              rows="10"
+              label="Results Text"
+              hint="Enter lab results from analyzer"
+              :rules="[(val) => !!val || 'Results text is required']"
+            />
+          </div>
+
+          <!-- File upload (available for both template and non-template) -->
           <q-file
             v-model="resultForm.attachment"
             filled
@@ -190,7 +296,7 @@
               color="primary"
               class="col"
               :loading="savingResult"
-              :disable="!canEditResult"
+              :disable="!canEditResult || !canEnterResults"
             />
           </div>
         </q-form>
@@ -203,7 +309,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, encountersAPI, patientsAPI, billingAPI } from '../services/api';
+import { consultationAPI, encountersAPI, patientsAPI, billingAPI, labTemplatesAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
@@ -218,10 +324,24 @@ const labResult = ref(null);
 const loading = ref(false);
 const savingResult = ref(false);
 const editingResult = ref(false);
+const template = ref(null);
+const templateData = ref({ field_values: {}, messages: {}, validated_by: '', sample_no: '' });
+const usingTemplate = ref(false);
+const generatingSampleId = ref(false);
 const encounterBillInfo = ref({
   totalAmount: null,
   paidAmount: null,
   remainingBalance: null,
+});
+const bills = ref([]);
+const isInvestigationPaid = ref(false);
+const canEnterResults = computed(() => {
+  // For IPD investigations, allow without payment check
+  if (investigation.value?.source === 'inpatient' || investigation.value?.prescription_type === 'inpatient') {
+    return true;
+  }
+  // For OPD, must be paid
+  return isInvestigationPaid.value;
 });
 
 // Check if user can edit result (Admin and Lab Head can edit completed investigations)
@@ -296,8 +416,8 @@ const loadInvestigation = async () => {
           throw ipdError;
         }
       }
-    } else {
-      // Default: Try OPD first (most common case)
+    } else if (source === 'opd') {
+      // Explicitly OPD - try OPD first
       try {
         invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
         investigation.value = invResponse.data;
@@ -308,7 +428,7 @@ const loadInvestigation = async () => {
           throw new Error('Patient mismatch');
         }
       } catch (opdError) {
-        // If OPD fails with 404 or patient mismatch, try IPD
+        // If OPD fails with 404 or patient mismatch, try IPD as fallback
         if (opdError.response?.status === 404 || opdError.message === 'Patient mismatch') {
           try {
             invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
@@ -330,6 +450,57 @@ const loadInvestigation = async () => {
         } else {
           throw opdError;
         }
+      }
+    } else {
+      // Source not specified: Try IPD first, then OPD (to handle IPD investigations correctly)
+      // This ensures IPD investigations are found even if source parameter is missing
+      let found = false;
+      
+      // Try IPD first
+      try {
+        invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+        investigation.value = invResponse.data;
+        isInpatient = true;
+        found = true;
+        
+        // Verify patient card number matches if provided
+        if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+          throw new Error('Patient mismatch');
+        }
+      } catch (ipdError) {
+        // IPD not found or mismatch - try OPD
+        if (ipdError.response?.status === 404 || ipdError.message === 'Patient mismatch') {
+          try {
+            invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+            investigation.value = invResponse.data;
+            isInpatient = false;
+            found = true;
+            
+            // Verify patient card number matches
+            if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+              throw new Error('Investigation not found for this patient');
+            }
+          } catch (opdError) {
+            $q.notify({
+              type: 'negative',
+              message: 'Investigation not found or patient mismatch',
+            });
+            router.push('/lab');
+            return;
+          }
+        } else {
+          // Other error from IPD call - rethrow
+          throw ipdError;
+        }
+      }
+      
+      if (!found) {
+        $q.notify({
+          type: 'negative',
+          message: 'Investigation not found',
+        });
+        router.push('/lab');
+        return;
       }
     }
     
@@ -353,6 +524,9 @@ const loadInvestigation = async () => {
         
         // Load bills for this encounter
         await loadEncounterBills(encounter.value.id);
+        
+        // Check if investigation is paid
+        checkInvestigationPayment();
         
         // Verify encounter matches investigation's patient_card_number if available
         if (investigation.value.patient_card_number && encounter.value.patient_card_number) {
@@ -458,6 +632,19 @@ const loadInvestigation = async () => {
       }
     }
 
+    // Check for template for this investigation's G-DRG code
+    try {
+      const templateResponse = await consultationAPI.getLabResultTemplateForInvestigation(investigation.value.id);
+      if (templateResponse.data) {
+        template.value = templateResponse.data;
+        usingTemplate.value = true;
+      }
+    } catch (error) {
+      console.log('No template found for investigation:', investigation.value.id);
+      template.value = null;
+      usingTemplate.value = false;
+    }
+
     // Check if result already exists
     // IMPORTANT: Only load result if investigation is loaded correctly
     // The backend will check IPD first to prevent ID collisions
@@ -470,6 +657,30 @@ const loadInvestigation = async () => {
       if (existingResult && existingResult.investigation_id === investigation.value.id) {
         labResult.value = existingResult;
         editingResult.value = true;
+        
+        // If template data exists, use it
+        if (existingResult.template_data) {
+          templateData.value = { ...existingResult.template_data };
+          usingTemplate.value = true;
+          // Log sample_no status for debugging
+          if (templateData.value.sample_no && templateData.value.sample_no.trim() !== '') {
+            console.log('Sample ID loaded from database:', templateData.value.sample_no);
+          } else {
+            console.warn('Sample ID is empty in loaded template_data. Investigation ID:', investigation.value.id);
+          }
+        } else {
+          // No template data, but check if sample_no was pre-generated
+          // Try to load it from a minimal lab_result record
+          if (existingResult.sample_no) {
+            templateData.value = {
+              field_values: {},
+              messages: {},
+              validated_by: '',
+              sample_no: existingResult.sample_no
+            };
+          }
+        }
+        
         resultForm.value = {
           investigation_id: investigation.value.id,
           results_text: existingResult.results_text || '',
@@ -480,6 +691,28 @@ const loadInvestigation = async () => {
         // No result exists or mismatch - start fresh
         labResult.value = null;
         editingResult.value = false;
+        // Check if sample ID was pre-generated when investigation was confirmed
+        // Try to load existing lab_result with just sample_no
+        try {
+          const checkResult = await consultationAPI.getLabResult(investigation.value.id);
+          if (checkResult.data && checkResult.data.template_data && checkResult.data.template_data.sample_no) {
+            // Sample ID was pre-generated, use it
+            templateData.value = {
+              field_values: {},
+              messages: {},
+              validated_by: '',
+              sample_no: checkResult.data.template_data.sample_no
+            };
+          } else {
+            // No pre-generated sample ID, generate one
+            generateSampleId();
+            templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
+          }
+        } catch (err) {
+          // No result exists, generate sample ID
+          generateSampleId();
+          templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
+        }
         resultForm.value = {
           investigation_id: investigation.value.id,
           results_text: '',
@@ -492,6 +725,28 @@ const loadInvestigation = async () => {
       console.log('No lab result found for investigation:', investigation.value.id, 'Source:', investigation.value?.source || 'unknown', error);
       labResult.value = null;
       editingResult.value = false;
+      // Check if sample ID was pre-generated when investigation was confirmed
+      // The backend creates a minimal lab_result record with sample_no when investigation is confirmed
+      try {
+        const checkResult = await consultationAPI.getLabResult(investigation.value.id);
+        if (checkResult.data && checkResult.data.template_data && checkResult.data.template_data.sample_no) {
+          // Sample ID was pre-generated, use it
+          templateData.value = {
+            field_values: {},
+            messages: {},
+            validated_by: '',
+            sample_no: checkResult.data.template_data.sample_no
+          };
+        } else {
+          // No pre-generated sample ID, generate one
+          generateSampleId();
+          templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
+        }
+      } catch (err) {
+        // No result exists, generate sample ID
+        generateSampleId();
+        templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
+      }
       resultForm.value = {
         investigation_id: investigation.value.id,
         results_text: '',
@@ -517,14 +772,38 @@ const onFileSelected = (file) => {
 
 const saveLabResult = async () => {
   if (!resultForm.value.investigation_id) return;
+  
+  // Check payment before saving
+  if (!canEnterResults.value) {
+    $q.notify({
+      type: 'negative',
+      message: 'Payment required. This investigation must be paid for before results can be entered.',
+      position: 'top',
+    });
+    return;
+  }
 
   savingResult.value = true;
   try {
     const formData = new FormData();
     formData.append('investigation_id', resultForm.value.investigation_id);
-    if (resultForm.value.results_text) {
-      formData.append('results_text', resultForm.value.results_text);
+    
+    // If using template, send template data
+    if (usingTemplate.value && template.value) {
+      formData.append('template_id', template.value.id);
+      // Ensure sample_no is included - send the current value from templateData
+      const dataToSend = { ...templateData.value };
+      console.log('Saving lab result with template_data:', dataToSend);
+      console.log('Sample ID being sent:', dataToSend.sample_no);
+      // Always send the sample_no - backend will use it if provided
+      formData.append('template_data', JSON.stringify(dataToSend));
+    } else {
+      // Otherwise, send results_text
+      if (resultForm.value.results_text) {
+        formData.append('results_text', resultForm.value.results_text);
+      }
     }
+    
     if (resultForm.value.attachment) {
       formData.append('attachment', resultForm.value.attachment);
     }
@@ -536,13 +815,49 @@ const saveLabResult = async () => {
     });
     router.push('/lab');
   } catch (error) {
+    const errorMessage = error.response?.data?.detail || 'Failed to save lab result';
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to save lab result',
+      message: errorMessage,
+      position: 'top',
     });
+    
+    // If payment error, refresh payment status
+    if (error.response?.status === 402) {
+      checkInvestigationPayment();
+    }
   } finally {
     savingResult.value = false;
   }
+};
+
+const getTemplateGroups = () => {
+  if (!template.value || !template.value.template_structure.fields) return [];
+  const groups = [...new Set(template.value.template_structure.fields.map(f => f.group || 'Other'))];
+  return groups;
+};
+
+const getTemplateFieldsByGroup = (group) => {
+  if (!template.value || !template.value.template_structure.fields) return [];
+  return template.value.template_structure.fields
+    .filter(f => (f.group || 'Other') === group)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+};
+
+const getReferenceRange = (field) => {
+  if (field.reference_min !== null && field.reference_max !== null) {
+    return `(Ref: ${field.reference_min} - ${field.reference_max})`;
+  }
+  return '';
+};
+
+const isOutOfRange = (field, value) => {
+  if (value === null || value === undefined || value === '') return false;
+  const numValue = parseFloat(value);
+  if (isNaN(numValue)) return false;
+  if (field.reference_min !== null && numValue < field.reference_min) return true;
+  if (field.reference_max !== null && numValue > field.reference_max) return true;
+  return false;
 };
 
 const downloadExistingAttachment = async () => {
@@ -619,6 +934,171 @@ const formatDateOnly = (dateString) => {
     month: 'short',
     year: 'numeric'
   });
+};
+
+const loadEncounterBills = async (encounterId) => {
+  try {
+    const response = await billingAPI.getBillsByEncounter(encounterId);
+    bills.value = response.data || [];
+    
+    // Calculate total amounts
+    let totalAmount = 0;
+    let paidAmount = 0;
+    
+    for (const bill of bills.value) {
+      totalAmount += bill.total_amount || 0;
+      paidAmount += bill.paid_amount || 0;
+    }
+    
+    encounterBillInfo.value = {
+      totalAmount,
+      paidAmount,
+      remainingBalance: totalAmount - paidAmount
+    };
+  } catch (error) {
+    console.error('Failed to load bills:', error);
+    bills.value = [];
+    encounterBillInfo.value = {
+      totalAmount: null,
+      paidAmount: null,
+      remainingBalance: null
+    };
+  }
+};
+
+const checkInvestigationPayment = () => {
+  if (!investigation.value || !bills.value.length) {
+    // For IPD, allow without payment check
+    if (investigation.value?.source === 'inpatient' || investigation.value?.prescription_type === 'inpatient') {
+      isInvestigationPaid.value = true;
+      return;
+    }
+    isInvestigationPaid.value = false;
+    return;
+  }
+  
+  // For IPD investigations, allow without payment requirement
+  if (investigation.value.source === 'inpatient' || investigation.value.prescription_type === 'inpatient') {
+    isInvestigationPaid.value = true;
+    return;
+  }
+  
+  // Find bill item for this investigation
+  for (const bill of bills.value) {
+    for (const billItem of bill.bill_items || []) {
+      const matchesCode = billItem.item_code === investigation.value.gdrg_code;
+      const investigationName = investigation.value.procedure_name || '';
+      const investigationCode = investigation.value.gdrg_code || '';
+      const matchesName = billItem.item_name && (
+        billItem.item_name.includes(investigationName) ||
+        billItem.item_name.includes(investigationCode) ||
+        billItem.item_name.includes(`Investigation: ${investigationName}`) ||
+        billItem.item_name.includes(`Investigation: ${investigationCode}`)
+      );
+      
+      if (matchesCode || matchesName) {
+        const totalPrice = billItem.total_price || 0;
+        const remainingBalance = billItem.remaining_balance !== undefined && billItem.remaining_balance !== null
+          ? billItem.remaining_balance 
+          : (totalPrice - (billItem.amount_paid || 0));
+        const isPaid = billItem.is_paid !== undefined 
+          ? billItem.is_paid 
+          : (remainingBalance <= 0.01);
+        
+        isInvestigationPaid.value = totalPrice === 0 || isPaid;
+        return;
+      }
+    }
+  }
+  
+  // If no bill item found, assume not paid (unless it's free)
+  isInvestigationPaid.value = false;
+};
+
+const generateAndSaveSampleId = async () => {
+  if (!investigation.value) return;
+  
+  generatingSampleId.value = true;
+  try {
+    // Call backend API to generate sequential sample ID
+    // Format: YYMMNNNNN (e.g., 251100001 = November 2025, sample 00001)
+    // Pass source and investigation_id to ensure correct table is checked
+    const source = investigation.value?.source || investigation.value?.prescription_type === 'inpatient' ? 'inpatient' : 'opd';
+    const response = await labTemplatesAPI.generateSampleId(source, investigation.value.id);
+    if (response.data && response.data.sample_id) {
+      const sampleId = response.data.sample_id;
+      templateData.value.sample_no = sampleId;
+      
+      // Save the sample ID automatically (no payment check required)
+      try {
+        const saveResponse = await consultationAPI.saveSampleId(investigation.value.id, sampleId);
+        console.log('Save sample ID response:', saveResponse.data);
+        // Reload the saved data to ensure we have the latest from database
+        if (saveResponse.data && saveResponse.data.template_data) {
+          const savedSampleNo = saveResponse.data.template_data.sample_no;
+          if (savedSampleNo && savedSampleNo.trim() !== '') {
+            templateData.value.sample_no = savedSampleNo;
+            console.log('Sample ID saved successfully:', savedSampleNo);
+          } else {
+            console.error('Sample ID was not in response:', saveResponse.data);
+            throw new Error('Sample ID was not saved correctly');
+          }
+        } else {
+          console.error('Invalid response from save sample ID:', saveResponse);
+          throw new Error('Invalid response from server');
+        }
+        $q.notify({
+          type: 'positive',
+          message: `Sample ID ${sampleId} generated and saved successfully`,
+          position: 'top',
+          timeout: 3000,
+        });
+      } catch (saveError) {
+        console.error('Failed to save sample ID:', saveError);
+        console.error('Error details:', saveError.response?.data);
+        $q.notify({
+          type: 'negative',
+          message: saveError.response?.data?.detail || 'Sample ID generated but could not be saved. Please try again.',
+          position: 'top',
+          timeout: 5000,
+        });
+        // Don't clear the sample ID from the form - let user try to save again
+      }
+    } else {
+      throw new Error('Invalid response from server');
+    }
+  } catch (error) {
+    console.error('Failed to generate sample ID:', error);
+    // Fallback: generate client-side (may not be unique, but better than nothing)
+    const now = new Date();
+    const year = now.getFullYear() % 100; // Last 2 digits (e.g., 25 for 2025)
+    const month = now.getMonth() + 1; // 1-12
+    // Use timestamp-based fallback (not guaranteed unique)
+    const timestamp = Date.now();
+    const fallbackNum = (timestamp % 100000).toString().padStart(5, '0');
+    const sampleId = `${year.toString().padStart(2, '0')}${month.toString().padStart(2, '0')}${fallbackNum}`;
+    templateData.value.sample_no = sampleId;
+    
+    // Try to save the fallback sample ID
+    try {
+      await consultationAPI.saveSampleId(investigation.value.id, sampleId);
+    } catch (saveError) {
+      console.error('Failed to save fallback sample ID:', saveError);
+    }
+    
+    $q.notify({
+      type: 'warning',
+      message: 'Could not generate sequential sample ID. Using fallback. Please verify uniqueness.',
+      position: 'top',
+    });
+  } finally {
+    generatingSampleId.value = false;
+  }
+};
+
+const generateSampleId = async () => {
+  // Legacy function - now just calls generateAndSaveSampleId
+  await generateAndSaveSampleId();
 };
 
 onMounted(() => {

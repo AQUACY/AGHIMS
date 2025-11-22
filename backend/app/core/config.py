@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     # Facility Settings
     FACILITY_CODE: str = "ER-A25"
     
+    # Analyzer Integration Settings (Sysmex XN-330)
+    ANALYZER_ENABLED: bool = False  # Set to True to enable analyzer integration
+    ANALYZER_HOST: str = "0.0.0.0"  # Host to bind TCP server (0.0.0.0 for all interfaces)
+    ANALYZER_PORT: int = 5150  # TCP port to listen on
+    ANALYZER_EQUIPMENT_IP: str = "10.10.16.34"  # Equipment IP (for reference/logging)
+    ANALYZER_TIMEOUT: int = 30  # Connection timeout in seconds
+    
     @property
     def DATABASE_URL(self) -> str:
         """Generate DATABASE_URL based on DATABASE_MODE"""

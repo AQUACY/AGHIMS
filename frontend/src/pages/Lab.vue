@@ -1284,7 +1284,15 @@ watch(() => route.query.encounterId, (newEncounterId) => {
 
 // Navigate to result page
 const navigateToResultPage = (request) => {
-  router.push(`/lab/result/${request.id}`);
+  // Determine source from request
+  const source = request.source === 'inpatient' || request.prescription_type === 'inpatient' ? 'inpatient' : 'opd';
+  router.push({
+    path: `/lab/result/${request.id}`,
+    query: {
+      source: source,
+      card_number: request.patient_card_number || undefined
+    }
+  });
 };
 
 const revertToRequested = async (investigation) => {

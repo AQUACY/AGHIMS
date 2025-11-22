@@ -1391,40 +1391,75 @@
     </q-dialog>
 
     <!-- Investigation Results Dialog -->
-    <q-dialog v-model="showResultsDialog">
-      <q-card style="min-width: 600px; max-width: 900px">
+    <q-dialog v-model="showResultsDialog" maximized>
+      <q-card style="min-width: 800px; max-width: 1200px">
         <q-card-section>
-          <div class="text-h6">Investigation Results</div>
+          <div class="row items-center">
+            <div class="text-h6">Investigation Results</div>
+            <q-space />
+            <q-btn
+              v-if="investigationResult && investigationResult.template_id && investigationResult.template_data"
+              flat
+              icon="picture_as_pdf"
+              label="View PDF Format"
+              color="primary"
+              @click="viewFormattedLabResult"
+              class="q-mr-sm"
+            />
+            <q-btn
+              flat
+              icon="close"
+              round
+              v-close-popup
+            />
+          </div>
           <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="selectedInvestigation">
             {{ selectedInvestigation.procedure_name || 'Investigation' }} ({{ selectedInvestigation.gdrg_code }})
           </div>
         </q-card-section>
 
-        <q-card-section>
+        <q-card-section style="max-height: calc(100vh - 150px); overflow-y: auto;">
           <q-inner-loading :showing="loadingResults" />
           
           <div v-if="!loadingResults && investigationResult">
-            <div class="q-mb-md">
-              <div class="text-subtitle1 q-mb-sm">Results Text:</div>
-              <div class="text-body1" style="white-space: pre-wrap; min-height: 100px; padding: 12px; background: #f5f5f5; border-radius: 4px;">
-                {{ investigationResult.results_text || 'No text results available.' }}
-              </div>
-            </div>
+            <!-- Template-based Results -->
+            <LabResultViewer
+              v-if="investigationResult.template_id && investigationResult.template_data && labResultTemplate"
+              :template-structure="labResultTemplate.template_structure"
+              :template-data="typeof investigationResult.template_data === 'string' ? JSON.parse(investigationResult.template_data) : investigationResult.template_data"
+              :results-text="investigationResult.results_text"
+              :patient-info="patientInfo"
+              :procedure-name="selectedInvestigation?.procedure_name || ''"
+              :template-name="labResultTemplate?.template_name || ''"
+              :result-date="investigationResult.created_at"
+              :entered-by="investigationResult.entered_by_name"
+              :entered-at="investigationResult.created_at"
+            />
             
-            <div v-if="investigationResult.attachment_path" class="q-mt-md">
-              <div class="text-subtitle1 q-mb-sm">Attachment:</div>
-              <q-btn
-                color="primary"
-                icon="download"
-                label="Download Attachment"
-                @click="downloadInvestigationAttachment"
-              />
-              <div class="text-caption text-grey-7 q-mt-xs">
-                {{ investigationResult.attachment_path.split('/').pop() }}
+            <!-- Non-template Results -->
+            <div v-else>
+              <div class="q-mb-md">
+                <div class="text-subtitle1 q-mb-sm">Results Text:</div>
+                <div class="text-body1" style="white-space: pre-wrap; min-height: 100px; padding: 12px; background: #f5f5f5; border-radius: 4px;">
+                  {{ investigationResult.results_text || 'No text results available.' }}
+                </div>
               </div>
-            </div>
-            <div v-else class="q-mt-md">
-              <div class="text-body2 text-grey-7">No attachment available.</div>
+              
+              <div v-if="investigationResult.attachment_path" class="q-mt-md">
+                <div class="text-subtitle1 q-mb-sm">Attachment:</div>
+                <q-btn
+                  color="primary"
+                  icon="download"
+                  label="Download Attachment"
+                  @click="downloadInvestigationAttachment"
+                />
+                <div class="text-caption text-grey-7 q-mt-xs">
+                  {{ investigationResult.attachment_path.split('/').pop() }}
+                </div>
+              </div>
+              <div v-else class="q-mt-md">
+                <div class="text-body2 text-grey-7">No attachment available.</div>
+              </div>
             </div>
           </div>
           
@@ -1703,11 +1738,12 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { consultationAPI, priceListAPI, encountersAPI, patientsAPI, billingAPI, vitalsAPI } from '../services/api';
+import { consultationAPI, priceListAPI, encountersAPI, patientsAPI, billingAPI, vitalsAPI, labTemplatesAPI } from '../services/api';
 import { useEncountersStore } from '../stores/encounters';
 import { usePatientsStore } from '../stores/patients';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar } from 'quasar';
+import LabResultViewer from '../components/LabResultViewer.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -1824,6 +1860,7 @@ const showInvestigationDialog = ref(false);
 const showResultsDialog = ref(false);
 const selectedInvestigation = ref(null);
 const investigationResult = ref(null);
+const labResultTemplate = ref(null);
 const loadingResults = ref(false);
 
 const diagnosisColumns = [
@@ -3659,6 +3696,7 @@ const deleteInvestigation = (investigation) => {
 const viewInvestigationResults = async (investigation) => {
   selectedInvestigation.value = investigation;
   investigationResult.value = null;
+  labResultTemplate.value = null;
   loadingResults.value = true;
   showResultsDialog.value = true;
   
@@ -3686,6 +3724,17 @@ const viewInvestigationResults = async (investigation) => {
     }
     
     investigationResult.value = response.data || null;
+    
+    // If lab result has template_id, fetch the template
+    if (investigationResult.value?.template_id && investigation.investigation_type === 'lab') {
+      try {
+        const templateResponse = await labTemplatesAPI.get(investigationResult.value.template_id);
+        labResultTemplate.value = templateResponse.data || null;
+      } catch (templateError) {
+        console.error('Failed to load template:', templateError);
+        // Template fetch failure is not critical, continue without template
+      }
+    }
   } catch (error) {
     console.error('Failed to load investigation results:', error);
     // If result doesn't exist, investigationResult.value will remain null
@@ -3700,6 +3749,24 @@ const viewInvestigationResults = async (investigation) => {
   } finally {
     loadingResults.value = false;
   }
+};
+
+const viewFormattedLabResult = () => {
+  if (!selectedInvestigation.value || !investigationResult.value) return;
+  
+  // Open formatted view page in a new tab/window
+  const route = router.resolve({
+    name: 'FormattedLabResult',
+    params: {
+      investigationId: selectedInvestigation.value.id
+    },
+    query: {
+      encounterId: encounterStore.currentEncounter?.id,
+      patientId: patientInfo?.id
+    }
+  });
+  
+  window.open(route.href, '_blank');
 };
 
 const downloadInvestigationAttachment = async () => {
