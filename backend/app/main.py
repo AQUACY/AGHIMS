@@ -56,6 +56,7 @@ if not cors_origins:
         "http://10.10.16.50",  # Production (Network IP)
         "http://10.10.16.50:8000",  # Production (Network IP with port)
         "http://10.10.16.50:9000",  # Production (Network IP dev server)
+        "http://10.10.16.50:9000/",  # Production (with trailing slash)
     ]
 
 app.add_middleware(
@@ -203,14 +204,23 @@ async def startup_event():
         print(f"Analyzer enabled: {settings.ANALYZER_ENABLED}")
         if settings.ANALYZER_ENABLED:
             print("Starting analyzer server...")
-            start_analyzer_server()
-            print("Analyzer server startup initiated")
+            try:
+                start_analyzer_server()
+                print("Analyzer server startup initiated")
+            except Exception as analyzer_error:
+                print(f"WARNING: Analyzer server failed to start: {analyzer_error}")
+                print("Application will continue without analyzer server")
+                import traceback
+                traceback.print_exc()
         else:
             print("Analyzer server is disabled (ANALYZER_ENABLED=false)")
     except Exception as e:
         print(f"ERROR: Failed to start analyzer server: {e}")
+        print("Application will continue without analyzer server")
         import traceback
         traceback.print_exc()
+    print("=" * 70)
+    print("Application startup complete")
     print("=" * 70)
 
 

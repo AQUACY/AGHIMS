@@ -293,27 +293,30 @@ class AnalyzerServer:
                     
                     if 'frame_data' not in locals():
                         continue
-                            
-                            # Save parsed frame to readable file
-                            parsed_file = RAW_DATA_DIR / f"parsed_{connection_id}.txt"
-                            with open(parsed_file, 'a', encoding='utf-8') as f:
-                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-                                f.write(f"\n=== Parsed frame at {timestamp} ===\n")
-                                try:
-                                    # Try to decode as ASCII/UTF-8 for readability
-                                    readable = frame_data.decode('ascii', errors='replace')
-                                    f.write(f"Readable content:\n{readable}\n")
-                                except:
-                                    f.write(f"Binary data (could not decode): {frame_data}\n")
-                                f.write(f"\nHex: {frame_data.hex()}\n")
-                                f.write("\n" + "="*80 + "\n")
-                            
-                            # Parse and process
-                            self._process_astm_data(frame_data, address)
-                            
-                            # Send ACK
-                            client_socket.send(b'\x06')  # ACK
-                            logger.info(f"Sent ACK to analyzer at {address}")
+                    
+                    # Save parsed frame to readable file
+                    parsed_file = RAW_DATA_DIR / f"parsed_{connection_id}.txt"
+                    with open(parsed_file, 'a', encoding='utf-8') as f:
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+                        f.write(f"\n=== Parsed frame at {timestamp} ===\n")
+                        try:
+                            # Try to decode as ASCII/UTF-8 for readability
+                            readable = frame_data.decode('ascii', errors='replace')
+                            f.write(f"Readable content:\n{readable}\n")
+                        except:
+                            f.write(f"Binary data (could not decode): {frame_data}\n")
+                        f.write(f"\nHex: {frame_data.hex()}\n")
+                        f.write("\n" + "="*80 + "\n")
+                    
+                    # Parse and process
+                    self._process_astm_data(frame_data, address)
+                    
+                    # Send ACK
+                    client_socket.send(b'\x06')  # ACK
+                    logger.info(f"Sent ACK to analyzer at {address}")
+                    
+                    # Clear frame_data for next iteration
+                    del frame_data
                 
                 except socket.timeout:
                     # Process any remaining data in buffer
