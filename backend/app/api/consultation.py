@@ -2669,7 +2669,7 @@ async def create_lab_result(
     
     # Check payment status for OPD investigations (IPD doesn't require payment check)
     if not is_inpatient:
-        from app.models.bill import Bill, BillItem
+        from app.models.bill import Bill, BillItem, Receipt, ReceiptItem
         from app.models.encounter import Encounter
         
         # Get encounter for this investigation
@@ -2703,8 +2703,18 @@ async def create_lab_result(
                             investigation_free = True
                             investigation_paid = True
                         else:
-                            remaining_balance = bill_item.remaining_balance if bill_item.remaining_balance is not None else (total_price - (bill_item.amount_paid or 0))
-                            is_paid = bill_item.is_paid if bill_item.is_paid is not None else (remaining_balance <= 0.01)
+                            # Calculate amount paid for this bill item from receipts
+                            amount_paid = 0.0
+                            for receipt in bill.receipts:
+                                if not receipt.refunded:  # Only count non-refunded receipts
+                                    for receipt_item in receipt.receipt_items:
+                                        if receipt_item.bill_item_id == bill_item.id:
+                                            amount_paid += receipt_item.amount_paid or 0.0
+                            
+                            # Calculate remaining balance
+                            remaining_balance = total_price - amount_paid
+                            is_paid = remaining_balance <= 0.01  # Allow 0.01 tolerance for rounding
+                            
                             if is_paid:
                                 investigation_paid = True
                         break
@@ -2858,9 +2868,10 @@ async def create_lab_result(
             existing_result.template_data = parsed_template_data
         if attachment_path:
             # Delete old attachment if exists
-            old_path = Path("uploads") / existing_result.attachment_path
-            if existing_result.attachment_path and old_path.exists():
-                old_path.unlink()
+            if existing_result.attachment_path:
+                old_path = Path("uploads") / existing_result.attachment_path
+                if old_path.exists():
+                    old_path.unlink()
             existing_result.attachment_path = attachment_path
         existing_result.updated_by = current_user.id  # Track who updated
         existing_result.updated_at = datetime.utcnow()
@@ -3104,16 +3115,27 @@ def get_lab_result_template_for_investigation(
 @router.get("/lab-result/{investigation_id}/download")
 def download_lab_result_attachment(
     investigation_id: int,
+    view: bool = Query(False, description="If true, open in browser instead of downloading"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Download lab result attachment file"""
+    """Download or view lab result attachment file"""
     import os
     import mimetypes
     from pathlib import Path
     
-    # Get lab result
-    result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        # Use InpatientLabResult for IPD
+        result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+    else:
+        # Use LabResult for OPD
+        result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    
     if not result:
         raise HTTPException(status_code=404, detail="Lab result not found")
     
@@ -3139,14 +3161,61 @@ def download_lab_result_attachment(
     # Get filename for download
     filename = file_path.name
     
+    # Use inline for PDFs and images when viewing, attachment for others or when downloading
+    is_pdf_or_image = mime_type.startswith('image/') or mime_type == 'application/pdf'
+    disposition = 'inline' if (view and is_pdf_or_image) else 'attachment'
+    
     return Response(
         content=file_content,
         media_type=mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
             "Content-Length": str(len(file_content))
         }
     )
+
+
+@router.delete("/lab-result/{investigation_id}/attachment")
+def delete_lab_result_attachment(
+    investigation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
+):
+    """Delete lab result attachment"""
+    from pathlib import Path
+    
+    # IMPORTANT: Check IPD FIRST to prevent ID collision issues
+    from app.models.inpatient_investigation import InpatientInvestigation
+    
+    # Check IPD first
+    ipd_investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if ipd_investigation:
+        # Use InpatientLabResult for IPD
+        result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+    else:
+        # Use LabResult for OPD
+        result = db.query(LabResult).filter(LabResult.investigation_id == investigation_id).first()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Lab result not found")
+    
+    if not result.attachment_path:
+        raise HTTPException(status_code=404, detail="No attachment found for this lab result")
+    
+    # Delete the physical file
+    file_path = Path("uploads") / result.attachment_path
+    if file_path.exists():
+        file_path.unlink()
+    
+    # Update the result
+    result.attachment_path = None
+    result.updated_by = current_user.id
+    result.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(result)
+    
+    return {"message": "Attachment deleted successfully", "investigation_id": investigation_id}
 
 
 # Scan Result schemas
@@ -3474,6 +3543,7 @@ def get_scan_result(
 def download_scan_result_attachment(
     investigation_id: int,
     attachment_path: Optional[str] = Query(None),
+    view: bool = Query(False, description="If true, open in browser instead of downloading"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -3529,9 +3599,9 @@ def download_scan_result_attachment(
     # Get filename for download
     filename = file_path.name
     
-    # Use inline for PDFs and images, attachment for others
+    # Use inline for PDFs and images when viewing, attachment for others or when downloading
     is_pdf_or_image = mime_type.startswith('image/') or mime_type == 'application/pdf'
-    disposition = 'inline' if is_pdf_or_image else 'attachment'
+    disposition = 'inline' if (view and is_pdf_or_image) else 'attachment'
     
     return Response(
         content=file_content,
@@ -3929,6 +3999,7 @@ def get_xray_result(
 def download_xray_result_attachment(
     investigation_id: int,
     attachment_path: Optional[str] = Query(None),
+    view: bool = Query(False, description="If true, open in browser instead of downloading"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -3984,9 +4055,9 @@ def download_xray_result_attachment(
     # Get filename for download
     filename = file_path.name
     
-    # Use inline for PDFs and images, attachment for others
+    # Use inline for PDFs and images when viewing, attachment for others or when downloading
     is_pdf_or_image = mime_type.startswith('image/') or mime_type == 'application/pdf'
-    disposition = 'inline' if is_pdf_or_image else 'attachment'
+    disposition = 'inline' if (view and is_pdf_or_image) else 'attachment'
     
     return Response(
         content=file_content,

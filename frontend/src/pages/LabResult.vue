@@ -183,12 +183,27 @@
               <div class="row q-gutter-md">
                 <template v-for="field in getTemplateFieldsByGroup(group)" :key="field.name">
                   <div class="col-12 col-md-6">
+                    <!-- Select field if options are provided -->
+                    <q-select
+                      v-if="field.options && field.options.length > 0"
+                      v-model="templateData.field_values[field.name]"
+                      filled
+                      :label="field.label"
+                      :hint="field.hint || `${field.unit || ''} ${getReferenceRange(field)}`"
+                      :options="field.options"
+                      :disable="!canEnterResults"
+                      clearable
+                      emit-value
+                      map-options
+                    />
+                    <!-- Numeric input for numeric fields -->
                     <q-input
+                      v-else-if="field.type === 'numeric'"
                       v-model.number="templateData.field_values[field.name]"
                       filled
                       :label="field.label"
                       :hint="`${field.unit || ''} ${getReferenceRange(field)}`"
-                      :type="field.type === 'numeric' ? 'number' : 'text'"
+                      type="number"
                       step="0.01"
                       :disable="!canEnterResults"
                     >
@@ -196,6 +211,16 @@
                         <q-icon name="warning" color="negative" />
                       </template>
                     </q-input>
+                    <!-- Text input for text fields -->
+                    <q-input
+                      v-else
+                      v-model="templateData.field_values[field.name]"
+                      filled
+                      :label="field.label"
+                      :hint="field.hint || `${field.unit || ''} ${getReferenceRange(field)}`"
+                      type="text"
+                      :disable="!canEnterResults"
+                    />
                   </div>
                 </template>
               </div>
@@ -229,6 +254,17 @@
               <div class="text-caption q-mt-xs">
                 This investigation must be paid for before results can be entered. Please process payment at the billing desk.
               </div>
+              <template v-slot:action>
+                <q-btn
+                  flat
+                  dense
+                  color="white"
+                  icon="refresh"
+                  label="Refresh Payment Status"
+                  @click="refreshPaymentStatus"
+                  :loading="refreshingPayment"
+                />
+              </template>
             </q-banner>
             
             <!-- Additional fields -->
@@ -271,17 +307,41 @@
               <q-icon name="attach_file" />
             </template>
           </q-file>
-          <div v-if="resultForm.existingAttachment" class="text-caption text-grey-7 q-mt-sm">
-            Current attachment: {{ resultForm.existingAttachment.split('/').pop() }}
-            <q-btn
-              flat
-              dense
-              size="sm"
-              icon="download"
-              label="Download"
-              @click="downloadExistingAttachment"
-              class="q-ml-sm"
-            />
+          <div v-if="resultForm.existingAttachment" class="q-mt-sm">
+            <q-card flat bordered class="bg-grey-1">
+              <q-card-section class="q-pa-sm">
+                <div class="row items-center q-gutter-sm">
+                  <q-icon name="attach_file" color="primary" size="24px" />
+                  <div class="col">
+                    <div class="text-body2 text-weight-medium">
+                      {{ resultForm.existingAttachment.split('/').pop() }}
+                    </div>
+                    <div class="text-caption text-grey-7">Current attachment</div>
+                  </div>
+                  <div class="col-auto">
+                    <q-btn
+                      flat
+                      dense
+                      size="sm"
+                      icon="visibility"
+                      label="View"
+                      color="primary"
+                      @click="viewExistingAttachment"
+                      class="q-mr-xs"
+                    />
+                    <q-btn
+                      flat
+                      dense
+                      size="sm"
+                      icon="delete"
+                      label="Delete"
+                      color="negative"
+                      @click="deleteExistingAttachment"
+                    />
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
           </div>
           <div class="row q-gutter-md q-mt-md">
             <q-btn
@@ -335,6 +395,7 @@ const encounterBillInfo = ref({
 });
 const bills = ref([]);
 const isInvestigationPaid = ref(false);
+const refreshingPayment = ref(false);
 const canEnterResults = computed(() => {
   // For IPD investigations, allow without payment check
   if (investigation.value?.source === 'inpatient' || investigation.value?.prescription_type === 'inpatient') {
@@ -691,28 +752,13 @@ const loadInvestigation = async () => {
         // No result exists or mismatch - start fresh
         labResult.value = null;
         editingResult.value = false;
-        // Check if sample ID was pre-generated when investigation was confirmed
-        // Try to load existing lab_result with just sample_no
-        try {
-          const checkResult = await consultationAPI.getLabResult(investigation.value.id);
-          if (checkResult.data && checkResult.data.template_data && checkResult.data.template_data.sample_no) {
-            // Sample ID was pre-generated, use it
-            templateData.value = {
-              field_values: {},
-              messages: {},
-              validated_by: '',
-              sample_no: checkResult.data.template_data.sample_no
-            };
-          } else {
-            // No pre-generated sample ID, generate one
-            generateSampleId();
-            templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
-          }
-        } catch (err) {
-          // No result exists, generate sample ID
-          generateSampleId();
-          templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
-        }
+        // Start with empty sample ID - user will generate it when ready
+        templateData.value = {
+          field_values: {},
+          messages: {},
+          validated_by: '',
+          sample_no: '' // Empty initially - user will generate when ready
+        };
         resultForm.value = {
           investigation_id: investigation.value.id,
           results_text: '',
@@ -725,28 +771,13 @@ const loadInvestigation = async () => {
       console.log('No lab result found for investigation:', investigation.value.id, 'Source:', investigation.value?.source || 'unknown', error);
       labResult.value = null;
       editingResult.value = false;
-      // Check if sample ID was pre-generated when investigation was confirmed
-      // The backend creates a minimal lab_result record with sample_no when investigation is confirmed
-      try {
-        const checkResult = await consultationAPI.getLabResult(investigation.value.id);
-        if (checkResult.data && checkResult.data.template_data && checkResult.data.template_data.sample_no) {
-          // Sample ID was pre-generated, use it
-          templateData.value = {
-            field_values: {},
-            messages: {},
-            validated_by: '',
-            sample_no: checkResult.data.template_data.sample_no
-          };
-        } else {
-          // No pre-generated sample ID, generate one
-          generateSampleId();
-          templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
-        }
-      } catch (err) {
-        // No result exists, generate sample ID
-        generateSampleId();
-        templateData.value = { field_values: {}, messages: {}, validated_by: '', sample_no: templateData.value.sample_no || '' };
-      }
+      // Start with empty sample ID - user will generate it when ready
+      templateData.value = {
+        field_values: {},
+        messages: {},
+        validated_by: '',
+        sample_no: '' // Empty initially - user will generate when ready
+      };
       resultForm.value = {
         investigation_id: investigation.value.id,
         results_text: '',
@@ -860,17 +891,17 @@ const isOutOfRange = (field, value) => {
   return false;
 };
 
-const downloadExistingAttachment = async () => {
+const viewExistingAttachment = async () => {
   if (!resultForm.value.existingAttachment || !resultForm.value.investigation_id) {
     $q.notify({
       type: 'warning',
-      message: 'No attachment available to download',
+      message: 'No attachment available to view',
     });
     return;
   }
 
   try {
-    const response = await consultationAPI.downloadLabResultAttachment(resultForm.value.investigation_id);
+    const response = await consultationAPI.downloadLabResultAttachment(resultForm.value.investigation_id, true);
     
     const blob = response.data instanceof Blob 
       ? response.data 
@@ -878,40 +909,54 @@ const downloadExistingAttachment = async () => {
           type: response.headers['content-type'] || 'application/pdf' 
         });
     
-    const contentDisposition = response.headers['content-disposition'] || 
-                                response.headers['Content-Disposition'];
-    let filename = resultForm.value.existingAttachment.split('/').pop() || 'lab_result.pdf';
-    
-    if (contentDisposition) {
-      const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-      if (filenameMatch && filenameMatch[1]) {
-        filename = filenameMatch[1].replace(/['"]/g, '');
-      }
-    }
-    
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
+    window.open(url, '_blank');
     
+    // Cleanup after a delay
     setTimeout(() => {
       window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    }, 100);
-    
-    $q.notify({
-      type: 'positive',
-      message: 'File downloaded successfully',
-    });
+    }, 1000);
   } catch (error) {
-    console.error('Download error:', error);
+    console.error('View attachment error:', error);
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to download attachment',
+      message: error.response?.data?.detail || 'Failed to view attachment',
     });
   }
+};
+
+const deleteExistingAttachment = async () => {
+  if (!resultForm.value.existingAttachment || !resultForm.value.investigation_id) {
+    return;
+  }
+
+  $q.dialog({
+    title: 'Confirm Deletion',
+    message: `Are you sure you want to delete "${resultForm.value.existingAttachment.split('/').pop()}"?`,
+    cancel: true,
+    persistent: true
+  }).onOk(async () => {
+    try {
+      await consultationAPI.deleteLabResultAttachment(resultForm.value.investigation_id);
+      
+      // Clear the existing attachment
+      resultForm.value.existingAttachment = null;
+      
+      // Reload the investigation to refresh data
+      await loadInvestigation();
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Attachment deleted successfully',
+      });
+    } catch (error) {
+      console.error('Delete attachment error:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to delete attachment',
+      });
+    }
+  });
 };
 
 const formatDate = (dateString) => {
@@ -938,7 +983,7 @@ const formatDateOnly = (dateString) => {
 
 const loadEncounterBills = async (encounterId) => {
   try {
-    const response = await billingAPI.getBillsByEncounter(encounterId);
+    const response = await billingAPI.getEncounterBills(encounterId);
     bills.value = response.data || [];
     
     // Calculate total amounts
@@ -983,36 +1028,97 @@ const checkInvestigationPayment = () => {
     return;
   }
   
-  // Find bill item for this investigation
+  // First, try to find matching bill item for this investigation
+  let foundMatchingItem = false;
   for (const bill of bills.value) {
-    for (const billItem of bill.bill_items || []) {
-      const matchesCode = billItem.item_code === investigation.value.gdrg_code;
-      const investigationName = investigation.value.procedure_name || '';
-      const investigationCode = investigation.value.gdrg_code || '';
-      const matchesName = billItem.item_name && (
-        billItem.item_name.includes(investigationName) ||
-        billItem.item_name.includes(investigationCode) ||
-        billItem.item_name.includes(`Investigation: ${investigationName}`) ||
-        billItem.item_name.includes(`Investigation: ${investigationCode}`)
-      );
-      
-      if (matchesCode || matchesName) {
-        const totalPrice = billItem.total_price || 0;
-        const remainingBalance = billItem.remaining_balance !== undefined && billItem.remaining_balance !== null
-          ? billItem.remaining_balance 
-          : (totalPrice - (billItem.amount_paid || 0));
-        const isPaid = billItem.is_paid !== undefined 
-          ? billItem.is_paid 
-          : (remainingBalance <= 0.01);
+    // Check if bill_items are available
+    if (bill.bill_items && bill.bill_items.length > 0) {
+      for (const billItem of bill.bill_items) {
+        const matchesCode = billItem.item_code === investigation.value.gdrg_code;
+        const investigationName = investigation.value.procedure_name || '';
+        const investigationCode = investigation.value.gdrg_code || '';
+        const matchesName = billItem.item_name && (
+          billItem.item_name.includes(investigationName) ||
+          billItem.item_name.includes(investigationCode) ||
+          billItem.item_name.includes(`Investigation: ${investigationName}`) ||
+          billItem.item_name.includes(`Investigation: ${investigationCode}`)
+        );
         
-        isInvestigationPaid.value = totalPrice === 0 || isPaid;
+        if (matchesCode || matchesName) {
+          foundMatchingItem = true;
+          const totalPrice = billItem.total_price || 0;
+          const remainingBalance = billItem.remaining_balance !== undefined && billItem.remaining_balance !== null
+            ? billItem.remaining_balance 
+            : (totalPrice - (billItem.amount_paid || 0));
+          const isPaid = billItem.is_paid !== undefined 
+            ? billItem.is_paid 
+            : (remainingBalance <= 0.01);
+          
+          isInvestigationPaid.value = totalPrice === 0 || isPaid;
+          return;
+        }
+      }
+    }
+  }
+  
+  // If no matching bill item found, check if any bill is fully paid as fallback
+  // This handles cases where bill_items are not included in the response
+  if (!foundMatchingItem) {
+    for (const bill of bills.value) {
+      // If bill is fully paid, allow results entry
+      const billPaid = bill.is_paid === true || 
+                       (bill.paid_amount >= bill.total_amount && bill.total_amount > 0) ||
+                       (bill.total_amount === 0); // Free service
+      
+      if (billPaid) {
+        // Check if this bill might contain the investigation
+        // If bill is paid and we can't find specific items, allow entry
+        // (This is a fallback - ideally we'd have bill_items to check)
+        isInvestigationPaid.value = true;
+        console.log('Payment check: Bill is fully paid, allowing results entry (fallback check)', {
+          bill_id: bill.id,
+          bill_number: bill.bill_number,
+          is_paid: bill.is_paid,
+          paid_amount: bill.paid_amount,
+          total_amount: bill.total_amount
+        });
         return;
       }
     }
   }
   
-  // If no bill item found, assume not paid (unless it's free)
+  // If no bill item found and no fully paid bill, assume not paid
   isInvestigationPaid.value = false;
+};
+
+const refreshPaymentStatus = async () => {
+  if (!investigation.value || !encounter.value) {
+    return;
+  }
+  
+  refreshingPayment.value = true;
+  try {
+    // Reload bills for this encounter
+    await loadEncounterBills(encounter.value.id);
+    
+    // Re-check payment status
+    checkInvestigationPayment();
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Payment status refreshed',
+      position: 'top',
+    });
+  } catch (error) {
+    console.error('Failed to refresh payment status:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to refresh payment status. Please try again.',
+      position: 'top',
+    });
+  } finally {
+    refreshingPayment.value = false;
+  }
 };
 
 const generateAndSaveSampleId = async () => {

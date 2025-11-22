@@ -1711,31 +1711,68 @@
                   <q-card-section>
                     <div class="text-h6 q-mb-md glass-text">Result</div>
                     
-                    <!-- Results Text -->
-                    <div v-if="currentResult.results_text" class="q-mb-md">
-                      <div class="text-caption text-grey-7 q-mb-sm">Results</div>
-                      <div class="text-body1 q-pa-md" style="background-color: rgba(255, 255, 255, 0.1); border-radius: 4px; white-space: pre-wrap;">
-                        {{ currentResult.results_text }}
+                    <!-- Template-based Results (Lab with template) -->
+                    <LabResultViewer
+                      v-if="currentResult.template_id && currentResult.template_data && labResultTemplate && investigationDetails.investigation_type === 'lab'"
+                      :template-structure="labResultTemplate.template_structure"
+                      :template-data="typeof currentResult.template_data === 'string' ? JSON.parse(currentResult.template_data) : currentResult.template_data"
+                      :results-text="currentResult.results_text"
+                      :patient-info="patientInfo"
+                      :procedure-name="investigationDetails?.procedure_name || ''"
+                      :template-name="labResultTemplate?.template_name || ''"
+                      :result-date="currentResult.created_at"
+                      :entered-by="currentResult.entered_by_name"
+                      :entered-at="currentResult.created_at"
+                    />
+                    
+                    <!-- Non-template Results -->
+                    <div v-else>
+                      <!-- Results Text -->
+                      <div v-if="currentResult.results_text" class="q-mb-md">
+                        <div class="text-caption text-grey-7 q-mb-sm">Results</div>
+                        <div class="text-body1 q-pa-md" style="background-color: rgba(255, 255, 255, 0.1); border-radius: 4px; white-space: pre-wrap;">
+                          {{ currentResult.results_text }}
+                        </div>
                       </div>
-                    </div>
-                    <div v-else class="q-mb-md">
-                      <q-banner class="bg-warning text-white">
-                        <template v-slot:avatar>
-                          <q-icon name="info" />
-                        </template>
-                        No text results available for this investigation.
-                      </q-banner>
+                      <div v-else class="q-mb-md">
+                        <q-banner class="bg-warning text-white">
+                          <template v-slot:avatar>
+                            <q-icon name="info" />
+                          </template>
+                          No text results available for this investigation.
+                        </q-banner>
+                      </div>
                     </div>
 
                     <!-- Attachment -->
                     <div v-if="currentResult.attachment_path" class="q-mt-md">
-                      <div class="text-caption text-grey-7 q-mb-sm">Attachment</div>
-                      <q-btn
-                        icon="download"
-                        label="Download Attachment"
-                        color="primary"
-                        @click="downloadResultAttachment(investigationDetails)"
-                      />
+                      <q-separator class="q-my-md" />
+                      <div class="text-subtitle2 q-mb-sm glass-text">
+                        <q-icon name="attach_file" class="q-mr-xs" />
+                        Attachment
+                      </div>
+                      <div class="row items-center q-gutter-md">
+                        <div class="col-auto">
+                          <q-icon name="description" size="32px" color="primary" />
+                        </div>
+                        <div class="col">
+                          <div class="text-body2 text-weight-medium">
+                            {{ currentResult.attachment_path.split('/').pop() || 'Attachment' }}
+                          </div>
+                          <div class="text-caption text-grey-7">
+                            Click to download the attached file
+                          </div>
+                        </div>
+                        <div class="col-auto">
+                          <q-btn
+                            icon="visibility"
+                            label="View"
+                            color="primary"
+                            outline
+                            @click="viewResultAttachment(investigationDetails)"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <!-- Result Metadata -->
@@ -1834,7 +1871,8 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, priceListAPI, billingAPI } from '../services/api';
+import { consultationAPI, priceListAPI, billingAPI, labTemplatesAPI } from '../services/api';
+import LabResultViewer from '../components/LabResultViewer.vue';
 import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
@@ -2941,6 +2979,7 @@ const showResultDialog = ref(false);
 const currentResult = ref(null);
 const loadingResult = ref(false);
 const investigationDetails = ref(null);
+const labResultTemplate = ref(null);
 
 const viewInvestigations = async () => {
   if (!wardAdmissionId.value) {
@@ -2987,6 +3026,20 @@ const viewInvestigationResult = async (investigation) => {
     
     if (resultResponse && resultResponse.data) {
       currentResult.value = resultResponse.data;
+      
+      // Load lab result template if this is a template-based lab result
+      if (investigation.investigation_type === 'lab' && currentResult.value.template_id && currentResult.value.template_data) {
+        try {
+          const templateResponse = await labTemplatesAPI.get(currentResult.value.template_id);
+          labResultTemplate.value = templateResponse.data;
+        } catch (templateError) {
+          console.error('Failed to load lab result template:', templateError);
+          labResultTemplate.value = null;
+        }
+      } else {
+        labResultTemplate.value = null;
+      }
+      
       showResultDialog.value = true;
     } else {
       $q.notify({
@@ -3005,51 +3058,59 @@ const viewInvestigationResult = async (investigation) => {
   }
 };
 
-const downloadResultAttachment = async (investigation) => {
+const viewResultAttachment = async (investigation) => {
+  if (!investigation || !currentResult.value?.attachment_path) {
+    $q.notify({
+      type: 'warning',
+      message: 'No attachment available to view',
+      position: 'top',
+    });
+    return;
+  }
+
   try {
-    let downloadResponse = null;
+    let viewResponse = null;
     if (investigation.investigation_type === 'lab') {
-      downloadResponse = await consultationAPI.downloadLabResultAttachment(investigation.id);
+      viewResponse = await consultationAPI.downloadLabResultAttachment(investigation.id, true);
     } else if (investigation.investigation_type === 'scan') {
-      downloadResponse = await consultationAPI.downloadScanResultAttachment(investigation.id);
+      viewResponse = await consultationAPI.downloadScanResultAttachment(investigation.id, null, true);
     } else if (investigation.investigation_type === 'xray') {
-      downloadResponse = await consultationAPI.downloadXrayResultAttachment(investigation.id);
+      viewResponse = await consultationAPI.downloadXrayResultAttachment(investigation.id, null, true);
+    } else {
+      $q.notify({
+        type: 'warning',
+        message: 'Unknown investigation type',
+        position: 'top',
+      });
+      return;
     }
     
-    if (downloadResponse && downloadResponse.data) {
-      // Create a blob URL and trigger download
-      const contentType = downloadResponse.headers?.['content-type'] || downloadResponse.headers?.['Content-Type'] || 'application/octet-stream';
-      const blob = new Blob([downloadResponse.data], { type: contentType });
+    if (viewResponse && viewResponse.data) {
+      // Handle blob response
+      const blob = viewResponse.data instanceof Blob 
+        ? viewResponse.data 
+        : new Blob([viewResponse.data], { 
+            type: viewResponse.headers?.['content-type'] || 
+                  viewResponse.headers?.['Content-Type'] || 
+                  'application/pdf' 
+          });
+      
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
+      window.open(url, '_blank');
       
-      // Extract filename from Content-Disposition header or use default
-      const contentDisposition = downloadResponse.headers?.['content-disposition'] || downloadResponse.headers?.['Content-Disposition'];
-      let filename = `result_attachment_${investigation.id}`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1].replace(/['"]/g, '');
-        }
-      }
-      
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      
-      $q.notify({
-        type: 'positive',
-        message: 'Download started',
-      });
+      // Cleanup after a delay
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+      }, 1000);
+    } else {
+      throw new Error('No data received from server');
     }
   } catch (error) {
-    console.error('Error downloading attachment:', error);
+    console.error('Error viewing attachment:', error);
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to download attachment',
+      message: error.response?.data?.detail || 'Failed to view attachment',
+      position: 'top',
     });
   }
 };

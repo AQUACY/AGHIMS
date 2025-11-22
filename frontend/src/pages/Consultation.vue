@@ -1444,22 +1444,37 @@
                   {{ investigationResult.results_text || 'No text results available.' }}
                 </div>
               </div>
-              
-              <div v-if="investigationResult.attachment_path" class="q-mt-md">
-                <div class="text-subtitle1 q-mb-sm">Attachment:</div>
-                <q-btn
-                  color="primary"
-                  icon="download"
-                  label="Download Attachment"
-                  @click="downloadInvestigationAttachment"
-                />
-                <div class="text-caption text-grey-7 q-mt-xs">
-                  {{ investigationResult.attachment_path.split('/').pop() }}
+            </div>
+            
+            <!-- Attachment Section (shown for both template and non-template results) -->
+            <div v-if="investigationResult.attachment_path" class="q-mt-md">
+              <q-separator class="q-my-md" />
+              <div class="text-subtitle1 q-mb-sm">Attachment:</div>
+              <div class="row items-center q-gutter-md">
+                <div class="col-auto">
+                  <q-icon name="description" size="32px" color="primary" />
+                </div>
+                <div class="col">
+                  <div class="text-body2 text-weight-medium">
+                    {{ investigationResult.attachment_path.split('/').pop() }}
+                  </div>
+                  <div class="text-caption text-grey-7">
+                    Click to view the attached file
+                  </div>
+                </div>
+                <div class="col-auto">
+                  <q-btn
+                    color="primary"
+                    icon="visibility"
+                    label="View Attachment"
+                    outline
+                    @click="viewInvestigationAttachment"
+                  />
                 </div>
               </div>
-              <div v-else class="q-mt-md">
-                <div class="text-body2 text-grey-7">No attachment available.</div>
-              </div>
+            </div>
+            <div v-else-if="investigationResult" class="q-mt-md">
+              <div class="text-body2 text-grey-7">No attachment available.</div>
             </div>
           </div>
           
@@ -3769,11 +3784,11 @@ const viewFormattedLabResult = () => {
   window.open(route.href, '_blank');
 };
 
-const downloadInvestigationAttachment = async () => {
+const viewInvestigationAttachment = async () => {
   if (!selectedInvestigation.value || !investigationResult.value?.attachment_path) {
     $q.notify({
       type: 'warning',
-      message: 'No attachment available to download',
+      message: 'No attachment available to view',
       position: 'top',
     });
     return;
@@ -3782,16 +3797,16 @@ const downloadInvestigationAttachment = async () => {
   try {
     let response;
     
-    // Download the appropriate attachment based on investigation type
+    // View the appropriate attachment based on investigation type
     switch (selectedInvestigation.value.investigation_type) {
       case 'lab':
-        response = await consultationAPI.downloadLabResultAttachment(selectedInvestigation.value.id);
+        response = await consultationAPI.downloadLabResultAttachment(selectedInvestigation.value.id, true);
         break;
       case 'scan':
-        response = await consultationAPI.downloadScanResultAttachment(selectedInvestigation.value.id);
+        response = await consultationAPI.downloadScanResultAttachment(selectedInvestigation.value.id, null, true);
         break;
       case 'xray':
-        response = await consultationAPI.downloadXrayResultAttachment(selectedInvestigation.value.id);
+        response = await consultationAPI.downloadXrayResultAttachment(selectedInvestigation.value.id, null, true);
         break;
       default:
         $q.notify({
@@ -3808,39 +3823,18 @@ const downloadInvestigationAttachment = async () => {
           type: response.headers['content-type'] || 'application/pdf' 
         });
     
-    const contentDisposition = response.headers['content-disposition'] || 
-                                response.headers['Content-Disposition'];
-    let filename = investigationResult.value.attachment_path.split('/').pop() || 'result.pdf';
-    
-    if (contentDisposition) {
-      const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-      if (filenameMatch && filenameMatch[1]) {
-        filename = filenameMatch[1].replace(/['"]/g, '');
-      }
-    }
-    
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
+    window.open(url, '_blank');
     
+    // Cleanup after a delay
     setTimeout(() => {
       window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    }, 100);
-    
-    $q.notify({
-      type: 'positive',
-      message: 'File downloaded successfully',
-      position: 'top',
-    });
+    }, 1000);
   } catch (error) {
-    console.error('Download error:', error);
+    console.error('View attachment error:', error);
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to download attachment',
+      message: error.response?.data?.detail || 'Failed to view attachment',
       position: 'top',
     });
   }

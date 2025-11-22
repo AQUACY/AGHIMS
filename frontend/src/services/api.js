@@ -290,10 +290,13 @@ export const consultationAPI = {
         'Content-Type': 'multipart/form-data',
       },
     }),
-  downloadLabResultAttachment: (investigationId) => 
+  downloadLabResultAttachment: (investigationId, view = false) => 
     api.get(`/consultation/lab-result/${investigationId}/download`, {
+      params: { view: view },
       responseType: 'blob',
     }),
+  deleteLabResultAttachment: (investigationId) => 
+    api.delete(`/consultation/lab-result/${investigationId}/attachment`),
   getLabResultTemplateForInvestigation: (investigationId) =>
     api.get(`/consultation/lab-result/investigation/${investigationId}/template`),
   getScanResult: (investigationId) => 
@@ -304,9 +307,11 @@ export const consultationAPI = {
         'Content-Type': 'multipart/form-data',
       },
     }),
-  downloadScanResultAttachment: (investigationId, attachmentPath) => {
+  downloadScanResultAttachment: (investigationId, attachmentPath, view = false) => {
     const url = `/consultation/scan-result/${investigationId}/download`;
-    const params = attachmentPath ? { attachment_path: attachmentPath } : {};
+    const params = {};
+    if (attachmentPath) params.attachment_path = attachmentPath;
+    if (view) params.view = true;
     return api.get(url, {
       params,
       responseType: 'blob',
@@ -326,9 +331,11 @@ export const consultationAPI = {
         'Content-Type': 'multipart/form-data',
       },
     }),
-  downloadXrayResultAttachment: (investigationId, attachmentPath) => {
+  downloadXrayResultAttachment: (investigationId, attachmentPath, view = false) => {
     const url = `/consultation/xray-result/${investigationId}/download`;
-    const params = attachmentPath ? { attachment_path: attachmentPath } : {};
+    const params = {};
+    if (attachmentPath) params.attachment_path = attachmentPath;
+    if (view) params.view = true;
     return api.get(url, {
       params,
       responseType: 'blob',
