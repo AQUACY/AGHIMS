@@ -32,7 +32,22 @@ if defined VIRTUAL_ENV (
 
 REM Install APScheduler
 echo Installing APScheduler...
-pip install apscheduler^>=3.10.4
+REM Try python -m pip first (most reliable on Windows)
+REM Quote the package name to avoid issues
+python -m pip install "apscheduler>=3.10.4"
+if errorlevel 1 (
+    echo Trying pip directly...
+    pip install "apscheduler>=3.10.4"
+    if errorlevel 1 (
+        echo Trying python3 -m pip...
+        python3 -m pip install "apscheduler>=3.10.4"
+        if errorlevel 1 (
+            echo ERROR: Could not install APScheduler. Please check Python and pip installation.
+            pause
+            exit /b 1
+        )
+    )
+)
 
 if errorlevel 1 (
     echo.

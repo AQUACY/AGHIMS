@@ -39,7 +39,20 @@ fi
 
 # Install APScheduler
 echo "Installing APScheduler..."
-pip install apscheduler>=3.10.4
+# Try different methods (quote the package name to avoid bash redirection issues)
+if command -v pip &> /dev/null; then
+    pip install "apscheduler>=3.10.4"
+elif command -v pip3 &> /dev/null; then
+    pip3 install "apscheduler>=3.10.4"
+elif python3 -m pip --version &> /dev/null 2>&1; then
+    python3 -m pip install "apscheduler>=3.10.4"
+elif python -m pip --version &> /dev/null 2>&1; then
+    python -m pip install "apscheduler>=3.10.4"
+else
+    echo "ERROR: Could not find pip. Please install pip first."
+    echo "Try: python -m pip install \"apscheduler>=3.10.4\""
+    exit 1
+fi
 
 if [ $? -eq 0 ]; then
     echo ""

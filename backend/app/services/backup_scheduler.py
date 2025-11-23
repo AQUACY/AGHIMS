@@ -4,9 +4,18 @@ Manages scheduled database backups using APScheduler
 """
 import logging
 from datetime import datetime, time
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+    APSCHEDULER_AVAILABLE = True
+except ImportError:
+    APSCHEDULER_AVAILABLE = False
+    BackgroundScheduler = None
+    CronTrigger = None
+    IntervalTrigger = None
+
 from app.core.config import settings
 from app.services.database_backup import DatabaseBackupService
 
@@ -17,6 +26,8 @@ class BackupScheduler:
     """Service for scheduling database backups"""
     
     def __init__(self):
+        if not APSCHEDULER_AVAILABLE:
+            raise ImportError("APScheduler is not installed. Install it with: pip install 'apscheduler>=3.10.4'")
         self.scheduler = BackgroundScheduler()
         self.backup_service = DatabaseBackupService()
         self.scheduled_job_ids = []  # List to store multiple backup job IDs

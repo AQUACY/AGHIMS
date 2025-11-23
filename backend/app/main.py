@@ -226,8 +226,12 @@ async def startup_event():
         from app.services.backup_scheduler import backup_scheduler
         backup_scheduler.start()
         print("Backup scheduler started")
+    except ImportError as e:
+        print(f"WARNING: Backup scheduler module not found: {e}")
+        print("This is OK if APScheduler is not installed. Server will continue without scheduled backups.")
     except Exception as e:
         print(f"WARNING: Backup scheduler failed to start: {e}")
+        print("Server will continue without scheduled backups.")
         import traceback
         traceback.print_exc()
     

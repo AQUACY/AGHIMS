@@ -28,14 +28,18 @@ If you prefer to install manually:
 # Navigate to backend directory
 cd backend
 
-# Install APScheduler only
-pip install apscheduler>=3.10.4
+# Install APScheduler (use python -m pip if pip command not found)
+python -m pip install apscheduler>=3.10.4
+# OR
+python3 -m pip install apscheduler>=3.10.4
 ```
 
 **One-liner (copy and paste):**
 ```bash
-pip install apscheduler>=3.10.4
+python -m pip install apscheduler>=3.10.4
 ```
+
+**If you get "permission denied" errors, see [INSTALL_APSCHEDULER_PRODUCTION.md](./INSTALL_APSCHEDULER_PRODUCTION.md) for solutions.**
 
 ### For Production (with Virtual Environment)
 
