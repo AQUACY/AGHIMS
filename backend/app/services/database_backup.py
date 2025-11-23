@@ -291,33 +291,68 @@ class DatabaseBackupService:
             if pre_restore_backup:
                 logger.info(f"Created pre-restore backup: {pre_restore_backup}")
             
-            # Import backup
+            # Prepare SQL with foreign key checks disabled
+            # We'll prepend SET FOREIGN_KEY_CHECKS=0 and append SET FOREIGN_KEY_CHECKS=1
+            import tempfile
+            import os
+            
+            # Read the backup file (compressed or not)
             if is_compressed:
                 import gzip
                 with gzip.open(backup_path, 'rb') as f_in:
-                    result = subprocess.run(
-                        cmd,
-                        stdin=f_in,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        check=False
-                    )
+                    sql_content = f_in.read().decode('utf-8', errors='ignore')
             else:
                 with open(backup_path, 'r', encoding='utf-8') as f_in:
+                    sql_content = f_in.read()
+            
+            # Prepend commands to disable foreign key checks and set other safe options
+            # Append command to re-enable foreign key checks
+            safe_sql = f"""SET FOREIGN_KEY_CHECKS=0;
+SET SQL_MODE='NO_AUTO_VALUE_ON_ZERO';
+SET AUTOCOMMIT=0;
+START TRANSACTION;
+{sql_content}
+COMMIT;
+SET FOREIGN_KEY_CHECKS=1;
+SET AUTOCOMMIT=1;
+"""
+            
+            # Write to temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sql', delete=False, encoding='utf-8') as tmp_file:
+                tmp_file.write(safe_sql)
+                tmp_file_path = tmp_file.name
+            
+            try:
+                # Import the modified SQL file
+                with open(tmp_file_path, 'r', encoding='utf-8') as f_in:
                     result = subprocess.run(
                         cmd,
                         stdin=f_in,
                         stderr=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
                         text=True,
                         check=False
                     )
-            
-            if result.returncode != 0:
-                error_msg = result.stderr or "Unknown mysql import error"
-                return False, f"MySQL import failed: {error_msg}"
-            
-            logger.info(f"MySQL backup restored from: {backup_path}")
-            return True, None
+                
+                if result.returncode != 0:
+                    error_msg = result.stderr or result.stdout or "Unknown mysql import error"
+                    # Filter out password warning
+                    error_msg = error_msg.replace('[Warning] Using a password on the command line interface can be insecure.\n', '')
+                    error_msg = error_msg.strip()
+                    if error_msg:
+                        return False, f"MySQL import failed: {error_msg}"
+                    else:
+                        # If only warnings, consider it success
+                        logger.warning("MySQL import completed with warnings")
+                
+                logger.info(f"MySQL backup restored from: {backup_path}")
+                return True, None
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(tmp_file_path)
+                except:
+                    pass
         
         except FileNotFoundError:
             return False, "mysql client not found. Please install MySQL client tools."
