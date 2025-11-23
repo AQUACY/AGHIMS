@@ -48,7 +48,8 @@ echo "=========================================="
 for config in "${CONFIG_FILES[@]}"; do
     if [ -f "$config" ]; then
         COUNT=$(sudo grep -c "^\[mysqld\]" "$config" 2>/dev/null || echo "0")
-        if [ "$COUNT" -gt 1 ]; then
+        COUNT=$(echo "$COUNT" | tr -d '[:space:]')
+        if [ -n "$COUNT" ] && [ "$COUNT" -gt 1 ] 2>/dev/null; then
             echo "⚠ Multiple [mysqld] sections in: $config"
             sudo grep -n "^\[mysqld\]" "$config"
         fi
