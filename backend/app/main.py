@@ -29,8 +29,16 @@ import traceback
 # Import all models to ensure they're registered with Base
 import app.models  # This imports all models from __init__.py
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Create database tables (with error handling - don't crash if DB is temporarily unavailable)
+try:
+    Base.metadata.create_all(bind=engine)
+    print("Database tables verified/created successfully")
+except Exception as e:
+    print(f"WARNING: Could not create/verify database tables: {e}")
+    print("This might be a connection issue. Server will start but database operations may fail.")
+    print("Please check MySQL is running and configuration is correct.")
+    import traceback
+    traceback.print_exc()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -189,7 +197,15 @@ def root():
 @app.get("/health")
 def health_check():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    try:
+        from app.core.database import engine
+        from sqlalchemy import text
+        # Test database connection
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        return {"status": "degraded", "database": "disconnected", "error": str(e)}
 
 
 # Startup event: Start analyzer server if enabled
