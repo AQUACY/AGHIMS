@@ -291,25 +291,33 @@ def get_database_info(
         tables = inspector.get_table_names()
         
         # Get database size (approximate)
-        db_size = 0
+        db_size_mb = 0
         if settings.DATABASE_MODE.lower() == "sqlite":
             from pathlib import Path
             db_path = Path(settings.SQLITE_DB_PATH)
             if db_path.exists():
-                db_size = db_path.stat().st_size
+                db_size_bytes = db_path.stat().st_size
+                db_size_mb = round(db_size_bytes / (1024 * 1024), 2)
         elif settings.DATABASE_MODE.lower() == "mysql":
-            with engine.connect() as conn:
-                result = conn.execute(
-                    text(f"SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'DB Size in MB' FROM information_schema.tables WHERE table_schema='{settings.MYSQL_DATABASE}'")
-                )
-                db_size = result.scalar() or 0
+            try:
+                with engine.connect() as conn:
+                    # Query already returns size in MB
+                    result = conn.execute(
+                        text(f"SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS db_size_mb FROM information_schema.tables WHERE table_schema='{settings.MYSQL_DATABASE}'")
+                    )
+                    db_size_mb = result.scalar()
+                    if db_size_mb is None:
+                        db_size_mb = 0
+            except Exception as e:
+                logger.warning(f"Could not get MySQL database size: {e}")
+                db_size_mb = 0
         
         return {
             "database_mode": settings.DATABASE_MODE,
             "database_url": settings.DATABASE_URL.split('@')[0] + '@***',  # Hide password
             "table_count": len(tables),
             "tables": tables,
-            "size_mb": round(db_size / (1024 * 1024), 2) if db_size else 0,
+            "size_mb": db_size_mb,
         }
     
     except Exception as e:

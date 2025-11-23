@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import logging
+import gzip
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple
@@ -62,14 +64,21 @@ class DatabaseBackupService:
             return None, str(e)
     
     def _export_mysql_backup(self, timestamp: str) -> Tuple[Optional[str], Optional[str]]:
-        """Export MySQL database backup using mysqldump"""
+        """Export MySQL database backup using mysqldump or Python fallback"""
         try:
             backup_filename = f"hms_backup_{timestamp}.sql"
             backup_path = self.backup_dir / backup_filename
             
+            # Check if mysqldump is available
+            mysqldump_path = shutil.which("mysqldump")
+            if not mysqldump_path:
+                # Fallback: Use Python to export data
+                logger.warning("mysqldump not found, using Python-based backup")
+                return self._export_mysql_backup_python(timestamp)
+            
             # Build mysqldump command
             cmd = [
-                "mysqldump",
+                mysqldump_path,
                 f"--host={settings.MYSQL_HOST}",
                 f"--port={settings.MYSQL_PORT}",
                 f"--user={settings.MYSQL_USER}",
@@ -95,7 +104,9 @@ class DatabaseBackupService:
                 error_msg = result.stderr or "Unknown mysqldump error"
                 if backup_path.exists():
                     backup_path.unlink()
-                return None, f"mysqldump failed: {error_msg}"
+                # Try Python fallback
+                logger.warning(f"mysqldump failed: {error_msg}, trying Python fallback")
+                return self._export_mysql_backup_python(timestamp)
             
             # Compress the backup
             compressed_path = self.backup_dir / f"{backup_filename}.gz"
@@ -110,11 +121,110 @@ class DatabaseBackupService:
             logger.info(f"MySQL backup created: {compressed_path}")
             return str(compressed_path), None
         
-        except FileNotFoundError:
-            return None, "mysqldump not found. Please install MySQL client tools."
         except Exception as e:
             logger.error(f"Error exporting MySQL backup: {e}", exc_info=True)
-            return None, str(e)
+            # Try Python fallback as last resort
+            try:
+                return self._export_mysql_backup_python(timestamp)
+            except Exception as fallback_error:
+                return None, f"Backup failed: {str(e)}. Python fallback also failed: {str(fallback_error)}"
+    
+    def _export_mysql_backup_python(self, timestamp: str) -> Tuple[Optional[str], Optional[str]]:
+        """Export MySQL database backup using Python (fallback when mysqldump not available)"""
+        try:
+            from app.core.database import engine, Base
+            from sqlalchemy import inspect, text
+            import app.models  # Import all models
+            
+            backup_filename = f"hms_backup_{timestamp}.sql"
+            backup_path = self.backup_dir / backup_filename
+            
+            logger.info("Creating MySQL backup using Python (mysqldump not available)")
+            
+            with open(backup_path, 'w', encoding='utf-8') as f:
+                # Write header
+                f.write(f"-- MySQL Backup created at {datetime.now().isoformat()}\n")
+                f.write(f"-- Database: {settings.MYSQL_DATABASE}\n")
+                f.write(f"-- Note: This is a Python-based backup (mysqldump not available)\n")
+                f.write("-- For full backup including structure, install MySQL client tools\n\n")
+                f.write(f"USE `{settings.MYSQL_DATABASE}`;\n\n")
+                
+                # Get all tables
+                inspector = inspect(engine)
+                tables = inspector.get_table_names()
+                
+                # Export each table
+                for table_name in tables:
+                    if table_name.startswith('_') or table_name in ['alembic_version']:
+                        continue
+                    
+                    try:
+                        # Get table structure
+                        columns = inspector.get_columns(table_name)
+                        pk_constraint = inspector.get_pk_constraint(table_name)
+                        
+                        # Write CREATE TABLE statement (simplified)
+                        f.write(f"\n-- Table: {table_name}\n")
+                        f.write(f"DROP TABLE IF EXISTS `{table_name}`;\n")
+                        
+                        # Get actual CREATE TABLE from MySQL
+                        with engine.connect() as conn:
+                            result = conn.execute(
+                                text(f"SHOW CREATE TABLE `{table_name}`")
+                            )
+                            create_table_row = result.first()
+                            if create_table_row:
+                                f.write(f"{create_table_row[1]};\n\n")
+                        
+                        # Export data
+                        with engine.connect() as conn:
+                            result = conn.execute(text(f"SELECT * FROM `{table_name}`"))
+                            rows = result.fetchall()
+                            
+                            if rows:
+                                # Get column names
+                                col_names = [col['name'] for col in columns]
+                                
+                                # Write INSERT statements
+                                for row in rows:
+                                    values = []
+                                    for val in row:
+                                        if val is None:
+                                            values.append('NULL')
+                                        elif isinstance(val, str):
+                                            # Escape single quotes
+                                            escaped = val.replace("'", "''").replace("\\", "\\\\")
+                                            values.append(f"'{escaped}'")
+                                        elif isinstance(val, (int, float)):
+                                            values.append(str(val))
+                                        elif isinstance(val, bool):
+                                            values.append('1' if val else '0')
+                                        else:
+                                            escaped = str(val).replace("'", "''").replace("\\", "\\\\")
+                                            values.append(f"'{escaped}'")
+                                    
+                                    f.write(f"INSERT INTO `{table_name}` (`{'`, `'.join(col_names)}`) VALUES ({', '.join(values)});\n")
+                        
+                    except Exception as e:
+                        logger.warning(f"Error exporting table {table_name}: {e}")
+                        f.write(f"\n-- Error exporting table {table_name}: {e}\n")
+                        continue
+            
+            # Compress the backup
+            compressed_path = self.backup_dir / f"{backup_filename}.gz"
+            with open(backup_path, 'rb') as f_in:
+                with gzip.open(compressed_path, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            
+            # Remove uncompressed file
+            backup_path.unlink()
+            
+            logger.info(f"MySQL backup created (Python method): {compressed_path}")
+            return str(compressed_path), None
+        
+        except Exception as e:
+            logger.error(f"Error in Python-based MySQL backup: {e}", exc_info=True)
+            return None, f"Python backup failed: {str(e)}. Please install MySQL client tools (mysqldump) for better backups."
     
     def import_backup(self, backup_file_path: str) -> Tuple[bool, Optional[str]]:
         """
