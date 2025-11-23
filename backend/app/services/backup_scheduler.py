@@ -26,15 +26,27 @@ class BackupScheduler:
     """Service for scheduling database backups"""
     
     def __init__(self):
-        if not APSCHEDULER_AVAILABLE:
-            raise ImportError("APScheduler is not installed. Install it with: pip install 'apscheduler>=3.10.4'")
-        self.scheduler = BackgroundScheduler()
+        # Always initialize backup_service (it doesn't require APScheduler)
         self.backup_service = DatabaseBackupService()
         self.scheduled_job_ids = []  # List to store multiple backup job IDs
         self.sync_job_id = None
+        
+        if not APSCHEDULER_AVAILABLE:
+            # Don't raise error, just mark as unavailable
+            self.scheduler = None
+            self.available = False
+            logger.warning("APScheduler is not installed. Scheduled backups will be disabled. Install with: pip install 'apscheduler>=3.10.4'")
+            return
+        
+        self.scheduler = BackgroundScheduler()
+        self.available = True
     
     def start(self):
         """Start the backup scheduler"""
+        if not self.available:
+            logger.warning("Backup scheduler cannot start - APScheduler is not installed")
+            return
+        
         if not settings.BACKUP_ENABLED:
             logger.info("Backup scheduler is disabled")
             return
@@ -56,6 +68,9 @@ class BackupScheduler:
     
     def stop(self):
         """Stop the backup scheduler"""
+        if not self.available or not self.scheduler:
+            return
+        
         try:
             if self.scheduler.running:
                 self.scheduler.shutdown()
@@ -65,6 +80,10 @@ class BackupScheduler:
     
     def schedule_backup(self, backup_times: str = None):
         """Schedule automatic backups (supports multiple times per day)"""
+        if not self.available or not self.scheduler:
+            logger.warning("Cannot schedule backup - APScheduler is not available")
+            return
+        
         # Remove existing backup jobs
         for job_id in self.scheduled_job_ids:
             try:
@@ -112,6 +131,10 @@ class BackupScheduler:
     
     def schedule_sync(self):
         """Schedule automatic database sync"""
+        if not self.available or not self.scheduler:
+            logger.warning("Cannot schedule sync - APScheduler is not available")
+            return
+        
         if self.sync_job_id:
             self.scheduler.remove_job(self.sync_job_id)
         
@@ -134,6 +157,10 @@ class BackupScheduler:
     
     def _perform_backup(self):
         """Perform a scheduled backup"""
+        if not self.available or not self.backup_service:
+            logger.warning("Cannot perform backup - APScheduler/backup service not available")
+            return
+        
         try:
             logger.info("Starting scheduled backup...")
             backup_path, error = self.backup_service.export_backup()
@@ -170,6 +197,14 @@ class BackupScheduler:
     
     def get_schedule_info(self) -> dict:
         """Get information about scheduled jobs"""
+        if not self.available or not self.scheduler:
+            return {
+                "running": False,
+                "jobs": [],
+                "available": False,
+                "message": "APScheduler is not installed"
+            }
+        
         jobs = []
         
         # Get all backup jobs
@@ -202,7 +237,8 @@ class BackupScheduler:
         
         return {
             "running": self.scheduler.running if hasattr(self.scheduler, 'running') else False,
-            "jobs": jobs
+            "jobs": jobs,
+            "available": True
         }
 
 # Global scheduler instance
