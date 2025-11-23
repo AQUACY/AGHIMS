@@ -6,6 +6,7 @@ A lightweight Hospital Management System backend focused on OPD (Outpatient Depa
 
 - **Development Setup**: Follow the [Setup](#setup) section below
 - **Production Deployment**: See [DEPLOYMENT.md](./DEPLOYMENT.md) for comprehensive production deployment guide with MySQL
+- **VM Deployment**: See [VM_DEPLOYMENT_GUIDE.md](./VM_DEPLOYMENT_GUIDE.md) for deploying to a VM with date management capabilities
 
 ## Features
 
