@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime, date
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
+from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.encounter import Encounter, EncounterStatus
 
@@ -200,7 +201,7 @@ def update_encounter_status(
                     detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
                 )
         
-        encounter.finalized_at = datetime.utcnow()
+        encounter.finalized_at = utcnow()
         encounter.finalized_by = current_user.id
     
     encounter.status = new_status
@@ -326,12 +327,12 @@ def update_encounter(
                         detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
                     )
             
-            encounter.finalized_at = datetime.utcnow()
+            encounter.finalized_at = utcnow()
             encounter.finalized_by = current_user.id
         
         encounter.status = encounter_data.status
     
-    encounter.updated_at = datetime.utcnow()
+    encounter.updated_at = utcnow()
     db.commit()
     db.refresh(encounter)
     return encounter
@@ -353,7 +354,7 @@ def archive_encounter(
     
     # Soft delete - mark as archived
     encounter.archived = True
-    encounter.updated_at = datetime.utcnow()
+    encounter.updated_at = utcnow()
     db.commit()
     
     return {"message": "Encounter archived successfully", "encounter_id": encounter_id}
