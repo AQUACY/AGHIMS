@@ -493,6 +493,21 @@
             <q-item-label>Blood Transfusion Requests</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="authStore.userRole === 'Admin'"
+          clickable
+          v-ripple
+          :to="{ name: 'DatabaseManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="storage" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Database Management</q-item-label>
+          </q-item-section>
+        </q-item>
       </q-list>
     </q-drawer>
 

@@ -625,6 +625,32 @@ export const staffAPI = {
 };
 
 // Lab Templates API
+export const databaseAPI = {
+  // Backup operations
+  exportBackup: () =>
+    api.get('/database/backup/export', { responseType: 'blob' }),
+  importBackup: (file) => {
+    const formData = new FormData();
+    formData.append('backup_file', file);
+    return api.post('/database/backup/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  listBackups: () => api.get('/database/backup/list'),
+  deleteBackup: (filename) => api.delete(`/database/backup/${filename}`),
+  getBackupStatus: () => api.get('/database/backup/status'),
+  configureBackupSchedule: (schedule) =>
+    api.post('/database/backup/schedule', schedule),
+  
+  // Sync operations
+  getSyncStatus: () => api.get('/database/sync/status'),
+  testSyncConnection: () => api.post('/database/sync/test'),
+  runSync: () => api.post('/database/sync/run'),
+  
+  // Database info
+  getDatabaseInfo: () => api.get('/database/info'),
+};
+
 export const labTemplatesAPI = {
   getAll: (procedure_name = null, g_drg_code = null, is_active = null) => {
     const params = {};

@@ -20,7 +20,8 @@ from app.api import (
     price_list,
     staff,
     lab_templates,
-    analyzer
+    analyzer,
+    database_management
 )
 from app.core.database import engine, Base
 import traceback
@@ -167,6 +168,7 @@ app.include_router(price_list.router, prefix="/api")
 app.include_router(staff.router, prefix="/api")
 app.include_router(lab_templates.router, prefix="/api")
 app.include_router(analyzer.router, prefix="/api")
+app.include_router(database_management.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")
@@ -219,19 +221,39 @@ async def startup_event():
         print("Application will continue without analyzer server")
         import traceback
         traceback.print_exc()
+    # Start backup scheduler
+    try:
+        from app.services.backup_scheduler import backup_scheduler
+        backup_scheduler.start()
+        print("Backup scheduler started")
+    except Exception as e:
+        print(f"WARNING: Backup scheduler failed to start: {e}")
+        import traceback
+        traceback.print_exc()
+    
     print("=" * 70)
     print("Application startup complete")
     print("=" * 70)
 
 
-# Shutdown event: Stop analyzer server
+# Shutdown event: Stop analyzer server and backup scheduler
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event handler"""
-    print("Application Shutdown - Stopping Analyzer Server...")
+    print("Application Shutdown - Stopping Services...")
+    
+    # Stop analyzer server
     try:
         from app.services.analyzer_server import stop_analyzer_server
         stop_analyzer_server()
     except Exception as e:
         print(f"ERROR: Failed to stop analyzer server: {e}")
+    
+    # Stop backup scheduler
+    try:
+        from app.services.backup_scheduler import backup_scheduler
+        backup_scheduler.stop()
+        print("Backup scheduler stopped")
+    except Exception as e:
+        print(f"ERROR: Failed to stop backup scheduler: {e}")
 

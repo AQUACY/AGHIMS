@@ -44,6 +44,10 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+**Note**: If you're upgrading and only need to install new dependencies (like APScheduler for database management), see [INSTALL_NEW_DEPENDENCIES.md](./INSTALL_NEW_DEPENDENCIES.md) for standalone installation instructions. You can also use the quick install scripts:
+- Linux/Mac: `./QUICK_INSTALL_APSCHEDULER.sh`
+- Windows: `QUICK_INSTALL_APSCHEDULER.bat`
+
 4. Create `.env` file from `.env.example`:
 ```bash
 cp .env.example .env

@@ -37,6 +37,25 @@ class Settings(BaseSettings):
     ANALYZER_EQUIPMENT_IP: str = "10.10.16.34"  # Equipment IP (for reference/logging)
     ANALYZER_TIMEOUT: int = 30  # Connection timeout in seconds
     
+    # Database Backup & Sync Settings
+    BACKUP_ENABLED: bool = True  # Enable automatic backups
+    BACKUP_DIR: str = "./backups"  # Directory to store backups
+    BACKUP_RETENTION_DAYS: int = 30  # Keep backups for this many days
+    
+    # Scheduled Backup Settings
+    SCHEDULED_BACKUP_ENABLED: bool = False  # Enable scheduled backups
+    SCHEDULED_BACKUP_TIME: str = "02:00"  # Time(s) to run daily backup (HH:MM format, comma-separated for multiple, e.g., "07:00,19:00")
+    SCHEDULED_BACKUP_INTERVAL_HOURS: int = 24  # Backup interval in hours (deprecated, use SCHEDULED_BACKUP_TIME instead)
+    
+    # Online Sync Settings (Remote MySQL Database)
+    SYNC_ENABLED: bool = False  # Enable online sync to remote database
+    SYNC_REMOTE_HOST: str = ""  # Remote MySQL host
+    SYNC_REMOTE_PORT: int = 3306  # Remote MySQL port
+    SYNC_REMOTE_USER: str = ""  # Remote MySQL user
+    SYNC_REMOTE_PASSWORD: str = ""  # Remote MySQL password
+    SYNC_REMOTE_DATABASE: str = ""  # Remote MySQL database name
+    SYNC_INTERVAL_MINUTES: int = 60  # Sync interval in minutes (default: 1 hour)
+    
     @property
     def DATABASE_URL(self) -> str:
         """Generate DATABASE_URL based on DATABASE_MODE"""
@@ -50,6 +69,18 @@ class Settings(BaseSettings):
             )
         else:  # Default to SQLite
             return f"sqlite:///{self.SQLITE_DB_PATH}"
+    
+    @property
+    def SYNC_DATABASE_URL(self) -> str:
+        """Generate remote sync DATABASE_URL"""
+        if not self.SYNC_ENABLED or not self.SYNC_REMOTE_HOST:
+            return ""
+        encoded_password = quote_plus(self.SYNC_REMOTE_PASSWORD)
+        return (
+            f"mysql+pymysql://{self.SYNC_REMOTE_USER}:{encoded_password}"
+            f"@{self.SYNC_REMOTE_HOST}:{self.SYNC_REMOTE_PORT}/{self.SYNC_REMOTE_DATABASE}"
+            f"?charset={self.MYSQL_CHARSET}"
+        )
     
     class Config:
         env_file = ".env"

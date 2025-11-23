@@ -184,6 +184,12 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/database',
+        name: 'DatabaseManagement',
+        component: () => import('../pages/DatabaseManagement.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin' },
+      },
+      {
         path: '/ipd/inventory-debit/:id',
         name: 'InpatientInventoryDebit',
         component: () => import('../pages/InpatientInventoryDebit.vue'),
