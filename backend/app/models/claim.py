@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class ClaimStatus(str, enum.Enum):
@@ -37,7 +38,7 @@ class Claim(Base):
     principal_gdrg = Column(String(50))  # Principal GDRG code
     status = Column(String(50), default=ClaimStatus.DRAFT.value, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
     finalized_at = Column(DateTime, nullable=True)
     exported_at = Column(DateTime, nullable=True)
     

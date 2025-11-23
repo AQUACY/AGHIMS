@@ -3,6 +3,7 @@ ICD-10 to DRG Code Mapping model
 """
 from sqlalchemy import Column, Integer, String, Text, Boolean
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class ICD10DRGMapping(Base):

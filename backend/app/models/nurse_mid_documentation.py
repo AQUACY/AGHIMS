@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class NurseMidDocumentation(Base):
@@ -21,8 +22,8 @@ class NurseMidDocumentation(Base):
     evaluation = Column(Text, nullable=True)  # Evaluation
     documentation = Column(Text, nullable=True)  # Keep for backward compatibility
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable, nullable=False)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="nurse_mid_documentations")

@@ -537,7 +537,7 @@ def create_encounter(
             Encounter.archived == False,
             Encounter.ccc_number.isnot(None),
             Encounter.ccc_number != "",
-            func.date(Encounter.created_at) == date.today()
+            func.date(Encounter.created_at) == today()
         ).first()
         if existing_insured_today:
             # Force cash: ignore any provided CCC for this new encounter

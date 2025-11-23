@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class Patient(Base):
@@ -34,8 +35,8 @@ class Patient(Base):
     marital_status = Column(String(50), nullable=True)  # e.g., Single, Married, Divorced, Widowed
     educational_level = Column(String(100), nullable=True)  # e.g., Primary, Secondary, Tertiary, None
     occupation = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")

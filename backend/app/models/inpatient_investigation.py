@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class InpatientInvestigationType(str, enum.Enum):
@@ -36,14 +37,14 @@ class InpatientInvestigation(Base):
     notes = Column(String(1000), nullable=True)  # Notes/remarks from doctor
     price = Column(String(50), nullable=True)  # Price of the investigation
     status = Column(String(50), default=InpatientInvestigationStatus.REQUESTED.value, nullable=False)
-    service_date = Column(DateTime, default=datetime.utcnow)
+    service_date = Column(DateTime, default=utcnow_callable)
     requested_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     confirmed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     cancellation_reason = Column(String(1000), nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships
     clinical_review = relationship("InpatientClinicalReview", back_populates="investigations")

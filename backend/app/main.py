@@ -21,7 +21,8 @@ from app.api import (
     staff,
     lab_templates,
     analyzer,
-    database_management
+    database_management,
+    system
 )
 from app.core.database import engine, Base
 import traceback
@@ -177,6 +178,7 @@ app.include_router(staff.router, prefix="/api")
 app.include_router(lab_templates.router, prefix="/api")
 app.include_router(analyzer.router, prefix="/api")
 app.include_router(database_management.router, prefix="/api")
+app.include_router(system.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

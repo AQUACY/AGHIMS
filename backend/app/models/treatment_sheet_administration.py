@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Date, Time
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class TreatmentSheetAdministration(Base):
@@ -20,7 +21,7 @@ class TreatmentSheetAdministration(Base):
     given_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     signature = Column(String(500), nullable=True)  # Digital signature or initials
     notes = Column(String(1000), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships
     ward_admission = relationship("WardAdmission")

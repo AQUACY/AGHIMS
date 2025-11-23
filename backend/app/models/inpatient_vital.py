@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Tex
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class InpatientVital(Base):
@@ -24,9 +25,9 @@ class InpatientVital(Base):
     bmi = Column(Float, nullable=True)
     notes = Column(Text, nullable=True)
     recorded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    recorded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    recorded_at = Column(DateTime, default=utcnow_callable, nullable=False)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="inpatient_vitals")

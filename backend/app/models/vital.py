@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Tex
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class Vital(Base):
@@ -28,7 +29,7 @@ class Vital(Base):
     retro_rdt = Column(String(50))  # Retro RDT result
     remarks = Column(Text)
     recorded_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    recorded_at = Column(DateTime, default=datetime.utcnow)
+    recorded_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships
     encounter = relationship("Encounter", back_populates="vitals")

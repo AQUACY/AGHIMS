@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Tex
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class InpatientInventoryDebit(Base):
@@ -26,9 +27,9 @@ class InpatientInventoryDebit(Base):
     released_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who released the inventory
     released_at = Column(DateTime, nullable=True)  # When inventory was released
     used_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # User who recorded the usage
-    used_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When product was used
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    used_at = Column(DateTime, default=utcnow_callable, nullable=False)  # When product was used
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="inventory_debits")

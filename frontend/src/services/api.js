@@ -679,5 +679,10 @@ export const labTemplatesAPI = {
   },
 };
 
+// System endpoints
+export const systemAPI = {
+  getApplicationDate: () => api.get('/system/date'),
+};
+
 export default api;
 

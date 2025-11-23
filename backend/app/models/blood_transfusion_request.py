@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Floa
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class BloodTransfusionRequest(Base):
@@ -24,14 +25,14 @@ class BloodTransfusionRequest(Base):
     returned_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Admin who returned
     bill_item_id = Column(Integer, ForeignKey("bill_items.id"), nullable=True)  # Bill item created when accepted
     return_bill_item_id = Column(Integer, ForeignKey("bill_items.id"), nullable=True)  # Bill item created when returned
-    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    requested_at = Column(DateTime, default=utcnow_callable, nullable=False)
     accepted_at = Column(DateTime, nullable=True)  # When request was accepted
     fulfilled_at = Column(DateTime, nullable=True)  # When blood was fulfilled
     returned_at = Column(DateTime, nullable=True)  # When blood was returned
     cancelled_at = Column(DateTime, nullable=True)  # When request was cancelled
     cancellation_reason = Column(Text, nullable=True)  # Reason for cancellation
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="blood_transfusion_requests")

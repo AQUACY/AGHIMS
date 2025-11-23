@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class LabResultTemplate(Base):
@@ -41,8 +42,8 @@ class LabResultTemplate(Base):
     
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     is_active = Column(Integer, default=1)  # 1 = active, 0 = inactive
     
     def __repr__(self):

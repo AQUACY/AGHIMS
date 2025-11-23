@@ -257,6 +257,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
+import { getApplicationTodaySync } from '../utils/dateUtils';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -453,8 +454,8 @@ const getDaysForPrescription = (prescription) => {
 
 // Format day label for expansion item
 const formatDayLabel = (day) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Use application date (from reference date if configured) instead of system date
+  const today = getApplicationTodaySync();
   const dayDate = new Date(day);
   dayDate.setHours(0, 0, 0, 0);
   

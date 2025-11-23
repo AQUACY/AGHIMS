@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class InpatientScanResult(Base):
@@ -17,8 +18,8 @@ class InpatientScanResult(Base):
     attachment_path = Column(String(500), nullable=True)  # Path to uploaded PDF/image attachment
     entered_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # User who first entered the result
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who last updated the result
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     investigation = relationship("InpatientInvestigation", back_populates="scan_result", uselist=False)

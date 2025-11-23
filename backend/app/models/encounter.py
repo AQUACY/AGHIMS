@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class EncounterStatus(str, enum.Enum):
@@ -37,8 +38,8 @@ class Encounter(Base):
     procedure_g_drg_code = Column(String(50), nullable=True)  # G-DRG code of selected procedure
     procedure_name = Column(String(500), nullable=True)  # Service Name of selected procedure
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     finalized_at = Column(DateTime, nullable=True)
     finalized_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor/PA who finalized
     archived = Column(Boolean, default=False, nullable=False)  # Soft delete flag

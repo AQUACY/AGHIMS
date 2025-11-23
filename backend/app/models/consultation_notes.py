@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 import enum
 
 
@@ -20,8 +21,8 @@ class ConsultationNotes(Base):
     # Outcome of consultation: referred, discharged, recommended_for_admission
     outcome = Column(String(100), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     encounter = relationship("Encounter", back_populates="consultation_notes", uselist=False)

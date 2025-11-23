@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boo
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class Bill(Base):
@@ -20,7 +21,7 @@ class Bill(Base):
     is_insured = Column(Boolean, default=False)  # Whether using insurance pricing
     miscellaneous = Column(Text)  # Additional items
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
     paid_at = Column(DateTime, nullable=True)
     
     # Relationships
@@ -44,7 +45,7 @@ class BillItem(Base):
     quantity = Column(Float, default=1.0, nullable=False)  # Changed to Float to support fractional quantities (e.g., 6.15 hours)
     unit_price = Column(Float, nullable=False)
     total_price = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships
     bill = relationship("Bill", back_populates="bill_items")
@@ -63,7 +64,7 @@ class Receipt(Base):
     amount_paid = Column(Float, nullable=False)
     payment_method = Column(String(50))  # cash, card, mobile_money, etc.
     issued_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    issued_at = Column(DateTime, default=datetime.utcnow)
+    issued_at = Column(DateTime, default=utcnow_callable)
     refunded = Column(Boolean, default=False)  # Whether this receipt has been refunded
     refunded_at = Column(DateTime, nullable=True)
     refunded_by = Column(Integer, ForeignKey("users.id"), nullable=True)

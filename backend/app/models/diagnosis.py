@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Bool
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class Diagnosis(Base):
@@ -20,7 +21,7 @@ class Diagnosis(Base):
     is_provisional = Column(Boolean, default=False)
     is_chief = Column(Boolean, default=False)  # Chief/final diagnosis
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships
     encounter = relationship("Encounter", back_populates="diagnoses")

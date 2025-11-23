@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 from app.core.database import get_db
+from app.core.datetime_utils import utcnow, today
 from app.core.dependencies import require_role, get_current_user
 from app.models.user import User
 from app.models.encounter import Encounter, EncounterStatus
@@ -88,7 +89,7 @@ def _generate_and_store_sample_id(db: Session, investigation, entered_by_user_id
                         pass
         
         # Generate sample ID
-        now = datetime.utcnow()
+        now = utcnow()
         year = now.year % 100  # Last 2 digits of year (e.g., 25 for 2025)
         month = now.month
         
@@ -631,7 +632,7 @@ def create_prescription(
         is_external = prescription_dict.get('is_external', 0)
         if is_external:
             prescription.confirmed_by = current_user.id
-            prescription.confirmed_at = datetime.utcnow()
+            prescription.confirmed_at = utcnow()
             print(f"Auto-confirmed external prescription {prescription.id} - no bill will be created")
         
         db.commit()
@@ -712,8 +713,9 @@ def create_direct_prescription(
                 pass
         elif prescription_data.patient_age:
             # Calculate approximate DOB from age
-            today = date.today()
-            birth_year = today.year - prescription_data.patient_age
+            from datetime import date
+            today_date = today()
+            birth_year = today_date.year - prescription_data.patient_age
             date_of_birth = date(birth_year, 1, 1)  # Use January 1st as approximate DOB
         
         # Generate a card number for the new patient
@@ -834,7 +836,7 @@ def create_direct_prescription(
     
     # Auto-confirm (but NOT auto-dispense - client must pay first)
     prescription.confirmed_by = current_user.id
-    prescription.confirmed_at = datetime.utcnow()
+    prescription.confirmed_at = utcnow()
     
     # Create bill item for the prescription (base_rate pricing)
     # Find or create an unpaid bill for this encounter
@@ -1085,7 +1087,7 @@ def dispense_prescription(
             prescription.quantity = dispense_data.quantity
     
     prescription.dispensed_by = current_user.id
-    prescription.service_date = datetime.utcnow()
+    prescription.service_date = utcnow()
     
     db.commit()
     db.refresh(prescription)
@@ -1147,7 +1149,7 @@ def confirm_prescription(
     
     # Mark prescription as confirmed
     prescription.confirmed_by = current_user.id
-    prescription.confirmed_at = datetime.utcnow()
+    prescription.confirmed_at = utcnow()
     
     # Determine if insured based on encounter CCC number
     is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
@@ -1346,7 +1348,7 @@ def return_prescription(
         raise HTTPException(status_code=400, detail="Prescription has not been dispensed")
     
     prescription.dispensed_by = None
-    prescription.service_date = datetime.utcnow()
+    prescription.service_date = utcnow()
     
     db.commit()
     db.refresh(prescription)
@@ -1707,8 +1709,8 @@ def create_investigation(
             card_number = generate_card_number(db)
             
             # Calculate date of birth from age (approximate)
-            today = date.today()
-            birth_year = today.year - investigation_data.patient_age
+            today_date = today()
+            birth_year = today_date.year - investigation_data.patient_age
             date_of_birth = date(birth_year, 1, 1)  # Use January 1st as approximate DOB
             
             # Create new patient record
@@ -1883,7 +1885,7 @@ def cancel_investigation(
     investigation.status = InvestigationStatus.CANCELLED.value
     investigation.cancelled_by = current_user.id
     investigation.cancellation_reason = cancel_data.reason
-    investigation.cancelled_at = datetime.utcnow()
+    investigation.cancelled_at = utcnow()
     
     db.commit()
     db.refresh(investigation)
@@ -2233,7 +2235,7 @@ def revert_investigation_to_requested(
     # Store revert reason in cancellation_reason field (reusing existing field)
     investigation.cancellation_reason = f"Reverted to requested by Admin: {revert_data.reason}"
     investigation.cancelled_by = current_user.id
-    investigation.cancelled_at = datetime.utcnow()
+    investigation.cancelled_at = utcnow()
     
     db.commit()
     db.refresh(investigation)
@@ -2874,7 +2876,7 @@ async def create_lab_result(
                     old_path.unlink()
             existing_result.attachment_path = attachment_path
         existing_result.updated_by = current_user.id  # Track who updated
-        existing_result.updated_at = datetime.utcnow()
+        existing_result.updated_at = utcnow()
         
         # Mark investigation as completed if results are entered
         if results_text or parsed_template_data or attachment_path:
@@ -3210,7 +3212,7 @@ def delete_lab_result_attachment(
     # Update the result
     result.attachment_path = None
     result.updated_by = current_user.id
-    result.updated_at = datetime.utcnow()
+    result.updated_at = utcnow()
     
     db.commit()
     db.refresh(result)
@@ -3374,7 +3376,7 @@ async def create_scan_result(
             all_attachments = existing_attachments + uploaded_paths
             existing_result.attachment_path = json.dumps(all_attachments)
         existing_result.updated_by = current_user.id  # Track who updated
-        existing_result.updated_at = datetime.utcnow()
+        existing_result.updated_at = utcnow()
         
         # Mark investigation as completed if results are entered
         if results_text or uploaded_paths:
@@ -3668,7 +3670,7 @@ def delete_scan_result_attachment(
         result.attachment_path = json.dumps(attachment_paths)
     
     result.updated_by = current_user.id
-    result.updated_at = datetime.utcnow()
+    result.updated_at = utcnow()
     db.commit()
     
     return {"message": "Attachment deleted successfully"}
@@ -3830,7 +3832,7 @@ async def create_xray_result(
             all_attachments = existing_attachments + uploaded_paths
             existing_result.attachment_path = json.dumps(all_attachments)
         existing_result.updated_by = current_user.id  # Track who updated
-        existing_result.updated_at = datetime.utcnow()
+        existing_result.updated_at = utcnow()
         
         # Mark investigation as completed if results are entered
         if results_text or uploaded_paths:
@@ -4124,7 +4126,7 @@ def delete_xray_result_attachment(
         result.attachment_path = json.dumps(attachment_paths)
     
     result.updated_by = current_user.id
-    result.updated_at = datetime.utcnow()
+    result.updated_at = utcnow()
     db.commit()
     
     return {"message": "Attachment deleted successfully"}
@@ -4213,7 +4215,7 @@ def create_or_update_consultation_notes(
         existing_notes.doctor_notes = notes_data.doctor_notes
         existing_notes.follow_up_date = follow_up_date
         existing_notes.outcome = notes_data.outcome
-        existing_notes.updated_at = datetime.utcnow()
+        existing_notes.updated_at = utcnow()
         # Initialize final_encounter_id to the current encounter_id (will be updated if new encounter is created)
         final_encounter_id = notes_data.encounter_id
         # Handle admission recommendation
@@ -4286,7 +4288,7 @@ def create_or_update_consultation_notes(
                     # Update existing non-cancelled admission
                     admission.ward = notes_data.admission_ward
                     admission.recommended_by = current_user.id
-                    admission.updated_at = datetime.utcnow()
+                    admission.updated_at = utcnow()
                     final_encounter_id = notes_data.encounter_id
             else:
                 admission = AdmissionRecommendation(
@@ -4403,7 +4405,7 @@ def create_or_update_consultation_notes(
                     # Update existing non-cancelled admission
                     existing_admission.ward = notes_data.admission_ward
                     existing_admission.recommended_by = current_user.id
-                    existing_admission.updated_at = datetime.utcnow()
+                    existing_admission.updated_at = utcnow()
                     final_encounter_id = notes_data.encounter_id
             else:
                 admission = AdmissionRecommendation(
@@ -4560,7 +4562,7 @@ def update_doctor_note_entry(
         )
     
     doctor_note.notes = note_data.notes
-    doctor_note.updated_at = datetime.utcnow()
+    doctor_note.updated_at = utcnow()
     
     db.commit()
     db.refresh(doctor_note)
@@ -4984,17 +4986,17 @@ def confirm_admission(
     # Set status to IN_CONSULTATION for IPD
     if encounter.status != EncounterStatus.IN_CONSULTATION.value:
         encounter.status = EncounterStatus.IN_CONSULTATION.value
-        encounter.updated_at = datetime.utcnow()
+        encounter.updated_at = utcnow()
     
     # Update encounter department to match ward
     if encounter.department != admission.ward:
         encounter.department = admission.ward
-        encounter.updated_at = datetime.utcnow()
+        encounter.updated_at = utcnow()
     
     # Ensure encounter is not archived
     if encounter.archived:
         encounter.archived = False
-        encounter.updated_at = datetime.utcnow()
+        encounter.updated_at = utcnow()
     
     # Use CCC from form or from encounter
     ccc_to_use = form_data.ccc_number or encounter.ccc_number
@@ -5013,12 +5015,12 @@ def confirm_admission(
     
     # Mark admission as confirmed
     admission.confirmed_by = current_user.id
-    admission.confirmed_at = datetime.utcnow()
-    admission.updated_at = datetime.utcnow()
+    admission.confirmed_at = utcnow()
+    admission.updated_at = utcnow()
     
     # Mark bed as occupied
     bed.is_occupied = True
-    bed.updated_at = datetime.utcnow()
+    bed.updated_at = utcnow()
     
     # Create ward admission record
     ward_admission = WardAdmission(
@@ -5032,7 +5034,7 @@ def confirm_admission(
         emergency_contact_number=form_data.emergency_contact_number,
         doctor_id=form_data.doctor_id,
         admitted_by=current_user.id,
-        admitted_at=datetime.utcnow()
+        admitted_at=utcnow()
     )
     db.add(ward_admission)
     db.flush()  # Flush to get ward_admission ID before committing
@@ -5132,7 +5134,7 @@ def revert_admission_confirmation(
             bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
             if bed:
                 bed.is_occupied = False
-                bed.updated_at = datetime.utcnow()
+                bed.updated_at = utcnow()
         
         # Delete the ward admission record
         db.delete(ward_admission)
@@ -5140,7 +5142,7 @@ def revert_admission_confirmation(
     # Revert confirmation status
     admission.confirmed_by = None
     admission.confirmed_at = None
-    admission.updated_at = datetime.utcnow()
+    admission.updated_at = utcnow()
     
     db.commit()
     db.refresh(admission)
@@ -5406,7 +5408,7 @@ def transfer_patient(
             transfer_reason=form_data.transfer_reason,
             status="pending",
             transferred_by=current_user.id,
-            transferred_at=datetime.utcnow()
+            transferred_at=utcnow()
         )
         db.add(transfer)
         db.commit()
@@ -5428,15 +5430,15 @@ def transfer_patient(
             old_bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
             if old_bed:
                 old_bed.is_occupied = False
-                old_bed.updated_at = datetime.utcnow()
+                old_bed.updated_at = utcnow()
         
         # Mark new bed as occupied
         bed.is_occupied = True
-        bed.updated_at = datetime.utcnow()
+        bed.updated_at = utcnow()
         
         # Update ward admission
         ward_admission.bed_id = form_data.bed_id
-        ward_admission.updated_at = datetime.utcnow()
+        ward_admission.updated_at = utcnow()
         
         # Create transfer record (auto-accepted for same-ward transfers)
         transfer = WardTransfer(
@@ -5447,8 +5449,8 @@ def transfer_patient(
             status="accepted",
             transferred_by=current_user.id,
             accepted_by=current_user.id,
-            transferred_at=datetime.utcnow(),
-            accepted_at=datetime.utcnow()
+            transferred_at=utcnow(),
+            accepted_at=utcnow()
         )
         db.add(transfer)
         
@@ -5680,12 +5682,12 @@ def partial_discharge_patient(
         raise HTTPException(status_code=400, detail=f"Invalid discharge condition. Must be one of: {', '.join(valid_conditions)}")
     
     # Mark as partially discharged
-    ward_admission.partially_discharged_at = datetime.utcnow()
+    ward_admission.partially_discharged_at = utcnow()
     ward_admission.partially_discharged_by = current_user.id
     ward_admission.discharge_outcome = request.discharge_outcome
     ward_admission.discharge_condition = request.discharge_condition
     ward_admission.final_orders = request.final_orders
-    ward_admission.updated_at = datetime.utcnow()
+    ward_admission.updated_at = utcnow()
     
     db.commit()
     db.refresh(ward_admission)
@@ -5727,7 +5729,7 @@ def revert_partial_discharge(
     ward_admission.discharge_outcome = None
     ward_admission.discharge_condition = None
     ward_admission.final_orders = None
-    ward_admission.updated_at = datetime.utcnow()
+    ward_admission.updated_at = utcnow()
     
     db.commit()
     db.refresh(ward_admission)
@@ -5795,7 +5797,7 @@ def final_discharge_patient(
         bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
         if bed:
             bed.is_occupied = False
-            bed.updated_at = datetime.utcnow()
+            bed.updated_at = utcnow()
     
     # Update discharge information (in case it changed from partial discharge)
     ward_admission.discharge_outcome = request.discharge_outcome
@@ -5804,9 +5806,9 @@ def final_discharge_patient(
         ward_admission.final_orders = request.final_orders
     
     # Mark as fully discharged
-    ward_admission.discharged_at = datetime.utcnow()
+    ward_admission.discharged_at = utcnow()
     ward_admission.discharged_by = current_user.id
-    ward_admission.updated_at = datetime.utcnow()
+    ward_admission.updated_at = utcnow()
     
     db.commit()
     db.refresh(ward_admission)
@@ -5846,7 +5848,7 @@ def update_admission_notes(
         raise HTTPException(status_code=400, detail="Cannot update notes for discharged patient")
     
     ward_admission.admission_notes = request.notes
-    ward_admission.updated_at = datetime.utcnow()
+    ward_admission.updated_at = utcnow()
     
     db.commit()
     db.refresh(ward_admission)
@@ -6328,13 +6330,13 @@ def toggle_nurse_note_strikethrough(
     if nurse_note.strikethrough == 0:
         nurse_note.strikethrough = 1
         nurse_note.strikethrough_by = current_user.id
-        nurse_note.strikethrough_at = datetime.utcnow()
+        nurse_note.strikethrough_at = utcnow()
     else:
         nurse_note.strikethrough = 0
         nurse_note.strikethrough_by = None
         nurse_note.strikethrough_at = None
     
-    nurse_note.updated_at = datetime.utcnow()
+    nurse_note.updated_at = utcnow()
     db.commit()
     db.refresh(nurse_note)
     
@@ -7345,7 +7347,7 @@ def confirm_inpatient_prescription(
     
     # Mark as confirmed
     prescription.confirmed_by = current_user.id
-    prescription.confirmed_at = datetime.utcnow()
+    prescription.confirmed_at = utcnow()
     
     # Determine if insured based on encounter CCC number
     is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
@@ -7465,7 +7467,7 @@ def dispense_inpatient_prescription(
             prescription.quantity = dispense_data.quantity
     
     prescription.dispensed_by = current_user.id
-    prescription.service_date = datetime.utcnow()
+    prescription.service_date = utcnow()
     
     db.commit()
     db.refresh(prescription)
@@ -7499,7 +7501,7 @@ def return_inpatient_prescription(
     prescription.dispensed_by = None
     # Don't set service_date to None - it has a NOT NULL constraint
     # Keep the existing service_date value or update it to current time
-    prescription.service_date = datetime.utcnow()
+    prescription.service_date = utcnow()
     
     db.commit()
     db.refresh(prescription)
@@ -8652,7 +8654,7 @@ def revert_inpatient_investigation_to_requested(
     # Store revert reason in cancellation_reason field (reusing existing field)
     investigation.cancellation_reason = f"Reverted to requested by Admin: {revert_data.reason}"
     investigation.cancelled_by = current_user.id
-    investigation.cancelled_at = datetime.utcnow()
+    investigation.cancelled_at = utcnow()
     
     db.commit()
     db.refresh(investigation)
@@ -8844,7 +8846,7 @@ def update_inpatient_surgery(
     if surgery_data.is_completed is not None:
         surgery.is_completed = surgery_data.is_completed
         if surgery_data.is_completed and not surgery.completed_at:
-            surgery.completed_at = datetime.utcnow()
+            surgery.completed_at = utcnow()
             surgery.completed_by = current_user.id
             # Check if surgery is being completed (was not completed before)
             if not was_completed:
@@ -8853,7 +8855,7 @@ def update_inpatient_surgery(
             surgery.completed_at = None
             surgery.completed_by = None
     
-    surgery.updated_at = datetime.utcnow()
+    surgery.updated_at = utcnow()
     
     # If surgery is being completed, create bill item
     if is_being_completed and surgery.g_drg_code:
@@ -9100,7 +9102,7 @@ def update_additional_service(
     for field, value in update_data.items():
         setattr(service, field, value)
     
-    service.updated_at = datetime.utcnow()
+    service.updated_at = utcnow()
     db.commit()
     db.refresh(service)
     
@@ -9122,7 +9124,7 @@ def delete_additional_service(
     
     # Soft delete by setting is_active to False
     service.is_active = False
-    service.updated_at = datetime.utcnow()
+    service.updated_at = utcnow()
     db.commit()
     
     return None
@@ -9257,7 +9259,7 @@ def update_blood_transfusion_type(
     for field, value in update_data.items():
         setattr(transfusion_type, field, value)
     
-    transfusion_type.updated_at = datetime.utcnow()
+    transfusion_type.updated_at = utcnow()
     db.commit()
     db.refresh(transfusion_type)
     
@@ -9279,7 +9281,7 @@ def delete_blood_transfusion_type(
     
     # Soft delete by setting is_active to False
     transfusion_type.is_active = False
-    transfusion_type.updated_at = datetime.utcnow()
+    transfusion_type.updated_at = utcnow()
     db.commit()
     
     return None
@@ -9559,7 +9561,7 @@ def accept_blood_transfusion_request(
         # Update request status
         blood_request.status = "accepted"
         blood_request.accepted_by = current_user.id
-        blood_request.accepted_at = datetime.utcnow()
+        blood_request.accepted_at = utcnow()
         blood_request.bill_item_id = bill_item.id
     else:
         # Reuse existing bill item - just update status
@@ -9567,7 +9569,7 @@ def accept_blood_transfusion_request(
         # Update request status
         blood_request.status = "accepted"
         blood_request.accepted_by = current_user.id
-        blood_request.accepted_at = datetime.utcnow()
+        blood_request.accepted_at = utcnow()
     
     db.commit()
     db.refresh(blood_request)
@@ -9635,7 +9637,7 @@ def fulfill_blood_transfusion_request(
     
     blood_request.status = "fulfilled"
     blood_request.fulfilled_by = current_user.id
-    blood_request.fulfilled_at = datetime.utcnow()
+    blood_request.fulfilled_at = utcnow()
     db.commit()
     db.refresh(blood_request)
     
@@ -9715,7 +9717,7 @@ def cancel_blood_transfusion_request(
             raise HTTPException(status_code=400, detail=f"Cannot cancel request with status '{blood_request.status}'")
     
     blood_request.status = "cancelled"
-    blood_request.cancelled_at = datetime.utcnow()
+    blood_request.cancelled_at = utcnow()
     blood_request.cancellation_reason = cancel_data.cancellation_reason
     db.commit()
     db.refresh(blood_request)
@@ -9847,7 +9849,7 @@ def return_blood_transfusion_request(
     # Update request status - set to "pending" so it can be accepted again
     blood_request.status = "pending"
     blood_request.returned_by = current_user.id
-    blood_request.returned_at = datetime.utcnow()
+    blood_request.returned_at = utcnow()
     blood_request.return_bill_item_id = return_bill_item.id
     # Reset accepted/fulfilled fields so it can be re-accepted
     blood_request.accepted_by = None
@@ -9967,7 +9969,7 @@ def start_additional_service(
     if not service:
         raise HTTPException(status_code=404, detail="Additional service not found or inactive")
     
-    start_time = service_data.start_time or datetime.utcnow()
+    start_time = service_data.start_time or utcnow()
     
     patient_service = InpatientAdditionalService(
         ward_admission_id=ward_admission_id,
@@ -10118,7 +10120,7 @@ def stop_additional_service(
             # Convert to UTC first, then remove timezone info
             end_time = end_time.astimezone(timezone.utc).replace(tzinfo=None)
     else:
-        end_time = datetime.utcnow()
+        end_time = utcnow()
     
     # Ensure start_time is also naive for comparison
     start_time = patient_service.start_time
@@ -10307,7 +10309,7 @@ def create_inpatient_inventory_debit(
         total_price=total_price,
         notes=debit_data.notes,
         used_by=current_user.id,
-        used_at=datetime.utcnow()
+        used_at=utcnow()
     )
     db.add(inventory_debit)
     db.flush()
@@ -10599,7 +10601,7 @@ def release_inventory_debit(
     # Mark as released
     debit.is_released = True
     debit.released_by = current_user.id
-    debit.released_at = datetime.utcnow()
+    debit.released_at = utcnow()
     
     db.commit()
     db.refresh(debit)
@@ -10899,14 +10901,14 @@ def create_direct_admission(
         ward=form_data.ward,
         recommended_by=current_user.id,
         confirmed_by=current_user.id,  # Auto-confirm for direct admission
-        confirmed_at=datetime.utcnow()
+        confirmed_at=utcnow()
     )
     db.add(admission_recommendation)
     db.flush()  # Get admission_recommendation ID
     
     # Mark bed as occupied
     bed.is_occupied = True
-    bed.updated_at = datetime.utcnow()
+    bed.updated_at = utcnow()
     
     # Create ward admission record
     ward_admission = WardAdmission(
@@ -10921,7 +10923,7 @@ def create_direct_admission(
         doctor_id=form_data.doctor_id,
         admitted_by=current_user.id,
         admission_notes=form_data.admission_notes,
-        admitted_at=datetime.utcnow()
+        admitted_at=utcnow()
     )
     db.add(ward_admission)
     db.flush()  # Flush to get ward_admission ID before committing
@@ -10983,8 +10985,8 @@ def calculate_age(date_of_birth):
     if not date_of_birth:
         return None
     from datetime import date
-    today = date.today()
-    return today.year - date_of_birth.year - ((today.month, today.day) < (date_of_birth.month, date_of_birth.day))
+    today_date = today()
+    return today_date.year - date_of_birth.year - ((today_date.month, today_date.day) < (date_of_birth.month, date_of_birth.day))
 
 
 @router.get("/ward-admissions/daily-state/{ward}")
@@ -11260,22 +11262,22 @@ def accept_transfer(
         old_bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
         if old_bed:
             old_bed.is_occupied = False
-            old_bed.updated_at = datetime.utcnow()
+            old_bed.updated_at = utcnow()
     
     # Mark new bed as occupied
     bed.is_occupied = True
-    bed.updated_at = datetime.utcnow()
+    bed.updated_at = utcnow()
     
     # Update ward admission
     ward_admission.ward = transfer.to_ward
     ward_admission.bed_id = form_data.bed_id
-    ward_admission.updated_at = datetime.utcnow()
+    ward_admission.updated_at = utcnow()
     
     # Update transfer status
     transfer.status = "accepted"
     transfer.accepted_by = current_user.id
-    transfer.accepted_at = datetime.utcnow()
-    transfer.updated_at = datetime.utcnow()
+    transfer.accepted_at = utcnow()
+    transfer.updated_at = utcnow()
     
     db.commit()
     db.refresh(ward_admission)
@@ -11324,8 +11326,8 @@ def reject_transfer(
     transfer.status = "rejected"
     transfer.rejected_by = current_user.id
     transfer.rejection_reason = form_data.rejection_reason
-    transfer.rejected_at = datetime.utcnow()
-    transfer.updated_at = datetime.utcnow()
+    transfer.rejected_at = utcnow()
+    transfer.updated_at = utcnow()
     
     db.commit()
     db.refresh(transfer)
@@ -11430,9 +11432,9 @@ def cancel_admission(
     # Mark as cancelled
     admission.cancelled = 1
     admission.cancelled_by = current_user.id
-    admission.cancelled_at = datetime.utcnow()
+    admission.cancelled_at = utcnow()
     admission.cancellation_reason = cancel_data.reason
-    admission.updated_at = datetime.utcnow()
+    admission.updated_at = utcnow()
     
     db.commit()
     db.refresh(admission)
@@ -11567,7 +11569,7 @@ def update_bed(
     bed.ward = bed_data.ward
     bed.bed_number = bed_data.bed_number
     bed.is_active = bed_data.is_active
-    bed.updated_at = datetime.utcnow()
+    bed.updated_at = utcnow()
     
     db.commit()
     db.refresh(bed)
@@ -11596,7 +11598,7 @@ def delete_bed(
     
     # Soft delete
     bed.is_active = False
-    bed.updated_at = datetime.utcnow()
+    bed.updated_at = utcnow()
     
     db.commit()
     
@@ -11662,7 +11664,7 @@ def cancel_ward_admission(
         bed = db.query(Bed).filter(Bed.id == ward_admission.bed_id).first()
         if bed:
             bed.is_occupied = False
-            bed.updated_at = datetime.utcnow()
+            bed.updated_at = utcnow()
     
     # Get admission recommendation and encounter
     admission = db.query(AdmissionRecommendation).filter(

@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class WardAdmission(Base):
@@ -23,7 +24,7 @@ class WardAdmission(Base):
     doctor_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor under whose care
     admitted_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # User who confirmed admission
     admission_notes = Column(Text, nullable=True)  # Admission notes
-    admitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    admitted_at = Column(DateTime, default=utcnow_callable, nullable=False)
     death_recorded_at = Column(DateTime, nullable=True)  # When patient death was recorded
     death_recorded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who recorded death
     discharged_at = Column(DateTime, nullable=True)  # When patient was discharged
@@ -33,8 +34,8 @@ class WardAdmission(Base):
     partially_discharged_at = Column(DateTime, nullable=True)  # When partial discharge was initiated
     partially_discharged_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who initiated partial discharge
     final_orders = Column(Text, nullable=True)  # Doctor's final orders/notes
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
     # Relationships
     encounter = relationship("Encounter")

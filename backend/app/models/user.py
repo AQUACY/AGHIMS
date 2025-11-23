@@ -3,6 +3,7 @@ User model for authentication and authorization
 """
 from sqlalchemy import Column, Integer, String, Boolean
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class User(Base):

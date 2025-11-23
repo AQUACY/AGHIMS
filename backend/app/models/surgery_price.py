@@ -3,6 +3,7 @@ Surgery Price List model
 """
 from sqlalchemy import Column, Integer, String, Float, Boolean
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class SurgeryPrice(Base):

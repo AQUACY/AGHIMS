@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class WardTransfer(Base):
@@ -21,11 +22,11 @@ class WardTransfer(Base):
     accepted_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who accepted transfer
     rejected_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who rejected transfer
     rejection_reason = Column(Text, nullable=True)  # Reason for rejection
-    transferred_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    transferred_at = Column(DateTime, default=utcnow_callable, nullable=False)
     accepted_at = Column(DateTime, nullable=True)  # When transfer was accepted
     rejected_at = Column(DateTime, nullable=True)  # When transfer was rejected
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="transfers")

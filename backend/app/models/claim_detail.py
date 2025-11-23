@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Tex
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class ClaimDiagnosis(Base):
@@ -19,8 +20,8 @@ class ClaimDiagnosis(Base):
     gdrg_code = Column(String(50))
     is_chief = Column(Boolean, default=False)
     display_order = Column(Integer, default=0)  # For ordering (1-4)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     claim = relationship("Claim", back_populates="claim_diagnoses")
@@ -38,11 +39,11 @@ class ClaimInvestigation(Base):
     investigation_id = Column(Integer, ForeignKey("investigations.id"), nullable=True)  # Reference to original investigation
     description = Column(Text)
     gdrg_code = Column(String(50), nullable=False)
-    service_date = Column(DateTime, default=datetime.utcnow)
+    service_date = Column(DateTime, default=utcnow_callable)
     investigation_type = Column(String(50))  # lab, scan, xray
     display_order = Column(Integer, default=0)  # For ordering (1-5)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     claim = relationship("Claim", back_populates="claim_investigations")
@@ -63,14 +64,14 @@ class ClaimPrescription(Base):
     price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=False)
     total_cost = Column(Float, nullable=False)
-    service_date = Column(DateTime, default=datetime.utcnow)
+    service_date = Column(DateTime, default=utcnow_callable)
     dose = Column(String(100))
     frequency = Column(String(100))
     duration = Column(String(100))
     unparsed = Column(Text)
     display_order = Column(Integer, default=0)  # For ordering (1-5)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     claim = relationship("Claim", back_populates="claim_prescriptions")
@@ -87,10 +88,10 @@ class ClaimProcedure(Base):
     claim_id = Column(Integer, ForeignKey("claims.id"), nullable=False)
     description = Column(Text)
     gdrg_code = Column(String(50))
-    service_date = Column(DateTime, default=datetime.utcnow)
+    service_date = Column(DateTime, default=utcnow_callable)
     display_order = Column(Integer, default=0)  # For ordering (1-3)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     claim = relationship("Claim", back_populates="claim_procedures")

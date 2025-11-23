@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     SYNC_REMOTE_DATABASE: str = ""  # Remote MySQL database name
     SYNC_INTERVAL_MINUTES: int = 60  # Sync interval in minutes (default: 1 hour)
     
+    # Application Date Override Settings
+    # When set, the application will use this date instead of the system date
+    # Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (e.g., "2024-01-15" or "2024-01-15 10:30:00")
+    # Leave empty to use system date
+    APPLICATION_REFERENCE_DATE: str = ""  # Override date for application (empty = use system date)
+    
     @property
     def DATABASE_URL(self) -> str:
         """Generate DATABASE_URL based on DATABASE_MODE"""

@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Bool
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class InpatientSurgery(Base):
@@ -29,8 +30,8 @@ class InpatientSurgery(Base):
     completed_at = Column(DateTime, nullable=True)  # When surgery was completed
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor who completed
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="surgeries")

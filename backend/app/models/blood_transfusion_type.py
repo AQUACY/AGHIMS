@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class BloodTransfusionType(Base):
@@ -18,8 +19,8 @@ class BloodTransfusionType(Base):
     unit_type = Column(String(50), nullable=False, default="unit")  # "unit", "pack", etc.
     is_active = Column(Boolean, default=True)  # Whether type is available
     created_by = Column(Integer, nullable=False)  # Admin who created it
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
     
     # Relationships
     requests = relationship("BloodTransfusionRequest", back_populates="transfusion_type")

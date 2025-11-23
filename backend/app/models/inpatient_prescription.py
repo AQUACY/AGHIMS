@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Tex
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class InpatientPrescription(Base):
@@ -28,8 +29,8 @@ class InpatientPrescription(Base):
     dispensed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     confirmed_at = Column(DateTime, nullable=True)
     is_external = Column(Integer, default=0, nullable=False)  # 0 = internal, 1 = external
-    service_date = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    service_date = Column(DateTime, default=utcnow_callable)
+    created_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships
     clinical_review = relationship("InpatientClinicalReview", back_populates="prescriptions")

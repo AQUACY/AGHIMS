@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class NurseNote(Base):
@@ -18,8 +19,8 @@ class NurseNote(Base):
     strikethrough = Column(Integer, default=0, nullable=False)  # 0 = not strikethrough, 1 = strikethrough
     strikethrough_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who strikethrough the note
     strikethrough_at = Column(DateTime, nullable=True)  # When note was strikethrough
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable, nullable=False)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
     # Relationships
     ward_admission = relationship("WardAdmission", back_populates="nurse_notes")

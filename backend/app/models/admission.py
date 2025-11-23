@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
 
 
 class AdmissionRecommendation(Base):
@@ -21,8 +22,8 @@ class AdmissionRecommendation(Base):
     cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
     cancellation_reason = Column(String(500), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
     # Relationships
     encounter = relationship("Encounter")
