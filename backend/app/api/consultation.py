@@ -909,14 +909,30 @@ def create_direct_prescription(
 
 def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionResponse:
     """Helper function to add prescriber and dispenser information to a prescription response"""
-    # Get prescriber information
-    prescriber = db.query(User).filter(User.id == prescription.prescribed_by).first()
-    prescriber_name = prescriber.full_name if prescriber else None
-    prescriber_role = prescriber.role if prescriber else None
+    # Get prescriber information (handle missing user gracefully)
+    prescriber_name = None
+    prescriber_role = None
+    try:
+        prescriber = db.query(User).filter(User.id == prescription.prescribed_by).first()
+        if prescriber:
+            prescriber_name = prescriber.full_name
+            prescriber_role = prescriber.role
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Could not load prescriber info for prescription {prescription.id}: {str(e)}")
     
-    # Get dispenser information
-    dispenser = db.query(User).filter(User.id == prescription.dispensed_by).first() if prescription.dispensed_by else None
-    dispenser_name = dispenser.full_name if dispenser else None
+    # Get dispenser information (handle missing user gracefully)
+    dispenser_name = None
+    try:
+        if prescription.dispensed_by:
+            dispenser = db.query(User).filter(User.id == prescription.dispensed_by).first()
+            if dispenser:
+                dispenser_name = dispenser.full_name
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Could not load dispenser info for prescription {prescription.id}: {str(e)}")
     
     # Create response with prescriber details
     # Convert is_external from integer (0/1) to boolean
@@ -961,8 +977,14 @@ def get_prescriptions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get all prescriptions for an encounter"""
+    """Get all prescriptions for an encounter (works even if encounter is archived)"""
+    # Verify encounter exists (but don't require it to be non-archived - prescriptions should still be accessible)
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
     # Query prescriptions with prescriber information, ordered by creation time
+    # Don't filter by archived status - prescriptions should be accessible even if encounter is archived
     prescriptions = db.query(Prescription).filter(
         Prescription.encounter_id == encounter_id
     ).order_by(Prescription.created_at.desc()).all()
@@ -989,7 +1011,7 @@ def get_prescriptions_by_patient_card(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     
-    # Verify encounter belongs to patient
+    # Verify encounter belongs to patient (include archived encounters - they may still have prescriptions to dispense)
     encounter = db.query(Encounter).filter(
         Encounter.id == encounter_id,
         Encounter.patient_id == patient.id
@@ -998,7 +1020,8 @@ def get_prescriptions_by_patient_card(
         raise HTTPException(status_code=404, detail="Encounter not found or does not belong to this patient")
     
     # Get prescriptions for the encounter with prescriber information
-    prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).all()
+    # Don't filter by archived status - prescriptions should be accessible even if encounter is archived
+    prescriptions = db.query(Prescription).filter(Prescription.encounter_id == encounter_id).order_by(Prescription.created_at.desc()).all()
     
     result = []
     for p in prescriptions:
@@ -4362,6 +4385,35 @@ def create_or_update_consultation_notes(
                     patient_id = old_encounter.patient_id if old_encounter else None
                     ccc_number = old_encounter.ccc_number if old_encounter else None
                     
+                    # If old encounter doesn't have CCC, look for OPD encounter with CCC for same patient today
+                    # This allows IPD encounters to inherit CCC from OPD encounters
+                    if not ccc_number and patient_id:
+                        from sqlalchemy import func
+                        from app.models.ward_admission import WardAdmission
+                        # Get all ward admission encounter IDs to exclude IPD encounters
+                        ward_admission_encounter_ids = [wa[0] for wa in db.query(WardAdmission.encounter_id).filter(
+                            WardAdmission.encounter_id.isnot(None)
+                        ).all()]
+                        
+                        # Find OPD encounter with CCC for same patient today
+                        opd_query = db.query(Encounter).filter(
+                            Encounter.patient_id == patient_id,
+                            Encounter.id != notes_data.encounter_id,  # Different encounter
+                            Encounter.archived == False,
+                            Encounter.ccc_number.isnot(None),
+                            Encounter.ccc_number != "",
+                            func.date(Encounter.created_at) == today()
+                        )
+                        
+                        # Exclude IPD encounters (those with ward admissions)
+                        if ward_admission_encounter_ids:
+                            opd_query = opd_query.filter(~Encounter.id.in_(ward_admission_encounter_ids))
+                        
+                        opd_encounter_with_ccc = opd_query.first()
+                        
+                        if opd_encounter_with_ccc and opd_encounter_with_ccc.ccc_number:
+                            ccc_number = opd_encounter_with_ccc.ccc_number
+                    
                     # Delete any unpaid bills from the cancelled admission's encounter
                     # This ensures a fresh bill is created for readmission
                     unpaid_bills = db.query(Bill).filter(
@@ -4978,6 +5030,7 @@ def confirm_admission(
     
     # Get encounter to check for existing CCC
     from app.models.encounter import EncounterStatus
+    from sqlalchemy import func
     encounter = db.query(Encounter).filter(Encounter.id == admission.encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
@@ -4998,12 +5051,44 @@ def confirm_admission(
         encounter.archived = False
         encounter.updated_at = utcnow()
     
-    # Use CCC from form or from encounter
+    # For IPD confirmations from recommendations: if IPD encounter doesn't have CCC,
+    # check if there's an OPD encounter with CCC for the same patient today and copy it
+    # This allows the IPD encounter to be recognized as insured even though it's the second encounter
     ccc_to_use = form_data.ccc_number or encounter.ccc_number
+    if not ccc_to_use and encounter.patient_id:
+        # Look for an OPD encounter (not associated with a ward admission) with CCC for same patient today
+        from app.models.ward_admission import WardAdmission
+        # Get all ward admission encounter IDs to exclude IPD encounters
+        ward_admission_encounter_ids = [wa[0] for wa in db.query(WardAdmission.encounter_id).filter(
+            WardAdmission.encounter_id.isnot(None)
+        ).all()]
+        
+        # Find OPD encounter with CCC for same patient today
+        opd_query = db.query(Encounter).filter(
+            Encounter.patient_id == encounter.patient_id,
+            Encounter.id != encounter.id,  # Different encounter
+            Encounter.archived == False,
+            Encounter.ccc_number.isnot(None),
+            Encounter.ccc_number != "",
+            func.date(Encounter.created_at) == today()
+        )
+        
+        # Exclude IPD encounters (those with ward admissions)
+        if ward_admission_encounter_ids:
+            opd_query = opd_query.filter(~Encounter.id.in_(ward_admission_encounter_ids))
+        
+        opd_encounter_with_ccc = opd_query.first()
+        
+        if opd_encounter_with_ccc and opd_encounter_with_ccc.ccc_number:
+            # Copy CCC from OPD encounter to IPD encounter
+            ccc_to_use = opd_encounter_with_ccc.ccc_number
+            encounter.ccc_number = ccc_to_use
+            encounter.updated_at = utcnow()
     
     # Update encounter CCC if provided in form
     if form_data.ccc_number and not encounter.ccc_number:
         encounter.ccc_number = form_data.ccc_number
+        ccc_to_use = form_data.ccc_number
     
     # Update patient emergency contact if not already set
     patient = encounter.patient
@@ -5776,21 +5861,27 @@ def final_discharge_patient(
     if request.discharge_condition not in valid_conditions:
         raise HTTPException(status_code=400, detail=f"Invalid discharge condition. Must be one of: {', '.join(valid_conditions)}")
     
-    # Check if all bills are paid
-    encounter = ward_admission.encounter
-    if encounter:
-        unpaid_bills = db.query(Bill).filter(
-            Bill.encounter_id == encounter.id,
-            Bill.is_paid == False
-        ).all()
-        
-        if unpaid_bills:
-            total_unpaid = sum(bill.total_amount - bill.paid_amount for bill in unpaid_bills)
-            if total_unpaid > 0.01:  # Allow small rounding differences
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot discharge patient. Outstanding bills amount to GHC {total_unpaid:.2f}. All bills must be paid before discharge."
-                )
+    # Check if all bills are paid (skip check for died or absconded patients)
+    is_died_or_absconded = (
+        request.discharge_outcome in ["died", "absconded"] or 
+        request.discharge_condition in ["died", "absconded"]
+    )
+    
+    if not is_died_or_absconded:
+        encounter = ward_admission.encounter
+        if encounter:
+            unpaid_bills = db.query(Bill).filter(
+                Bill.encounter_id == encounter.id,
+                Bill.is_paid == False
+            ).all()
+            
+            if unpaid_bills:
+                total_unpaid = sum(bill.total_amount - bill.paid_amount for bill in unpaid_bills)
+                if total_unpaid > 0.01:  # Allow small rounding differences
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot discharge patient. Outstanding bills amount to GHC {total_unpaid:.2f}. All bills must be paid before discharge."
+                    )
     
     # Free up the bed
     if ward_admission.bed_id:
@@ -6703,6 +6794,7 @@ class InpatientPrescriptionCreate(BaseModel):
     instructions: Optional[str] = None
     quantity: int = 0
     unparsed: Optional[str] = None
+    is_external: Optional[bool] = False  # Mark prescription as external (to be filled outside)
 
 
 class InpatientPrescriptionUpdate(BaseModel):
@@ -6716,6 +6808,7 @@ class InpatientPrescriptionUpdate(BaseModel):
     instructions: Optional[str] = None
     quantity: int = 0
     unparsed: Optional[str] = None
+    is_external: Optional[bool] = None  # Mark prescription as external (to be filled outside)
 
 
 @router.post("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions")
@@ -6724,7 +6817,7 @@ def create_inpatient_prescription(
     clinical_review_id: int,
     prescription_data: InpatientPrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head"]))
 ):
     """Add a prescription to a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -6747,6 +6840,10 @@ def create_inpatient_prescription(
     if prescription_data.frequency:
         frequency_value = FREQUENCY_MAPPING.get(prescription_data.frequency.strip(), None)
     
+    # Handle is_external flag (convert boolean to integer for SQLite)
+    is_external = prescription_data.is_external if prescription_data.is_external is not None else False
+    is_external_int = 1 if is_external else 0
+    
     prescription = InpatientPrescription(
         clinical_review_id=clinical_review_id,
         medicine_code=prescription_data.medicine_code,
@@ -6759,7 +6856,8 @@ def create_inpatient_prescription(
         instructions=prescription_data.instructions,
         quantity=prescription_data.quantity,
         unparsed=prescription_data.unparsed,
-        prescribed_by=current_user.id
+        prescribed_by=current_user.id,
+        is_external=is_external_int
     )
     
     db.add(prescription)
@@ -6779,6 +6877,7 @@ def create_inpatient_prescription(
         "instructions": prescription.instructions,
         "quantity": prescription.quantity,
         "prescribed_by": prescription.prescribed_by,
+        "is_external": bool(prescription.is_external),
         "created_at": prescription.created_at,
     }
 
@@ -7310,6 +7409,15 @@ def confirm_inpatient_prescription(
     if not prescription:
         raise HTTPException(status_code=404, detail="Inpatient prescription not found")
     
+    # Prevent confirming already external prescriptions (they're auto-confirmed and not billed)
+    # Check is_external as integer (0 or 1) since SQLite stores it as INTEGER
+    current_is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
+    if current_is_external:
+        raise HTTPException(
+            status_code=400, 
+            detail="External prescriptions are automatically confirmed and cannot be confirmed again. They are filled outside and not billed."
+        )
+    
     if prescription.confirmed_by is not None:
         raise HTTPException(status_code=400, detail="Prescription has already been confirmed")
     
@@ -7331,6 +7439,8 @@ def confirm_inpatient_prescription(
         raise HTTPException(status_code=404, detail="Encounter not found")
     
     # Update prescription details if provided
+    # Also allow marking as external if drug is not in stock
+    mark_as_external = False
     if dispense_data:
         if dispense_data.dose is not None:
             prescription.dose = dispense_data.dose
@@ -7344,6 +7454,10 @@ def confirm_inpatient_prescription(
             prescription.quantity = dispense_data.quantity
         if dispense_data.instructions is not None:
             prescription.instructions = dispense_data.instructions
+        if dispense_data.is_external is not None:
+            mark_as_external = dispense_data.is_external
+            # Convert boolean to integer (0 or 1) for SQLite
+            prescription.is_external = 1 if mark_as_external else 0
     
     # Mark as confirmed
     prescription.confirmed_by = current_user.id
@@ -7361,13 +7475,17 @@ def confirm_inpatient_prescription(
     
     total_price = unit_price * prescription.quantity
     
-    # Check if we should add to IPD bill (default is True)
+    # Check if we should add to IPD bill (default is True, but skip if external)
     add_to_bill = True
-    if dispense_data and hasattr(dispense_data, 'add_to_ipd_bill'):
+    if mark_as_external:
+        # External prescriptions are not billed
+        add_to_bill = False
+    elif dispense_data and hasattr(dispense_data, 'add_to_ipd_bill'):
         add_to_bill = dispense_data.add_to_ipd_bill if dispense_data.add_to_ipd_bill is not None else True
     
     # Add to IPD bill (no payment required - accumulates until discharge)
-    if total_price > 0 and add_to_bill:
+    # Skip billing for external prescriptions
+    if total_price > 0 and add_to_bill and not mark_as_external:
         # Find or create a bill for this encounter
         existing_bill = db.query(Bill).filter(
             Bill.encounter_id == encounter.id,
@@ -7606,6 +7724,9 @@ def update_inpatient_prescription(
     prescription.instructions = prescription_data.instructions
     prescription.quantity = quantity
     prescription.unparsed = prescription_data.unparsed
+    # Update is_external if provided
+    if prescription_data.is_external is not None:
+        prescription.is_external = 1 if prescription_data.is_external else 0
     
     db.commit()
     db.refresh(prescription)
@@ -7620,6 +7741,7 @@ def update_inpatient_prescription(
         "duration": prescription.duration,
         "quantity": prescription.quantity,
         "instructions": prescription.instructions,
+        "is_external": bool(prescription.is_external),
         "message": "Inpatient prescription updated successfully"
     }
 

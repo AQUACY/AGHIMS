@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # JWT Settings
     SECRET_KEY: str = "your-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # 30 minutes
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60  # 1 hour
     
     # Facility Settings
     FACILITY_CODE: str = "ER-A25"

@@ -71,32 +71,37 @@
           <div class="text-subtitle1 q-mb-sm glass-text">Select Service Type:</div>
           
           <!-- OPD Section -->
-          <div v-if="todaysEncounter || oldEncounters.length > 0" class="q-mb-md">
+          <div v-if="todaysEncounters.length > 0 || oldEncounters.length > 0" class="q-mb-md">
             <div class="text-weight-medium q-mb-sm">OPD Services</div>
             
-        <!-- Today's Encounter -->
-            <div v-if="todaysEncounter" class="q-mb-sm">
-              <q-card 
-                flat 
-                bordered 
-                clickable
-                :class="{ 'bg-blue-1': serviceType === 'opd' && selectedEncounterId === todaysEncounter.id }"
-                @click="selectOPDEncounter(todaysEncounter.id)"
-                style="cursor: pointer; background-color: rgba(46, 139, 87, 0.1);"
-              >
-            <q-card-section>
-              <div class="row items-center">
-                <div class="col">
-                  <div class="text-weight-bold">Encounter #{{ todaysEncounter.id }} - {{ getEncounterProcedures(todaysEncounter) }}</div>
-                  <div class="text-caption text-grey-7 q-mt-xs">
-                    {{ formatDate(todaysEncounter.created_at) }} - Status: {{ todaysEncounter.status }}
-        </div>
-                </div>
-                <q-badge color="green" label="Today" />
+        <!-- Today's Encounters - Show ALL encounters from today -->
+            <div v-if="todaysEncounters.length > 0" class="q-mb-sm">
+              <div class="text-subtitle2 q-mb-xs text-grey-7">Today's Services ({{ todaysEncounters.length }})</div>
+              <div class="q-gutter-sm">
+                <q-card 
+                  v-for="encounter in todaysEncounters"
+                  :key="encounter.id"
+                  flat 
+                  bordered 
+                  clickable
+                  :class="{ 'bg-blue-1': serviceType === 'opd' && selectedEncounterId === encounter.id }"
+                  @click="selectOPDEncounter(encounter.id)"
+                  style="cursor: pointer; background-color: rgba(46, 139, 87, 0.1);"
+                >
+                  <q-card-section>
+                    <div class="row items-center">
+                      <div class="col">
+                        <div class="text-weight-bold">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
+                        <div class="text-caption text-grey-7 q-mt-xs">
+                          {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
+                        </div>
+                      </div>
+                      <q-badge color="green" label="Today" />
+                    </div>
+                  </q-card-section>
+                </q-card>
               </div>
-            </q-card-section>
-          </q-card>
-        </div>
+            </div>
 
         <!-- Old Encounters - Collapsible -->
             <div v-if="oldEncounters.length > 0">
@@ -166,7 +171,7 @@
             </div>
           </div>
 
-          <div v-if="(!todaysEncounter && oldEncounters.length === 0) && wardAdmissions.length === 0" class="text-grey-7 q-mt-md">
+          <div v-if="(todaysEncounters.length === 0 && oldEncounters.length === 0) && wardAdmissions.length === 0" class="text-grey-7 q-mt-md">
             No active services found for this patient
           </div>
         </div>
@@ -1875,7 +1880,8 @@ const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
 const activeEncounters = ref([]);
-const todaysEncounter = ref(null);
+const todaysEncounter = ref(null); // Keep for backward compatibility, but we'll use todaysEncounters array
+const todaysEncounters = ref([]); // Array of all encounters from today
 const oldEncounters = ref([]);
 const oldEncountersExpanded = ref(false);
 const selectedEncounterId = ref(null);
@@ -3105,11 +3111,11 @@ const searchPatient = async () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const todaysEncounters = allEncounters.filter(e => {
+    const todaysEncountersList = allEncounters.filter(e => {
       const encounterDate = new Date(e.created_at);
       encounterDate.setHours(0, 0, 0, 0);
       return encounterDate.getTime() === today.getTime();
-    });
+    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
     
     const oldEncs = allEncounters.filter(e => {
       const encounterDate = new Date(e.created_at);
@@ -3117,17 +3123,22 @@ const searchPatient = async () => {
       return encounterDate.getTime() !== today.getTime();
     }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
     
-    // Set today's encounter (use the most recent one if multiple)
-    if (todaysEncounters.length > 0) {
-      todaysEncounter.value = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-      // Don't auto-select - let user choose
-      // Pre-fetch procedure names for today's encounter (non-blocking)
-      getEncounterProcedures(todaysEncounter.value).catch(() => {});
+    // Set all today's encounters (not just the most recent one)
+    todaysEncounters.value = todaysEncountersList;
+    
+    // Set today's encounter to the most recent one for backward compatibility
+    if (todaysEncountersList.length > 0) {
+      todaysEncounter.value = todaysEncountersList[0];
+      // Pre-fetch procedure names for all today's encounters (non-blocking)
+      Promise.all(todaysEncountersList.map(encounter => 
+        getEncounterProcedures(encounter).catch(() => {})
+      )).catch(() => {});
     } else {
       todaysEncounter.value = null;
+      todaysEncounters.value = [];
     }
     
-    // Set old encounters and pre-fetch their procedure names (non-blocking)
+    // Set old encounters (only encounters NOT from today) and pre-fetch their procedure names (non-blocking)
     oldEncounters.value = oldEncs;
     // Load procedure names in background without blocking
     Promise.all(oldEncounters.value.map(encounter => 
@@ -3154,6 +3165,7 @@ const searchPatient = async () => {
       patient.value = null;
       activeEncounters.value = [];
       todaysEncounter.value = null;
+      todaysEncounters.value = [];
       oldEncounters.value = [];
       selectedEncounterId.value = null;
       prescriptions.value = [];
@@ -4171,6 +4183,7 @@ const clearSearch = () => {
   inpatientPrescriptions.value = [];
   activeEncounters.value = [];
   todaysEncounter.value = null;
+  todaysEncounters.value = [];
   oldEncounters.value = [];
   oldEncountersExpanded.value = false;
   selectedEncounterId.value = null;

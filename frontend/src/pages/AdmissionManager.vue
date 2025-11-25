@@ -3262,16 +3262,25 @@ const completeFinalDischarge = async () => {
     return;
   }
 
-  // Check bills again before final discharge
-  await checkBills();
-  
-  if (hasUnpaidBills.value) {
-    $q.notify({
-      type: 'negative',
-      message: `Cannot discharge patient. Outstanding bills amount to GHC ${unpaidBillAmount.value.toFixed(2)}. All bills must be paid before discharge.`,
-      timeout: 5000,
-    });
-    return;
+  // Check if patient died or absconded - skip bill check for these cases
+  const isDiedOrAbsconded = 
+    dischargeForm.value.discharge_outcome === 'died' || 
+    dischargeForm.value.discharge_outcome === 'absconded' ||
+    dischargeForm.value.discharge_condition === 'died' || 
+    dischargeForm.value.discharge_condition === 'absconded';
+
+  // Check bills again before final discharge (skip for died/absconded)
+  if (!isDiedOrAbsconded) {
+    await checkBills();
+    
+    if (hasUnpaidBills.value) {
+      $q.notify({
+        type: 'negative',
+        message: `Cannot discharge patient. Outstanding bills amount to GHC ${unpaidBillAmount.value.toFixed(2)}. All bills must be paid before discharge.`,
+        timeout: 5000,
+      });
+      return;
+    }
   }
 
   discharging.value = true;

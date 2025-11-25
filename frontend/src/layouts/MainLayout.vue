@@ -25,8 +25,8 @@
           <span class="text-caption text-weight-medium" :class="sessionTimeLeftMinutes < 5 ? 'text-negative' : 'text-white'">
             {{ formatTimeLeft(sessionTimeLeft) }}
           </span>
-          <q-tooltip v-if="sessionTimeLeftMinutes > 35">
-            You're using an old token. Please log out and log back in to get a 30-minute session.
+          <q-tooltip v-if="sessionTimeLeftMinutes > 65">
+            You're using an old token. Please log out and log back in to get a 1-hour session.
           </q-tooltip>
         </div>
         <q-btn
@@ -536,13 +536,10 @@ const sessionTimeLeft = ref(null);
 const sessionTimerInterval = ref(null);
 const refreshingToken = ref(false);
 
-// Idle timeout tracking
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
-const IDLE_WARNING_MS = 25 * 60 * 1000; // 25 minutes - show warning 5 minutes before logout
+// Idle timeout tracking - DISABLED: No idle timeout enforcement
+// Users can stay logged in indefinitely, tokens will auto-refresh
 const lastActivityTime = ref(Date.now());
 const idleCheckInterval = ref(null);
-const idleWarningShown = ref(false);
-const idleWarningDialog = ref(null);
 
 // Computed session time in minutes
 const sessionTimeLeftMinutes = computed(() => {
@@ -595,8 +592,8 @@ const updateSessionTimer = () => {
   if (clockSkewHours > 1) {
     console.warn('PC clock is significantly ahead of server (', clockSkewHours.toFixed(2), 'hours). This is a clock synchronization issue, not token expiration.');
     // Set a fake positive time left to prevent logout
-    // Use the token's expected duration (30 minutes) as the time left
-    sessionTimeLeft.value = 30 * 60 * 1000; // 30 minutes in milliseconds
+    // Use the token's expected duration (1 hour) as the time left
+    sessionTimeLeft.value = 60 * 60 * 1000; // 1 hour in milliseconds
     return;
   }
   
@@ -605,80 +602,26 @@ const updateSessionTimer = () => {
   const GRACE_PERIOD_MS = Math.max(5 * 60 * 1000, Math.min(clockSkew, 60 * 60 * 1000)); // 5 minutes to 1 hour
   const timeLeftWithGrace = timeLeft + GRACE_PERIOD_MS;
   
-  // Check if user has been idle for 30 minutes
-  const idleTime = Date.now() - lastActivityTime.value;
-  
-  // Only log out if user has been idle for 30 minutes (enforce 30-minute idle timeout)
-  if (idleTime >= IDLE_TIMEOUT_MS) {
-    // User has been idle for 30 minutes - enforce logout
-    console.warn('User idle for 30 minutes, logging out', {
-      idleTimeMs: idleTime,
-      idleTimeMinutes: idleTime / (60 * 1000)
-    });
-    sessionTimeLeft.value = 0;
-    
-    // Close warning dialog if open
-    if (idleWarningDialog.value) {
-      idleWarningDialog.value.hide();
-      idleWarningDialog.value = null;
-    }
-    
-    $q.notify({
-      type: 'warning',
-      message: 'You have been idle for 30 minutes. You have been logged out for security.',
-      position: 'top',
-      timeout: 5000,
-    });
-    authStore.logout();
-    router.push('/login');
-    return;
-  }
-  
-  // Only logout on token expiration if user has been idle for 30 minutes
-  // If user is active, don't logout even if token is expired (will be refreshed)
-  if (timeLeftWithGrace <= 0 && idleTime >= IDLE_TIMEOUT_MS) {
-    // Token expired beyond grace period AND user idle
-    console.warn('Token expired beyond grace period and user idle', {
-      expiration,
-      now,
-      timeLeft,
-      timeLeftWithGrace,
-      gracePeriod: GRACE_PERIOD_MS,
-      clockSkewHours: clockSkewHours.toFixed(2),
-      idleTimeMs: idleTime
-    });
-    sessionTimeLeft.value = 0;
-    
-    // Close warning dialog if open
-    if (idleWarningDialog.value) {
-      idleWarningDialog.value.hide();
-      idleWarningDialog.value = null;
-    }
-    
-    $q.notify({
-      type: 'warning',
-      message: 'Your session has expired. Please login again.',
-      position: 'top',
-    });
-    authStore.logout();
-    router.push('/login');
-    return;
-  }
+  // NO IDLE TIMEOUT ENFORCEMENT - Users can stay logged in indefinitely
+  // Token will auto-refresh when it expires
   
   // Always set the time left, even if it's a large value (old 7-day token)
   // Use the actual timeLeft (without grace period) for display
   sessionTimeLeft.value = timeLeft;
   
-  // Auto-refresh token when 5 minutes or less remaining (only if token is actually close to expiring)
-  // Only refresh if we have less than 5 minutes AND it's a new 30-minute token (not old 7-day token)
+  // Auto-refresh token when 5 minutes or less remaining OR when token has expired
+  // Token expiration is 1 hour, so refresh when 5 minutes or less remain, or if expired
   const minutesLeft = timeLeft / (60 * 1000);
-  if (minutesLeft <= 5 && !refreshingToken.value && minutesLeft > 0 && minutesLeft <= 35) {
-    // Only refresh if it's a 30-minute token (max 35 minutes to account for slight timing differences)
-    refreshToken();
+  if (!refreshingToken.value) {
+    // Refresh if token is about to expire (5 minutes or less) or has expired (with grace period)
+    if ((minutesLeft <= 5 && minutesLeft > 0) || timeLeftWithGrace <= 0) {
+      // Refresh token automatically - don't logout users
+      refreshToken();
+    }
   }
 };
 
-// Refresh token
+// Refresh token - automatically refreshes when token expires (1 hour period)
 const refreshToken = async () => {
   if (refreshingToken.value) return;
   
@@ -688,93 +631,40 @@ const refreshToken = async () => {
     if (success) {
       // Update timer with new expiration
       updateSessionTimer();
-      $q.notify({
-        type: 'positive',
-        message: 'Session refreshed',
-        position: 'top',
-        timeout: 2000,
-      });
+      // Silent refresh - no notification to avoid interrupting user workflow
+      console.log('Token refreshed successfully');
+    } else {
+      // If refresh failed, try again after a short delay
+      console.warn('Token refresh failed, will retry...');
+      setTimeout(() => {
+        if (authStore.isAuthenticated) {
+          refreshToken();
+        }
+      }, 5000); // Retry after 5 seconds
     }
   } catch (error) {
     console.error('Failed to refresh token:', error);
+    // If refresh failed, try again after a short delay
+    setTimeout(() => {
+      if (authStore.isAuthenticated) {
+        refreshToken();
+      }
+    }, 5000); // Retry after 5 seconds
   } finally {
     refreshingToken.value = false;
   }
 };
 
-// Check for idle timeout and show warning
+// Check for idle timeout - DISABLED: No idle timeout enforcement
 const checkIdleTimeout = () => {
-  if (!authStore.isAuthenticated || !authStore.token) {
-    return;
-  }
-  
-  const idleTime = Date.now() - lastActivityTime.value;
-  const idleTimeMinutes = Math.floor(idleTime / (60 * 1000));
-  const secondsUntilLogout = Math.floor((IDLE_TIMEOUT_MS - idleTime) / 1000);
-  
-  // Show warning at 25 minutes (5 minutes before logout)
-  if (idleTime >= IDLE_WARNING_MS && !idleWarningShown.value) {
-    idleWarningShown.value = true;
-    
-    // Show warning dialog
-    idleWarningDialog.value = $q.dialog({
-      title: 'Idle Warning',
-      message: `You have been idle for ${idleTimeMinutes} minutes. You will be automatically logged out in ${Math.floor(secondsUntilLogout / 60)} minutes and ${secondsUntilLogout % 60} seconds for security.`,
-      persistent: true,
-      ok: {
-        label: 'Stay Logged In',
-        color: 'primary',
-        flat: false
-      },
-      cancel: false
-    }).onOk(() => {
-      // Reset activity time when user clicks "Stay Logged In"
-      lastActivityTime.value = Date.now();
-      idleWarningShown.value = false;
-      idleWarningDialog.value = null;
-    });
-  }
-  
-  // Update warning message if dialog is still open
-  if (idleWarningDialog.value && idleTime < IDLE_TIMEOUT_MS) {
-    const remainingSeconds = Math.floor((IDLE_TIMEOUT_MS - idleTime) / 1000);
-    const remainingMinutes = Math.floor(remainingSeconds / 60);
-    const remainingSecs = remainingSeconds % 60;
-    
-    // Update dialog message (Quasar doesn't support dynamic updates, so we'll recreate it)
-    if (remainingSeconds > 0 && remainingSeconds % 10 === 0) {
-      // Update every 10 seconds to avoid too many updates
-      idleWarningDialog.value.hide();
-      idleWarningDialog.value = $q.dialog({
-        title: 'Idle Warning',
-        message: `You have been idle for ${idleTimeMinutes} minutes. You will be automatically logged out in ${remainingMinutes} minutes and ${remainingSecs} seconds for security.`,
-        persistent: true,
-        ok: {
-          label: 'Stay Logged In',
-          color: 'primary',
-          flat: false
-        },
-        cancel: false
-      }).onOk(() => {
-        lastActivityTime.value = Date.now();
-        idleWarningShown.value = false;
-        idleWarningDialog.value = null;
-      });
-    }
-  }
+  // Idle timeout checking is disabled - users can stay logged in indefinitely
+  // Token will auto-refresh when it expires
+  return;
 };
 
-// Track user activity
+// Track user activity (for reference only - no idle timeout enforcement)
 const updateActivity = () => {
   lastActivityTime.value = Date.now();
-  // Reset warning if user becomes active
-  if (idleWarningShown.value) {
-    idleWarningShown.value = false;
-    if (idleWarningDialog.value) {
-      idleWarningDialog.value.hide();
-      idleWarningDialog.value = null;
-    }
-  }
 };
 
 // Start session timer
@@ -786,10 +676,8 @@ const startSessionTimer = () => {
   
   // Reset activity tracking
   lastActivityTime.value = Date.now();
-  idleWarningShown.value = false;
   
   // Add a small delay before first check to allow token to be fully set
-  // This prevents immediate logout on clock sync issues
   setTimeout(() => {
     // Update immediately after delay
     updateSessionTimer();
@@ -800,13 +688,7 @@ const startSessionTimer = () => {
     }, 1000);
   }, 1000); // 1 second delay to allow token to be properly set
   
-  // Start idle check interval (check every 10 seconds)
-  if (idleCheckInterval.value) {
-    clearInterval(idleCheckInterval.value);
-  }
-  idleCheckInterval.value = setInterval(() => {
-    checkIdleTimeout();
-  }, 10000); // Check every 10 seconds
+  // Idle check interval is disabled - no idle timeout enforcement
 };
 
 // Stop session timer
@@ -818,11 +700,6 @@ const stopSessionTimer = () => {
   if (idleCheckInterval.value) {
     clearInterval(idleCheckInterval.value);
     idleCheckInterval.value = null;
-  }
-  // Close warning dialog if open
-  if (idleWarningDialog.value) {
-    idleWarningDialog.value.hide();
-    idleWarningDialog.value = null;
   }
 };
 
