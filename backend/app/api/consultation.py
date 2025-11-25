@@ -3016,12 +3016,19 @@ def get_lab_result(
         # Use raw SQL query to avoid template_id column issue if it doesn't exist in database
         # Check if template_id column exists first, then use appropriate query
         from sqlalchemy import text, inspect
-        from sqlalchemy.engine import reflection
         
         # Check if template_id column exists in the table
-        inspector = inspect(db.bind)
-        columns = [col['name'] for col in inspector.get_columns('inpatient_lab_results')]
-        has_template_id = 'template_id' in columns
+        has_template_id = False
+        try:
+            inspector = inspect(db.bind)
+            columns_info = inspector.get_columns('inpatient_lab_results')
+            if columns_info and isinstance(columns_info, list):
+                columns = [col.get('name', '') for col in columns_info if isinstance(col, dict)]
+                has_template_id = 'template_id' in columns
+        except Exception as e:
+            # If inspection fails, assume column doesn't exist and use raw SQL
+            logger.warning(f"Failed to inspect columns, assuming template_id doesn't exist: {e}")
+            has_template_id = False
         
         if has_template_id:
             # Column exists, use normal ORM query
@@ -8195,6 +8202,9 @@ def get_all_inpatient_investigations_for_ward_admission(
     ).order_by(InpatientInvestigation.created_at.desc()).all()
     
     result = []
+    if not investigations:
+        return []
+    
     for inv in investigations:
         requester = db.query(User).filter(User.id == inv.requested_by).first()
         confirmed_by_user = None
@@ -8210,9 +8220,17 @@ def get_all_inpatient_investigations_for_ward_admission(
         if inv.investigation_type == "lab":
             # Check if template_id column exists to avoid query errors
             from sqlalchemy import text, inspect
-            inspector = inspect(db.bind)
-            columns = [col['name'] for col in inspector.get_columns('inpatient_lab_results')]
-            has_template_id = 'template_id' in columns
+            has_template_id = False
+            try:
+                inspector = inspect(db.bind)
+                columns_info = inspector.get_columns('inpatient_lab_results')
+                if columns_info and isinstance(columns_info, list):
+                    columns = [col.get('name', '') for col in columns_info if isinstance(col, dict)]
+                    has_template_id = 'template_id' in columns
+            except Exception as e:
+                # If inspection fails, assume column doesn't exist
+                logger.warning(f"Failed to inspect columns for has_result check: {e}")
+                has_template_id = False
             
             if has_template_id:
                 lab_result = db.query(InpatientLabResult).filter(
@@ -8221,11 +8239,11 @@ def get_all_inpatient_investigations_for_ward_admission(
                 has_result = lab_result is not None
             else:
                 # Column doesn't exist, use raw SQL
-                result = db.execute(
+                lab_result_row = db.execute(
                     text("SELECT id FROM inpatient_lab_results WHERE investigation_id = :inv_id LIMIT 1"),
                     {"inv_id": inv.id}
                 ).first()
-                has_result = result is not None
+                has_result = lab_result_row is not None
         elif inv.investigation_type == "scan":
             scan_result = db.query(InpatientScanResult).filter(
                 InpatientScanResult.investigation_id == inv.id
