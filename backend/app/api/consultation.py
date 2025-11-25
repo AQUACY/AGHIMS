@@ -3013,33 +3013,79 @@ def get_lab_result(
             logger.info(f"IPD investigation {investigation_id} is not a lab investigation, returning None")
             return None
         
-        result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+        # Use raw SQL query to avoid template_id column issue if it doesn't exist in database
+        # Check if template_id column exists first, then use appropriate query
+        from sqlalchemy import text, inspect
+        from sqlalchemy.engine import reflection
         
-        if not result:
-            # No IPD result exists - return None (do NOT check OPD table)
-            logger.info(f"No IPD lab result found for investigation {investigation_id}, returning None")
-            return None
+        # Check if template_id column exists in the table
+        inspector = inspect(db.bind)
+        columns = [col['name'] for col in inspector.get_columns('inpatient_lab_results')]
+        has_template_id = 'template_id' in columns
         
-        # Found IPD result - use it
-        logger.info(f"Found IPD lab result for investigation {investigation_id}")
-        entered_user = db.query(User).filter(User.id == result.entered_by).first()
-        updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
-        
-        result_dict = {
-            "id": result.id,
-            "investigation_id": result.investigation_id,
-            "template_id": result.template_id,
-            "results_text": result.results_text,
-            "template_data": result.template_data,
-            "attachment_path": result.attachment_path,
-            "entered_by": result.entered_by,
-            "updated_by": result.updated_by,
-            "created_at": result.created_at,
-            "updated_at": result.updated_at,
-            "entered_by_name": entered_user.full_name if entered_user else None,
-            "updated_by_name": updated_user.full_name if updated_user else None,
-        }
-        return LabResultResponse(**result_dict)
+        if has_template_id:
+            # Column exists, use normal ORM query
+            result = db.query(InpatientLabResult).filter(InpatientLabResult.investigation_id == investigation_id).first()
+            
+            if not result:
+                logger.info(f"No IPD lab result found for investigation {investigation_id}, returning None")
+                return None
+            
+            entered_user = db.query(User).filter(User.id == result.entered_by).first()
+            updated_user = db.query(User).filter(User.id == result.updated_by).first() if result.updated_by else None
+            
+            result_dict = {
+                "id": result.id,
+                "investigation_id": result.investigation_id,
+                "template_id": result.template_id,
+                "results_text": result.results_text,
+                "template_data": result.template_data,
+                "attachment_path": result.attachment_path,
+                "entered_by": result.entered_by,
+                "updated_by": result.updated_by,
+                "created_at": result.created_at,
+                "updated_at": result.updated_at,
+                "entered_by_name": entered_user.full_name if entered_user else None,
+                "updated_by_name": updated_user.full_name if updated_user else None,
+            }
+            return LabResultResponse(**result_dict)
+        else:
+            # Column doesn't exist, use raw SQL query without template_id
+            logger.info(f"template_id column not found, using raw SQL query")
+            result_row = db.execute(
+                text("""
+                    SELECT id, investigation_id, results_text, template_data, 
+                           attachment_path, entered_by, updated_by, created_at, updated_at
+                    FROM inpatient_lab_results 
+                    WHERE investigation_id = :investigation_id
+                    LIMIT 1
+                """),
+                {"investigation_id": investigation_id}
+            ).first()
+            
+            if not result_row:
+                logger.info(f"No IPD lab result found for investigation {investigation_id}, returning None")
+                return None
+            
+            # Build result dict from raw query
+            entered_user = db.query(User).filter(User.id == result_row.entered_by).first()
+            updated_user = db.query(User).filter(User.id == result_row.updated_by).first() if result_row.updated_by else None
+            
+            result_dict = {
+                "id": result_row.id,
+                "investigation_id": result_row.investigation_id,
+                "template_id": None,  # Column doesn't exist in database
+                "results_text": result_row.results_text,
+                "template_data": result_row.template_data,
+                "attachment_path": result_row.attachment_path,
+                "entered_by": result_row.entered_by,
+                "updated_by": result_row.updated_by,
+                "created_at": result_row.created_at,
+                "updated_at": result_row.updated_at,
+                "entered_by_name": entered_user.full_name if entered_user else None,
+                "updated_by_name": updated_user.full_name if updated_user else None,
+            }
+            return LabResultResponse(**result_dict)
     
     # Not an IPD investigation - check OPD
     logger.info(f"Investigation {investigation_id} is not IPD, checking OPD")
@@ -8162,10 +8208,24 @@ def get_all_inpatient_investigations_for_ward_admission(
         # Check if result exists
         has_result = False
         if inv.investigation_type == "lab":
-            lab_result = db.query(InpatientLabResult).filter(
-                InpatientLabResult.investigation_id == inv.id
-            ).first()
-            has_result = lab_result is not None
+            # Check if template_id column exists to avoid query errors
+            from sqlalchemy import text, inspect
+            inspector = inspect(db.bind)
+            columns = [col['name'] for col in inspector.get_columns('inpatient_lab_results')]
+            has_template_id = 'template_id' in columns
+            
+            if has_template_id:
+                lab_result = db.query(InpatientLabResult).filter(
+                    InpatientLabResult.investigation_id == inv.id
+                ).first()
+                has_result = lab_result is not None
+            else:
+                # Column doesn't exist, use raw SQL
+                result = db.execute(
+                    text("SELECT id FROM inpatient_lab_results WHERE investigation_id = :inv_id LIMIT 1"),
+                    {"inv_id": inv.id}
+                ).first()
+                has_result = result is not None
         elif inv.investigation_type == "scan":
             scan_result = db.query(InpatientScanResult).filter(
                 InpatientScanResult.investigation_id == inv.id
