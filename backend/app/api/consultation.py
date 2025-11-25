@@ -10609,7 +10609,14 @@ def delete_inpatient_inventory_debit(
                 # Ensure bill total doesn't go negative
                 if bill.total_amount < 0:
                     bill.total_amount = 0.0
-                db.delete(bill_item)
+            
+            # Clear the foreign key reference first to avoid constraint violation
+            debit.bill_item_id = None
+            debit.is_billed = False
+            db.flush()  # Flush to ensure the reference is cleared before deletion
+            
+            # Now safe to delete the bill item
+            db.delete(bill_item)
     
     # Delete the inventory debit record
     db.delete(debit)
