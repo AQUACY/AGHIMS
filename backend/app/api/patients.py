@@ -1,7 +1,7 @@
 """
 Patient management endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.patient import Patient
 from app.models.encounter import Encounter, EncounterStatus
 from app.utils.card_number import generate_card_number, generate_ccc_number
+from app.core.audit import log_activity
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
@@ -76,6 +77,7 @@ class PatientResponse(BaseModel):
 
 @router.post("/", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
 def create_patient(
+    request: Request,
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
@@ -92,6 +94,17 @@ def create_patient(
     db.add(patient)
     db.commit()
     db.refresh(patient)
+    
+    # Log patient creation
+    log_activity(
+        db=db,
+        user=current_user,
+        request=request,
+        action="CREATE",
+        resource_type="Patient",
+        resource_id=patient.id,
+        details={"card_number": card_number, "name": patient.name}
+    )
     
     return patient
 
@@ -494,6 +507,7 @@ def get_patient(
 
 @router.put("/{patient_id}", response_model=PatientResponse)
 def update_patient(
+    request: Request,
     patient_id: int,
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
@@ -504,11 +518,26 @@ def update_patient(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     
+    # Store old values for audit log
+    old_card_number = patient.card_number
+    
     for key, value in patient_data.dict().items():
         setattr(patient, key, value)
     
     db.commit()
     db.refresh(patient)
+    
+    # Log patient update
+    log_activity(
+        db=db,
+        user=current_user,
+        request=request,
+        action="UPDATE",
+        resource_type="Patient",
+        resource_id=patient.id,
+        details={"card_number": patient.card_number, "name": patient.name}
+    )
+    
     return patient
 
 

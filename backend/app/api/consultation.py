@@ -6539,7 +6539,7 @@ def create_inpatient_clinical_review(
 def get_inpatient_clinical_reviews(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head"]))
 ):
     """Get all clinical reviews for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -8229,7 +8229,8 @@ def get_all_inpatient_investigations_for_ward_admission(
                     has_template_id = 'template_id' in columns
             except Exception as e:
                 # If inspection fails, assume column doesn't exist
-                logger.warning(f"Failed to inspect columns for has_result check: {e}")
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to inspect columns for has_result check: {e}")
                 has_template_id = False
             
             if has_template_id:

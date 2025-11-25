@@ -166,6 +166,12 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/audit-logs',
+        name: 'AuditLogs',
+        component: () => import('../pages/AuditLogs.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Auditor'] },
+      },
+      {
         path: '/admin/patient-upload',
         name: 'PatientUpload',
         component: () => import('../pages/PatientUpload.vue'),

@@ -508,6 +508,21 @@
             <q-item-label>Database Management</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="canAccess(['Admin', 'Auditor'])"
+          clickable
+          v-ripple
+          :to="{ name: 'AuditLogs' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="history" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Audit Trail Logs</q-item-label>
+          </q-item-section>
+        </q-item>
       </q-list>
     </q-drawer>
 

@@ -2,7 +2,7 @@
 Authentication endpoints
 """
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from app.core.security import verify_password, get_password_hash, create_access_
 from app.core.config import settings
 from app.models.user import User
 from app.core.dependencies import get_current_user
+from app.core.audit import log_activity
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -36,6 +37,7 @@ class UserResponse(BaseModel):
 
 @router.post("/login", response_model=Token)
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
@@ -63,6 +65,17 @@ def login(
         expires_delta=access_token_expires
     )
     
+    # Log successful login
+    log_activity(
+        db=db,
+        user=user,
+        request=request,
+        action="LOGIN",
+        resource_type="User",
+        resource_id=user.id,
+        details={"username": user.username, "role": user.role}
+    )
+    
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -80,6 +93,7 @@ class PasswordChange(BaseModel):
 
 @router.post("/change-password", status_code=status.HTTP_200_OK)
 def change_password(
+    request: Request,
     password_data: PasswordChange,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -103,6 +117,17 @@ def change_password(
     current_user.hashed_password = get_password_hash(password_data.new_password)
     db.commit()
     db.refresh(current_user)
+    
+    # Log password change
+    log_activity(
+        db=db,
+        user=current_user,
+        request=request,
+        action="UPDATE",
+        resource_type="User",
+        resource_id=current_user.id,
+        details={"action": "password_change"}
+    )
     
     return {"message": "Password changed successfully"}
 

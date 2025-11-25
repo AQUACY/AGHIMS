@@ -680,6 +680,27 @@ export const labTemplatesAPI = {
 };
 
 // System endpoints
+// Audit Logs endpoints
+export const auditLogsAPI = {
+  getLogs: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.role) params.append('role', filters.role);
+    if (filters.full_name) params.append('full_name', filters.full_name);
+    if (filters.username) params.append('username', filters.username);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+    if (filters.action) params.append('action', filters.action);
+    if (filters.resource_type) params.append('resource_type', filters.resource_type);
+    if (filters.page) params.append('page', filters.page);
+    if (filters.page_size) params.append('page_size', filters.page_size);
+    return api.get(`/audit-logs?${params.toString()}`);
+  },
+  getLog: (logId) => api.get(`/audit-logs/${logId}`),
+  getRoles: () => api.get('/audit-logs/roles'),
+  getActions: () => api.get('/audit-logs/actions'),
+  getResourceTypes: () => api.get('/audit-logs/resource-types'),
+};
+
 export const systemAPI = {
   getApplicationDate: () => api.get('/system/date'),
 };
