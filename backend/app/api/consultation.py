@@ -4,7 +4,7 @@ Consultation endpoints (diagnoses, prescriptions, investigations)
 from fastapi import APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form, Response, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import or_
+from sqlalchemy import or_, and_
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -1291,65 +1291,63 @@ def unconfirm_prescription(
             detail="Cannot revert a prescription that has already been dispensed. Please return it first."
         )
     
-    # Prevent unconfirming external prescriptions
+    # Check if prescription is external (external prescriptions are not billed, so skip bill item removal)
     is_external = bool(prescription.is_external) if hasattr(prescription, 'is_external') else False
-    if is_external:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot revert external prescriptions. They are automatically confirmed and not billed."
-        )
     
-    # Find and remove the bill item that was created during confirmation
-    # Find all unpaid bills for this encounter
-    encounter = db.query(Encounter).filter(Encounter.id == prescription.encounter_id).first()
-    if encounter:
-        unpaid_bills = db.query(Bill).filter(
-            Bill.encounter_id == encounter.id,
-            Bill.is_paid == False
-        ).all()
-        
-        for bill in unpaid_bills:
-            # Find the bill item for this prescription
-            bill_item = db.query(BillItem).filter(
-                BillItem.bill_id == bill.id,
-                BillItem.item_code == prescription.medicine_code,
-                BillItem.item_name.like(f"%{prescription.medicine_name}%")
-            ).first()
+    # Find and remove the bill item that was created during confirmation (only for non-external prescriptions)
+    # External prescriptions are not billed, so no bill items to remove
+    if not is_external:
+        encounter = db.query(Encounter).filter(Encounter.id == prescription.encounter_id).first()
+        if encounter:
+            unpaid_bills = db.query(Bill).filter(
+                Bill.encounter_id == encounter.id,
+                Bill.is_paid == False
+            ).all()
             
-            if bill_item:
-                # Check if this bill item has been paid (has receipts)
-                # If the bill item has any payments, we can't remove it
-                from app.models.bill import Receipt, ReceiptItem
-                receipt_items = db.query(ReceiptItem).join(Receipt).filter(
-                    Receipt.bill_id == bill.id,
-                    ReceiptItem.bill_item_id == bill_item.id
-                ).all()
+            for bill in unpaid_bills:
+                # Find the bill item for this prescription
+                bill_item = db.query(BillItem).filter(
+                    BillItem.bill_id == bill.id,
+                    BillItem.item_code == prescription.medicine_code,
+                    BillItem.item_name.like(f"%{prescription.medicine_name}%")
+                ).first()
                 
-                if receipt_items:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Cannot revert prescription. The bill item has already been paid. Please refund the payment first."
-                    )
-                
-                # Remove the bill item and update bill total
-                bill.total_amount -= bill_item.total_price
-                if bill.total_amount < 0:
-                    bill.total_amount = 0
-                
-                db.delete(bill_item)
-                
-                # If bill has no items left and total is 0, we can optionally delete the bill
-                # But for now, we'll just leave it with 0 total
-                remaining_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).count()
-                if remaining_items == 0 and bill.total_amount == 0:
-                    # Optionally delete empty bill, but for now we'll keep it
-                    pass
-                
-                break  # Found and removed the bill item, exit loop
+                if bill_item:
+                    # Check if this bill item has been paid (has receipts)
+                    # If the bill item has any payments, we can't remove it
+                    from app.models.bill import Receipt, ReceiptItem
+                    receipt_items = db.query(ReceiptItem).join(Receipt).filter(
+                        Receipt.bill_id == bill.id,
+                        ReceiptItem.bill_item_id == bill_item.id
+                    ).all()
+                    
+                    if receipt_items:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Cannot revert prescription. The bill item has already been paid. Please refund the payment first."
+                        )
+                    
+                    # Remove the bill item and update bill total
+                    bill.total_amount -= bill_item.total_price
+                    if bill.total_amount < 0:
+                        bill.total_amount = 0
+                    
+                    db.delete(bill_item)
+                    
+                    # If bill has no items left and total is 0, we can optionally delete the bill
+                    # But for now, we'll just leave it with 0 total
+                    remaining_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).count()
+                    if remaining_items == 0 and bill.total_amount == 0:
+                        # Optionally delete empty bill, but for now we'll keep it
+                        pass
+                    
+                    break  # Found and removed the bill item, exit loop
     
-    # Revert prescription confirmation
+    # Revert prescription confirmation and clear external flag
     prescription.confirmed_by = None
     prescription.confirmed_at = None
+    if hasattr(prescription, 'is_external'):
+        prescription.is_external = 0  # Clear external flag so it can be confirmed again
     
     db.commit()
     db.refresh(prescription)
@@ -7817,9 +7815,11 @@ def unconfirm_inpatient_prescription(
             if remaining_items == 0 and bill.total_amount == 0:
                 db.delete(bill)
     
-    # Clear confirmation fields
+    # Clear confirmation fields and external flag
     prescription.confirmed_by = None
     prescription.confirmed_at = None
+    if hasattr(prescription, 'is_external'):
+        prescription.is_external = 0  # Clear external flag so it can be confirmed again
     
     db.commit()
     db.refresh(prescription)
@@ -10373,7 +10373,8 @@ class InpatientInventoryDebitResponse(BaseModel):
     # Additional fields for pharmacy view
     patient_name: Optional[str] = None
     patient_card_number: Optional[str] = None
-    ward: Optional[str] = None
+    ward: Optional[str] = None  # Current ward (for backward compatibility)
+    requesting_ward: Optional[str] = None  # Original ward that requested the inventory
     admitted_at: Optional[datetime] = None
     
     class Config:
@@ -10421,9 +10422,11 @@ def create_inpatient_inventory_debit(
     total_price = unit_price * debit_data.quantity
     
     # Create inventory debit record
+    # Store the current ward as requesting_ward to preserve it even if patient is transferred
     inventory_debit = InpatientInventoryDebit(
         ward_admission_id=ward_admission_id,
         encounter_id=ward_admission.encounter_id,
+        requesting_ward=ward_admission.ward,  # Store original ward at time of debit
         product_code=debit_data.product_code,
         product_name=debit_data.product_name,
         quantity=debit_data.quantity,
@@ -10518,6 +10521,7 @@ def create_inpatient_inventory_debit(
         "used_at": inventory_debit.used_at,
         "created_at": inventory_debit.created_at,
         "updated_at": inventory_debit.updated_at,
+        "requesting_ward": inventory_debit.requesting_ward,
     }
 
 
@@ -10569,6 +10573,7 @@ def get_inpatient_inventory_debits(
             "used_at": debit.used_at,
             "created_at": debit.created_at,
             "updated_at": debit.updated_at,
+            "requesting_ward": getattr(debit, 'requesting_ward', None) or ward_admission.ward if ward_admission else None,
         })
     
     return result
@@ -10629,34 +10634,81 @@ def delete_inpatient_inventory_debit(
 def get_all_inventory_debits(
     ward: Optional[str] = None,
     is_released: Optional[bool] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    used_by_name: Optional[str] = None,
+    product_code: Optional[str] = None,
+    product_name: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin", "Nurse", "Doctor", "PA"]))
 ):
-    """Get all inventory debits with optional ward filtering - for pharmacy staff to view and release"""
+    """Get all inventory debits with optional filtering - for pharmacy staff to view and release"""
     from app.models.inpatient_inventory_debit import InpatientInventoryDebit
     from app.models.ward_admission import WardAdmission
     from app.models.encounter import Encounter
     from app.models.patient import Patient
+    from datetime import datetime as dt
     
-    # Build query with joins to get patient and ward information
-    query = db.query(InpatientInventoryDebit).join(
+    # Build query with outer joins to handle old data that might have missing relationships
+    query = db.query(InpatientInventoryDebit).outerjoin(
         WardAdmission, InpatientInventoryDebit.ward_admission_id == WardAdmission.id
-    ).join(
+    ).outerjoin(
         Encounter, InpatientInventoryDebit.encounter_id == Encounter.id
-    ).join(
+    ).outerjoin(
         Patient, Encounter.patient_id == Patient.id
     )
     
-    # Filter by ward if provided
+    # Filter by requesting_ward if provided (use requesting_ward field instead of current ward)
+    # Handle cases where requesting_ward might be None for old records
     if ward:
-        query = query.filter(WardAdmission.ward == ward)
+        query = query.filter(
+            or_(
+                InpatientInventoryDebit.requesting_ward == ward,
+                and_(
+                    (InpatientInventoryDebit.requesting_ward.is_(None)),
+                    (WardAdmission.ward == ward)
+                )
+            )
+        )
     
     # Filter by release status if provided
     if is_released is not None:
         query = query.filter(InpatientInventoryDebit.is_released == is_released)
     
-    # Only show active admissions (not discharged)
-    query = query.filter(WardAdmission.discharged_at.is_(None))
+    # Filter by date range if provided
+    if start_date:
+        try:
+            start_dt = dt.strptime(start_date, "%Y-%m-%d")
+            query = query.filter(InpatientInventoryDebit.used_at >= start_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD")
+    
+    if end_date:
+        try:
+            end_dt = dt.strptime(end_date, "%Y-%m-%d")
+            # Include the entire end date by setting time to end of day
+            from datetime import timedelta
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            query = query.filter(InpatientInventoryDebit.used_at <= end_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD")
+    
+    # Filter by user full name if provided (User model only has full_name, not name/surname)
+    if used_by_name:
+        query = query.join(User, InpatientInventoryDebit.used_by == User.id).filter(
+            User.full_name.ilike(f"%{used_by_name}%")
+        )
+    
+    # Filter by product code if provided
+    if product_code:
+        query = query.filter(InpatientInventoryDebit.product_code.ilike(f"%{product_code}%"))
+    
+    # Filter by product name if provided
+    if product_name:
+        query = query.filter(InpatientInventoryDebit.product_name.ilike(f"%{product_name}%"))
+    
+    # Note: Removed the filter for only active admissions to show all inventory debits
+    # This allows viewing historical data even for discharged patients
     
     # Order by used_at descending (most recent first)
     debits = query.order_by(InpatientInventoryDebit.used_at.desc()).all()
@@ -10704,7 +10756,8 @@ def get_all_inventory_debits(
             # Additional patient and ward information
             "patient_name": f"{patient.surname or ''} {patient.name or ''} {patient.other_names or ''}".strip() if patient else None,
             "patient_card_number": patient.card_number if patient else None,
-            "ward": ward_admission.ward if ward_admission else None,
+            "ward": ward_admission.ward if ward_admission else None,  # Current ward (for backward compatibility)
+            "requesting_ward": getattr(debit, 'requesting_ward', None) or (ward_admission.ward if ward_admission else None),  # Original requesting ward
             "admitted_at": ward_admission.admitted_at if ward_admission else None,
         })
     

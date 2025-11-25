@@ -169,6 +169,49 @@
                 </q-card-section>
               </q-card>
             </div>
+            
+            <!-- Clinical Reviews Selection (shown after IPD admission is selected) -->
+            <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviews.length > 0" class="q-mt-md">
+              <div class="text-weight-medium q-mb-sm">Select Clinical Review:</div>
+              <div class="q-gutter-sm">
+                <q-card
+                  v-for="review in clinicalReviews"
+                  :key="review.id"
+                  flat
+                  bordered
+                  clickable
+                  :class="{ 'bg-blue-1': selectedClinicalReviewId === review.id }"
+                  @click="selectClinicalReview(review.id)"
+                  style="cursor: pointer;"
+                >
+                  <q-card-section class="q-pa-sm">
+                    <div class="row items-center">
+                      <div class="col">
+                        <div class="text-weight-medium">
+                          Clinical Review #{{ clinicalReviews.indexOf(review) + 1 }}
+                        </div>
+                        <div class="text-caption text-grey-7 q-mt-xs">
+                          Reviewed by: {{ review.reviewed_by_name || 'N/A' }} | 
+                          {{ formatDateTime(review.reviewed_at || review.created_at) }}
+                        </div>
+                        <div v-if="review.review_notes" class="text-caption text-grey-6 q-mt-xs" style="max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                          {{ review.review_notes }}
+                        </div>
+                      </div>
+                      <q-badge 
+                        v-if="getPrescriptionCountForReview(review.id) > 0"
+                        color="primary" 
+                        :label="`${getPrescriptionCountForReview(review.id)} medication(s)`" 
+                      />
+                      <q-icon name="chevron_right" color="grey-6" />
+                    </div>
+                  </q-card-section>
+                </q-card>
+              </div>
+              <div v-if="clinicalReviews.length > 0 && clinicalReviews.every(r => getPrescriptionCountForReview(r.id) === 0)" class="text-caption text-warning q-mt-sm">
+                No clinical reviews with prescriptions found. Prescriptions will appear here once they are added to a clinical review.
+              </div>
+            </div>
           </div>
 
           <div v-if="(todaysEncounters.length === 0 && oldEncounters.length === 0) && wardAdmissions.length === 0" class="text-grey-7 q-mt-md">
@@ -583,17 +626,17 @@
                   :loading="confirmingId === props.row.id || confirmingInpatient === props.row.id"
                   :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null || dispensingInpatient !== null || unconfirmingInpatient !== null"
                 />
-              <q-btn
-                  v-if="props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
+                <q-btn
+                  v-if="props.row.is_confirmed && !props.row.is_dispensed"
                   size="sm"
                   color="warning"
                   icon="undo"
-                  label="Revert"
+                  :label="props.row.is_external ? 'Revert External' : 'Revert'"
                   @click="unconfirmPrescription(props.row)"
                   :loading="unconfirmingId === props.row.id || unconfirmingInpatient === props.row.id"
                   :disable="confirmingId !== null || dispensingId !== null || returningId !== null || confirmingMultiple || deletingId !== null || unconfirmingId !== null || confirmingInpatient !== null || dispensingInpatient !== null"
                 >
-                  <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
+                  <q-tooltip>{{ props.row.is_external ? 'Revert external status (set back to pending)' : 'Revert confirmation (set back to pending)' }}</q-tooltip>
                 </q-btn>
                 <q-btn
                   v-if="!props.row.is_dispensed && !props.row.is_external && props.row.is_confirmed"
@@ -642,13 +685,13 @@
         </div>
 
         <!-- IPD Prescriptions Section -->
-        <div v-if="serviceType === 'ipd' && filteredInpatientPrescriptions.length > 0" class="q-mb-md">
+        <div v-if="serviceType === 'ipd' && selectedClinicalReviewId && filteredInpatientPrescriptionsByReview.length > 0" class="q-mb-md">
           <div class="text-h6 q-mb-sm">IPD Prescriptions</div>
           <div class="text-caption text-info q-mb-sm">
             IPD medications can be dispensed but must be added to IPD bill to be charged at discharge.
           </div>
           <q-table
-            :rows="filteredInpatientPrescriptions"
+            :rows="filteredInpatientPrescriptionsByReview"
             :columns="inpatientColumns"
             row-key="id"
             flat
@@ -699,32 +742,37 @@
                   </span>
                   <span v-else>{{ props.value }}</span>
                   <q-badge color="purple" label="IPD" />
+                  <q-badge v-if="props.row.is_external" color="orange" label="External" />
                 </div>
               </q-td>
             </template>
             <template v-slot:body-cell-status="props">
               <q-td :props="props">
+                <!-- Don't show status badge for external prescriptions (they're going outside) -->
                 <q-badge
-                  v-if="props.row.is_confirmed && props.row.is_dispensed"
+                  v-if="!props.row.is_external && props.row.is_confirmed && props.row.is_dispensed"
                   color="positive"
                   label="Dispensed"
                 />
                 <q-badge
-                  v-else-if="props.row.is_confirmed"
+                  v-else-if="!props.row.is_external && props.row.is_confirmed"
                   color="blue"
                   label="Confirmed"
                 />
                 <q-badge
-                  v-else
+                  v-else-if="!props.row.is_external"
                   color="orange"
                   label="Pending"
                 />
+                <div v-else-if="props.row.is_external" class="text-grey-6 text-caption">
+                  External
+                </div>
               </q-td>
             </template>
             <template v-slot:body-cell-selection="props">
               <q-td :props="props">
                 <q-checkbox
-                  v-if="!props.row.is_confirmed && !props.row.is_dispensed"
+                  v-if="!props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
                   :model-value="isInpatientPrescriptionSelected(props.row)"
                   @update:model-value="toggleInpatientPrescriptionSelection(props.row, $event)"
                 />
@@ -765,7 +813,7 @@
                     <q-tooltip>Edit prescription</q-tooltip>
                   </q-btn>
                   <q-btn
-                    v-if="!props.row.is_confirmed && !props.row.is_dispensed"
+                    v-if="!props.row.is_confirmed && !props.row.is_dispensed && !props.row.is_external"
                     size="sm"
                     color="primary"
                     icon="check_circle"
@@ -779,15 +827,15 @@
                     size="sm"
                     color="warning"
                     icon="undo"
-                    label="Revert"
+                    :label="props.row.is_external ? 'Revert External' : 'Revert'"
                     @click="unconfirmPrescription(props.row)"
                     :loading="unconfirmingInpatient === props.row.id"
                     :disable="confirmingInpatient !== null || dispensingInpatient !== null || unconfirmingInpatient !== null"
                   >
-                    <q-tooltip>Revert confirmation (set back to pending)</q-tooltip>
+                    <q-tooltip>{{ props.row.is_external ? 'Revert external status (set back to pending)' : 'Revert confirmation (set back to pending)' }}</q-tooltip>
                   </q-btn>
                   <q-btn
-                    v-if="!props.row.is_dispensed && props.row.is_confirmed"
+                    v-if="!props.row.is_dispensed && !props.row.is_external && props.row.is_confirmed"
                     size="sm"
                     color="positive"
                     label="Dispense"
@@ -816,12 +864,13 @@
         </div>
 
         <!-- Empty State -->
-        <div v-if="serviceType && ((serviceType === 'opd' && prescriptions.length === 0) || (serviceType === 'ipd' && inpatientPrescriptions.length === 0))" class="text-center q-pa-lg">
+        <div v-if="serviceType && ((serviceType === 'opd' && prescriptions.length === 0) || (serviceType === 'ipd' && (!selectedClinicalReviewId || filteredInpatientPrescriptionsByReview.length === 0)))" class="text-center q-pa-lg">
           <q-icon name="medication" size="4em" color="grey-6" />
           <div class="text-h6 q-mt-md text-grey-6">No prescriptions found</div>
           <div class="text-body2 text-grey-6">
             <span v-if="serviceType === 'opd'">Prescriptions will appear here once they are added for this encounter.</span>
-            <span v-else>Prescriptions will appear here once they are added in a clinical review.</span>
+            <span v-else-if="!selectedClinicalReviewId">Please select a clinical review above to view prescriptions.</span>
+            <span v-else>No prescriptions found for the selected clinical review.</span>
           </div>
         </div>
       </q-card-section>
@@ -1642,15 +1691,25 @@
               hint="Instructions for taking this medication"
             />
             <q-checkbox
+              v-model="confirmInpatientForm.is_external"
+              label="Mark as External (Drug not in stock - to be filled outside)"
+              color="orange"
+              class="q-mt-md"
+            />
+            <div class="text-caption text-grey-7 q-ml-md" v-if="confirmInpatientForm.is_external">
+              External prescriptions are filled outside the hospital and will not be billed.
+            </div>
+            <q-checkbox
+              v-if="!confirmInpatientForm.is_external"
               v-model="confirmInpatientForm.add_to_ipd_bill"
               label="Add to IPD Bill"
               color="purple"
               class="q-mt-md"
             />
-            <div class="text-caption text-grey-7 q-ml-md" v-if="confirmInpatientForm.add_to_ipd_bill">
+            <div class="text-caption text-grey-7 q-ml-md" v-if="!confirmInpatientForm.is_external && confirmInpatientForm.add_to_ipd_bill">
               This medication will be added to the patient's IPD bill and charged at discharge.
             </div>
-            <div class="text-caption text-warning q-ml-md" v-else>
+            <div class="text-caption text-warning q-ml-md" v-if="!confirmInpatientForm.is_external && !confirmInpatientForm.add_to_ipd_bill">
               This medication will be confirmed but NOT added to the IPD bill. It can still be dispensed.
             </div>
             <div class="row q-gutter-md q-mt-md">
@@ -1661,9 +1720,9 @@
                 class="col"
               />
               <q-btn
-                label="Confirm"
+                :label="confirmInpatientForm.is_external ? 'Mark as External' : 'Confirm'"
                 type="submit"
-                color="purple"
+                :color="confirmInpatientForm.is_external ? 'orange' : 'purple'"
                 class="col"
                 :loading="confirmingInpatient !== null"
               />
@@ -1905,6 +1964,7 @@ const updatingPrescriptionId = ref(null);
 // Inpatient prescriptions
 const wardAdmissions = ref([]);
 const selectedWardAdmissionId = ref(null);
+const selectedClinicalReviewId = ref(null); // Selected clinical review for IPD
 const inpatientPrescriptions = ref([]);
 const loadingInpatientPrescriptions = ref(false);
 const confirmingInpatient = ref(null);
@@ -1933,6 +1993,7 @@ const diagnoses = ref([]);
 const vitals = ref(null);
 const inpatientVitals = ref([]); // Array of vitals for IPD (can have multiple)
 const latestInpatientVital = ref(null); // Most recent vital for display
+const clinicalReviews = ref([]); // Clinical reviews for IPD
 const loadingData = ref(false);
 const showDispenseDialog = ref(false);
 const showConfirmDialog = ref(false);
@@ -1976,6 +2037,7 @@ const confirmInpatientForm = ref({
   quantity: 1,
   instructions: '',
   add_to_ipd_bill: true,
+  is_external: false,
 });
 const bills = ref([]);
 const newPrescriptionForm = ref({
@@ -3346,6 +3408,15 @@ const loadPrescriptions = async () => {
 const confirmPrescription = (prescription) => {
   // Check if this is an inpatient prescription
   if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
+    // Prevent confirming already external prescriptions
+    if (prescription.is_external) {
+      $q.notify({
+        type: 'warning',
+        message: 'External prescriptions are automatically confirmed and cannot be confirmed again. They are filled outside and not billed.',
+      });
+      return;
+    }
+    
     // For inpatient, show confirmation dialog with "Add to IPD bill" checkbox
     const defaultQuantity = prescription.quantity && prescription.quantity > 0 ? prescription.quantity : 1;
     confirmInpatientForm.value = {
@@ -3359,6 +3430,7 @@ const confirmPrescription = (prescription) => {
       quantity: defaultQuantity,
       instructions: prescription.instructions || '',
       add_to_ipd_bill: true, // Default to true
+      is_external: false, // Reset to false when opening dialog
     };
     showConfirmInpatientDialog.value = true;
     return;
@@ -3405,15 +3477,18 @@ const confirmInpatientPrescriptionSubmit = async () => {
       duration: confirmInpatientForm.value.duration,
       quantity: confirmInpatientForm.value.quantity,
       instructions: confirmInpatientForm.value.instructions || null,
-      add_to_ipd_bill: confirmInpatientForm.value.add_to_ipd_bill !== false, // Default to true
+      is_external: confirmInpatientForm.value.is_external || false,
+      add_to_ipd_bill: confirmInpatientForm.value.is_external ? false : (confirmInpatientForm.value.add_to_ipd_bill !== false), // Don't add to bill if external
     };
 
     await consultationAPI.confirmInpatientPrescription(confirmInpatientForm.value.id, confirmData);
     $q.notify({
       type: 'positive',
-      message: confirmInpatientForm.value.add_to_ipd_bill 
-        ? 'Inpatient prescription confirmed and added to IPD bill' 
-        : 'Inpatient prescription confirmed (not added to bill)',
+      message: confirmInpatientForm.value.is_external
+        ? 'Inpatient prescription marked as external (filled outside, not billed)'
+        : confirmInpatientForm.value.add_to_ipd_bill 
+          ? 'Inpatient prescription confirmed and added to IPD bill' 
+          : 'Inpatient prescription confirmed (not added to bill)',
     });
     showConfirmInpatientDialog.value = false;
     await loadInpatientPrescriptions();
@@ -3615,9 +3690,14 @@ const confirmDispense = async () => {
 };
 
 const unconfirmPrescription = async (prescription) => {
+  const isExternal = prescription.is_external;
+  const message = isExternal
+    ? `Revert ${prescription.medicine_name} back to pending? This will clear the external status and allow it to be confirmed again.`
+    : `Revert ${prescription.medicine_name} back to pending? This will undo the confirmation and remove it from the bill.`;
+  
   $q.dialog({
     title: 'Revert Prescription',
-    message: `Revert ${prescription.medicine_name} back to pending? This will undo the confirmation and remove it from the bill.`,
+    message: message,
     cancel: true,
     persistent: true,
   }).onOk(async () => {
@@ -3628,7 +3708,9 @@ const unconfirmPrescription = async (prescription) => {
         await consultationAPI.unconfirmInpatientPrescription(prescription.id);
         $q.notify({
           type: 'positive',
-          message: 'Inpatient prescription reverted to pending successfully',
+          message: isExternal 
+            ? 'Inpatient prescription reverted to pending. External status cleared.' 
+            : 'Inpatient prescription reverted to pending successfully',
           position: 'top',
         });
         await loadInpatientPrescriptions();
@@ -3654,7 +3736,9 @@ const unconfirmPrescription = async (prescription) => {
       console.log('Unconfirm response:', response);
       $q.notify({
         type: 'positive',
-        message: 'Prescription reverted to pending successfully',
+        message: isExternal 
+          ? 'Prescription reverted to pending. External status cleared.' 
+          : 'Prescription reverted to pending successfully',
         position: 'top',
       });
       // Reload prescriptions and recalculate costs
@@ -4179,8 +4263,10 @@ const clearSearch = () => {
   patient.value = null;
   serviceType.value = null;
   selectedWardAdmissionId.value = null;
+  selectedClinicalReviewId.value = null;
   wardAdmissions.value = [];
   inpatientPrescriptions.value = [];
+  clinicalReviews.value = [];
   activeEncounters.value = [];
   todaysEncounter.value = null;
   todaysEncounters.value = [];
@@ -4374,6 +4460,17 @@ const filteredInpatientPrescriptions = computed(() => {
   return inpatientPrescriptions.value;
 });
 
+// Group IPD prescriptions by clinical review (only show reviews with prescriptions)
+// Filter prescriptions by selected clinical review
+const filteredInpatientPrescriptionsByReview = computed(() => {
+  if (!selectedClinicalReviewId.value) {
+    return []; // No clinical review selected, show nothing
+  }
+  
+  // Filter prescriptions to only show those from the selected clinical review
+  return filteredInpatientPrescriptions.value.filter(p => p.clinical_review_id === selectedClinicalReviewId.value);
+});
+
 const isFinalized = computed(() => {
   return currentEncounter.value?.status === 'finalized';
 });
@@ -4519,6 +4616,7 @@ const selectIPDAdmission = async (wardAdmissionId) => {
   console.log('selectIPDAdmission: Selected ward admission ID:', wardAdmissionId);
   serviceType.value = 'ipd';
   selectedWardAdmissionId.value = wardAdmissionId;
+  selectedClinicalReviewId.value = null; // Clear selected clinical review
   selectedEncounterId.value = null;
   prescriptions.value = []; // Clear OPD prescriptions
   await loadInpatientPrescriptions();
@@ -4526,17 +4624,34 @@ const selectIPDAdmission = async (wardAdmissionId) => {
   console.log('selectIPDAdmission: After loading, inpatientPrescriptions.length:', inpatientPrescriptions.value.length);
 };
 
+// Select clinical review
+const selectClinicalReview = async (clinicalReviewId) => {
+  console.log('selectClinicalReview: Selected clinical review ID:', clinicalReviewId);
+  selectedClinicalReviewId.value = clinicalReviewId;
+};
+
+// Get prescription count for a clinical review
+const getPrescriptionCountForReview = (clinicalReviewId) => {
+  return filteredInpatientPrescriptions.value.filter(p => p.clinical_review_id === clinicalReviewId).length;
+};
+
 // Load inpatient prescriptions for selected ward admission
 const loadInpatientPrescriptions = async () => {
   if (!selectedWardAdmissionId.value) {
     console.log('loadInpatientPrescriptions: No ward admission ID selected');
     inpatientPrescriptions.value = [];
+    clinicalReviews.value = [];
     return;
   }
   
   console.log('loadInpatientPrescriptions: Loading prescriptions for ward admission:', selectedWardAdmissionId.value);
   loadingInpatientPrescriptions.value = true;
   try {
+    // Load clinical reviews first
+    const reviewsResponse = await consultationAPI.getInpatientClinicalReviews(selectedWardAdmissionId.value);
+    clinicalReviews.value = reviewsResponse.data || [];
+    console.log('loadInpatientPrescriptions: Loaded clinical reviews:', clinicalReviews.value);
+    
     const response = await consultationAPI.getInpatientPrescriptionsByWardAdmission(selectedWardAdmissionId.value);
     console.log('loadInpatientPrescriptions: API response:', response);
     const inpatientData = response.data || [];
@@ -4670,6 +4785,7 @@ const loadInpatientPrescriptions = async () => {
       message: error.response?.data?.detail || 'Failed to load inpatient prescriptions',
     });
     inpatientPrescriptions.value = [];
+    clinicalReviews.value = [];
   } finally {
     loadingInpatientPrescriptions.value = false;
   }

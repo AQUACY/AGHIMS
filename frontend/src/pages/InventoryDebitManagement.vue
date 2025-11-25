@@ -8,7 +8,7 @@
     <q-card class="glass-card q-mb-md" flat bordered>
       <q-card-section>
         <div class="row q-col-gutter-md items-end">
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-3">
             <q-select
               v-model="selectedWard"
               :options="wardOptions"
@@ -24,7 +24,7 @@
               </template>
             </q-select>
           </div>
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-3">
             <q-select
               v-model="releaseStatusFilter"
               :options="releaseStatusOptions"
@@ -40,7 +40,61 @@
               </template>
             </q-select>
           </div>
-          <div class="col-12 col-md-4">
+          <div class="col-12 col-md-3">
+            <q-input
+              v-model="startDate"
+              filled
+              label="Start Date"
+              type="date"
+              clearable
+              @update:model-value="loadInventoryDebits"
+            >
+              <template v-slot:prepend>
+                <q-icon name="event" />
+              </template>
+            </q-input>
+          </div>
+          <div class="col-12 col-md-3">
+            <q-input
+              v-model="endDate"
+              filled
+              label="End Date"
+              type="date"
+              clearable
+              @update:model-value="loadInventoryDebits"
+            >
+              <template v-slot:prepend>
+                <q-icon name="event" />
+              </template>
+            </q-input>
+          </div>
+          <div class="col-12 col-md-3">
+            <q-input
+              v-model="userNameFilter"
+              filled
+              label="Filter by Full Name"
+              clearable
+              @update:model-value="loadInventoryDebits"
+            >
+              <template v-slot:prepend>
+                <q-icon name="person" />
+              </template>
+            </q-input>
+          </div>
+          <div class="col-12 col-md-3">
+            <q-input
+              v-model="itemFilter"
+              filled
+              label="Filter by Item (Code/Name)"
+              clearable
+              @update:model-value="loadInventoryDebits"
+            >
+              <template v-slot:prepend>
+                <q-icon name="inventory" />
+              </template>
+            </q-input>
+          </div>
+          <div class="col-12 col-md-3">
             <q-btn
               flat
               icon="refresh"
@@ -115,7 +169,12 @@
 
           <template v-slot:body-cell-ward="props">
             <q-td :props="props">
-              <q-badge color="primary" :label="props.value || 'N/A'" />
+              <div>
+                <q-badge color="primary" :label="props.row.requesting_ward || props.value || 'N/A'" />
+                <div v-if="props.row.requesting_ward && props.value && props.row.requesting_ward !== props.value" class="text-caption text-grey-7 q-mt-xs">
+                  (Current: {{ props.value }})
+                </div>
+              </div>
             </q-td>
           </template>
 
@@ -212,6 +271,10 @@ const loading = ref(false);
 const inventoryDebits = ref([]);
 const selectedWard = ref(null);
 const releaseStatusFilter = ref(null);
+const startDate = ref(null);
+const endDate = ref(null);
+const userNameFilter = ref(null);
+const itemFilter = ref(null);
 const releasingId = ref(null);
 
 const wardOptions = ref([]);
@@ -230,8 +293,8 @@ const columns = [
   },
   {
     name: 'ward',
-    label: 'Ward',
-    field: 'ward',
+    label: 'Requesting Ward',
+    field: 'requesting_ward',
     align: 'center',
     sortable: true
   },
@@ -339,15 +402,29 @@ const loadInventoryDebits = async () => {
     if (releaseStatusFilter.value !== null) {
       params.is_released = releaseStatusFilter.value;
     }
+    if (startDate.value) {
+      params.start_date = startDate.value;
+    }
+    if (endDate.value) {
+      params.end_date = endDate.value;
+    }
+    if (userNameFilter.value) {
+      params.used_by_name = userNameFilter.value;
+    }
+    if (itemFilter.value) {
+      // Filter by product name (backend will handle partial matching)
+      params.product_name = itemFilter.value;
+    }
     
     const response = await consultationAPI.getAllInventoryDebits(params);
     inventoryDebits.value = response.data || [];
     
-    // Extract unique wards for filter dropdown
+    // Extract unique wards for filter dropdown (use requesting_ward if available, otherwise ward)
     const wards = new Set();
     inventoryDebits.value.forEach(debit => {
-      if (debit.ward) {
-        wards.add(debit.ward);
+      const ward = debit.requesting_ward || debit.ward;
+      if (ward) {
+        wards.add(ward);
       }
     });
     wardOptions.value = Array.from(wards).sort().map(ward => ({

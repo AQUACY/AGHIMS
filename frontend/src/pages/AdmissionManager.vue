@@ -1534,7 +1534,7 @@
                   <div class="text-caption">This will initiate partial discharge. You'll need to complete final discharge after all bills are paid.</div>
                 </q-banner>
 
-                <q-banner v-if="hasUnpaidBills && isPartiallyDischarged" class="q-mt-md bg-negative text-white">
+                <q-banner v-if="hasUnpaidBills && isPartiallyDischarged && !isDiedOrAbsconded" class="q-mt-md bg-negative text-white">
                   <template v-slot:avatar>
                     <q-icon name="error" />
                   </template>
@@ -1569,7 +1569,7 @@
                   color="negative"
                   @click="completeFinalDischarge"
                   :loading="discharging"
-                  :disable="hasUnpaidBills"
+                  :disable="hasUnpaidBills && !isDiedOrAbsconded"
                 />
               </q-card-actions>
             </q-card>
@@ -1908,6 +1908,12 @@ const dischargeConditionOptions = [
 const unpaidBillAmount = ref(0);
 const hasUnpaidBills = ref(false);
 const isPartiallyDischarged = computed(() => patientInfo.value?.partially_discharged_at !== null && patientInfo.value?.partially_discharged_at !== undefined);
+const isDiedOrAbsconded = computed(() => {
+  return dischargeForm.value.discharge_outcome === 'died' || 
+         dischargeForm.value.discharge_outcome === 'absconded' ||
+         dischargeForm.value.discharge_condition === 'died' || 
+         dischargeForm.value.discharge_condition === 'absconded';
+});
 const patientBillInfo = ref({
   totalAmount: null,
   paidAmount: null,

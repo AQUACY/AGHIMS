@@ -15,6 +15,7 @@ class InpatientInventoryDebit(Base):
     id = Column(Integer, primary_key=True, index=True)
     ward_admission_id = Column(Integer, ForeignKey("ward_admissions.id"), nullable=False)
     encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=False)
+    requesting_ward = Column(String(100), nullable=False)  # Original ward that requested the inventory (preserved even after transfer)
     product_code = Column(String(50), nullable=False)  # Product/medication code
     product_name = Column(String(500), nullable=False)  # Product name
     quantity = Column(Float, nullable=False, default=1.0)  # Quantity used
