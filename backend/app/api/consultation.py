@@ -5345,6 +5345,8 @@ def get_ward_admissions(
     """Get ward admissions - by default only shows active (non-discharged) patients"""
     from app.models.ward_admission import WardAdmission
     from app.models.patient import Patient
+    from app.models.ward_transfer import WardTransfer
+    from sqlalchemy import and_
     
     try:
         query = db.query(WardAdmission)
@@ -5356,6 +5358,16 @@ def get_ward_admissions(
         # Filter by ward if provided
         if ward:
             query = query.filter(WardAdmission.ward == ward)
+            # Exclude patients who have accepted transfers to a different ward
+            # This is a safeguard in case the ward field wasn't updated properly
+            accepted_transfers_subquery = db.query(WardTransfer.ward_admission_id).filter(
+                and_(
+                    WardTransfer.status == "accepted",
+                    WardTransfer.from_ward == ward,
+                    WardTransfer.to_ward != ward
+                )
+            )
+            query = query.filter(~WardAdmission.id.in_(accepted_transfers_subquery))
         
         ward_admissions = query.options(
             joinedload(WardAdmission.encounter).joinedload(Encounter.patient),
