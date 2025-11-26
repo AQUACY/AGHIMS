@@ -459,7 +459,8 @@ def create_claim(
         # Populate procedures from surgeries (IPD only - surgeries, not encounter procedure)
         from app.models.inpatient_surgery import InpatientSurgery
         surgeries = db.query(InpatientSurgery).filter(
-            InpatientSurgery.ward_admission_id == ward_admission.id
+            InpatientSurgery.ward_admission_id == ward_admission.id,
+            InpatientSurgery.is_completed == True  # Only completed surgeries
         ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
         
         procedure_order = 0
@@ -629,7 +630,27 @@ def create_claim(
                 db.add(claim_presc)
                 prescription_order += 1
         
-        # OPD claims: No procedures/surgeries - only diagnoses, medications, and investigations
+        # Populate procedures from surgeries for OPD (if any surgeries exist, e.g., catheter changing)
+        from app.models.inpatient_surgery import InpatientSurgery
+        opd_surgeries = db.query(InpatientSurgery).filter(
+            InpatientSurgery.encounter_id == encounter.id,
+            InpatientSurgery.is_completed == True  # Only completed surgeries
+        ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+        
+        procedure_order = 0
+        for surgery in opd_surgeries:
+            if procedure_order >= 3:  # Limit to 3 procedures
+                break
+            claim_proc = ClaimProcedure(
+                claim_id=claim.id,
+                description=surgery.surgery_name or "",
+                gdrg_code=surgery.g_drg_code or "",
+                service_date=surgery.surgery_date or encounter.created_at,
+                display_order=procedure_order
+            )
+            db.add(claim_proc)
+            procedure_order += 1
+        # If no surgeries found, no procedures are added (only diagnoses, medications, and investigations)
     
     db.commit()
     db.refresh(claim)
@@ -1014,7 +1035,8 @@ def regenerate_claim(
         # Populate procedures from surgeries (IPD only - surgeries, not encounter procedure)
         from app.models.inpatient_surgery import InpatientSurgery
         surgeries = db.query(InpatientSurgery).filter(
-            InpatientSurgery.ward_admission_id == ward_admission.id
+            InpatientSurgery.ward_admission_id == ward_admission.id,
+            InpatientSurgery.is_completed == True  # Only completed surgeries
         ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
         
         procedure_order = 0
@@ -1101,7 +1123,27 @@ def regenerate_claim(
                 db.add(claim_presc)
                 prescription_order += 1
         
-        # OPD claims: No procedures/surgeries - only diagnoses, medications, and investigations
+        # Populate procedures from surgeries for OPD (if any surgeries exist, e.g., catheter changing)
+        from app.models.inpatient_surgery import InpatientSurgery
+        opd_surgeries = db.query(InpatientSurgery).filter(
+            InpatientSurgery.encounter_id == encounter.id,
+            InpatientSurgery.is_completed == True  # Only completed surgeries
+        ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+        
+        procedure_order = 0
+        for surgery in opd_surgeries:
+            if procedure_order >= 3:  # Limit to 3 procedures
+                break
+            claim_proc = ClaimProcedure(
+                claim_id=claim.id,
+                description=surgery.surgery_name or "",
+                gdrg_code=surgery.g_drg_code or "",
+                service_date=surgery.surgery_date or encounter.created_at,
+                display_order=procedure_order
+            )
+            db.add(claim_proc)
+            procedure_order += 1
+        # If no surgeries found, no procedures are added (only diagnoses, medications, and investigations)
     
     db.commit()
     db.refresh(claim)
@@ -1661,29 +1703,45 @@ def get_claim_edit_details(
                 "gdrg": claim_proc.gdrg_code or "",
             })
         # Note: If claim_procedures is empty (user deleted them), procedures_list stays empty
+    else:
+        # First time loading - for both IPD and OPD, load surgeries if they exist
+        from app.models.inpatient_surgery import InpatientSurgery
+        
+        if is_ipd:
+            # IPD: Load surgeries from ward admission
+            from app.models.ward_admission import WardAdmission
+            
+            ward_admission = db.query(WardAdmission).filter(
+                WardAdmission.encounter_id == encounter.id
+            ).first()
+            
+            if ward_admission:
+                surgeries = db.query(InpatientSurgery).filter(
+                    InpatientSurgery.ward_admission_id == ward_admission.id,
+                    InpatientSurgery.is_completed == True  # Only completed surgeries
+                ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+                
+                for surgery in surgeries:
+                    procedures_list.append({
+                        "description": surgery.surgery_name or "",
+                        "date": surgery.surgery_date.isoformat() if surgery.surgery_date else encounter.created_at.isoformat(),
+                        "gdrg": surgery.g_drg_code or "",
+                    })
         else:
-            # First time loading - for IPD, load surgeries; for OPD, no procedures
-            if is_ipd:
-                # IPD: Load surgeries from ward admission
-                from app.models.ward_admission import WardAdmission
-                from app.models.inpatient_surgery import InpatientSurgery
-                
-                ward_admission = db.query(WardAdmission).filter(
-                    WardAdmission.encounter_id == encounter.id
-                ).first()
-                
-                if ward_admission:
-                    surgeries = db.query(InpatientSurgery).filter(
-                        InpatientSurgery.ward_admission_id == ward_admission.id
-                    ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
-                    
-                    for surgery in surgeries:
-                        procedures_list.append({
-                            "description": surgery.surgery_name or "",
-                            "date": surgery.surgery_date.isoformat() if surgery.surgery_date else encounter.created_at.isoformat(),
-                            "gdrg": surgery.g_drg_code or "",
-                        })
-            # OPD: No procedures - procedures_list stays empty (don't use encounter procedure)
+            # OPD: Check if there are surgeries linked to this encounter (e.g., catheter changing)
+            # Surgeries can be linked to OPD encounters via encounter_id
+            surgeries = db.query(InpatientSurgery).filter(
+                InpatientSurgery.encounter_id == encounter.id,
+                InpatientSurgery.is_completed == True  # Only completed surgeries
+            ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+            
+            for surgery in surgeries:
+                procedures_list.append({
+                    "description": surgery.surgery_name or "",
+                    "date": surgery.surgery_date.isoformat() if surgery.surgery_date else encounter.created_at.isoformat(),
+                    "gdrg": surgery.g_drg_code or "",
+                })
+            # If no surgeries found, procedures_list stays empty (don't use encounter procedure)
     
     # Pad to 3 procedures
     while len(procedures_list) < 3:
@@ -1814,17 +1872,12 @@ def update_claim_detailed(
             except:
                 pass
         
-        # Update encounter procedure from first procedure in list (only if procedures were provided)
-        # If procedures array is empty, it means user intentionally removed all procedures
-        if claim_data.procedures and len(claim_data.procedures) > 0:
-            first_proc = claim_data.procedures[0]
-            if first_proc.description and first_proc.gdrg:
-                encounter.procedure_g_drg_code = first_proc.gdrg
-                encounter.procedure_name = first_proc.description
-        # If procedures array is empty, we should clear the encounter procedure fields to respect user's deletion
-        elif claim_data.procedures is not None:  # Explicitly empty array (not undefined)
-            encounter.procedure_g_drg_code = None
-            encounter.procedure_name = None
+        # IMPORTANT: Do NOT update encounter procedure from claim procedures
+        # Encounter procedures (procedure_g_drg_code) are for general OPD procedures, not surgeries
+        # Surgeries are stored in inpatient_surgeries table and should not be synced back to encounter
+        # For IPD claims, surgeries are separate from encounter procedures
+        # For OPD claims, we don't want to store procedures in encounter.procedure_g_drg_code
+        # So we leave encounter.procedure_g_drg_code unchanged to avoid polluting it with surgery data
         
         # Principal GDRG is now set directly from the form field, not from procedure
         # (This was already set above in claim.principal_gdrg = claim_data.principal_gdrg or None)

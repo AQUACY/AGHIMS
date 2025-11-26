@@ -52,16 +52,29 @@ class PriceItemCreate(BaseModel):
     clinic_bill_effective: Optional[str] = None
 
 class PriceItemUpdate(BaseModel):
-    # Common
+    # Common fields for all types
     service_name: Optional[str] = None
     service_type: Optional[str] = None
+    service_ty: Optional[str] = None
+    service_id: Optional[str] = None
+    g_drg_code: Optional[str] = None
     base_rate: Optional[float] = None
     nhia_app: Optional[float] = None
     nhia_claim_co_payment: Optional[float] = None
+    clinic_bill_effective: Optional[str] = None
+    sr_no: Optional[str] = None
     is_active: Optional[bool] = None
-    # Product-specific
+    # Product-specific fields
+    medication_code: Optional[str] = None
     product_name: Optional[str] = None
+    sub_category_1: Optional[str] = None
+    sub_category_2: Optional[str] = None
+    product_id: Optional[str] = None
+    formulation: Optional[str] = None
+    strength: Optional[str] = None
     claim_amount: Optional[float] = None
+    nhia_claim: Optional[str] = None
+    bill_effective: Optional[str] = None
     insurance_covered: Optional[str] = None  # "yes" or "no"
 
 @router.post("/item/{file_type}")
@@ -201,9 +214,21 @@ def update_price_item(
         if not item:
             raise HTTPException(status_code=404, detail="Product price item not found")
         
-        # Update fields
+        # Update all fields
+        if update.medication_code is not None:
+            item.medication_code = update.medication_code
         if update.product_name is not None:
             item.product_name = update.product_name
+        if update.sub_category_1 is not None:
+            item.sub_category_1 = update.sub_category_1
+        if update.sub_category_2 is not None:
+            item.sub_category_2 = update.sub_category_2
+        if update.product_id is not None:
+            item.product_id = update.product_id
+        if update.formulation is not None:
+            item.formulation = update.formulation
+        if update.strength is not None:
+            item.strength = update.strength
         if update.base_rate is not None:
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
@@ -212,8 +237,26 @@ def update_price_item(
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
         if update.claim_amount is not None:
             item.claim_amount = update.claim_amount
+        if update.nhia_claim is not None:
+            item.nhia_claim = update.nhia_claim
+        if update.bill_effective is not None:
+            item.bill_effective = update.bill_effective
         if update.insurance_covered is not None:
             item.insurance_covered = update.insurance_covered
+        if update.g_drg_code is not None:
+            item.g_drg_code = update.g_drg_code
+        if update.service_name is not None:
+            item.service_name = update.service_name
+        if update.service_type is not None:
+            item.service_type = update.service_type
+        if update.service_ty is not None:
+            item.service_ty = update.service_ty
+        if update.service_id is not None:
+            item.service_id = update.service_id
+        if update.clinic_bill_effective is not None:
+            item.clinic_bill_effective = update.clinic_bill_effective
+        if update.sr_no is not None:
+            item.sr_no = update.sr_no
         if update.is_active is not None:
             item.is_active = update.is_active
     
@@ -222,16 +265,26 @@ def update_price_item(
         if not item:
             raise HTTPException(status_code=404, detail="Procedure price item not found")
         
+        if update.g_drg_code is not None:
+            item.g_drg_code = update.g_drg_code
         if update.service_name is not None:
             item.service_name = update.service_name
         if update.service_type is not None:
             item.service_type = update.service_type
+        if update.service_ty is not None:
+            item.service_ty = update.service_ty
+        if update.service_id is not None:
+            item.service_id = update.service_id
         if update.base_rate is not None:
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
             item.nhia_app = update.nhia_app
         if update.nhia_claim_co_payment is not None:
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.clinic_bill_effective is not None:
+            item.clinic_bill_effective = update.clinic_bill_effective
+        if update.sr_no is not None:
+            item.sr_no = update.sr_no
         if update.is_active is not None:
             item.is_active = update.is_active
     
@@ -240,16 +293,26 @@ def update_price_item(
         if not item:
             raise HTTPException(status_code=404, detail="Surgery price item not found")
         
+        if update.g_drg_code is not None:
+            item.g_drg_code = update.g_drg_code
         if update.service_name is not None:
             item.service_name = update.service_name
         if update.service_type is not None:
             item.service_type = update.service_type
+        if update.service_ty is not None:
+            item.service_ty = update.service_ty
+        if update.service_id is not None:
+            item.service_id = update.service_id
         if update.base_rate is not None:
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
             item.nhia_app = update.nhia_app
         if update.nhia_claim_co_payment is not None:
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.clinic_bill_effective is not None:
+            item.clinic_bill_effective = update.clinic_bill_effective
+        if update.sr_no is not None:
+            item.sr_no = update.sr_no
         if update.is_active is not None:
             item.is_active = update.is_active
     
@@ -258,16 +321,26 @@ def update_price_item(
         if not item:
             raise HTTPException(status_code=404, detail="Unmapped DRG price item not found")
         
+        if update.g_drg_code is not None:
+            item.g_drg_code = update.g_drg_code
         if update.service_name is not None:
             item.service_name = update.service_name
         if update.service_type is not None:
             item.service_type = update.service_type
+        if update.service_ty is not None:
+            item.service_ty = update.service_ty
+        if update.service_id is not None:
+            item.service_id = update.service_id
         if update.base_rate is not None:
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
             item.nhia_app = update.nhia_app
         if update.nhia_claim_co_payment is not None:
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
+        if update.clinic_bill_effective is not None:
+            item.clinic_bill_effective = update.clinic_bill_effective
+        if update.sr_no is not None:
+            item.sr_no = update.sr_no
         if update.is_active is not None:
             item.is_active = update.is_active
 

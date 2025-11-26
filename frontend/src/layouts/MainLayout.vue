@@ -679,7 +679,10 @@ const checkIdleTimeout = () => {
 
 // Track user activity (for reference only - no idle timeout enforcement)
 const updateActivity = () => {
-  lastActivityTime.value = Date.now();
+  // Only update if component is still mounted and authenticated
+  if (authStore.isAuthenticated) {
+    lastActivityTime.value = Date.now();
+  }
 };
 
 // Start session timer
@@ -1040,15 +1043,17 @@ const handleLogout = () => {
 
 // Start timer when component mounts
 onMounted(() => {
+  // Only set up timers and listeners if authenticated
+  // This prevents errors on login page where MainLayout might be loaded but not displayed
   if (authStore.isAuthenticated && authStore.token) {
     startSessionTimer();
+    
+    // Add event listeners for user activity (only when authenticated)
+    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach(event => {
+      document.addEventListener(event, updateActivity, { passive: true });
+    });
   }
-  
-  // Add event listeners for user activity
-  const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-  activityEvents.forEach(event => {
-    document.addEventListener(event, updateActivity, { passive: true });
-  });
 });
 
 // Stop timer when component unmounts
@@ -1061,20 +1066,28 @@ onUnmounted(() => {
     document.removeEventListener(event, updateActivity);
   });
   
-  // Close warning dialog if open
-  if (idleWarningDialog.value) {
-    idleWarningDialog.value.hide();
-    idleWarningDialog.value = null;
-  }
+  // Note: Idle timeout is disabled, so no warning dialog to close
 });
 
 // Watch for authentication changes
 watch(() => authStore.isAuthenticated, (isAuth) => {
   if (isAuth && authStore.token) {
     startSessionTimer();
+    
+    // Add event listeners when user becomes authenticated
+    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach(event => {
+      document.addEventListener(event, updateActivity, { passive: true });
+    });
   } else {
     stopSessionTimer();
     sessionTimeLeft.value = null;
+    
+    // Remove event listeners when user logs out
+    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    activityEvents.forEach(event => {
+      document.removeEventListener(event, updateActivity);
+    });
   }
 });
 

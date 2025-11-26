@@ -324,29 +324,65 @@
 
     <!-- Edit Price Dialog -->
     <q-dialog v-model="showEditDialog">
-      <q-card style="min-width: 500px">
+      <q-card style="min-width: 700px; max-width: 900px">
         <q-card-section>
           <div class="text-h6">Edit Price Item</div>
         </q-card-section>
-        <q-card-section>
-          <div class="q-gutter-md">
-            <q-input v-if="editingItem?.file_type === 'product'" v-model="editForm.product_name" filled label="Product Name" />
-            <q-input v-else v-model="editForm.service_name" filled label="Service Name" />
-            <q-input v-if="editingItem?.file_type !== 'product'" v-model="editForm.service_type" filled label="Service Type (Department)" />
-            <q-input v-model.number="editForm.base_rate" type="number" filled label="Base Rate" />
-            <q-input v-model.number="editForm.nhia_app" type="number" filled label="NHIA App" />
-            <q-input v-model.number="editForm.nhia_claim_co_payment" type="number" filled label="Co-Payment" hint="For insured patients (with CCC). If null, patient pays 0 (free)." />
-            <q-input v-if="editingItem?.file_type === 'product'" v-model.number="editForm.claim_amount" type="number" filled label="Claim Amount (Products)" />
-            <q-select 
-              v-if="editingItem?.file_type === 'product'"
-              v-model="editForm.insurance_covered"
-              :options="insuranceCoveredOptions"
-              filled
-              label="Insurance Covered"
-              hint="If 'No', product will always charge base_rate regardless of patient insurance status"
-            />
-            <q-toggle v-model="editForm.is_active" label="Active" />
-          </div>
+        <q-card-section class="q-pt-none">
+          <q-scroll-area style="height: 70vh">
+            <div class="q-gutter-md">
+              <!-- Common fields for all types -->
+              <q-input v-model="editForm.sr_no" filled label="SR No" />
+              <q-input v-if="editingItem?.file_type !== 'product'" v-model="editForm.g_drg_code" filled label="G-DRG Code" />
+              
+              <!-- Product-specific fields -->
+              <template v-if="editingItem?.file_type === 'product'">
+                <q-input v-model="editForm.medication_code" filled label="Medication Code" />
+                <q-input v-model="editForm.product_name" filled label="Product Name" />
+                <q-input v-model="editForm.sub_category_1" filled label="Sub Category 1" />
+                <q-input v-model="editForm.sub_category_2" filled label="Sub Category 2" />
+                <q-input v-model="editForm.product_id" filled label="Product ID" />
+                <q-input v-model="editForm.formulation" filled label="Formulation" />
+                <q-input v-model="editForm.strength" filled label="Strength" />
+                <q-input v-model="editForm.g_drg_code" filled label="G-DRG Code" />
+                <q-input v-model="editForm.service_name" filled label="Service Name" />
+                <q-input v-model="editForm.service_type" filled label="Service Type (Department)" />
+                <q-input v-model="editForm.service_ty" filled label="Service Ty" />
+                <q-input v-model="editForm.service_id" filled label="Service ID" />
+                <q-input v-model="editForm.nhia_claim" filled label="NHIA Claim" />
+                <q-input v-model="editForm.bill_effective" filled label="Bill Effective" />
+                <q-input v-model="editForm.clinic_bill_effective" filled label="Clinic Bill Effective" />
+                <q-select 
+                  v-model="editForm.insurance_covered"
+                  :options="insuranceCoveredOptions"
+                  filled
+                  label="Insurance Covered"
+                  hint="If 'No', product will always charge base_rate regardless of patient insurance status"
+                />
+              </template>
+              
+              <!-- Procedure/Surgery/Unmapped DRG fields -->
+              <template v-else>
+                <q-input v-model="editForm.service_name" filled label="Service Name" />
+                <q-input v-model="editForm.service_type" filled label="Service Type (Department)" />
+                <q-input v-model="editForm.service_ty" filled label="Service Ty" />
+                <q-input v-model="editForm.service_id" filled label="Service ID" />
+                <q-input v-model="editForm.clinic_bill_effective" filled label="Clinic Bill Effective" />
+              </template>
+              
+              <!-- Common pricing fields -->
+              <q-separator class="q-my-md" />
+              <div class="text-subtitle2 q-mb-sm">Pricing</div>
+              <q-input v-model.number="editForm.base_rate" type="number" step="0.01" filled label="Base Rate" />
+              <q-input v-model.number="editForm.nhia_app" type="number" step="0.01" filled label="NHIA App" />
+              <q-input v-model.number="editForm.nhia_claim_co_payment" type="number" step="0.01" filled label="Co-Payment" hint="For insured patients (with CCC). If null, patient pays 0 (free)." />
+              <q-input v-if="editingItem?.file_type === 'product'" v-model.number="editForm.claim_amount" type="number" step="0.01" filled label="Claim Amount (Products)" />
+              
+              <!-- Status -->
+              <q-separator class="q-my-md" />
+              <q-toggle v-model="editForm.is_active" label="Active" />
+            </div>
+          </q-scroll-area>
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Cancel" v-close-popup />
@@ -682,24 +718,51 @@ const insuranceCoveredOptions = ['yes', 'no'];
 
 const openEditItem = (row) => {
   editingItem.value = row;
-  // Prime editForm with allowed fields by type
+  // Prime editForm with all fields
   if (row.file_type === 'product') {
     editForm.value = {
-      product_name: row.service_name,
-      base_rate: row.base_rate,
-      nhia_app: row.nhia_app,
+      // Common fields
+      sr_no: row.sr_no || '',
+      g_drg_code: row.g_drg_code || '',
+      service_name: row.service_name || '',
+      service_type: row.service_type || '',
+      service_ty: row.service_ty || '',
+      service_id: row.service_id || '',
+      clinic_bill_effective: row.clinic_bill_effective || '',
+      // Product-specific fields
+      medication_code: row.medication_code || row.g_drg_code || '',
+      product_name: row.product_name || row.service_name || '',
+      sub_category_1: row.sub_category_1 || '',
+      sub_category_2: row.sub_category_2 || '',
+      product_id: row.product_id || '',
+      formulation: row.formulation || '',
+      strength: row.strength || '',
+      nhia_claim: row.nhia_claim || '',
+      bill_effective: row.bill_effective || '',
+      // Pricing fields
+      base_rate: row.base_rate || 0.0,
+      nhia_app: row.nhia_app || null,
       nhia_claim_co_payment: row.nhia_claim_co_payment !== null && row.nhia_claim_co_payment !== undefined ? row.nhia_claim_co_payment : 0.0,
       claim_amount: row.claim_amount || null,
       insurance_covered: row.insurance_covered || 'yes',
+      // Status
       is_active: row.is_active ?? true,
     };
   } else {
     editForm.value = {
-      service_name: row.service_name,
-      service_type: row.service_type,
-      base_rate: row.base_rate,
-      nhia_app: row.nhia_app,
+      // Common fields
+      sr_no: row.sr_no || '',
+      g_drg_code: row.g_drg_code || '',
+      service_name: row.service_name || '',
+      service_type: row.service_type || '',
+      service_ty: row.service_ty || '',
+      service_id: row.service_id || '',
+      clinic_bill_effective: row.clinic_bill_effective || '',
+      // Pricing fields
+      base_rate: row.base_rate || 0.0,
+      nhia_app: row.nhia_app || null,
       nhia_claim_co_payment: row.nhia_claim_co_payment !== null && row.nhia_claim_co_payment !== undefined ? row.nhia_claim_co_payment : 0.0,
+      // Status
       is_active: row.is_active ?? true,
     };
   }

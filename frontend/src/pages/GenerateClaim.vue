@@ -187,10 +187,13 @@
       </q-card-section>
     </q-card>
 
-    <!-- Surgeries Section (IPD only) -->
-    <q-card v-if="isIPD && encounter && !loading" class="q-mb-md glass-card" flat>
+    <!-- Surgeries Section - Show for both IPD and OPD (OPD will always show "No surgeries") -->
+    <q-card v-if="encounter && !loading" class="q-mb-md glass-card" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Surgeries</div>
+        <div class="text-h6 q-mb-md glass-text">
+          Surgeries
+          <q-badge v-if="surgeries.length > 0" color="primary" :label="surgeries.length" class="q-ml-sm" />
+        </div>
         <q-table
           v-if="surgeries.length > 0"
           :rows="surgeries"
@@ -208,7 +211,13 @@
           </template>
         </q-table>
         <div v-else class="text-center text-grey-7 q-pa-md">
-          No surgeries recorded for this admission
+          <q-icon name="info" size="md" class="q-mb-sm" />
+          <div v-if="isIPD">No surgeries recorded for this admission</div>
+          <div v-else>
+            <strong>OPD Claims:</strong> No surgeries/procedures recorded.
+            <br />If this OPD encounter has surgeries (e.g., catheter changing), they will appear here and in the claim edit form.
+            <br />Otherwise, only diagnoses, investigations, and medications will appear in the claim edit form.
+          </div>
         </div>
       </q-card-section>
     </q-card>
@@ -431,15 +440,18 @@ const loadEncounter = async () => {
       loadInvestigations(encounterId),
     ]);
     
-    // For IPD, also load diagnoses and surgeries
+    // For IPD, load diagnoses and surgeries from ward admission
     if (isIPD.value && wardAdmissionId.value) {
+      console.log('Loading IPD data - diagnoses and surgeries for ward admission:', wardAdmissionId.value);
       await Promise.all([
         loadDiagnoses(wardAdmissionId.value),
         loadSurgeries(wardAdmissionId.value),
       ]);
+      console.log('IPD data loaded - isIPD:', isIPD.value, 'surgeries count:', surgeries.value.length);
     } else {
-      // For OPD, load diagnoses from encounter
+      // For OPD, load diagnoses from encounter and check for surgeries
       await loadOPDDiagnoses(encounterId);
+      await loadSurgeriesForEncounter(encounterId);
     }
   } catch (err) {
     error.value = err.response?.data?.detail || 'Failed to load encounter';
@@ -498,8 +510,49 @@ const loadSurgeries = async (wardAdmissionId) => {
   try {
     const response = await consultationAPI.getInpatientSurgeries(wardAdmissionId);
     surgeries.value = response.data || [];
+    console.log('Loaded surgeries for IPD ward admission:', wardAdmissionId, 'count:', surgeries.value.length);
   } catch (err) {
     console.error('Failed to load surgeries:', err);
+    surgeries.value = [];
+  }
+};
+
+const loadSurgeriesForEncounter = async (encounterId) => {
+  try {
+    // For OPD, try to find surgeries linked to this encounter
+    // First check if there's a ward admission for this encounter
+    const encounterResponse = await encountersAPI.get(encounterId);
+    const encounterData = encounterResponse.data;
+    
+    // Check if encounter has surgeries via ward admission
+    // If it's OPD but has surgeries, they might be linked through a ward admission
+    if (encounterData) {
+      // Try to find ward admission for this encounter
+      try {
+        const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(
+          encounterData.patient_card_number || '', 
+          true // Include discharged
+        );
+        const wardAdmissions = wardAdmissionsResponse.data || [];
+        const matchingAdmission = wardAdmissions.find(wa => wa.encounter_id === encounterId);
+        
+        if (matchingAdmission) {
+          // Load surgeries from ward admission
+          const response = await consultationAPI.getInpatientSurgeries(matchingAdmission.id);
+          surgeries.value = response.data || [];
+          console.log('Loaded surgeries for OPD encounter via ward admission:', surgeries.value.length);
+        } else {
+          // No ward admission, so no surgeries for OPD
+          surgeries.value = [];
+          console.log('No ward admission found for OPD encounter, no surgeries');
+        }
+      } catch (err) {
+        console.warn('Could not check for ward admission:', err);
+        surgeries.value = [];
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load surgeries for encounter:', err);
     surgeries.value = [];
   }
 };
