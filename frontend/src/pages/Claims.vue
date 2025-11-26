@@ -82,6 +82,16 @@
             class="col-12 col-md-2"
             clearable
             @keyup.enter="loadFinalizedEncounters"
+            hint="Partial match supported"
+          />
+          <q-input
+            v-model="filterClaimId"
+            filled
+            label="Claim ID"
+            class="col-12 col-md-2"
+            clearable
+            @keyup.enter="loadFinalizedEncounters"
+            hint="e.g., CLA-XXXXX"
           />
           <q-input
             v-model="filterStartDate"
@@ -230,6 +240,7 @@ const filterStartDate = ref('');
 const filterEndDate = ref('');
 const filterClaimStatus = ref(null);
 const filterCardNumber = ref('');
+const filterClaimId = ref('');
 const filtersLocked = ref(false);
 
 // LocalStorage key for locked filters
@@ -322,6 +333,7 @@ const clearFilters = () => {
   filterEndDate.value = '';
   filterClaimStatus.value = null;
   filterCardNumber.value = '';
+  filterClaimId.value = '';
   searchEncounterId.value = '';
   
   // Save cleared filters if locked
@@ -360,6 +372,7 @@ const saveFiltersToStorage = () => {
   const filters = {
     claimType: claimType.value,
     filterCardNumber: filterCardNumber.value,
+    filterClaimId: filterClaimId.value,
     filterStartDate: filterStartDate.value,
     filterEndDate: filterEndDate.value,
     filterClaimStatus: filterClaimStatus.value,
@@ -375,6 +388,7 @@ const loadFiltersFromStorage = () => {
       const filters = JSON.parse(savedFilters);
       claimType.value = filters.claimType ?? null;
       filterCardNumber.value = filters.filterCardNumber || '';
+      filterClaimId.value = filters.filterClaimId || '';
       filterStartDate.value = filters.filterStartDate || '';
       filterEndDate.value = filters.filterEndDate || '';
       filterClaimStatus.value = filters.filterClaimStatus ?? null;
@@ -464,7 +478,8 @@ const loadFinalizedEncounters = async () => {
       filterStartDate.value || null,
       filterEndDate.value || null,
       filterClaimStatus.value || null,
-      filterCardNumber.value || null
+      filterCardNumber.value || null,
+      filterClaimId.value || null
     );
     finalizedEncounters.value = response.data.map(encounter => ({
       id: encounter.id,
@@ -488,7 +503,7 @@ const loadFinalizedEncounters = async () => {
   }
 };
 
-watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, claimType], () => {
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
     loadFinalizedEncounters();

@@ -210,6 +210,12 @@ export const consultationAPI = {
   },
   createDoctorNoteEntry: (encounterId, data) => api.post(`/consultation/encounters/${encounterId}/doctor-notes`, data),
   updateDoctorNoteEntry: (noteId, data) => api.put(`/consultation/doctor-notes/${noteId}`, data),
+  // Consultation template endpoints
+  getConsultationTemplates: (includeShared = true) => api.get('/consultation/consultation-templates', { params: { include_shared: includeShared } }),
+  getConsultationTemplate: (templateId) => api.get(`/consultation/consultation-templates/${templateId}`),
+  createConsultationTemplate: (data) => api.post('/consultation/consultation-templates', data),
+  updateConsultationTemplate: (templateId, data) => api.put(`/consultation/consultation-templates/${templateId}`, data),
+  deleteConsultationTemplate: (templateId) => api.delete(`/consultation/consultation-templates/${templateId}`),
   getPrescriptionsByPatientCard: (cardNumber, encounterId) => 
     api.get(`/consultation/prescription/patient/${cardNumber}/encounter/${encounterId}`),
   confirmPrescription: (prescriptionId, data = null) => {
@@ -587,13 +593,14 @@ export const priceListAPI = {
 // Claims endpoints
 export const claimsAPI = {
   create: (data) => api.post('/claims/', data),
-  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null) => {
+  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null) => {
     const params = {};
     if (type) params.claim_type = type;
     if (startDate) params.start_date = startDate;
     if (endDate) params.end_date = endDate;
     if (claimStatus) params.claim_status = claimStatus;
     if (cardNumber) params.card_number = cardNumber;
+    if (claimId) params.claim_id = claimId;
     return api.get('/claims/eligible-encounters', { params });
   },
   get: (claimId) => api.get(`/claims/${claimId}`),

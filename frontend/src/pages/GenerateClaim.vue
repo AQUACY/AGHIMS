@@ -47,6 +47,13 @@
             <div class="text-body1">{{ encounter.patient_card_number || 'N/A' }}</div>
           </div>
           <div class="col-12 col-md-4">
+            <div class="text-caption text-grey-7">Member Number</div>
+            <div class="text-body1">
+              <span v-if="encounter.patient_insurance_id">{{ encounter.patient_insurance_id }}</span>
+              <span v-else class="text-negative">Not Set</span>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">CCC Number</div>
             <div class="text-body1">{{ encounter.ccc_number || 'N/A' }}</div>
           </div>
@@ -57,6 +64,10 @@
           <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">Finalized At</div>
             <div class="text-body1">{{ formatDate(encounter.finalized_at) }}</div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="text-caption text-grey-7">Physician Code (Finalized By)</div>
+            <div class="text-body1">{{ encounter.finalized_by_username || 'N/A' }}</div>
           </div>
         </div>
       </q-card-section>
@@ -177,10 +188,11 @@
     </q-card>
 
     <!-- Surgeries Section (IPD only) -->
-    <q-card v-if="isIPD && encounter && !loading && surgeries.length > 0" class="q-mb-md glass-card" flat>
+    <q-card v-if="isIPD && encounter && !loading" class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">Surgeries</div>
         <q-table
+          v-if="surgeries.length > 0"
           :rows="surgeries"
           :columns="surgeryColumns"
           row-key="id"
@@ -195,6 +207,9 @@
             </q-td>
           </template>
         </q-table>
+        <div v-else class="text-center text-grey-7 q-pa-md">
+          No surgeries recorded for this admission
+        </div>
       </q-card-section>
     </q-card>
 
@@ -230,6 +245,12 @@
               <q-icon name="info" color="primary" />
             </template>
           </q-input>
+          <q-input
+            v-model="claimForm.physician_name"
+            filled
+            label="Physician Name"
+            hint="Enter physician full name"
+          />
           <q-select
             v-model="claimForm.type_of_service"
             :options="['OPD', 'Inpatient']"
@@ -304,6 +325,7 @@ if (route.query.ward_admission_id) {
 
 const claimForm = reactive({
   physician_id: '',
+  physician_name: '',
   type_of_service: isIPD.value ? 'IPD' : 'OPD',
   type_of_attendance: 'EAE',
   specialty_attended: 'OPDC',
@@ -397,6 +419,10 @@ const loadEncounter = async () => {
       if (response.data.finalized_by_username) {
         claimForm.physician_id = response.data.finalized_by_username;
       }
+      // Auto-fill physician_name with finalized_by name if available (for OPD)
+      if (response.data.finalized_by_name) {
+        claimForm.physician_name = response.data.finalized_by_name;
+      }
     }
     
     // Load medicines and investigations in parallel
@@ -434,6 +460,10 @@ const loadWardAdmission = async (wardAdmissionId) => {
     // Pre-fill physician_id with doctor's username (user can change to SNO code)
     if (wardAdmission.value?.doctor_username) {
       claimForm.physician_id = wardAdmission.value.doctor_username;
+    }
+    // Pre-fill physician_name with doctor's name if available
+    if (wardAdmission.value?.doctor_name) {
+      claimForm.physician_name = wardAdmission.value.doctor_name;
     }
   } catch (err) {
     console.error('Failed to load ward admission:', err);

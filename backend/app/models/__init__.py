@@ -45,6 +45,7 @@ from app.models.inpatient_scan_result import InpatientScanResult
 from app.models.xray_result import XrayResult
 from app.models.inpatient_xray_result import InpatientXrayResult
 from app.models.audit_log import AuditLog
+from app.models.consultation_template import ConsultationTemplate
 
 __all__ = [
     "User",
@@ -102,5 +103,6 @@ __all__ = [
     "XrayResult",
     "InpatientXrayResult",
     "AuditLog",
+    "ConsultationTemplate",
 ]
 

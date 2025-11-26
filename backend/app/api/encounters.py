@@ -21,6 +21,7 @@ class EncounterResponse(BaseModel):
     patient_id: int
     patient_name: Optional[str] = None  # Patient full name
     patient_card_number: Optional[str] = None  # Patient card number
+    patient_insurance_id: Optional[str] = None  # Patient member number (insurance ID)
     ccc_number: Optional[str] = None
     status: str
     department: str
@@ -73,6 +74,7 @@ def get_encounter(
     patient = encounter.patient
     patient_name = ""
     patient_card_number = ""
+    patient_insurance_id = ""
     if patient:
         # Construct patient name
         name_parts = []
@@ -84,12 +86,14 @@ def get_encounter(
             name_parts.append(patient.other_names)
         patient_name = " ".join(name_parts).strip() if name_parts else ""
         patient_card_number = patient.card_number or ""
+        patient_insurance_id = patient.insurance_id or ""
     
     return {
         "id": encounter.id,
         "patient_id": encounter.patient_id,
         "patient_name": patient_name,
         "patient_card_number": patient_card_number,
+        "patient_insurance_id": patient_insurance_id,
         "ccc_number": encounter.ccc_number,
         "status": encounter.status,
         "department": encounter.department,

@@ -234,6 +234,13 @@ def create_claim(
         
         patient = encounter.patient
         
+        # Validate member number (insurance_id) exists
+        if not patient.insurance_id or patient.insurance_id.strip() == "":
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot create claim: Patient member number (insurance ID) is required but not found. Please update the patient's insurance information."
+            )
+        
         # Get all IPD services
         clinical_reviews = db.query(InpatientClinicalReview).filter(
             InpatientClinicalReview.ward_admission_id == ward_admission.id
@@ -296,7 +303,7 @@ def create_claim(
             claim_id=generate_claim_id(db),
             claim_check_code=generate_claim_check_code(),
             physician_id=claim_data.physician_id,
-            member_no=patient.insurance_id or "",
+            member_no=patient.insurance_id,
             card_serial_no=patient.card_number or "",
             is_dependant=False,
             type_of_service="IPD",
@@ -449,16 +456,25 @@ def create_claim(
                 db.add(claim_presc)
                 prescription_order += 1
         
-        # Populate procedures (from IPD encounter procedure, up to 3)
-        if encounter.procedure_g_drg_code:
+        # Populate procedures from surgeries (IPD only - surgeries, not encounter procedure)
+        from app.models.inpatient_surgery import InpatientSurgery
+        surgeries = db.query(InpatientSurgery).filter(
+            InpatientSurgery.ward_admission_id == ward_admission.id
+        ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+        
+        procedure_order = 0
+        for surgery in surgeries:
+            if procedure_order >= 3:  # Limit to 3 procedures
+                break
             claim_proc = ClaimProcedure(
                 claim_id=claim.id,
-                description=encounter.procedure_name or "",
-                gdrg_code=encounter.procedure_g_drg_code,
-                service_date=encounter.created_at,
-                display_order=0
+                description=surgery.surgery_name or "",
+                gdrg_code=surgery.g_drg_code or "",
+                service_date=surgery.surgery_date or encounter.created_at,
+                display_order=procedure_order
             )
             db.add(claim_proc)
+            procedure_order += 1
         
     else:
         # OPD Claim - original logic
@@ -491,6 +507,13 @@ def create_claim(
         # Get patient info
         patient = encounter.patient
         
+        # Validate member number (insurance_id) exists
+        if not patient.insurance_id or patient.insurance_id.strip() == "":
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot create claim: Patient member number (insurance ID) is required but not found. Please update the patient's insurance information."
+            )
+        
         # Check if pharmacy items exist
         has_pharmacy = len(encounter.prescriptions) > 0
         
@@ -510,7 +533,7 @@ def create_claim(
             claim_id=generate_claim_id(db),
             claim_check_code=generate_claim_check_code(),
             physician_id=claim_data.physician_id,
-            member_no=patient.insurance_id or "",
+            member_no=patient.insurance_id,
             card_serial_no=patient.card_number or "",
             is_dependant=False,
             type_of_service=claim_data.type_of_service,
@@ -606,16 +629,7 @@ def create_claim(
                 db.add(claim_presc)
                 prescription_order += 1
         
-        # Populate procedures (from encounter procedure, up to 3)
-        if encounter.procedure_g_drg_code:
-            claim_proc = ClaimProcedure(
-                claim_id=claim.id,
-                description=encounter.procedure_name or "",
-                gdrg_code=encounter.procedure_g_drg_code,
-                service_date=encounter.created_at,
-                display_order=0
-            )
-            db.add(claim_proc)
+        # OPD claims: No procedures/surgeries - only diagnoses, medications, and investigations
     
     db.commit()
     db.refresh(claim)
@@ -794,6 +808,13 @@ def regenerate_claim(
         
         patient = encounter.patient
         
+        # Validate member number (insurance_id) exists for IPD
+        if not patient.insurance_id or patient.insurance_id.strip() == "":
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot regenerate claim: Patient member number (insurance ID) is required but not found. Please update the patient's insurance information."
+            )
+        
     else:
         # OPD Claim regeneration
         # Get encounter - use claim_data.encounter_id if provided, otherwise use claim's encounter_id
@@ -838,6 +859,13 @@ def regenerate_claim(
         
         if chief_diagnosis:
             principal_gdrg = chief_diagnosis.gdrg_code
+        
+        # Validate member number (insurance_id) exists for OPD
+        if not patient.insurance_id or patient.insurance_id.strip() == "":
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot regenerate claim: Patient member number (insurance ID) is required but not found. Please update the patient's insurance information."
+            )
     
     # Delete existing claim details
     db.query(ClaimDiagnosis).filter(ClaimDiagnosis.claim_id == claim_id).delete()
@@ -852,6 +880,8 @@ def regenerate_claim(
     claim.specialty_attended = claim_data.specialty_attended
     claim.includes_pharmacy = has_pharmacy
     claim.principal_gdrg = principal_gdrg
+    claim.member_no = patient.insurance_id  # Update member number
+    claim.card_serial_no = patient.card_number or ""  # Update card number
     
     db.flush()
     
@@ -981,16 +1011,25 @@ def regenerate_claim(
                 db.add(claim_presc)
                 prescription_order += 1
         
-        # Populate procedures (from IPD encounter procedure)
-        if encounter.procedure_g_drg_code:
+        # Populate procedures from surgeries (IPD only - surgeries, not encounter procedure)
+        from app.models.inpatient_surgery import InpatientSurgery
+        surgeries = db.query(InpatientSurgery).filter(
+            InpatientSurgery.ward_admission_id == ward_admission.id
+        ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+        
+        procedure_order = 0
+        for surgery in surgeries:
+            if procedure_order >= 3:  # Limit to 3 procedures
+                break
             claim_proc = ClaimProcedure(
                 claim_id=claim.id,
-                description=encounter.procedure_name or "",
-                gdrg_code=encounter.procedure_g_drg_code,
-                service_date=encounter.created_at,
-                display_order=0
+                description=surgery.surgery_name or "",
+                gdrg_code=surgery.g_drg_code or "",
+                service_date=surgery.surgery_date or encounter.created_at,
+                display_order=procedure_order
             )
             db.add(claim_proc)
+            procedure_order += 1
     
     else:
         # OPD: Repopulate claim detail tables from encounter services
@@ -1062,16 +1101,7 @@ def regenerate_claim(
                 db.add(claim_presc)
                 prescription_order += 1
         
-        # Populate procedures (from encounter procedure, up to 3)
-        if encounter.procedure_g_drg_code:
-            claim_proc = ClaimProcedure(
-                claim_id=claim.id,
-                description=encounter.procedure_name or "",
-                gdrg_code=encounter.procedure_g_drg_code,
-                service_date=encounter.created_at,
-                display_order=0
-            )
-            db.add(claim_proc)
+        # OPD claims: No procedures/surgeries - only diagnoses, medications, and investigations
     
     db.commit()
     db.refresh(claim)
@@ -1136,6 +1166,7 @@ def get_eligible_encounters_for_claims(
     end_date: Optional[str] = None,  # Filter by end date (YYYY-MM-DD)
     claim_status: Optional[str] = None,  # Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
     card_number: Optional[str] = None,  # Filter by patient card number
+    claim_id: Optional[str] = None,  # Filter by claim ID (e.g., "CLA-XXXXX")
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin"]))
 ):
@@ -1151,6 +1182,7 @@ def get_eligible_encounters_for_claims(
     - end_date: Filter encounters finalized on or before this date (YYYY-MM-DD)
     - claim_status: Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
     - card_number: Filter by patient card number (partial match supported)
+    - claim_id: Filter by claim ID (e.g., "CLA-XXXXX")
     """
     from sqlalchemy.orm import joinedload
     from datetime import datetime
@@ -1162,6 +1194,7 @@ def get_eligible_encounters_for_claims(
             end_date=end_date,
             claim_status=claim_status,
             card_number=card_number,
+            claim_id=claim_id,
             db=db,
             current_user=current_user
         )
@@ -1175,6 +1208,7 @@ def get_eligible_encounters_for_claims(
             end_date=end_date,
             claim_status=claim_status,
             card_number=card_number,
+            claim_id=claim_id,
             db=db,
             current_user=current_user
         )
@@ -1189,13 +1223,22 @@ def get_eligible_encounters_for_claims(
             Encounter.archived == False
         )
     
-    # Apply card number filter
+    # Apply card number filter (partial match)
     if card_number:
         card_number_clean = card_number.strip()
         if card_number_clean:
             from app.models.patient import Patient
             query = query.join(Patient).filter(
-                Patient.card_number == card_number_clean
+                Patient.card_number.like(f'%{card_number_clean}%')
+            )
+    
+    # Apply claim_id filter
+    if claim_id:
+        claim_id_clean = claim_id.strip()
+        if claim_id_clean:
+            # Filter by claim_id - find encounters that have a claim with matching claim_id
+            query = query.join(Claim).filter(
+                Claim.claim_id == claim_id_clean
             )
     
     # Apply date filters
@@ -1276,6 +1319,7 @@ def get_eligible_ipd_ward_admissions_for_claims(
     end_date: Optional[str] = None,
     claim_status: Optional[str] = None,
     card_number: Optional[str] = None,
+    claim_id: Optional[str] = None,
     db: Session = None,
     current_user: User = None
 ):
@@ -1308,12 +1352,26 @@ def get_eligible_ipd_ward_admissions_for_claims(
             )
         )
     
-    # Apply card number filter
+    # Apply card number filter (partial match)
     if card_number:
         card_number_clean = card_number.strip()
         if card_number_clean:
-            query = query.join(Encounter).join(Patient).filter(
-                Patient.card_number == card_number_clean
+            # Use subquery to filter by patient card number (partial match) to avoid duplicate join issues
+            patient_ids_subquery = db.query(Patient.id).filter(
+                Patient.card_number.like(f'%{card_number_clean}%')
+            )
+            # Filter encounters where patient_id matches the subquery
+            query = query.filter(
+                Encounter.patient_id.in_(patient_ids_subquery)
+            )
+    
+    # Apply claim_id filter
+    if claim_id:
+        claim_id_clean = claim_id.strip()
+        if claim_id_clean:
+            # Filter by claim_id - find ward admissions that have a claim with matching claim_id
+            query = query.join(Claim, Claim.encounter_id == WardAdmission.encounter_id).filter(
+                Claim.claim_id == claim_id_clean
             )
     
     # Apply date filters (filter by discharge date)
@@ -1575,11 +1633,14 @@ def get_claim_edit_details(
             "unparsed": "",
         })
     
-    # Get procedures from claim detail table (or fallback to encounter procedure ONLY on first load)
+    # Get procedures (surgeries for IPD) from claim detail table or fallback to surgeries/encounter procedure
     # Check if claim detail tables have ever been populated for this claim
     claim_has_been_edited = db.query(ClaimDiagnosis)\
         .filter(ClaimDiagnosis.claim_id == claim.id)\
         .first() is not None
+    
+    # Determine if this is an IPD claim
+    is_ipd = claim.type_of_service.upper() == "IPD"
     
     # Query claim_procedures
     claim_procedures = db.query(ClaimProcedure)\
@@ -1590,7 +1651,7 @@ def get_claim_edit_details(
     procedures_list = []
     
     # IMPORTANT: If claim has been edited (claim detail tables exist), ALWAYS use claim_procedures
-    # even if it's empty - this respects user's deletion. Never fallback to encounter after edits.
+    # even if it's empty - this respects user's deletion. Never fallback after edits.
     if claim_has_been_edited:
         # Claim has been edited - use what's in claim_procedures (even if empty = user deleted them)
         for claim_proc in claim_procedures:
@@ -1600,15 +1661,29 @@ def get_claim_edit_details(
                 "gdrg": claim_proc.gdrg_code or "",
             })
         # Note: If claim_procedures is empty (user deleted them), procedures_list stays empty
-    else:
-        # First time loading - fallback to encounter procedure (for backward compatibility)
-        # Only happens if claim has NEVER been edited
-        if encounter.procedure_g_drg_code:
-            procedures_list.append({
-                "description": encounter.procedure_name or "",
-                "date": encounter.created_at.isoformat(),
-                "gdrg": encounter.procedure_g_drg_code,
-            })
+        else:
+            # First time loading - for IPD, load surgeries; for OPD, no procedures
+            if is_ipd:
+                # IPD: Load surgeries from ward admission
+                from app.models.ward_admission import WardAdmission
+                from app.models.inpatient_surgery import InpatientSurgery
+                
+                ward_admission = db.query(WardAdmission).filter(
+                    WardAdmission.encounter_id == encounter.id
+                ).first()
+                
+                if ward_admission:
+                    surgeries = db.query(InpatientSurgery).filter(
+                        InpatientSurgery.ward_admission_id == ward_admission.id
+                    ).order_by(InpatientSurgery.surgery_date, InpatientSurgery.created_at).all()
+                    
+                    for surgery in surgeries:
+                        procedures_list.append({
+                            "description": surgery.surgery_name or "",
+                            "date": surgery.surgery_date.isoformat() if surgery.surgery_date else encounter.created_at.isoformat(),
+                            "gdrg": surgery.g_drg_code or "",
+                        })
+            # OPD: No procedures - procedures_list stays empty (don't use encounter procedure)
     
     # Pad to 3 procedures
     while len(procedures_list) < 3:

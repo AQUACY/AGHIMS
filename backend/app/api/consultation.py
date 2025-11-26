@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import or_, and_
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from app.core.database import get_db
 from app.core.datetime_utils import utcnow, today
@@ -25,6 +25,7 @@ from app.models.inpatient_xray_result import InpatientXrayResult
 from app.models.consultation_notes import ConsultationNotes
 from app.models.admission import AdmissionRecommendation
 from app.models.doctor_note_entry import DoctorNoteEntry
+from app.models.consultation_template import ConsultationTemplate
 
 router = APIRouter(prefix="/consultation", tags=["consultation"])
 
@@ -4693,6 +4694,225 @@ def create_doctor_note_entry(
     }
 
 
+# Consultation Template endpoints
+class ConsultationTemplateCreate(BaseModel):
+    """Consultation template creation model"""
+    name: str
+    description: Optional[str] = None
+    is_shared: bool = False
+    prescriptions: Optional[List[Dict[str, Any]]] = None  # List of prescription data
+    investigations: Optional[List[Dict[str, Any]]] = None  # List of investigation data
+
+
+class ConsultationTemplateUpdate(BaseModel):
+    """Consultation template update model"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_shared: Optional[bool] = None
+    prescriptions: Optional[List[Dict[str, Any]]] = None
+    investigations: Optional[List[Dict[str, Any]]] = None
+
+
+class ConsultationTemplateResponse(BaseModel):
+    """Consultation template response model"""
+    id: int
+    name: str
+    description: Optional[str] = None
+    created_by: int
+    created_by_name: Optional[str] = None
+    is_shared: bool
+    prescriptions: List[Dict[str, Any]] = []
+    investigations: List[Dict[str, Any]] = []
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.get("/consultation-templates", response_model=List[ConsultationTemplateResponse])
+def get_consultation_templates(
+    include_shared: bool = Query(True, description="Include shared templates"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all consultation templates accessible to the user"""
+    from app.models.consultation_template import ConsultationTemplate
+    
+    from sqlalchemy import or_
+    
+    if include_shared:
+        query = db.query(ConsultationTemplate).filter(
+            or_(
+                ConsultationTemplate.created_by == current_user.id,
+                ConsultationTemplate.is_shared == True
+            )
+        )
+    else:
+        query = db.query(ConsultationTemplate).filter(
+            ConsultationTemplate.created_by == current_user.id
+        )
+    
+    templates = query.order_by(ConsultationTemplate.created_at.desc()).all()
+    
+    result = []
+    for template in templates:
+        creator = db.query(User).filter(User.id == template.created_by).first()
+        result.append({
+            "id": template.id,
+            "name": template.name,
+            "description": template.description,
+            "created_by": template.created_by,
+            "created_by_name": creator.full_name if creator else None,
+            "is_shared": template.is_shared,
+            "prescriptions": template.get_prescriptions(),
+            "investigations": template.get_investigations(),
+            "created_at": template.created_at,
+            "updated_at": template.updated_at,
+        })
+    
+    return result
+
+
+@router.post("/consultation-templates", response_model=ConsultationTemplateResponse, status_code=status.HTTP_201_CREATED)
+def create_consultation_template(
+    template_data: ConsultationTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Create a new consultation template"""
+    from app.models.consultation_template import ConsultationTemplate
+    
+    template = ConsultationTemplate(
+        name=template_data.name,
+        description=template_data.description,
+        created_by=current_user.id,
+        is_shared=template_data.is_shared,
+    )
+    template.set_prescriptions(template_data.prescriptions)
+    template.set_investigations(template_data.investigations)
+    
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    
+    creator = db.query(User).filter(User.id == template.created_by).first()
+    return {
+        "id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "created_by": template.created_by,
+        "created_by_name": creator.full_name if creator else None,
+        "is_shared": template.is_shared,
+        "prescriptions": template.get_prescriptions(),
+        "investigations": template.get_investigations(),
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+    }
+
+
+@router.put("/consultation-templates/{template_id}", response_model=ConsultationTemplateResponse)
+def update_consultation_template(
+    template_id: int,
+    template_data: ConsultationTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Update a consultation template (only by creator or admin)"""
+    from app.models.consultation_template import ConsultationTemplate
+    
+    template = db.query(ConsultationTemplate).filter(ConsultationTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # Check if user is the creator (or admin)
+    if template.created_by != current_user.id and current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="You can only edit your own templates")
+    
+    if template_data.name is not None:
+        template.name = template_data.name
+    if template_data.description is not None:
+        template.description = template_data.description
+    if template_data.is_shared is not None:
+        template.is_shared = template_data.is_shared
+    if template_data.prescriptions is not None:
+        template.set_prescriptions(template_data.prescriptions)
+    if template_data.investigations is not None:
+        template.set_investigations(template_data.investigations)
+    
+    template.updated_at = utcnow()
+    db.commit()
+    db.refresh(template)
+    
+    creator = db.query(User).filter(User.id == template.created_by).first()
+    return {
+        "id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "created_by": template.created_by,
+        "created_by_name": creator.full_name if creator else None,
+        "is_shared": template.is_shared,
+        "prescriptions": template.get_prescriptions(),
+        "investigations": template.get_investigations(),
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+    }
+
+
+@router.delete("/consultation-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_consultation_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA"]))
+):
+    """Delete a consultation template (only by creator or admin)"""
+    from app.models.consultation_template import ConsultationTemplate
+    
+    template = db.query(ConsultationTemplate).filter(ConsultationTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # Check if user is the creator (or admin)
+    if template.created_by != current_user.id and current_user.role != "Admin":
+        raise HTTPException(status_code=403, detail="You can only delete your own templates")
+    
+    db.delete(template)
+    db.commit()
+    return None
+
+
+@router.get("/consultation-templates/{template_id}", response_model=ConsultationTemplateResponse)
+def get_consultation_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a specific consultation template"""
+    from app.models.consultation_template import ConsultationTemplate
+    
+    template = db.query(ConsultationTemplate).filter(ConsultationTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # Check if user has access (creator or shared template)
+    if template.created_by != current_user.id and not template.is_shared:
+        raise HTTPException(status_code=403, detail="You don't have access to this template")
+    
+    creator = db.query(User).filter(User.id == template.created_by).first()
+    return {
+        "id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "created_by": template.created_by,
+        "created_by_name": creator.full_name if creator else None,
+        "is_shared": template.is_shared,
+        "prescriptions": template.get_prescriptions(),
+        "investigations": template.get_investigations(),
+        "created_at": template.created_at,
+        "updated_at": template.updated_at,
+    }
+
+
 @router.put("/doctor-notes/{note_id}", response_model=DoctorNoteEntryResponse)
 def update_doctor_note_entry(
     note_id: int,
@@ -7986,6 +8206,7 @@ def get_ward_admissions_by_patient_card(
     )
     
     # Filter by discharged status if not including discharged
+    # Note: This includes partially discharged patients (partially_discharged_at set but discharged_at is NULL)
     if not include_discharged:
         query = query.filter(WardAdmission.discharged_at.is_(None))
     
@@ -8007,6 +8228,8 @@ def get_ward_admissions_by_patient_card(
             "admission_notes": wa.admission_notes,
             "discharged_at": wa.discharged_at,
             "discharged_by": wa.discharged_by,
+            "partially_discharged_at": wa.partially_discharged_at,  # Include partial discharge info
+            "partially_discharged_by": wa.partially_discharged_by,
             "encounter_created_at": encounter.created_at,
             "encounter_department": encounter.department,
         })

@@ -360,6 +360,17 @@
                 class="q-mr-sm"
               />
               <q-btn
+                flat
+                icon="bookmark"
+                label="Templates"
+                color="accent"
+                size="sm"
+                @click="showTemplateDialog = true; loadTemplates()"
+                class="q-mr-sm"
+              >
+                <q-tooltip>Manage and apply prescription/investigation templates</q-tooltip>
+              </q-btn>
+              <q-btn
                 color="primary"
                 label="Add Prescription"
                 @click="resetPrescriptionForm(); showPrescriptionDialog = true"
@@ -442,6 +453,17 @@
               @click="showPreviousInvestigations"
               class="q-mr-sm"
             />
+            <q-btn
+              flat
+              icon="bookmark"
+              label="Templates"
+              color="accent"
+              size="sm"
+              @click="showTemplateDialog = true; loadTemplates()"
+              class="q-mr-sm"
+            >
+              <q-tooltip>Manage and apply prescription/investigation templates</q-tooltip>
+            </q-btn>
             <q-btn
               color="primary"
               label="Add Investigation"
@@ -1350,6 +1372,165 @@
       </q-card>
     </q-dialog>
 
+    <!-- Consultation Template Dialog -->
+    <q-dialog v-model="showTemplateDialog" maximized>
+      <q-card>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 glass-text">Consultation Templates</div>
+          <q-space />
+          <q-btn icon="close" flat round dense @click="showTemplateDialog = false" />
+        </q-card-section>
+        <q-card-section>
+          <div class="row q-mb-md">
+            <q-space />
+            <q-btn
+              color="primary"
+              icon="add"
+              label="Create Template from Current"
+              @click="showCreateTemplateDialog = true"
+              class="q-mr-sm"
+            />
+            <q-btn
+              flat
+              icon="refresh"
+              label="Refresh"
+              @click="loadTemplates"
+              :loading="loadingTemplates"
+            />
+          </div>
+
+          <div v-if="loadingTemplates" class="text-center q-pa-lg">
+            <q-spinner color="primary" size="3em" />
+            <div class="text-subtitle1 q-mt-md">Loading templates...</div>
+          </div>
+          <div v-else-if="templates.length === 0" class="text-center text-secondary q-pa-lg">
+            <q-icon name="bookmark_border" size="48px" class="q-mb-sm" />
+            <div class="text-subtitle1">No templates found</div>
+            <div class="text-caption q-mt-sm">Create a template from your current prescriptions and investigations</div>
+          </div>
+          <div v-else>
+            <q-list bordered separator>
+              <q-item
+                v-for="template in templates"
+                :key="template.id"
+                class="q-pa-md"
+              >
+                <q-item-section>
+                  <q-item-label>
+                    <div class="text-h6">{{ template.name }}</div>
+                    <div v-if="template.description" class="text-body2 text-secondary q-mt-xs">
+                      {{ template.description }}
+                    </div>
+                  </q-item-label>
+                  <q-item-label caption>
+                    <div class="row items-center q-gutter-md q-mt-sm">
+                      <div>
+                        <q-icon name="person" size="14px" class="q-mr-xs" />
+                        {{ template.created_by_name || 'Unknown' }}
+                      </div>
+                      <div>
+                        <q-icon name="medication" size="14px" class="q-mr-xs" />
+                        {{ template.prescriptions?.length || 0 }} Prescription(s)
+                      </div>
+                      <div>
+                        <q-icon name="science" size="14px" class="q-mr-xs" />
+                        {{ template.investigations?.length || 0 }} Investigation(s)
+                      </div>
+                      <div v-if="template.is_shared">
+                        <q-chip color="primary" text-color="white" size="sm">Shared</q-chip>
+                      </div>
+                    </div>
+                  </q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <div class="row q-gutter-xs">
+                    <q-btn
+                      flat
+                      dense
+                      icon="play_arrow"
+                      label="Apply"
+                      color="positive"
+                      size="sm"
+                      @click="applyTemplate(template)"
+                    />
+                    <q-btn
+                      v-if="template.created_by === authStore.user?.id || authStore.userRole === 'Admin'"
+                      flat
+                      dense
+                      icon="edit"
+                      color="primary"
+                      size="sm"
+                      @click="editTemplate(template)"
+                    />
+                    <q-btn
+                      v-if="template.created_by === authStore.user?.id || authStore.userRole === 'Admin'"
+                      flat
+                      dense
+                      icon="delete"
+                      color="negative"
+                      size="sm"
+                      @click="deleteTemplate(template)"
+                    />
+                  </div>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="primary" @click="showTemplateDialog = false" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Create/Edit Template Dialog -->
+    <q-dialog v-model="showCreateTemplateDialog">
+      <q-card style="min-width: 500px; max-width: 700px">
+        <q-card-section>
+          <div class="text-h6 glass-text">{{ editingTemplate ? 'Edit Template' : 'Create Template' }}</div>
+        </q-card-section>
+        <q-card-section>
+          <q-input
+            v-model="templateForm.name"
+            filled
+            label="Template Name *"
+            :rules="[val => !!val || 'Template name is required']"
+            class="q-mb-md"
+          />
+          <q-input
+            v-model="templateForm.description"
+            filled
+            type="textarea"
+            label="Description (Optional)"
+            rows="2"
+            class="q-mb-md"
+          />
+          <q-checkbox
+            v-model="templateForm.is_shared"
+            label="Share with all users"
+            class="q-mb-md"
+          />
+          <div class="text-body2 text-secondary q-mb-sm">
+            This template will include:
+          </div>
+          <div class="text-caption text-secondary">
+            • {{ encounterStore.encounterPrescriptions?.length || 0 }} Prescription(s)
+            <br />
+            • {{ encounterStore.encounterInvestigations?.length || 0 }} Investigation(s)
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" @click="closeCreateTemplateDialog" />
+          <q-btn
+            color="primary"
+            :label="editingTemplate ? 'Update' : 'Create'"
+            @click="saveTemplate"
+            :loading="savingTemplate"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- DRG Code Selection Dialog -->
     <q-dialog v-model="showDrgSelectionDialog">
       <q-card style="min-width: 500px; max-width: 700px">
@@ -2151,6 +2332,18 @@ const showPreviousNotesDialog = ref(false);
 const previousDoctorNotes = ref([]);
 const loadingPreviousNotes = ref(false);
 const editFollowUpDate = ref(false);
+// Template management
+const showTemplateDialog = ref(false);
+const showCreateTemplateDialog = ref(false);
+const templates = ref([]);
+const loadingTemplates = ref(false);
+const savingTemplate = ref(false);
+const editingTemplate = ref(null);
+const templateForm = reactive({
+  name: '',
+  description: '',
+  is_shared: false,
+});
 const notesForm = reactive({
   encounter_id: null,
   presenting_complaints: '',
@@ -2790,6 +2983,197 @@ const loadPreviousDoctorNotes = async () => {
   } finally {
     loadingPreviousNotes.value = false;
   }
+};
+
+// Template management functions
+const loadTemplates = async () => {
+  loadingTemplates.value = true;
+  try {
+    const response = await consultationAPI.getConsultationTemplates(true);
+    templates.value = response.data || [];
+  } catch (error) {
+    console.error('Error loading templates:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load templates',
+    });
+    templates.value = [];
+  } finally {
+    loadingTemplates.value = false;
+  }
+};
+
+const saveTemplate = async () => {
+  if (!templateForm.name?.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a template name',
+    });
+    return;
+  }
+
+  if (!encounterStore.currentEncounter?.id) {
+    $q.notify({
+      type: 'warning',
+      message: 'No active encounter',
+    });
+    return;
+  }
+
+  savingTemplate.value = true;
+  try {
+    // Extract prescription data (exclude encounter_id and other auto-generated fields)
+    const prescriptions = (encounterStore.encounterPrescriptions || []).map(p => ({
+      medicine_code: p.medicine_code,
+      medicine_name: p.medicine_name,
+      dose: p.dose,
+      unit: p.unit,
+      frequency: p.frequency,
+      duration: p.duration,
+      quantity: p.quantity,
+      instructions: p.instructions,
+      is_external: p.is_external || false,
+    }));
+
+    // Extract investigation data
+    const investigations = (encounterStore.encounterInvestigations || []).map(i => ({
+      gdrg_code: i.gdrg_code,
+      procedure_name: i.procedure_name,
+      investigation_type: i.investigation_type,
+      service_type: i.service_type,
+      notes: i.notes,
+      price: i.price,
+    }));
+
+    const templateData = {
+      name: templateForm.name.trim(),
+      description: templateForm.description?.trim() || null,
+      is_shared: templateForm.is_shared,
+      prescriptions: prescriptions,
+      investigations: investigations,
+    };
+
+    if (editingTemplate.value) {
+      await consultationAPI.updateConsultationTemplate(editingTemplate.value.id, templateData);
+      $q.notify({
+        type: 'positive',
+        message: 'Template updated successfully',
+      });
+    } else {
+      await consultationAPI.createConsultationTemplate(templateData);
+      $q.notify({
+        type: 'positive',
+        message: 'Template created successfully',
+      });
+    }
+
+    closeCreateTemplateDialog();
+    await loadTemplates();
+  } catch (error) {
+    console.error('Error saving template:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to save template',
+    });
+  } finally {
+    savingTemplate.value = false;
+  }
+};
+
+const applyTemplate = async (template) => {
+  if (!encounterStore.currentEncounter?.id) {
+    $q.notify({
+      type: 'warning',
+      message: 'No active encounter',
+    });
+    return;
+  }
+
+  $q.dialog({
+    title: 'Apply Template',
+    message: `Apply template "${template.name}"? This will add ${template.prescriptions?.length || 0} prescription(s) and ${template.investigations?.length || 0} investigation(s) to the current encounter.`,
+    cancel: true,
+    persistent: true
+  }).onOk(async () => {
+    try {
+      // Apply prescriptions
+      if (template.prescriptions && template.prescriptions.length > 0) {
+        for (const presc of template.prescriptions) {
+          const prescriptionData = {
+            encounter_id: encounterStore.currentEncounter.id,
+            ...presc,
+          };
+          await consultationAPI.createPrescription(prescriptionData);
+        }
+      }
+
+      // Apply investigations
+      if (template.investigations && template.investigations.length > 0) {
+        for (const inv of template.investigations) {
+          const investigationData = {
+            encounter_id: encounterStore.currentEncounter.id,
+            ...inv,
+          };
+          await consultationAPI.createInvestigation(investigationData);
+        }
+      }
+
+      $q.notify({
+        type: 'positive',
+        message: 'Template applied successfully',
+      });
+
+      // Reload encounter data
+      await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
+      showTemplateDialog.value = false;
+    } catch (error) {
+      console.error('Error applying template:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to apply template',
+      });
+    }
+  });
+};
+
+const editTemplate = (template) => {
+  editingTemplate.value = template;
+  templateForm.name = template.name;
+  templateForm.description = template.description || '';
+  templateForm.is_shared = template.is_shared || false;
+  showCreateTemplateDialog.value = true;
+};
+
+const deleteTemplate = (template) => {
+  $q.dialog({
+    title: 'Delete Template',
+    message: `Are you sure you want to delete template "${template.name}"?`,
+    cancel: true,
+    persistent: true
+  }).onOk(async () => {
+    try {
+      await consultationAPI.deleteConsultationTemplate(template.id);
+      $q.notify({
+        type: 'positive',
+        message: 'Template deleted successfully',
+      });
+      await loadTemplates();
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to delete template',
+      });
+    }
+  });
+};
+
+const closeCreateTemplateDialog = () => {
+  showCreateTemplateDialog.value = false;
+  editingTemplate.value = null;
+  templateForm.name = '';
+  templateForm.description = '';
+  templateForm.is_shared = false;
 };
 
 const loadConsultationNotes = async () => {

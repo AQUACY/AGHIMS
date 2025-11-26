@@ -221,10 +221,10 @@
         </q-card-section>
       </q-card>
 
-      <!-- Procedures -->
+      <!-- Procedures (Surgeries) -->
       <q-card>
         <q-card-section>
-          <div class="text-h6 q-mb-md">Procedure(s)</div>
+          <div class="text-h6 q-mb-md">Surgery(ies)</div>
           <div class="row q-gutter-md">
             <div class="col-12">
               <q-input
@@ -280,6 +280,22 @@
                 />
               </q-td>
             </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  v-if="proceduresList[props.row.index].description && proceduresList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                  size="sm"
+                  color="negative"
+                  icon="delete"
+                  flat
+                  round
+                  dense
+                  @click="deleteProcedure(props.row.index)"
+                >
+                  <q-tooltip>Delete Surgery</q-tooltip>
+                </q-btn>
+              </q-td>
+            </template>
           </q-table>
         </q-card-section>
       </q-card>
@@ -331,6 +347,22 @@
                   v-model="diagnosesList[props.row.index].is_chief"
                   :disable="claimStatus === 'finalized' && !isViewMode"
                 />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  v-if="diagnosesList[props.row.index].description && diagnosesList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                  size="sm"
+                  color="negative"
+                  icon="delete"
+                  flat
+                  round
+                  dense
+                  @click="deleteDiagnosis(props.row.index)"
+                >
+                  <q-tooltip>Delete Diagnosis</q-tooltip>
+                </q-btn>
               </q-td>
             </template>
           </q-table>
@@ -777,6 +809,7 @@ const procedureColumns = [
   { name: 'description', label: 'Description', field: 'description', align: 'left' },
   { name: 'date', label: 'Date', field: 'date', align: 'center' },
   { name: 'gdrg', label: 'G-DRG', field: 'gdrg', align: 'left' },
+  { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
 // Diagnoses
@@ -793,6 +826,7 @@ const diagnosisColumns = [
   { name: 'icd10', label: 'ICD-10', field: 'icd10', align: 'center' },
   { name: 'gdrg', label: 'G-DRG', field: 'gdrg', align: 'left' },
   { name: 'is_chief', label: 'Chief', field: 'is_chief', align: 'center' },
+  { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
 // Investigations
@@ -986,6 +1020,42 @@ const addPrescription = () => {
       timeout: 2000,
     });
   }
+};
+
+const deleteProcedure = (index) => {
+  $q.dialog({
+    title: 'Delete Surgery',
+    message: 'Are you sure you want to delete this surgery?',
+    cancel: true,
+    persistent: true
+  }).onOk(() => {
+    proceduresList.value[index].description = '';
+    proceduresList.value[index].date = '';
+    proceduresList.value[index].gdrg = '';
+    $q.notify({
+      type: 'positive',
+      message: 'Surgery deleted',
+    });
+  });
+};
+
+const deleteDiagnosis = (index) => {
+  $q.dialog({
+    title: 'Delete Diagnosis',
+    message: 'Are you sure you want to delete this diagnosis?',
+    cancel: true,
+    persistent: true
+  }).onOk(() => {
+    diagnosesList.value[index].description = '';
+    diagnosesList.value[index].icd10 = '';
+    diagnosesList.value[index].gdrg = '';
+    diagnosesList.value[index].is_chief = false;
+    diagnosesList.value[index].id = null;
+    $q.notify({
+      type: 'positive',
+      message: 'Diagnosis deleted',
+    });
+  });
 };
 
 const deletePrescription = (index) => {

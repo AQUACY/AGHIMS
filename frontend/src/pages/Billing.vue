@@ -1163,23 +1163,48 @@ const existingBillColumns = [
 
 // Filter encounters based on billing module (OPD vs IPD)
 const filteredEncounters = computed(() => {
-  if (!activeEncounters.value || activeEncounters.value.length === 0) return [];
-  
   if (billingModule.value === 'opd') {
     // OPD: Show encounters that don't have ward admissions
+    if (!activeEncounters.value || activeEncounters.value.length === 0) return [];
     const ipdEncounterIds = new Set(wardAdmissions.value.map(wa => wa.encounter_id));
     return activeEncounters.value.filter(enc => !ipdEncounterIds.has(enc.id));
   } else {
     // IPD: Show encounters that have ward admissions
     const ipdEncounterIds = new Set(wardAdmissions.value.map(wa => wa.encounter_id));
-    const ipdEncounters = activeEncounters.value.filter(enc => ipdEncounterIds.has(enc.id));
+    
+    if (ipdEncounterIds.size === 0) return [];
+    
+    // First, try to find encounters from activeEncounters
+    let ipdEncounters = [];
+    if (activeEncounters.value && activeEncounters.value.length > 0) {
+      ipdEncounters = activeEncounters.value.filter(enc => ipdEncounterIds.has(enc.id));
+    }
+    
+    // If no encounters found in activeEncounters, create entries from ward admissions
+    // This handles cases where the encounter might be archived or not in activeEncounters
+    if (ipdEncounters.length === 0) {
+      console.log('No encounters found in activeEncounters, creating from ward admissions');
+      ipdEncounters = wardAdmissions.value.map(wa => {
+        const wardAdmission = wa;
+        const isPartiallyDischarged = wardAdmission?.partially_discharged_at && !wardAdmission?.discharged_at;
+        return {
+          id: wa.encounter_id,
+          label: `Encounter #${wa.encounter_id} - ${wa.encounter_department || 'IPD'} (${new Date(wa.encounter_created_at || wa.admitted_at).toLocaleDateString()})`,
+          value: wa.encounter_id,
+          department: wa.encounter_department || 'IPD',
+          created_at: wa.encounter_created_at || wa.admitted_at,
+          wardAdmission: wardAdmission
+        };
+      });
+    }
     
     // Enrich with ward admission info
     return ipdEncounters.map(enc => {
-      const wardAdmission = wardAdmissions.value.find(wa => wa.encounter_id === enc.id);
+      const wardAdmission = wardAdmissions.value.find(wa => wa.encounter_id === enc.id) || enc.wardAdmission;
+      const isPartiallyDischarged = wardAdmission?.partially_discharged_at && !wardAdmission?.discharged_at;
       return {
         ...enc,
-        label: `${enc.label} | Ward: ${wardAdmission?.ward || 'N/A'} | Bed: ${wardAdmission?.bed_number || 'N/A'}`,
+        label: `${enc.label} | Ward: ${wardAdmission?.ward || 'N/A'} | Bed: ${wardAdmission?.bed_number || 'N/A'}${isPartiallyDischarged ? ' (Partially Discharged)' : ''}`,
         wardAdmission: wardAdmission
       };
     });
@@ -1351,12 +1376,23 @@ const searchPatient = async () => {
         ...e, // Store full encounter data
       }));
       
-      // Load ward admissions for IPD filtering
+      // Load ward admissions for IPD filtering (include partially discharged)
       try {
-        const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
+        const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number, false);
         wardAdmissions.value = wardAdmissionsResponse.data || [];
+        console.log('Loaded ward admissions for billing:', wardAdmissions.value);
+        console.log('Active encounters:', activeEncounters.value.map(e => ({ id: e.id, department: e.department })));
+        console.log('Ward admission encounter IDs:', wardAdmissions.value.map(wa => wa.encounter_id));
+        
+        // Auto-switch to IPD mode if ward admissions exist
+        if (wardAdmissions.value.length > 0 && billingModule.value === 'opd') {
+          billingModule.value = 'ipd';
+        }
+        
+        console.log('Filtered encounters (IPD):', filteredEncounters.value);
+        console.log('Filtered encounters count:', filteredEncounters.value.length);
       } catch (error) {
-        console.warn('Failed to load ward admissions:', error);
+        console.error('Failed to load ward admissions:', error);
         wardAdmissions.value = [];
       }
       
@@ -1372,6 +1408,9 @@ const searchPatient = async () => {
           selectedWardAdmission.value = filteredEncounters.value[0].wardAdmission;
         }
         await loadEncounterData();
+      } else if (filteredEncounters.value.length > 0 && billingModule.value === 'ipd') {
+        // If multiple IPD encounters, still try to load bills for all of them
+        await loadExistingBills();
       }
     } else {
       // Multiple results - navigate to search results page
@@ -1488,12 +1527,54 @@ const loadExistingBills = async () => {
     loadingBills.value = true;
     try {
       // Get all IPD encounter IDs from ward admissions
-      const ipdEncounterIds = wardAdmissions.value.map(wa => wa.encounter_id);
+      let ipdEncounterIds = wardAdmissions.value.map(wa => wa.encounter_id);
+      
+      // If no ward admissions loaded yet, try to load them first
+      if (ipdEncounterIds.length === 0 && patient.value.card_number) {
+        console.log('No ward admissions found, attempting to load...');
+        try {
+          const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number, false);
+          wardAdmissions.value = wardAdmissionsResponse.data || [];
+          ipdEncounterIds = wardAdmissions.value.map(wa => wa.encounter_id);
+          console.log('Loaded ward admissions:', wardAdmissions.value);
+        } catch (error) {
+          console.error('Failed to load ward admissions in loadExistingBills:', error);
+        }
+      }
+      
+      // Also include the selected encounter if it's set and not already in the list
+      if (selectedEncounterId.value && !ipdEncounterIds.includes(selectedEncounterId.value)) {
+        console.log('Adding selected encounter to IPD encounter IDs:', selectedEncounterId.value);
+        ipdEncounterIds.push(selectedEncounterId.value);
+      }
+      
+      // Fallback: If still no encounter IDs, try to get all encounters for the patient
+      // This handles cases where ward admissions might not be properly linked
+      if (ipdEncounterIds.length === 0 && activeEncounters.value.length > 0) {
+        console.warn('No IPD encounter IDs from ward admissions, trying all active encounters as fallback');
+        // Filter encounters that might be IPD (have department that suggests IPD)
+        const possibleIPDEncounters = activeEncounters.value.filter(enc => {
+          const dept = enc.department?.toLowerCase() || '';
+          return dept.includes('ward') || dept.includes('ipd') || dept.includes('inpatient') || 
+                 dept.includes('maternity') || dept.includes('surgical');
+        });
+        if (possibleIPDEncounters.length > 0) {
+          ipdEncounterIds = possibleIPDEncounters.map(enc => enc.id);
+          console.log('Using fallback IPD encounter IDs:', ipdEncounterIds);
+        } else {
+          // Last resort: use all active encounters
+          ipdEncounterIds = activeEncounters.value.map(enc => enc.id);
+          console.log('Using all active encounters as last resort:', ipdEncounterIds);
+        }
+      }
       
       if (ipdEncounterIds.length === 0) {
+        console.warn('No IPD encounter IDs found for loading bills');
         existingBills.value = [];
         return;
       }
+      
+      console.log('Loading bills for IPD encounter IDs:', ipdEncounterIds);
       
       // Load bills for all IPD encounters
       const allBillsPromises = ipdEncounterIds.map(encounterId => 
@@ -1505,6 +1586,7 @@ const loadExistingBills = async () => {
       
       const allBillsResponses = await Promise.all(allBillsPromises);
       const allBills = allBillsResponses.flatMap(response => response.data || []);
+      console.log('Loaded bills from API:', allBills);
       
       // Enrich bills with detailed information
       const enrichedBills = await Promise.all(allBills.map(async (bill) => {
@@ -1552,6 +1634,10 @@ const loadExistingBills = async () => {
       }));
       
       existingBills.value = enrichedBills;
+      console.log('Final enriched bills:', enrichedBills.length, 'bills loaded');
+      if (enrichedBills.length === 0) {
+        console.warn('No bills found for IPD encounters. Encounter IDs searched:', ipdEncounterIds);
+      }
     } catch (error) {
       console.error('Failed to load IPD bills:', error);
       existingBills.value = [];
@@ -2634,10 +2720,11 @@ const autoLoadFromRoute = async () => {
           ...e,
         }));
         
-        // Load ward admissions for IPD filtering
+        // Load ward admissions for IPD filtering (include partially discharged)
         try {
-          const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
+          const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number, false);
           wardAdmissions.value = wardAdmissionsResponse.data || [];
+          console.log('Auto-load: Loaded ward admissions:', wardAdmissions.value);
           
           // Determine if this is an IPD encounter
           const isIPD = wardAdmissions.value.some(wa => wa.encounter_id === encounterId);
@@ -2649,7 +2736,7 @@ const autoLoadFromRoute = async () => {
             }
           }
         } catch (error) {
-          console.warn('Failed to load ward admissions:', error);
+          console.error('Failed to load ward admissions:', error);
           wardAdmissions.value = [];
         }
         
