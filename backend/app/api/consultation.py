@@ -4592,6 +4592,62 @@ def get_doctor_note_entries(
     return result
 
 
+@router.get("/patients/{patient_id}/doctor-notes", response_model=List[dict])
+def get_patient_doctor_notes(
+    patient_id: int,
+    exclude_encounter_id: Optional[int] = Query(None, description="Exclude notes from this encounter (current encounter)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all doctor note entries for a patient across all encounters"""
+    from app.models.patient import Patient
+    
+    # Verify patient exists
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Get all encounters for this patient
+    encounters_query = db.query(Encounter).filter(
+        Encounter.patient_id == patient_id,
+        Encounter.archived == False
+    )
+    
+    if exclude_encounter_id:
+        encounters_query = encounters_query.filter(Encounter.id != exclude_encounter_id)
+    
+    encounters = encounters_query.all()
+    
+    if not encounters:
+        return []
+    
+    encounter_ids = [enc.id for enc in encounters]
+    
+    # Get all doctor notes for these encounters
+    doctor_notes = db.query(DoctorNoteEntry).filter(
+        DoctorNoteEntry.encounter_id.in_(encounter_ids)
+    ).order_by(DoctorNoteEntry.created_at.desc()).all()
+    
+    result = []
+    for note in doctor_notes:
+        creator = db.query(User).filter(User.id == note.created_by).first()
+        encounter = db.query(Encounter).filter(Encounter.id == note.encounter_id).first()
+        
+        result.append({
+            "id": note.id,
+            "encounter_id": note.encounter_id,
+            "encounter_date": encounter.created_at if encounter else None,
+            "encounter_department": encounter.department if encounter else None,
+            "notes": note.notes,
+            "created_by": note.created_by,
+            "created_by_name": creator.full_name if creator else None,
+            "created_at": note.created_at,
+            "updated_at": note.updated_at,
+        })
+    
+    return result
+
+
 @router.post("/encounters/{encounter_id}/doctor-notes", response_model=DoctorNoteEntryResponse, status_code=status.HTTP_201_CREATED)
 def create_doctor_note_entry(
     encounter_id: int,

@@ -565,6 +565,17 @@
           <div class="row items-center q-mb-md">
             <div class="text-h6 glass-text">Doctor Notes</div>
             <q-space />
+            <q-btn
+              flat
+              dense
+              icon="history"
+              label="Show Previous Notes"
+              color="primary"
+              @click="showPreviousNotesDialog = true; loadPreviousDoctorNotes()"
+              :loading="loadingPreviousNotes"
+            >
+              <q-tooltip>View doctor notes from previous encounters for this patient</q-tooltip>
+            </q-btn>
           </div>
           
           <!-- Existing Doctor Notes List -->
@@ -1275,7 +1286,70 @@
       </q-card>
     </q-dialog>
 
-    <!-- Old Doctor Notes Dialog (kept for backward compatibility but not used) -->
+    <!-- Previous Doctor Notes Dialog -->
+    <q-dialog v-model="showPreviousNotesDialog" maximized>
+      <q-card>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 glass-text">Previous Doctor Notes</div>
+          <q-space />
+          <q-btn icon="close" flat round dense @click="showPreviousNotesDialog = false" />
+        </q-card-section>
+        <q-card-section>
+          <div v-if="loadingPreviousNotes" class="text-center q-pa-lg">
+            <q-spinner color="primary" size="3em" />
+            <div class="text-subtitle1 q-mt-md">Loading previous notes...</div>
+          </div>
+          <div v-else-if="previousDoctorNotes.length === 0" class="text-center text-secondary q-pa-lg">
+            <q-icon name="info" size="48px" class="q-mb-sm" />
+            <div class="text-subtitle1">No previous doctor notes found for this patient</div>
+          </div>
+          <div v-else>
+            <q-list bordered separator>
+              <q-item
+                v-for="note in previousDoctorNotes"
+                :key="note.id"
+                class="q-pa-md"
+              >
+                <q-item-section>
+                  <q-item-label>
+                    <div class="text-body1" style="white-space: pre-wrap;">
+                      {{ note.notes }}
+                    </div>
+                  </q-item-label>
+                  <q-item-label caption>
+                    <div class="row items-center q-gutter-md q-mt-sm">
+                      <div>
+                        <q-icon name="person" size="14px" class="q-mr-xs" />
+                        <strong>{{ note.created_by_name || 'Unknown' }}</strong>
+                      </div>
+                      <div>
+                        <q-icon name="schedule" size="14px" class="q-mr-xs" />
+                        {{ formatDateTime(note.created_at) }}
+                        <span v-if="note.updated_at && note.updated_at !== note.created_at">
+                          (Updated: {{ formatDateTime(note.updated_at) }})
+                        </span>
+                      </div>
+                      <div v-if="note.encounter_department">
+                        <q-icon name="local_hospital" size="14px" class="q-mr-xs" />
+                        {{ note.encounter_department }}
+                      </div>
+                      <div v-if="note.encounter_date">
+                        <q-icon name="event" size="14px" class="q-mr-xs" />
+                        Encounter: {{ formatDate(note.encounter_date) }}
+                      </div>
+                    </div>
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="primary" @click="showPreviousNotesDialog = false" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- DRG Code Selection Dialog -->
     <q-dialog v-model="showDrgSelectionDialog">
       <q-card style="min-width: 500px; max-width: 700px">
@@ -2073,6 +2147,9 @@ const newDoctorNote = ref('');
 const savingDoctorNote = ref(false);
 const doctorNoteEntries = ref([]);
 const editingDoctorNote = ref({ id: null, notes: '' });
+const showPreviousNotesDialog = ref(false);
+const previousDoctorNotes = ref([]);
+const loadingPreviousNotes = ref(false);
 const editFollowUpDate = ref(false);
 const notesForm = reactive({
   encounter_id: null,
@@ -2684,6 +2761,35 @@ const cancelAddDoctorNote = () => {
   
   newDoctorNote.value = '';
   showAddDoctorNote.value = false;
+};
+
+// Load previous doctor notes for the patient
+const loadPreviousDoctorNotes = async () => {
+  if (!encounterStore.currentEncounter?.patient_id) {
+    $q.notify({
+      type: 'warning',
+      message: 'Patient information not available',
+    });
+    return;
+  }
+  
+  loadingPreviousNotes.value = true;
+  try {
+    const response = await consultationAPI.getPatientDoctorNotes(
+      encounterStore.currentEncounter.patient_id,
+      encounterStore.currentEncounter.id // Exclude current encounter
+    );
+    previousDoctorNotes.value = response.data || [];
+  } catch (error) {
+    console.error('Error loading previous doctor notes:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load previous doctor notes',
+    });
+    previousDoctorNotes.value = [];
+  } finally {
+    loadingPreviousNotes.value = false;
+  }
 };
 
 const loadConsultationNotes = async () => {

@@ -204,6 +204,10 @@ export const consultationAPI = {
   saveConsultationNotes: (data) => api.post('/consultation/notes', data),
   // Doctor note entries endpoints
   getDoctorNoteEntries: (encounterId) => api.get(`/consultation/encounters/${encounterId}/doctor-notes`),
+  getPatientDoctorNotes: (patientId, excludeEncounterId = null) => {
+    const params = excludeEncounterId ? { exclude_encounter_id: excludeEncounterId } : {};
+    return api.get(`/consultation/patients/${patientId}/doctor-notes`, { params });
+  },
   createDoctorNoteEntry: (encounterId, data) => api.post(`/consultation/encounters/${encounterId}/doctor-notes`, data),
   updateDoctorNoteEntry: (noteId, data) => api.put(`/consultation/doctor-notes/${noteId}`, data),
   getPrescriptionsByPatientCard: (cardNumber, encounterId) => 
