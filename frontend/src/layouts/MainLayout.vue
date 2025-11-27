@@ -680,9 +680,6 @@ const startSessionTimer = () => {
     clearInterval(sessionTimerInterval.value);
   }
   
-  // Reset activity tracking
-  lastActivityTime.value = Date.now();
-  
   // Add a small delay before first check to allow token to be fully set
   setTimeout(() => {
     // Update immediately after delay
@@ -693,8 +690,6 @@ const startSessionTimer = () => {
       updateSessionTimer();
     }, 1000);
   }, 1000); // 1 second delay to allow token to be properly set
-  
-  // Idle check interval is disabled - no idle timeout enforcement
 };
 
 // Stop session timer
