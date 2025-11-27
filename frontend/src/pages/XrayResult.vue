@@ -108,6 +108,10 @@
         </div>
         <div class="row q-gutter-md q-mt-md">
           <div class="col-12 col-md-4">
+            <div class="text-caption text-grey-7">Requested By</div>
+            <div class="text-body1 text-weight-medium">{{ investigation.requested_by_name || 'N/A' }}</div>
+          </div>
+          <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">Confirmed By</div>
             <div class="text-body1 text-weight-medium">{{ investigation.confirmed_by_name || 'N/A' }}</div>
           </div>

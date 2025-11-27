@@ -50,55 +50,115 @@ api.interceptors.request.use(
 );
 
 // Response interceptor - Handle errors
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  
+  failedQueue = [];
+};
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Unauthorized - clear token and redirect to login
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (error.response?.status === 401 && !originalRequest._retry) {
       // Only redirect if not already on login page to avoid redirect loops
-      if (window.location.pathname !== '/login') {
-        // Check if token was just set (within last 5 seconds) - might be clock sync issue
-        const token = localStorage.getItem('auth_token');
-        if (token) {
-          try {
-            // Try to decode token to check age
-            const parts = token.split('.');
-            if (parts.length === 3) {
-              const base64Url = parts[1];
-              const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-              const jsonPayload = decodeURIComponent(
-                atob(base64)
-                  .split('')
-                  .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-                  .join('')
-              );
-              const payload = JSON.parse(jsonPayload);
-              
-              // Check if token was issued very recently (within last 5 seconds)
-              if (payload.iat) {
-                const tokenAge = Date.now() - (payload.iat * 1000);
-                if (tokenAge < 5000) {
-                  // Token is very new, might be clock sync issue - don't logout immediately
-                  console.warn('401 error but token is very new (age:', tokenAge, 'ms), might be clock sync - not logging out');
-                  return Promise.reject(error);
-                }
+      if (window.location.pathname === '/login') {
+        return Promise.reject(error);
+      }
+
+      // Check if token was just set (within last 5 seconds) - might be clock sync issue
+      const token = localStorage.getItem('auth_token');
+      if (token) {
+        try {
+          // Try to decode token to check age
+          const parts = token.split('.');
+          if (parts.length === 3) {
+            const base64Url = parts[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(
+              atob(base64)
+                .split('')
+                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+            );
+            const payload = JSON.parse(jsonPayload);
+            
+            // Check if token was issued very recently (within last 5 seconds)
+            if (payload.iat) {
+              const tokenAge = Date.now() - (payload.iat * 1000);
+              if (tokenAge < 5000) {
+                // Token is very new, might be clock sync issue - don't logout immediately
+                console.warn('401 error but token is very new (age:', tokenAge, 'ms), might be clock sync - not logging out');
+                return Promise.reject(error);
               }
             }
-          } catch (e) {
-            // If we can't decode, proceed with logout
-            console.warn('Could not decode token to check age:', e);
           }
+        } catch (e) {
+          // If we can't decode, proceed with refresh attempt
+          console.warn('Could not decode token to check age:', e);
         }
+      }
+
+      // If we're already refreshing, queue this request
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then(token => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return api(originalRequest);
+          })
+          .catch(err => {
+            return Promise.reject(err);
+          });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        // Attempt to refresh the token
+        const response = await api.post('/auth/refresh');
+        const { access_token } = response.data;
         
-        // Token is old enough or we couldn't check - proceed with logout
+        // Update token in storage
+        localStorage.setItem('auth_token', access_token);
+        
+        // Update axios default header
+        originalRequest.headers.Authorization = `Bearer ${access_token}`;
+        
+        // Process queued requests
+        processQueue(null, access_token);
+        
+        // Retry the original request
+        return api(originalRequest);
+      } catch (refreshError) {
+        // Refresh failed - logout user
+        processQueue(refreshError, null);
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
+        
         // Use a small delay to allow any ongoing operations to complete
         setTimeout(() => {
           window.location.href = '/login';
         }, 100);
+        
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
       }
     }
+    
     return Promise.reject(error);
   }
 );

@@ -403,6 +403,7 @@ class InvestigationResponse(BaseModel):
     patient_card_number: Optional[str] = None
     encounter_date: Optional[datetime] = None
     # User names for display
+    requested_by_name: Optional[str] = None
     confirmed_by_name: Optional[str] = None
     completed_by_name: Optional[str] = None
     
@@ -1835,6 +1836,11 @@ def get_investigation(
         raise HTTPException(status_code=404, detail="Investigation not found")
     
     # Get user names
+    requested_by_name = None
+    if investigation.requested_by:
+        requested_user = db.query(User).filter(User.id == investigation.requested_by).first()
+        requested_by_name = requested_user.full_name if requested_user else None
+    
     confirmed_by_name = None
     if investigation.confirmed_by:
         confirmed_user = db.query(User).filter(User.id == investigation.confirmed_by).first()
@@ -1863,6 +1869,7 @@ def get_investigation(
         "patient_name": f"{investigation.encounter.patient.name or ''} {investigation.encounter.patient.surname or ''} {investigation.encounter.patient.other_names or ''}".strip(),
         "patient_card_number": investigation.encounter.patient.card_number,
         "encounter_date": investigation.encounter.created_at,
+        "requested_by_name": requested_by_name,
         "confirmed_by_name": confirmed_by_name,
         "completed_by_name": completed_by_name,
     }
@@ -2093,6 +2100,11 @@ def get_investigations_by_type(
     result = []
     for inv in investigations:
         # Get user names
+        requested_by_name = None
+        if inv.requested_by:
+            requested_user = db.query(User).filter(User.id == inv.requested_by).first()
+            requested_by_name = requested_user.full_name if requested_user else None
+        
         confirmed_by_name = None
         if inv.confirmed_by:
             confirmed_user = db.query(User).filter(User.id == inv.confirmed_by).first()
@@ -2121,6 +2133,7 @@ def get_investigations_by_type(
             "patient_name": f"{inv.encounter.patient.name or ''} {inv.encounter.patient.surname or ''} {inv.encounter.patient.other_names or ''}".strip(),
             "patient_card_number": inv.encounter.patient.card_number,
             "encounter_date": inv.encounter.created_at,
+            "requested_by_name": requested_by_name,
             "confirmed_by_name": confirmed_by_name,
             "completed_by_name": completed_by_name,
         }
@@ -8735,6 +8748,11 @@ def get_inpatient_investigations_by_type(
     for inv in investigations:
         try:
             # Get user names
+            requested_by_name = None
+            if inv.requested_by:
+                requested_user = db.query(User).filter(User.id == inv.requested_by).first()
+                requested_by_name = requested_user.full_name if requested_user else None
+            
             confirmed_by_name = None
             if inv.confirmed_by:
                 confirmed_user = db.query(User).filter(User.id == inv.confirmed_by).first()
@@ -8790,6 +8808,7 @@ def get_inpatient_investigations_by_type(
                 "patient_name": patient_name,
                 "patient_card_number": patient_card_number,
                 "encounter_date": inv.created_at,  # Use investigation created_at (request date) instead of encounter date
+                "requested_by_name": requested_by_name,
                 "confirmed_by_name": confirmed_by_name,
                 "completed_by_name": completed_by_name,
                 "ward": ward,
@@ -8843,6 +8862,11 @@ def get_inpatient_investigation(
         raise HTTPException(status_code=404, detail="Investigation not found")
     
     # Get user names
+    requested_by_name = None
+    if investigation.requested_by:
+        requested_user = db.query(User).filter(User.id == investigation.requested_by).first()
+        requested_by_name = requested_user.full_name if requested_user else None
+    
     confirmed_by_name = None
     if investigation.confirmed_by:
         confirmed_user = db.query(User).filter(User.id == investigation.confirmed_by).first()
@@ -8900,6 +8924,7 @@ def get_inpatient_investigation(
         "patient_name": patient_name,
         "patient_card_number": patient_card_number,
         "encounter_date": investigation.created_at,
+        "requested_by_name": requested_by_name,
         "confirmed_by_name": confirmed_by_name,
         "completed_by_name": completed_by_name,
         "ward": ward,

@@ -553,8 +553,7 @@ const refreshingToken = ref(false);
 
 // Idle timeout tracking - DISABLED: No idle timeout enforcement
 // Users can stay logged in indefinitely, tokens will auto-refresh
-const lastActivityTime = ref(Date.now());
-const idleCheckInterval = ref(null);
+// Activity tracking removed - not needed since we're not enforcing idle timeout
 
 // Computed session time in minutes
 const sessionTimeLeftMinutes = computed(() => {
@@ -624,12 +623,13 @@ const updateSessionTimer = () => {
   // Use the actual timeLeft (without grace period) for display
   sessionTimeLeft.value = timeLeft;
   
-  // Auto-refresh token when 5 minutes or less remaining OR when token has expired
-  // Token expiration is 1 hour, so refresh when 5 minutes or less remain, or if expired
+  // Auto-refresh token when 10 minutes or less remaining OR when token has expired
+  // Token expiration is 1 hour, so refresh proactively when 10 minutes remain
   const minutesLeft = timeLeft / (60 * 1000);
   if (!refreshingToken.value) {
-    // Refresh if token is about to expire (5 minutes or less) or has expired (with grace period)
-    if ((minutesLeft <= 5 && minutesLeft > 0) || timeLeftWithGrace <= 0) {
+    // Refresh proactively if token is about to expire (10 minutes or less) or has expired (with grace period)
+    // This ensures users stay logged in seamlessly without interruption
+    if ((minutesLeft <= 10 && minutesLeft > 0) || timeLeftWithGrace <= 0) {
       // Refresh token automatically - don't logout users
       refreshToken();
     }
@@ -670,20 +670,8 @@ const refreshToken = async () => {
   }
 };
 
-// Check for idle timeout - DISABLED: No idle timeout enforcement
-const checkIdleTimeout = () => {
-  // Idle timeout checking is disabled - users can stay logged in indefinitely
-  // Token will auto-refresh when it expires
-  return;
-};
-
-// Track user activity (for reference only - no idle timeout enforcement)
-const updateActivity = () => {
-  // Only update if component is still mounted and authenticated
-  if (authStore.isAuthenticated) {
-    lastActivityTime.value = Date.now();
-  }
-};
+// Idle timeout is completely disabled - users can stay logged in indefinitely
+// Token will auto-refresh proactively before expiration (when 10 minutes remain)
 
 // Start session timer
 const startSessionTimer = () => {
@@ -715,10 +703,7 @@ const stopSessionTimer = () => {
     clearInterval(sessionTimerInterval.value);
     sessionTimerInterval.value = null;
   }
-  if (idleCheckInterval.value) {
-    clearInterval(idleCheckInterval.value);
-    idleCheckInterval.value = null;
-  }
+  // Idle check interval removed - no longer needed
 };
 
 // Patient search fields
@@ -1043,51 +1028,28 @@ const handleLogout = () => {
 
 // Start timer when component mounts
 onMounted(() => {
-  // Only set up timers and listeners if authenticated
+  // Only set up timer if authenticated
   // This prevents errors on login page where MainLayout might be loaded but not displayed
   if (authStore.isAuthenticated && authStore.token) {
     startSessionTimer();
-    
-    // Add event listeners for user activity (only when authenticated)
-    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-    activityEvents.forEach(event => {
-      document.addEventListener(event, updateActivity, { passive: true });
-    });
+    // No activity tracking needed - idle timeout is disabled
   }
 });
 
 // Stop timer when component unmounts
 onUnmounted(() => {
   stopSessionTimer();
-  
-  // Remove event listeners
-  const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-  activityEvents.forEach(event => {
-    document.removeEventListener(event, updateActivity);
-  });
-  
-  // Note: Idle timeout is disabled, so no warning dialog to close
+  // No activity tracking listeners to remove - idle timeout is disabled
 });
 
 // Watch for authentication changes
 watch(() => authStore.isAuthenticated, (isAuth) => {
   if (isAuth && authStore.token) {
     startSessionTimer();
-    
-    // Add event listeners when user becomes authenticated
-    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-    activityEvents.forEach(event => {
-      document.addEventListener(event, updateActivity, { passive: true });
-    });
+    // No activity tracking needed - idle timeout is disabled
   } else {
     stopSessionTimer();
     sessionTimeLeft.value = null;
-    
-    // Remove event listeners when user logs out
-    const activityEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-    activityEvents.forEach(event => {
-      document.removeEventListener(event, updateActivity);
-    });
   }
 });
 
