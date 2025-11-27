@@ -1744,23 +1744,23 @@
                       </div>
                     </div>
 
-                    <!-- Attachment -->
-                    <div v-if="currentResult.attachment_path" class="q-mt-md">
+                    <!-- Attachments -->
+                    <div v-if="parsedAttachments && parsedAttachments.length > 0" class="q-mt-md">
                       <q-separator class="q-my-md" />
                       <div class="text-subtitle2 q-mb-sm glass-text">
                         <q-icon name="attach_file" class="q-mr-xs" />
-                        Attachment
+                        Attachment{{ parsedAttachments.length > 1 ? 's' : '' }} ({{ parsedAttachments.length }})
                       </div>
-                      <div class="row items-center q-gutter-md">
+                      <div v-for="(attachmentPath, index) in parsedAttachments" :key="index" class="row items-center q-gutter-md q-mb-md" style="background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; padding: 12px;">
                         <div class="col-auto">
                           <q-icon name="description" size="32px" color="primary" />
                         </div>
                         <div class="col">
                           <div class="text-body2 text-weight-medium">
-                            {{ currentResult.attachment_path.split('/').pop() || 'Attachment' }}
+                            {{ attachmentPath.split('/').pop() || `Attachment ${index + 1}` }}
                           </div>
                           <div class="text-caption text-grey-7">
-                            Click to download the attached file
+                            Click to view the attached file
                           </div>
                         </div>
                         <div class="col-auto">
@@ -1769,7 +1769,8 @@
                             label="View"
                             color="primary"
                             outline
-                            @click="viewResultAttachment(investigationDetails)"
+                            size="sm"
+                            @click="viewResultAttachment(investigationDetails, attachmentPath)"
                           />
                         </div>
                       </div>
@@ -3064,7 +3065,27 @@ const viewInvestigationResult = async (investigation) => {
   }
 };
 
-const viewResultAttachment = async (investigation) => {
+// Parse attachment_path to handle both single string and JSON array
+const parsedAttachments = computed(() => {
+  if (!currentResult.value?.attachment_path) {
+    return [];
+  }
+  
+  try {
+    // Try to parse as JSON array
+    const parsed = JSON.parse(currentResult.value.attachment_path);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    // If not an array, treat as single string
+    return [currentResult.value.attachment_path];
+  } catch (e) {
+    // If parsing fails, treat as single string
+    return [currentResult.value.attachment_path];
+  }
+});
+
+const viewResultAttachment = async (investigation, attachmentPath = null) => {
   if (!investigation || !currentResult.value?.attachment_path) {
     $q.notify({
       type: 'warning',
@@ -3077,11 +3098,14 @@ const viewResultAttachment = async (investigation) => {
   try {
     let viewResponse = null;
     if (investigation.investigation_type === 'lab') {
+      // Lab results only have a single attachment
       viewResponse = await consultationAPI.downloadLabResultAttachment(investigation.id, true);
     } else if (investigation.investigation_type === 'scan') {
-      viewResponse = await consultationAPI.downloadScanResultAttachment(investigation.id, null, true);
+      // For scan, pass the specific attachment path if provided
+      viewResponse = await consultationAPI.downloadScanResultAttachment(investigation.id, attachmentPath, true);
     } else if (investigation.investigation_type === 'xray') {
-      viewResponse = await consultationAPI.downloadXrayResultAttachment(investigation.id, null, true);
+      // For xray, pass the specific attachment path if provided
+      viewResponse = await consultationAPI.downloadXrayResultAttachment(investigation.id, attachmentPath, true);
     } else {
       $q.notify({
         type: 'warning',

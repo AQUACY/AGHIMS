@@ -378,8 +378,8 @@ const loadInvestigation = async () => {
           throw ipdError;
         }
       }
-    } else {
-      // Default: Try OPD first (most common case)
+    } else if (source === 'opd') {
+      // Explicitly OPD - try OPD first
       try {
         invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
         investigation.value = invResponse.data;
@@ -390,7 +390,7 @@ const loadInvestigation = async () => {
           throw new Error('Patient mismatch');
         }
       } catch (opdError) {
-        // If OPD fails with 404 or patient mismatch, try IPD
+        // If OPD fails with 404 or patient mismatch, try IPD as fallback
         if (opdError.response?.status === 404 || opdError.message === 'Patient mismatch') {
           try {
             invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
@@ -413,6 +413,57 @@ const loadInvestigation = async () => {
           throw opdError;
         }
       }
+    } else {
+      // Source not specified: Try IPD first, then OPD (to handle IPD investigations correctly)
+      // This ensures IPD investigations are found even if source parameter is missing
+      let found = false;
+      
+      // Try IPD first
+      try {
+        invResponse = await consultationAPI.getInpatientInvestigation(parseInt(investigationId));
+        investigation.value = invResponse.data;
+        isInpatient = true;
+        found = true;
+        
+        // Verify patient card number matches if provided
+        if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+          throw new Error('Patient mismatch');
+        }
+      } catch (ipdError) {
+        // IPD not found or mismatch - try OPD
+        if (ipdError.response?.status === 404 || ipdError.message === 'Patient mismatch') {
+          try {
+            invResponse = await consultationAPI.getInvestigation(parseInt(investigationId));
+            investigation.value = invResponse.data;
+            isInpatient = false;
+            found = true;
+            
+            // Verify patient card number matches
+            if (expectedCardNumber && investigation.value.patient_card_number !== expectedCardNumber) {
+              throw new Error('Investigation not found for this patient');
+            }
+          } catch (opdError) {
+            $q.notify({
+              type: 'negative',
+              message: 'Investigation not found or patient mismatch',
+            });
+            router.push('/xray');
+            return;
+          }
+        } else {
+          // Other error from IPD call - rethrow
+          throw ipdError;
+        }
+      }
+      
+      if (!found) {
+        $q.notify({
+          type: 'negative',
+          message: 'Investigation not found',
+        });
+        router.push('/xray');
+        return;
+      }
     }
     
     // Store investigation source for reference
@@ -427,7 +478,47 @@ const loadInvestigation = async () => {
       return;
     }
 
-    // Load encounter details first (for both OPD and IPD)
+    // For IPD investigations, use patient_id directly from investigation response if available
+    // This ensures we get the correct patient even if encounter_id points to a different encounter
+    if (isInpatient) {
+      if (investigation.value.patient_id) {
+        // Use patient_id directly from investigation response (most reliable)
+        try {
+          const patientResponse = await patientsAPI.get(investigation.value.patient_id);
+          patient.value = patientResponse.data;
+        } catch (error) {
+          console.error('Failed to load patient by ID from investigation:', error);
+          // Fallback to card number if patient_id lookup fails
+          if (investigation.value.patient_card_number) {
+            try {
+              const patientResponse = await patientsAPI.getByCard(investigation.value.patient_card_number);
+              const patients = patientResponse.data || [];
+              if (patients.length > 0) {
+                // Find patient that matches the patient_id if available, otherwise use first
+                patient.value = investigation.value.patient_id 
+                  ? patients.find(p => p.id === investigation.value.patient_id) || patients[0]
+                  : patients[0];
+              }
+            } catch (cardError) {
+              console.error('Failed to load patient by card from investigation:', cardError);
+            }
+          }
+        }
+      } else if (investigation.value.patient_card_number) {
+        // Fallback: use card number if patient_id not available
+        try {
+          const patientResponse = await patientsAPI.getByCard(investigation.value.patient_card_number);
+          const patients = patientResponse.data || [];
+          if (patients.length > 0) {
+            patient.value = patients[0];
+          }
+        } catch (error) {
+          console.error('Failed to load patient by card from investigation:', error);
+        }
+      }
+    }
+    
+    // Load encounter details (for both OPD and IPD)
     if (investigation.value.encounter_id) {
       try {
         const encounterResponse = await encountersAPI.get(investigation.value.encounter_id);
@@ -436,21 +527,52 @@ const loadInvestigation = async () => {
         // Load bills for this encounter
         await loadEncounterBills(encounter.value.id);
         
+        // Verify encounter matches investigation's patient_card_number if available
+        if (investigation.value.patient_card_number && encounter.value.patient_card_number) {
+          if (investigation.value.patient_card_number !== encounter.value.patient_card_number) {
+            console.warn(`Mismatch: Investigation patient card (${investigation.value.patient_card_number}) != Encounter patient card (${encounter.value.patient_card_number})`);
+            $q.notify({
+              type: 'warning',
+              message: 'Warning: Patient information mismatch detected. Please verify the investigation belongs to this patient.',
+            });
+          }
+        }
+        
         // Load patient from encounter to ensure correct patient
-        if (encounter.value && encounter.value.patient_id) {
+        // For IPD, we already loaded patient from investigation above, so only load for OPD
+        if (!isInpatient && encounter.value && encounter.value.patient_id) {
           try {
             const patientResponse = await patientsAPI.get(encounter.value.patient_id);
             patient.value = patientResponse.data;
+            
+            // Double-check: verify patient card number matches investigation
+            if (investigation.value.patient_card_number && patient.value.card_number) {
+              if (investigation.value.patient_card_number !== patient.value.card_number) {
+                console.error(`CRITICAL: Patient card mismatch! Investigation: ${investigation.value.patient_card_number}, Patient: ${patient.value.card_number}`);
+                $q.notify({
+                  type: 'negative',
+                  message: `Error: Patient mismatch detected. Investigation is for ${investigation.value.patient_card_number} but encounter is for ${patient.value.card_number}`,
+                });
+              }
+            }
           } catch (error) {
             console.error('Failed to load patient by ID:', error);
-            // Fallback: try loading by card number
+            // Fallback: try loading by card number from investigation
             if (investigation.value.patient_card_number) {
               try {
                 const patientResponse = await patientsAPI.getByCard(investigation.value.patient_card_number);
                 const patients = patientResponse.data || [];
                 if (patients.length > 0) {
-                  // Find the patient that matches the encounter's patient_id
-                  const correctPatient = patients.find(p => p.id === encounter.value.patient_id) || patients[0];
+                  // For IPD, prefer the patient that matches the encounter's patient_id if available
+                  let correctPatient = patients[0];
+                  if (encounter.value && encounter.value.patient_id) {
+                    const matchingPatient = patients.find(p => p.id === encounter.value.patient_id);
+                    if (matchingPatient) {
+                      correctPatient = matchingPatient;
+                    } else {
+                      console.warn(`Patient from card lookup doesn't match encounter patient_id. Using first match.`);
+                    }
+                  }
                   patient.value = correctPatient;
                 } else {
                   throw new Error('Patient not found');
@@ -461,7 +583,7 @@ const loadInvestigation = async () => {
                 if (investigation.value.patient_name) {
                   const nameParts = investigation.value.patient_name.split(' ');
                   patient.value = {
-                    id: encounter.value.patient_id,
+                    id: encounter.value?.patient_id || null,
                     card_number: investigation.value.patient_card_number,
                     name: nameParts[0] || 'N/A',
                     surname: nameParts.slice(1).join(' ') || '',
@@ -476,11 +598,30 @@ const loadInvestigation = async () => {
               }
             }
           }
+        } else if (!isInpatient && !patient.value && investigation.value.patient_card_number) {
+          // For OPD, if patient not loaded, try by card number
+          try {
+            const patientResponse = await patientsAPI.getByCard(investigation.value.patient_card_number);
+            const patients = patientResponse.data || [];
+            if (patients.length > 0) {
+              patient.value = patients[0];
+            }
+          } catch (cardError) {
+            console.error('Failed to load patient by card:', cardError);
+          }
+        }
+        
+        // For IPD, verify patient matches if we have both - but don't override patient from investigation
+        if (isInpatient && patient.value && encounter.value && encounter.value.patient_id) {
+          if (patient.value.id !== encounter.value.patient_id) {
+            console.warn('Patient ID mismatch between investigation and encounter. Using patient from investigation.');
+            // Keep the patient from investigation (already loaded above) - don't override
+          }
         }
       } catch (error) {
         console.error('Failed to load encounter:', error);
-        // Fallback: try loading patient by card number if encounter fails
-        if (investigation.value.patient_card_number) {
+        // If encounter fails but we have patient from investigation, that's okay
+        if (!patient.value && investigation.value.patient_card_number) {
           try {
             const patientResponse = await patientsAPI.getByCard(investigation.value.patient_card_number);
             const patients = patientResponse.data || [];
@@ -493,8 +634,8 @@ const loadInvestigation = async () => {
         }
       }
     } else {
-      // No encounter_id - fallback to card number lookup
-      if (investigation.value.patient_card_number) {
+      // No encounter_id - load patient by card number from investigation
+      if (!patient.value && investigation.value.patient_card_number) {
         try {
           const patientResponse = await patientsAPI.getByCard(investigation.value.patient_card_number);
           const patients = patientResponse.data || [];

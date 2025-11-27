@@ -8867,9 +8867,11 @@ def get_inpatient_investigation(
     encounter_id = None
     ward_admission_id = None
     
+    patient_id = None
     if patient:
         patient_name = f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown"
         patient_card_number = patient.card_number
+        patient_id = patient.id
     
     if ward_admission:
         ward = ward_admission.ward
@@ -8882,6 +8884,7 @@ def get_inpatient_investigation(
         "clinical_review_id": investigation.clinical_review_id,
         "ward_admission_id": ward_admission_id,
         "encounter_id": encounter_id,
+        "patient_id": patient_id,  # Include patient_id for direct patient lookup
         "gdrg_code": investigation.gdrg_code,
         "procedure_name": investigation.procedure_name,
         "investigation_type": investigation.investigation_type,
