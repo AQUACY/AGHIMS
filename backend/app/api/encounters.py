@@ -252,21 +252,47 @@ def update_encounter(
         encounter.procedure_name = encounter_data.procedure_name
     if encounter_data.ccc_number is not None:
         # Enforce single insured encounter per patient per day
+        # Exception: Allow CCC number for ward/IPD encounters even if another insured encounter exists today
         if encounter_data.ccc_number and encounter_data.ccc_number.strip():
             from sqlalchemy import func
-            existing_other = db.query(Encounter).filter(
-                Encounter.patient_id == encounter.patient_id,
-                Encounter.id != encounter_id,
-                Encounter.archived == False,
-                Encounter.ccc_number.isnot(None),
-                Encounter.ccc_number != "",
-                func.date(Encounter.created_at) == func.date(encounter.created_at)
+            from app.models.ward_admission import WardAdmission
+            
+            # Check if this encounter is a ward/IPD encounter
+            # Either it already has a ward admission, or the department being updated to is a ward
+            is_ward_encounter = False
+            
+            # Check if encounter already has a ward admission
+            ward_admission = db.query(WardAdmission).filter(
+                WardAdmission.encounter_id == encounter_id
             ).first()
-            if existing_other:
-                raise HTTPException(
-                    status_code=400,
-                    detail="An insured encounter already exists today for this patient. This encounter cannot have a CCC number."
+            if ward_admission:
+                is_ward_encounter = True
+            
+            # Check if the department being updated to is a ward department
+            # (check the new department value if provided, otherwise check current department)
+            department_to_check = encounter_data.department if encounter_data.department is not None else encounter.department
+            if department_to_check:
+                # Common ward department patterns
+                ward_keywords = ['ward', 'ipd', 'inpatient', 'maternity', 'surgical', 'medical']
+                is_ward_encounter = is_ward_encounter or any(
+                    keyword in department_to_check.lower() for keyword in ward_keywords
                 )
+            
+            # Only enforce the single insured encounter rule if this is NOT a ward encounter
+            if not is_ward_encounter:
+                existing_other = db.query(Encounter).filter(
+                    Encounter.patient_id == encounter.patient_id,
+                    Encounter.id != encounter_id,
+                    Encounter.archived == False,
+                    Encounter.ccc_number.isnot(None),
+                    Encounter.ccc_number != "",
+                    func.date(Encounter.created_at) == func.date(encounter.created_at)
+                ).first()
+                if existing_other:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="An insured encounter already exists today for this patient. This encounter cannot have a CCC number."
+                    )
         encounter.ccc_number = encounter_data.ccc_number
     if encounter_data.status is not None:
         # Validate status transition if provided
