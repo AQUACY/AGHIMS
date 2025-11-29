@@ -140,6 +140,11 @@
           row-key="id"
           flat
           :loading="loading"
+          v-model:pagination="pagination"
+          @request="onRequest"
+          binary-state-sort
+          server-side
+          :rows-per-page-options="[50]"
         >
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
@@ -243,6 +248,13 @@ const filterCardNumber = ref('');
 const filterClaimId = ref('');
 const filtersLocked = ref(false);
 
+// Pagination
+const pagination = ref({
+  page: 1,
+  rowsPerPage: 50,
+  rowsNumber: 0
+});
+
 // LocalStorage key for locked filters
 const FILTERS_LOCK_KEY = 'claims_filters_locked';
 const FILTERS_STORAGE_KEY = 'claims_filters';
@@ -297,7 +309,8 @@ const exportByDateRange = async () => {
 
 const searchEncounter = async () => {
   if (!searchEncounterId.value) {
-    loadFinalizedEncounters();
+    pagination.value.page = 1;
+    loadFinalizedEncounters(1);
     return;
   }
 
@@ -312,6 +325,8 @@ const searchEncounter = async () => {
         claim_id: null,
         claim_status: null,
       }];
+      pagination.value.rowsNumber = 1;
+      pagination.value.page = 1;
     } else {
       $q.notify({
         type: 'warning',
@@ -323,6 +338,8 @@ const searchEncounter = async () => {
       type: 'negative',
       message: error.response?.data?.detail || 'Failed to fetch encounter',
     });
+    finalizedEncounters.value = [];
+    pagination.value.rowsNumber = 0;
   } finally {
     loading.value = false;
   }
@@ -335,13 +352,14 @@ const clearFilters = () => {
   filterCardNumber.value = '';
   filterClaimId.value = '';
   searchEncounterId.value = '';
+  pagination.value.page = 1; // Reset to first page
   
   // Save cleared filters if locked
   if (filtersLocked.value) {
     saveFiltersToStorage();
   }
   
-  loadFinalizedEncounters();
+  loadFinalizedEncounters(1);
 };
 
 const toggleFiltersLock = () => {
@@ -425,7 +443,7 @@ const finalizeClaim = async (claimId) => {
   }).onOk(async () => {
     try {
       await claimsStore.finalizeClaim(claimId);
-      loadFinalizedEncounters();
+      loadFinalizedEncounters(pagination.value.page);
     } catch (error) {
       // Error handled in store
     }
@@ -440,7 +458,7 @@ const reopenClaim = async (claimId) => {
   }).onOk(async () => {
     try {
       await claimsStore.reopenClaim(claimId);
-      loadFinalizedEncounters();
+      loadFinalizedEncounters(pagination.value.page);
     } catch (error) {
       // Error handled in store
     }
@@ -470,18 +488,55 @@ const viewClaim = (claimId) => {
   $router.push(`/claims/edit/${claimId}?view=true`);
 };
 
-const loadFinalizedEncounters = async () => {
+const loadFinalizedEncounters = async (page = 1) => {
   loading.value = true;
   try {
+    const skip = (page - 1) * pagination.value.rowsPerPage;
     const response = await claimsAPI.getEligibleEncounters(
       claimType.value,
       filterStartDate.value || null,
       filterEndDate.value || null,
       filterClaimStatus.value || null,
       filterCardNumber.value || null,
-      filterClaimId.value || null
+      filterClaimId.value || null,
+      skip,
+      pagination.value.rowsPerPage
     );
-    finalizedEncounters.value = response.data.map(encounter => ({
+    
+    // Handle response - check if it's the new paginated format or old format
+    const responseData = response.data;
+    let items = [];
+    let total = 0;
+    
+    if (responseData && responseData.items && Array.isArray(responseData.items)) {
+      // New paginated format
+      items = responseData.items;
+      total = responseData.total || 0;
+    } else if (Array.isArray(responseData)) {
+      // Old format (array directly) - fallback for compatibility
+      items = responseData;
+      total = responseData.length;
+    } else {
+      console.error('Unexpected response format:', responseData);
+      throw new Error('Unexpected response format from API');
+    }
+    
+    // Update pagination info - create new object to ensure reactivity
+    pagination.value = {
+      page: page,
+      rowsPerPage: 50,
+      rowsNumber: total
+    };
+    
+    console.log('Pagination updated:', {
+      page: pagination.value.page,
+      rowsPerPage: pagination.value.rowsPerPage,
+      rowsNumber: pagination.value.rowsNumber,
+      totalFromAPI: total,
+      itemsCount: items.length
+    });
+    
+    finalizedEncounters.value = items.map(encounter => ({
       id: encounter.id,
       ward_admission_id: encounter.ward_admission_id || null,
       patient_name: encounter.patient_name,
@@ -493,20 +548,36 @@ const loadFinalizedEncounters = async () => {
       department: encounter.department,
     }));
   } catch (error) {
+    console.error('Error loading encounters:', error);
+    const errorMessage = error.response?.data?.detail || error.message || 'Failed to load encounters';
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to load encounters',
+      message: errorMessage,
+      timeout: 5000,
     });
     finalizedEncounters.value = [];
+    pagination.value.rowsNumber = 0;
   } finally {
     loading.value = false;
   }
 };
 
+const onRequest = (props) => {
+  const { page, rowsPerPage } = props.pagination;
+  // Lock rowsPerPage to 50 and update pagination
+  pagination.value = {
+    ...pagination.value,
+    page: page,
+    rowsPerPage: 50
+  };
+  loadFinalizedEncounters(page);
+};
+
 watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
-    loadFinalizedEncounters();
+    pagination.value.page = 1; // Reset to first page when filters change
+    loadFinalizedEncounters(1);
   }
   
   // Save filters if locked
@@ -525,7 +596,7 @@ onMounted(() => {
     loadFiltersFromStorage();
   }
   
-  loadFinalizedEncounters();
+  loadFinalizedEncounters(1);
 });
 </script>
 

@@ -1151,6 +1151,14 @@ const loadClaimData = async () => {
     const response = await claimsAPI.getEditDetails(claimId.value);
     const data = response.data;
     
+    // Debug: Log OPD encounter info if available
+    if (data.debug) {
+      console.log('OPD Encounter Debug Info:', data.debug);
+      console.log('Diagnoses in response:', data.diagnoses?.length || 0);
+      console.log('Prescriptions in response:', data.prescriptions?.length || 0);
+      console.log('Investigations in response:', data.investigations?.length || 0);
+    }
+    
     // Set claim status
     claimStatus.value = data.claim.status;
     
@@ -1190,8 +1198,23 @@ const loadClaimData = async () => {
       };
     });
     
-    // Reset and populate diagnoses (always populate all 4 slots)
-    diagnosesList.value = Array.from({ length: 4 }, (_, idx) => {
+    // Determine if this is an IPD claim
+    const isIPD = (data.claim.type_of_service || 'OPD').toUpperCase() === 'IPD';
+    
+    // For IPD claims, use actual data length (OPD + IPD can have more items)
+    // For OPD claims, pad to minimum required slots
+    const diagnosesLength = isIPD 
+      ? Math.max(4, data.diagnoses ? data.diagnoses.length : 4)
+      : 4;
+    const investigationsLength = isIPD
+      ? Math.max(5, data.investigations ? data.investigations.length : 5)
+      : 5;
+    const prescriptionsLength = isIPD
+      ? Math.max(5, data.prescriptions ? data.prescriptions.length : 5)
+      : 5;
+    
+    // Reset and populate diagnoses
+    diagnosesList.value = Array.from({ length: diagnosesLength }, (_, idx) => {
       const diag = data.diagnoses && data.diagnoses[idx] ? data.diagnoses[idx] : null;
       return {
         index: idx,
@@ -1203,8 +1226,8 @@ const loadClaimData = async () => {
       };
     });
     
-    // Reset and populate investigations (always populate all 5 slots)
-    investigationsList.value = Array.from({ length: 5 }, (_, idx) => {
+    // Reset and populate investigations
+    investigationsList.value = Array.from({ length: investigationsLength }, (_, idx) => {
       const inv = data.investigations && data.investigations[idx] ? data.investigations[idx] : null;
       return {
         index: idx,
@@ -1215,8 +1238,8 @@ const loadClaimData = async () => {
       };
     });
     
-    // Reset and populate prescriptions (always populate all 5 slots)
-    prescriptionsList.value = Array.from({ length: 5 }, (_, idx) => {
+    // Reset and populate prescriptions
+    prescriptionsList.value = Array.from({ length: prescriptionsLength }, (_, idx) => {
       const presc = data.prescriptions && data.prescriptions[idx] ? data.prescriptions[idx] : null;
       return {
         index: idx,

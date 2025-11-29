@@ -133,19 +133,19 @@ const routes = [
         path: '/claims',
         name: 'Claims',
         component: () => import('../pages/Claims.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
         path: '/claims/edit/:claimId',
         name: 'EditClaim',
         component: () => import('../pages/EditClaim.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
         path: '/claims/generate/:encounterId',
         name: 'GenerateClaim',
         component: () => import('../pages/GenerateClaim.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
         path: '/admin/price-list',

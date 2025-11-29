@@ -653,8 +653,8 @@ export const priceListAPI = {
 // Claims endpoints
 export const claimsAPI = {
   create: (data) => api.post('/claims/', data),
-  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null) => {
-    const params = {};
+  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, skip = 0, limit = 50) => {
+    const params = { skip, limit };
     if (type) params.claim_type = type;
     if (startDate) params.start_date = startDate;
     if (endDate) params.end_date = endDate;
