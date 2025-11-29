@@ -776,5 +776,61 @@ export const systemAPI = {
   getApplicationDate: () => api.get('/system/date'),
 };
 
+export const misReportsAPI = {
+  getConsultingRoomRegister: (startDate, endDate, department = null) => {
+    const params = { start_date: startDate, end_date: endDate };
+    if (department) params.department = department;
+    return api.get('/mis-reports/consulting-room-register', { params });
+  },
+  exportConsultingRoomRegister: (startDate, endDate, department = null, clinicName = 'Asesewa Government Hospital') => {
+    const params = { start_date: startDate, end_date: endDate, clinic_name: clinicName };
+    if (department) params.department = department;
+    return api.get('/mis-reports/consulting-room-register/export', { 
+      params,
+      responseType: 'blob'
+    });
+  },
+  getStatementOfOutpatient: (startDate, endDate, departments = null) => {
+    const params = { start_date: startDate, end_date: endDate };
+    if (departments) params.departments = departments;
+    return api.get('/mis-reports/statement-of-outpatient', { params });
+  },
+  exportStatementOfOutpatient: (startDate, endDate, departments = null, clinicName = 'Asesewa Government Hospital', clinicCity = 'Asesewa', clinicRegion = 'N/A', clinicDistrict = 'N/A') => {
+    const params = { 
+      start_date: startDate, 
+      end_date: endDate, 
+      clinic_name: clinicName,
+      clinic_city: clinicCity,
+      clinic_region: clinicRegion,
+      clinic_district: clinicDistrict
+    };
+    if (departments) params.departments = departments;
+    return api.get('/mis-reports/statement-of-outpatient/export', { 
+      params,
+      responseType: 'blob'
+    });
+  },
+  getOPDMorbidity: (startDate, endDate, departments = null) => {
+    const params = { start_date: startDate, end_date: endDate };
+    if (departments) params.departments = departments;
+    return api.get('/mis-reports/opd-morbidity', { params });
+  },
+  exportOPDMorbidity: (startDate, endDate, departments = null, clinicName = 'Asesewa Government Hospital', clinicCity = 'Asesewa', clinicRegion = 'N/A', clinicDistrict = 'N/A') => {
+    const params = { 
+      start_date: startDate, 
+      end_date: endDate, 
+      clinic_name: clinicName,
+      clinic_city: clinicCity,
+      clinic_region: clinicRegion,
+      clinic_district: clinicDistrict
+    };
+    if (departments) params.departments = departments;
+    return api.get('/mis-reports/opd-morbidity/export', { 
+      params,
+      responseType: 'blob'
+    });
+  },
+};
+
 export default api;
 

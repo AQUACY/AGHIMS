@@ -23,7 +23,8 @@ from app.api import (
     analyzer,
     database_management,
     system,
-    audit_logs
+    audit_logs,
+    mis_reports
 )
 from app.core.database import engine, Base
 import traceback
@@ -181,6 +182,7 @@ app.include_router(analyzer.router, prefix="/api")
 app.include_router(database_management.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 app.include_router(audit_logs.router, prefix="/api")
+app.include_router(mis_reports.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

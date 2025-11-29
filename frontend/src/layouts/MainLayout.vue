@@ -371,6 +371,22 @@
         </q-item>
 
         <q-item
+          v-if="canAccess(['Admin', 'Records'])"
+          clickable
+          v-ripple
+          :to="{ name: 'MISReport' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="assessment" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>MIS Reports</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
           v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
           clickable
           v-ripple

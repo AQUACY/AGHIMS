@@ -291,6 +291,12 @@ const routes = [
         component: () => import('../pages/TreatmentSheet.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
+      {
+        path: '/mis-reports',
+        name: 'MISReport',
+        component: () => import('../pages/MISReport.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Records'] },
+      },
     ],
   },
 ];
