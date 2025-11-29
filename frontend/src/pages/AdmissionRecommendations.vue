@@ -262,19 +262,153 @@
         </q-card-section>
 
         <q-card-section>
-          <q-tabs v-model="currentTab" class="text-primary" align="left">
-            <q-tab name="patient-info" label="Patient Info" icon="person" />
-            <q-tab name="emergency-contact" label="Emergency Contact" icon="contact_phone" />
-            <q-tab name="bed-selection" label="Bed Selection" icon="hotel" />
-            <q-tab name="doctor-selection" label="Under Care Of" icon="medical_services" />
-          </q-tabs>
+          <div v-if="loadingPatientInsurance" class="text-center q-pa-lg">
+            <q-spinner color="primary" size="3em" />
+            <div class="text-subtitle1 q-mt-md glass-text">Loading patient insurance information...</div>
+          </div>
+          
+          <template v-else>
+            <q-tabs v-model="currentTab" class="text-primary" align="left">
+              <q-tab name="patient-info" label="Patient Info" icon="person" />
+              <q-tab name="emergency-contact" label="Emergency Contact" icon="contact_phone" />
+              <q-tab name="bed-selection" label="Bed Selection" icon="hotel" />
+              <q-tab name="doctor-selection" label="Under Care Of" icon="medical_services" />
+            </q-tabs>
 
-          <q-separator />
+            <q-separator />
 
-          <q-tab-panels v-model="currentTab" animated>
+            <q-tab-panels v-model="currentTab" animated>
             <!-- Tab 1: Patient Info -->
             <q-tab-panel name="patient-info">
               <div class="text-h6 q-mb-md glass-text">Patient Information</div>
+              
+              <!-- PROMINENT INSURANCE INFORMATION SECTION -->
+              <q-card 
+                v-if="selectedAdmissionForConfirm && (selectedAdmissionForConfirm.patient_insured || selectedAdmissionForConfirm.patient_insurance_id)"
+                :class="getInsuranceCardClass(selectedAdmissionForConfirm)"
+                flat 
+                bordered
+                class="q-mb-lg insurance-info-card"
+                style="border-width: 3px !important;"
+              >
+                <q-card-section class="q-pa-lg">
+                  <div class="row items-center q-mb-md">
+                    <q-icon 
+                      :name="selectedAdmissionForConfirm.patient_insured ? 'verified_user' : 'warning'" 
+                      :color="selectedAdmissionForConfirm.patient_insured ? 'positive' : 'negative'"
+                      size="48px" 
+                      class="q-mr-md"
+                    />
+                    <div class="col">
+                      <div class="text-h5 text-weight-bold" :class="selectedAdmissionForConfirm.patient_insured ? 'text-positive' : 'text-negative'">
+                        <q-icon name="health_and_safety" size="32px" class="q-mr-sm" />
+                        {{ selectedAdmissionForConfirm.patient_insured ? 'INSURED PATIENT' : 'INSURANCE INFORMATION' }}
+                      </div>
+                      <div class="text-subtitle1 q-mt-xs" :class="selectedAdmissionForConfirm.patient_insured ? 'text-positive' : 'text-grey-7'">
+                        {{ selectedAdmissionForConfirm.patient_insured ? 'Active Insurance Coverage' : 'Insurance Status: Not Active' }}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <q-separator class="q-mb-md" />
+                  
+                  <div class="row q-col-gutter-lg">
+                    <div class="col-12 col-md-4">
+                      <div class="text-subtitle2 text-weight-bold q-mb-xs" :class="selectedAdmissionForConfirm.patient_insured ? 'text-positive' : 'text-grey-7'">
+                        <q-icon name="badge" size="20px" class="q-mr-xs" />
+                        Insurance Number
+                      </div>
+                      <div class="text-h6 text-weight-bold glass-text" style="word-break: break-all;">
+                        {{ selectedAdmissionForConfirm.patient_insurance_id || 'N/A' }}
+                      </div>
+                    </div>
+                    <div class="col-12 col-md-4">
+                      <div class="text-subtitle2 text-weight-bold q-mb-xs" :class="selectedAdmissionForConfirm.patient_insured ? 'text-positive' : 'text-grey-7'">
+                        <q-icon name="event" size="20px" class="q-mr-xs" />
+                        Start Date
+                      </div>
+                      <div class="text-h6 text-weight-bold glass-text">
+                        {{ selectedAdmissionForConfirm.patient_insurance_start_date ? formatDate(selectedAdmissionForConfirm.patient_insurance_start_date) : 'N/A' }}
+                      </div>
+                    </div>
+                    <div class="col-12 col-md-4">
+                      <div class="text-subtitle2 text-weight-bold q-mb-xs" :class="getEndDateClass(selectedAdmissionForConfirm)">
+                        <q-icon name="event_available" size="20px" class="q-mr-xs" />
+                        End Date
+                      </div>
+                      <div class="text-h6 text-weight-bold" :class="getEndDateTextClass(selectedAdmissionForConfirm)">
+                        {{ selectedAdmissionForConfirm.patient_insurance_end_date ? formatDate(selectedAdmissionForConfirm.patient_insurance_end_date) : 'N/A' }}
+                        <q-icon 
+                          v-if="isInsuranceExpired(selectedAdmissionForConfirm)" 
+                          name="error" 
+                          color="negative" 
+                          size="24px" 
+                          class="q-ml-sm"
+                        />
+                      </div>
+                      <div v-if="isInsuranceExpired(selectedAdmissionForConfirm)" class="text-negative text-weight-bold q-mt-xs">
+                        <q-icon name="warning" size="16px" class="q-mr-xs" />
+                        EXPIRED - Cash and Carry
+                      </div>
+                      <div v-else-if="isInsuranceExpiringSoon(selectedAdmissionForConfirm)" class="text-warning text-weight-bold q-mt-xs">
+                        <q-icon name="schedule" size="16px" class="q-mr-xs" />
+                        Expiring Soon
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <q-banner 
+                    v-if="selectedAdmissionForConfirm.patient_insured && !isInsuranceExpired(selectedAdmissionForConfirm)"
+                    class="q-mt-md"
+                    :class="selectedAdmissionForConfirm.patient_insured ? 'bg-positive' : 'bg-negative'"
+                    rounded
+                  >
+                    <template v-slot:avatar>
+                      <q-icon name="check_circle" color="white" size="32px" />
+                    </template>
+                    <div class="text-h6 text-white text-weight-bold">
+                      CONFIRM CCC NUMBER - Patient has active insurance coverage
+                    </div>
+                    <div class="text-body1 text-white q-mt-xs">
+                      Verify insurance dates and enter CCC number below if applicable.
+                    </div>
+                  </q-banner>
+                  
+                  <q-banner 
+                    v-else
+                    class="q-mt-md bg-negative"
+                    rounded
+                  >
+                    <template v-slot:avatar>
+                      <q-icon name="cancel" color="white" size="32px" />
+                    </template>
+                    <div class="text-h6 text-white text-weight-bold">
+                      CASH AND CARRY - No active insurance coverage
+                    </div>
+                    <div class="text-body1 text-white q-mt-xs">
+                      Do not enter CCC number. Patient will pay cash.
+                    </div>
+                  </q-banner>
+                </q-card-section>
+              </q-card>
+              
+              <!-- Insurance Not Available Warning -->
+              <q-banner 
+                v-if="selectedAdmissionForConfirm && !selectedAdmissionForConfirm.patient_insured && !selectedAdmissionForConfirm.patient_insurance_id"
+                class="q-mb-md bg-warning"
+                rounded
+              >
+                <template v-slot:avatar>
+                  <q-icon name="info" color="white" size="32px" />
+                </template>
+                <div class="text-h6 text-white text-weight-bold">
+                  NO INSURANCE INFORMATION AVAILABLE
+                </div>
+                <div class="text-body1 text-white q-mt-xs">
+                  Patient is not registered as insured. This is a cash and carry case.
+                </div>
+              </q-banner>
+              
               <div class="row q-col-gutter-md">
                 <div class="col-12">
                   <q-card flat bordered class="q-pa-md">
@@ -306,6 +440,7 @@
                           label="CCC Number"
                           hint="Auto-populated from OPD encounter if available. For direct admissions, enter if patient has active insurance, otherwise leave blank (cash and carry)."
                           :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
+                          :class="selectedAdmissionForConfirm && selectedAdmissionForConfirm.patient_insured && !isInsuranceExpired(selectedAdmissionForConfirm) ? 'bg-positive-1' : ''"
                         >
                           <template v-slot:append>
                             <q-btn
@@ -476,6 +611,7 @@
               </q-select>
             </q-tab-panel>
           </q-tab-panels>
+          </template>
         </q-card-section>
 
         <q-card-actions align="right">
@@ -554,7 +690,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, patientsAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 const $q = useQuasar();
@@ -584,6 +720,7 @@ const beds = ref([]);
 const doctors = ref([]);
 const loadingBeds = ref(false);
 const loadingDoctors = ref(false);
+const loadingPatientInsurance = ref(false);
 
 const admissionForm = ref({
   ccc_number: '',
@@ -698,18 +835,8 @@ const loadAdmissions = async () => {
       data = response.data.data;
     }
     
-    // Debug: Check emergency contact data for specific card
-    const testCard = 'ER-A25-AAA0002';
-    const testAdmission = data.find(a => a.patient_card_number === testCard);
-    if (testAdmission) {
-      console.log(`Emergency contact data for ${testCard}:`, {
-        patient_emergency_contact_name: testAdmission.patient_emergency_contact_name,
-        patient_emergency_contact_relationship: testAdmission.patient_emergency_contact_relationship,
-        patient_emergency_contact_number: testAdmission.patient_emergency_contact_number,
-        fullAdmission: testAdmission
-      });
-    }
-    
+    // Load admissions quickly without fetching patient insurance data
+    // Insurance data will be fetched only when a specific admission is selected
     allAdmissions.value = data;
     admissions.value = data;
     
@@ -737,69 +864,121 @@ const onSearchChange = () => {
 };
 
 // Confirm admission - Available to all staff (Nurse, Doctor, PA, Admin)
-const confirmAdmission = (admission) => {
-  selectedAdmissionForConfirm.value = admission;
-  
-  // Debug: Log the full admission object
-  console.log('Full admission object:', JSON.stringify(admission, null, 2));
-  console.log('Emergency contact fields:', {
-    name: admission.patient_emergency_contact_name,
-    relationship: admission.patient_emergency_contact_relationship,
-    number: admission.patient_emergency_contact_number,
-    nameType: typeof admission.patient_emergency_contact_name,
-    nameValue: admission.patient_emergency_contact_name
-  });
-  
-  // Auto-populate CCC from encounter if available
-  // For OPD cases: use encounter CCC if exists, otherwise leave empty (can be filled if patient has insurance)
-  // For direct admissions: leave empty (can be filled if patient has active insurance)
-  
-  // Auto-populate emergency contact from patient registration if available
-  // Check if patient has emergency contact details from registration
-  const hasEmergencyContactFromRegistration = !!(
-    admission.patient_emergency_contact_name ||
-    admission.patient_emergency_contact_relationship ||
-    admission.patient_emergency_contact_number
-  );
-  
-  // Auto-populate emergency contact from patient registration if available
-  // Handle null, undefined, and empty strings properly
-  const emergencyContactName = (admission.patient_emergency_contact_name && typeof admission.patient_emergency_contact_name === 'string') 
-    ? admission.patient_emergency_contact_name.trim() 
-    : (admission.patient_emergency_contact_name || '');
-  const emergencyContactRelationship = (admission.patient_emergency_contact_relationship && typeof admission.patient_emergency_contact_relationship === 'string')
-    ? admission.patient_emergency_contact_relationship.trim()
-    : (admission.patient_emergency_contact_relationship || '');
-  const emergencyContactNumber = (admission.patient_emergency_contact_number && typeof admission.patient_emergency_contact_number === 'string')
-    ? admission.patient_emergency_contact_number.trim()
-    : (admission.patient_emergency_contact_number || '');
-  
-  admissionForm.value = {
-    ccc_number: (admission.encounter_ccc_number && typeof admission.encounter_ccc_number === 'string') 
-      ? admission.encounter_ccc_number.trim() 
-      : (admission.encounter_ccc_number || ''), // Auto-populate from OPD encounter if exists
-    emergency_contact_name: emergencyContactName, // Auto-populate from patient registration
-    emergency_contact_relationship: emergencyContactRelationship, // Auto-populate from patient registration
-    emergency_contact_number: emergencyContactNumber, // Auto-populate from patient registration
-    bed_id: null,
-    doctor_id: null,
-  };
-  
-  // Log for debugging
-  console.log('Admission data for card:', admission.patient_card_number, {
-    raw_emergency_contact_name: admission.patient_emergency_contact_name,
-    raw_emergency_contact_relationship: admission.patient_emergency_contact_relationship,
-    raw_emergency_contact_number: admission.patient_emergency_contact_number,
-    processed_emergency_contact_name: emergencyContactName,
-    processed_emergency_contact_relationship: emergencyContactRelationship,
-    processed_emergency_contact_number: emergencyContactNumber,
-    hasEmergencyContactFromRegistration,
-    formValues: admissionForm.value
-  });
-  
-  currentTab.value = 'patient-info';
-  showConfirmDialog.value = true;
-  loadBedsAndDoctors(admission.ward);
+const confirmAdmission = async (admission) => {
+  loadingPatientInsurance.value = true;
+  try {
+    // Fetch patient insurance information for the selected admission
+    let admissionWithInsurance = { ...admission };
+    
+    if (admission.patient_card_number) {
+      try {
+        const patientResponse = await patientsAPI.getByCard(admission.patient_card_number);
+        const patient = Array.isArray(patientResponse.data) 
+          ? patientResponse.data[0] 
+          : patientResponse.data;
+        
+        if (patient) {
+          // Merge insurance information into admission object
+          admissionWithInsurance = {
+            ...admission,
+            patient_insured: patient.insured || false,
+            patient_insurance_id: patient.insurance_id || null,
+            patient_insurance_start_date: patient.insurance_start_date || null,
+            patient_insurance_end_date: patient.insurance_end_date || null,
+          };
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch patient data for card ${admission.patient_card_number}:`, error);
+        // Continue with admission data without insurance info if fetch fails
+        admissionWithInsurance = {
+          ...admission,
+          patient_insured: false,
+          patient_insurance_id: null,
+          patient_insurance_start_date: null,
+          patient_insurance_end_date: null,
+        };
+      }
+    }
+    
+    // Set the admission with insurance data
+    selectedAdmissionForConfirm.value = admissionWithInsurance;
+    
+    // Debug: Log the full admission object
+    console.log('Full admission object with insurance:', JSON.stringify(admissionWithInsurance, null, 2));
+    console.log('Emergency contact fields:', {
+      name: admissionWithInsurance.patient_emergency_contact_name,
+      relationship: admissionWithInsurance.patient_emergency_contact_relationship,
+      number: admissionWithInsurance.patient_emergency_contact_number,
+      nameType: typeof admissionWithInsurance.patient_emergency_contact_name,
+      nameValue: admissionWithInsurance.patient_emergency_contact_name
+    });
+    
+    // Auto-populate CCC from encounter if available
+    // For OPD cases: use encounter CCC if exists, otherwise leave empty (can be filled if patient has insurance)
+    // For direct admissions: leave empty (can be filled if patient has active insurance)
+    
+    // Auto-populate emergency contact from patient registration if available
+    // Check if patient has emergency contact details from registration
+    const hasEmergencyContactFromRegistration = !!(
+      admissionWithInsurance.patient_emergency_contact_name ||
+      admissionWithInsurance.patient_emergency_contact_relationship ||
+      admissionWithInsurance.patient_emergency_contact_number
+    );
+    
+    // Auto-populate emergency contact from patient registration if available
+    // Handle null, undefined, and empty strings properly
+    const emergencyContactName = (admissionWithInsurance.patient_emergency_contact_name && typeof admissionWithInsurance.patient_emergency_contact_name === 'string') 
+      ? admissionWithInsurance.patient_emergency_contact_name.trim() 
+      : (admissionWithInsurance.patient_emergency_contact_name || '');
+    const emergencyContactRelationship = (admissionWithInsurance.patient_emergency_contact_relationship && typeof admissionWithInsurance.patient_emergency_contact_relationship === 'string')
+      ? admissionWithInsurance.patient_emergency_contact_relationship.trim()
+      : (admissionWithInsurance.patient_emergency_contact_relationship || '');
+    const emergencyContactNumber = (admissionWithInsurance.patient_emergency_contact_number && typeof admissionWithInsurance.patient_emergency_contact_number === 'string')
+      ? admissionWithInsurance.patient_emergency_contact_number.trim()
+      : (admissionWithInsurance.patient_emergency_contact_number || '');
+    
+    admissionForm.value = {
+      ccc_number: (admissionWithInsurance.encounter_ccc_number && typeof admissionWithInsurance.encounter_ccc_number === 'string') 
+        ? admissionWithInsurance.encounter_ccc_number.trim() 
+        : (admissionWithInsurance.encounter_ccc_number || ''), // Auto-populate from OPD encounter if exists
+      emergency_contact_name: emergencyContactName, // Auto-populate from patient registration
+      emergency_contact_relationship: emergencyContactRelationship, // Auto-populate from patient registration
+      emergency_contact_number: emergencyContactNumber, // Auto-populate from patient registration
+      bed_id: null,
+      doctor_id: null,
+    };
+    
+    // Log for debugging
+    console.log('Admission data for card:', admissionWithInsurance.patient_card_number, {
+      raw_emergency_contact_name: admissionWithInsurance.patient_emergency_contact_name,
+      raw_emergency_contact_relationship: admissionWithInsurance.patient_emergency_contact_relationship,
+      raw_emergency_contact_number: admissionWithInsurance.patient_emergency_contact_number,
+      processed_emergency_contact_name: emergencyContactName,
+      processed_emergency_contact_relationship: emergencyContactRelationship,
+      processed_emergency_contact_number: emergencyContactNumber,
+      hasEmergencyContactFromRegistration,
+      patient_insured: admissionWithInsurance.patient_insured,
+      patient_insurance_id: admissionWithInsurance.patient_insurance_id,
+      formValues: admissionForm.value
+    });
+    
+    currentTab.value = 'patient-info';
+    showConfirmDialog.value = true;
+    loadBedsAndDoctors(admissionWithInsurance.ward);
+  } catch (error) {
+    console.error('Error loading patient insurance data:', error);
+    $q.notify({
+      type: 'warning',
+      message: 'Failed to load patient insurance information. Proceeding with available data.',
+    });
+    // Still show the dialog with available data
+    selectedAdmissionForConfirm.value = admission;
+    currentTab.value = 'patient-info';
+    showConfirmDialog.value = true;
+    loadBedsAndDoctors(admission.ward);
+  } finally {
+    loadingPatientInsurance.value = false;
+  }
 };
 
 const revertConfirmation = async (admission) => {
@@ -1035,6 +1214,48 @@ const formatDateTime = (dateString) => {
   return date.toLocaleString('en-GB');
 };
 
+const isInsuranceExpired = (admission) => {
+  if (!admission || !admission.patient_insurance_end_date) return false;
+  const endDate = new Date(admission.patient_insurance_end_date);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return endDate < today;
+};
+
+const isInsuranceExpiringSoon = (admission) => {
+  if (!admission || !admission.patient_insurance_end_date) return false;
+  const endDate = new Date(admission.patient_insurance_end_date);
+  const today = new Date();
+  const daysUntilExpiry = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+  return daysUntilExpiry > 0 && daysUntilExpiry <= 30;
+};
+
+const getInsuranceCardClass = (admission) => {
+  if (!admission) return '';
+  if (admission.patient_insured && !isInsuranceExpired(admission)) {
+    return 'bg-positive-1 border-positive';
+  } else if (isInsuranceExpired(admission)) {
+    return 'bg-negative-1 border-negative';
+  } else if (admission.patient_insurance_id) {
+    return 'bg-warning-1 border-warning';
+  }
+  return '';
+};
+
+const getEndDateClass = (admission) => {
+  if (!admission) return 'text-grey-7';
+  if (isInsuranceExpired(admission)) return 'text-negative';
+  if (isInsuranceExpiringSoon(admission)) return 'text-warning';
+  return 'text-positive';
+};
+
+const getEndDateTextClass = (admission) => {
+  if (!admission) return 'glass-text';
+  if (isInsuranceExpired(admission)) return 'text-negative';
+  if (isInsuranceExpiringSoon(admission)) return 'text-warning';
+  return 'glass-text';
+};
+
 const viewPatient = (cardNumber) => {
   router.push(`/patients/${cardNumber}`);
 };
@@ -1107,6 +1328,46 @@ onMounted(() => {
 
 .body--light .glass-button:hover {
   background: rgba(255, 255, 255, 0.9);
+}
+
+.insurance-info-card {
+  animation: pulse-border 2s ease-in-out infinite;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+  50% {
+    box-shadow: 0 6px 30px rgba(76, 175, 80, 0.3);
+  }
+}
+
+.insurance-info-card.bg-positive-1 {
+  animation: pulse-border-positive 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border-positive {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(76, 175, 80, 0.2);
+  }
+  50% {
+    box-shadow: 0 8px 40px rgba(76, 175, 80, 0.5);
+  }
+}
+
+.insurance-info-card.bg-negative-1 {
+  animation: pulse-border-negative 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border-negative {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(244, 67, 54, 0.2);
+  }
+  50% {
+    box-shadow: 0 8px 40px rgba(244, 67, 54, 0.5);
+  }
 }
 </style>
 

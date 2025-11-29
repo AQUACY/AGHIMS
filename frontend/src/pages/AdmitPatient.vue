@@ -132,6 +132,134 @@
             <!-- Tab 1: Patient Info -->
             <q-tab-panel name="patient-info">
               <div class="text-h6 q-mb-md glass-text">Patient Information</div>
+              
+              <!-- PROMINENT INSURANCE INFORMATION SECTION -->
+              <q-card 
+                v-if="selectedPatient && (selectedPatient.insured || selectedPatient.insurance_id)"
+                :class="getInsuranceCardClass(selectedPatient)"
+                flat 
+                bordered
+                class="q-mb-lg insurance-info-card"
+                style="border-width: 3px !important;"
+              >
+                <q-card-section class="q-pa-lg">
+                  <div class="row items-center q-mb-md">
+                    <q-icon 
+                      :name="selectedPatient.insured ? 'verified_user' : 'warning'" 
+                      :color="selectedPatient.insured ? 'positive' : 'negative'"
+                      size="48px" 
+                      class="q-mr-md"
+                    />
+                    <div class="col">
+                      <div class="text-h5 text-weight-bold" :class="selectedPatient.insured ? 'text-positive' : 'text-negative'">
+                        <q-icon name="health_and_safety" size="32px" class="q-mr-sm" />
+                        {{ selectedPatient.insured ? 'INSURED PATIENT' : 'INSURANCE INFORMATION' }}
+                      </div>
+                      <div class="text-subtitle1 q-mt-xs" :class="selectedPatient.insured ? 'text-positive' : 'text-grey-7'">
+                        {{ selectedPatient.insured ? 'Active Insurance Coverage' : 'Insurance Status: Not Active' }}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <q-separator class="q-mb-md" />
+                  
+                  <div class="row q-col-gutter-lg">
+                    <div class="col-12 col-md-4">
+                      <div class="text-subtitle2 text-weight-bold q-mb-xs" :class="selectedPatient.insured ? 'text-positive' : 'text-grey-7'">
+                        <q-icon name="badge" size="20px" class="q-mr-xs" />
+                        Insurance Number
+                      </div>
+                      <div class="text-h6 text-weight-bold glass-text" style="word-break: break-all;">
+                        {{ selectedPatient.insurance_id || 'N/A' }}
+                      </div>
+                    </div>
+                    <div class="col-12 col-md-4">
+                      <div class="text-subtitle2 text-weight-bold q-mb-xs" :class="selectedPatient.insured ? 'text-positive' : 'text-grey-7'">
+                        <q-icon name="event" size="20px" class="q-mr-xs" />
+                        Start Date
+                      </div>
+                      <div class="text-h6 text-weight-bold glass-text">
+                        {{ selectedPatient.insurance_start_date ? formatDate(selectedPatient.insurance_start_date) : 'N/A' }}
+                      </div>
+                    </div>
+                    <div class="col-12 col-md-4">
+                      <div class="text-subtitle2 text-weight-bold q-mb-xs" :class="getEndDateClass(selectedPatient)">
+                        <q-icon name="event_available" size="20px" class="q-mr-xs" />
+                        End Date
+                      </div>
+                      <div class="text-h6 text-weight-bold" :class="getEndDateTextClass(selectedPatient)">
+                        {{ selectedPatient.insurance_end_date ? formatDate(selectedPatient.insurance_end_date) : 'N/A' }}
+                        <q-icon 
+                          v-if="isInsuranceExpired(selectedPatient)" 
+                          name="error" 
+                          color="negative" 
+                          size="24px" 
+                          class="q-ml-sm"
+                        />
+                      </div>
+                      <div v-if="isInsuranceExpired(selectedPatient)" class="text-negative text-weight-bold q-mt-xs">
+                        <q-icon name="warning" size="16px" class="q-mr-xs" />
+                        EXPIRED - Cash and Carry
+                      </div>
+                      <div v-else-if="isInsuranceExpiringSoon(selectedPatient)" class="text-warning text-weight-bold q-mt-xs">
+                        <q-icon name="schedule" size="16px" class="q-mr-xs" />
+                        Expiring Soon
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <q-banner 
+                    v-if="selectedPatient.insured && !isInsuranceExpired(selectedPatient)"
+                    class="q-mt-md"
+                    :class="selectedPatient.insured ? 'bg-positive' : 'bg-negative'"
+                    rounded
+                  >
+                    <template v-slot:avatar>
+                      <q-icon name="check_circle" color="white" size="32px" />
+                    </template>
+                    <div class="text-h6 text-white text-weight-bold">
+                      CONFIRM CCC NUMBER - Patient has active insurance coverage
+                    </div>
+                    <div class="text-body1 text-white q-mt-xs">
+                      Verify insurance dates and enter CCC number below if applicable.
+                    </div>
+                  </q-banner>
+                  
+                  <q-banner 
+                    v-else
+                    class="q-mt-md bg-negative"
+                    rounded
+                  >
+                    <template v-slot:avatar>
+                      <q-icon name="cancel" color="white" size="32px" />
+                    </template>
+                    <div class="text-h6 text-white text-weight-bold">
+                      CASH AND CARRY - No active insurance coverage
+                    </div>
+                    <div class="text-body1 text-white q-mt-xs">
+                      Do not enter CCC number. Patient will pay cash.
+                    </div>
+                  </q-banner>
+                </q-card-section>
+              </q-card>
+              
+              <!-- Insurance Not Available Warning -->
+              <q-banner 
+                v-if="selectedPatient && !selectedPatient.insured && !selectedPatient.insurance_id"
+                class="q-mb-md bg-warning"
+                rounded
+              >
+                <template v-slot:avatar>
+                  <q-icon name="info" color="white" size="32px" />
+                </template>
+                <div class="text-h6 text-white text-weight-bold">
+                  NO INSURANCE INFORMATION AVAILABLE
+                </div>
+                <div class="text-body1 text-white q-mt-xs">
+                  Patient is not registered as insured. This is a cash and carry case.
+                </div>
+              </q-banner>
+              
               <div class="row q-col-gutter-md">
                 <div class="col-12">
                   <q-card flat bordered class="q-pa-md">
@@ -162,6 +290,7 @@
                           label="CCC Number"
                           hint="Enter if patient has active insurance, otherwise leave blank (cash and carry)"
                           :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
+                          :class="selectedPatient.insured && !isInsuranceExpired(selectedPatient) ? 'bg-positive-1' : ''"
                         >
                           <template v-slot:append>
                             <q-btn
@@ -740,6 +869,48 @@ const formatDate = (dateString) => {
   return date.toLocaleDateString('en-GB');
 };
 
+const isInsuranceExpired = (patient) => {
+  if (!patient || !patient.insurance_end_date) return false;
+  const endDate = new Date(patient.insurance_end_date);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return endDate < today;
+};
+
+const isInsuranceExpiringSoon = (patient) => {
+  if (!patient || !patient.insurance_end_date) return false;
+  const endDate = new Date(patient.insurance_end_date);
+  const today = new Date();
+  const daysUntilExpiry = Math.ceil((endDate - today) / (1000 * 60 * 60 * 24));
+  return daysUntilExpiry > 0 && daysUntilExpiry <= 30;
+};
+
+const getInsuranceCardClass = (patient) => {
+  if (!patient) return '';
+  if (patient.insured && !isInsuranceExpired(patient)) {
+    return 'bg-positive-1 border-positive';
+  } else if (isInsuranceExpired(patient)) {
+    return 'bg-negative-1 border-negative';
+  } else if (patient.insurance_id) {
+    return 'bg-warning-1 border-warning';
+  }
+  return '';
+};
+
+const getEndDateClass = (patient) => {
+  if (!patient) return 'text-grey-7';
+  if (isInsuranceExpired(patient)) return 'text-negative';
+  if (isInsuranceExpiringSoon(patient)) return 'text-warning';
+  return 'text-positive';
+};
+
+const getEndDateTextClass = (patient) => {
+  if (!patient) return 'glass-text';
+  if (isInsuranceExpired(patient)) return 'text-negative';
+  if (isInsuranceExpiringSoon(patient)) return 'text-warning';
+  return 'glass-text';
+};
+
 onMounted(() => {
   loadDoctors();
 });
@@ -752,5 +923,45 @@ onMounted(() => {
 
 .body--dark .glass-text {
   color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.insurance-info-card {
+  animation: pulse-border 2s ease-in-out infinite;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+  50% {
+    box-shadow: 0 6px 30px rgba(76, 175, 80, 0.3);
+  }
+}
+
+.insurance-info-card.bg-positive-1 {
+  animation: pulse-border-positive 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border-positive {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(76, 175, 80, 0.2);
+  }
+  50% {
+    box-shadow: 0 8px 40px rgba(76, 175, 80, 0.5);
+  }
+}
+
+.insurance-info-card.bg-negative-1 {
+  animation: pulse-border-negative 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border-negative {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(244, 67, 54, 0.2);
+  }
+  50% {
+    box-shadow: 0 8px 40px rgba(244, 67, 54, 0.5);
+  }
 }
 </style>
