@@ -2,6 +2,7 @@
 ICD-10 to Morbidity Disease Mapping for OPD Morbidity Report
 This module contains the mapping logic and disease list
 """
+from datetime import date
 
 # List of all morbidity diseases in order (as per DHIMS template)
 MORBIDITY_DISEASES = [
