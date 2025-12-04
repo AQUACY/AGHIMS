@@ -877,5 +877,17 @@ export const misReportsAPI = {
   },
 };
 
+export const wardsAPI = {
+  getAll: (activeOnly = true) => {
+    const params = new URLSearchParams();
+    if (activeOnly) params.append('active_only', 'true');
+    return api.get(`/wards?${params.toString()}`);
+  },
+  get: (wardId) => api.get(`/wards/${wardId}`),
+  create: (data) => api.post('/wards', data),
+  update: (wardId, data) => api.put(`/wards/${wardId}`, data),
+  delete: (wardId) => api.delete(`/wards/${wardId}`),
+};
+
 export default api;
 

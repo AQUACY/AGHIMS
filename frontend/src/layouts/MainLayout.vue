@@ -472,6 +472,21 @@
             <q-item-label>IPD</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="canAccess(['Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'WardManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="meeting_room" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Ward Management</q-item-label>
+          </q-item-section>
+        </q-item>
 
         <q-item
           v-if="canAccess(['Admin', 'Pharmacy Head', 'Store Manager'])"

@@ -343,7 +343,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { patientsAPI, consultationAPI } from '../services/api';
+import { patientsAPI, consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -370,15 +370,23 @@ const transferForm = ref({
   transfer_reason: '',
 });
 
-const wardOptions = [
-  { label: 'Accident & Emergency Ward', value: 'Accident & Emergency Ward' },
-  { label: 'Maternity Ward', value: 'Maternity Ward' },
-  { label: 'Female Ward', value: 'Female Ward' },
-  { label: 'Male Ward', value: 'Male Ward' },
-  { label: 'Kids Ward', value: 'Kids Ward' },
-  { label: 'Nicu', value: 'Nicu' },
-  { label: 'Detention & Observation Ward', value: 'Detention & Observation Ward' },
-];
+const wardOptions = ref([]);
+
+const loadWards = async () => {
+  try {
+    const response = await wardsAPI.getAll(true); // Get only active wards
+    wardOptions.value = (response.data || []).map(ward => ({
+      label: ward.name,
+      value: ward.name
+    }));
+  } catch (error) {
+    console.error('Error loading wards:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load wards',
+    });
+  }
+};
 
 const searchPatientByCard = async () => {
   if (!searchCardNumber.value.trim()) {
@@ -620,6 +628,10 @@ watch(transferType, () => {
       checkPendingTransfer(currentAdmission.value.id);
     }
   }
+});
+
+onMounted(() => {
+  loadWards();
 });
 </script>
 

@@ -128,7 +128,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { Notify } from 'quasar';
-import { pharmacyRequisitionsAPI } from '../services/api';
+import { pharmacyRequisitionsAPI, wardsAPI } from '../services/api';
 
 export default {
   name: 'WardStock',
@@ -140,7 +140,7 @@ export default {
     const selectedWard = ref(authStore.userRole || null);
     const productSearch = ref('');
 
-    const wardOptions = ref(['Male Ward', 'Female Ward', 'Pediatric Ward', 'Maternity Ward', 'Emergency Ward']);
+    const wardOptions = ref([]);
 
     const columns = [
       { name: 'product_code', label: 'Product Code', field: 'product_code', align: 'left', sortable: true },
@@ -192,7 +192,22 @@ export default {
       return 'positive';
     };
 
+    const loadWards = async () => {
+      try {
+        const response = await wardsAPI.getAll(true); // Get only active wards
+        wardOptions.value = (response.data || []).map(ward => ward.name);
+      } catch (error) {
+        console.error('Error loading wards:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load wards',
+          position: 'top',
+        });
+      }
+    };
+
     onMounted(() => {
+      loadWards();
       if (selectedWard.value) {
         loadWardStock();
       }

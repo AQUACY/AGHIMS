@@ -180,7 +180,7 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
-import { pharmacyRequisitionsAPI, priceListAPI } from '../services/api';
+import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI } from '../services/api';
 
 export default {
   name: 'CreateRequisition',
@@ -197,13 +197,27 @@ export default {
     const allProducts = ref([]);
     const filteredProductOptions = ref([]);
 
-    const wardOptions = ref(['Male Ward', 'Female Ward', 'Pediatric Ward', 'Maternity Ward', 'Emergency Ward']);
+    const wardOptions = ref([]);
 
     const requisition = ref({
       ward: authStore.userRole || '',
       notes: '',
       items: [],
     });
+
+    const loadWards = async () => {
+      try {
+        const response = await wardsAPI.getAll(true); // Get only active wards
+        wardOptions.value = (response.data || []).map(ward => ward.name);
+      } catch (error) {
+        console.error('Error loading wards:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load wards',
+          position: 'top',
+        });
+      }
+    };
 
     const loadProducts = async () => {
       try {
@@ -407,6 +421,11 @@ export default {
       }
     };
 
+    // Load wards on component mount
+    onMounted(() => {
+      loadWards();
+    });
+
     return {
       requisitionForm,
       requisition,
@@ -422,6 +441,7 @@ export default {
       loadingProducts,
       removeItem,
       createRequisition,
+      loadWards,
     };
   },
 };

@@ -234,7 +234,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useQuasar } from 'quasar';
 import { useRoute } from 'vue-router';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -244,15 +244,23 @@ const selectedWard = ref(null);
 const selectedDate = ref(new Date().toISOString().split('T')[0]);
 const wardState = ref(null);
 
-const wardOptions = [
-  { label: 'Accident & Emergency Ward', value: 'Accident & Emergency Ward' },
-  { label: 'Maternity Ward', value: 'Maternity Ward' },
-  { label: 'Female Ward', value: 'Female Ward' },
-  { label: 'Male Ward', value: 'Male Ward' },
-  { label: 'Kids Ward', value: 'Kids Ward' },
-  { label: 'Nicu', value: 'Nicu' },
-  { label: 'Detention & Observation Ward', value: 'Detention & Observation Ward' },
-];
+const wardOptions = ref([]);
+
+const loadWards = async () => {
+  try {
+    const response = await wardsAPI.getAll(true); // Get only active wards
+    wardOptions.value = (response.data || []).map(ward => ({
+      label: ward.name,
+      value: ward.name
+    }));
+  } catch (error) {
+    console.error('Error loading wards:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load wards',
+    });
+  }
+};
 
 const admissionColumns = [
   { name: 'office_no', label: 'Office No.', field: 'office_no', align: 'center', sortable: true },
@@ -336,6 +344,7 @@ const formatDate = (dateString) => {
 };
 
 onMounted(() => {
+  loadWards();
   // Auto-load if ward is pre-selected from query params
   if (route.query.ward) {
     selectedWard.value = route.query.ward;

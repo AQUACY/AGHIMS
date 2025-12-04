@@ -441,7 +441,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
-import { pharmacyRequisitionsAPI, priceListAPI } from '../services/api';
+import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI } from '../services/api';
 
 export default {
   name: 'PharmacyRequisitions',
@@ -504,7 +504,7 @@ export default {
       return authStore.userRole && authStore.userRole === 'Admin';
     });
 
-    const wardOptions = ref(['Male Ward', 'Female Ward', 'Pediatric Ward', 'Maternity Ward', 'Emergency Ward']);
+    const wardOptions = ref([]);
     const statusOptions = ref([
       { label: 'Pending', value: 'pending' },
       { label: 'Approved', value: 'approved' },
@@ -850,7 +850,22 @@ export default {
       return new Date(dateTime).toLocaleString();
     };
 
+    const loadWards = async () => {
+      try {
+        const response = await wardsAPI.getAll(true); // Get only active wards
+        wardOptions.value = (response.data || []).map(ward => ward.name);
+      } catch (error) {
+        console.error('Error loading wards:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load wards',
+          position: 'top',
+        });
+      }
+    };
+
     onMounted(() => {
+      loadWards();
       loadRequisitions();
     });
 
@@ -899,6 +914,7 @@ export default {
       getStatusColor,
       formatDateTime,
       currentUserId,
+      wardOptions,
     };
   },
 };

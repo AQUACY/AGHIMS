@@ -263,7 +263,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
 
@@ -419,18 +419,39 @@ const loadInventoryDebits = async () => {
     const response = await consultationAPI.getAllInventoryDebits(params);
     inventoryDebits.value = response.data || [];
     
-    // Extract unique wards for filter dropdown (use requesting_ward if available, otherwise ward)
-    const wards = new Set();
-    inventoryDebits.value.forEach(debit => {
-      const ward = debit.requesting_ward || debit.ward;
-      if (ward) {
-        wards.add(ward);
-      }
-    });
-    wardOptions.value = Array.from(wards).sort().map(ward => ({
-      label: ward,
-      value: ward
-    }));
+    // Load wards from API first, then merge with any additional wards from debits
+    try {
+      const wardsResponse = await wardsAPI.getAll(true); // Get only active wards
+      const apiWards = (wardsResponse.data || []).map(ward => ward.name);
+      const wards = new Set(apiWards);
+      
+      // Add any wards found in debits that might not be in the API (for backward compatibility)
+      inventoryDebits.value.forEach(debit => {
+        const ward = debit.requesting_ward || debit.ward;
+        if (ward) {
+          wards.add(ward);
+        }
+      });
+      
+      wardOptions.value = Array.from(wards).sort().map(ward => ({
+        label: ward,
+        value: ward
+      }));
+    } catch (error) {
+      console.error('Error loading wards:', error);
+      // Fallback to extracting wards from debits only
+      const wards = new Set();
+      inventoryDebits.value.forEach(debit => {
+        const ward = debit.requesting_ward || debit.ward;
+        if (ward) {
+          wards.add(ward);
+        }
+      });
+      wardOptions.value = Array.from(wards).sort().map(ward => ({
+        label: ward,
+        value: ward
+      }));
+    }
   } catch (error) {
     console.error('Error loading inventory debits:', error);
     $q.notify({

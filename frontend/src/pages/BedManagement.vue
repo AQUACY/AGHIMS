@@ -197,7 +197,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useQuasar } from 'quasar';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
 
@@ -292,21 +292,22 @@ const loadBeds = async () => {
   }
 };
 
-const loadWards = () => {
-  // Use predefined list of wards
-  wards.value = [
-    'Accident & Emergency Ward',
-    'Maternity Ward',
-    'Female Ward',
-    'Male Ward',
-    'Kids Ward',
-    'Nicu',
-    'Detention & Observation Ward'
-  ];
-  wardOptions.value = wards.value.map(ward => ({
-    label: ward,
-    value: ward
-  }));
+const loadWards = async () => {
+  try {
+    const response = await wardsAPI.getAll(true); // Get only active wards
+    const wardNames = (response.data || []).map(ward => ward.name);
+    wards.value = wardNames;
+    wardOptions.value = wardNames.map(ward => ({
+      label: ward,
+      value: ward
+    }));
+  } catch (error) {
+    console.error('Error loading wards:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load wards',
+    });
+  }
 };
 
 const filterWards = (val, update) => {

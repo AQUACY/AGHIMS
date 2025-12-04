@@ -769,15 +769,7 @@
             v-if="notesForm.outcome === 'recommended_for_admission'"
             v-model="notesForm.admission_ward"
             filled
-            :options="[
-              'Accident & Emergency Ward',
-              'Maternity Ward',
-              'Female Ward',
-              'Male Ward',
-              'Kids Ward',
-              'Nicu',
-              'Detention & Observation Ward'
-            ]"
+            :options="wardOptions"
             label="Admission Ward *"
             hint="Select the ward for admission"
           />
@@ -2008,7 +2000,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { consultationAPI, priceListAPI, encountersAPI, patientsAPI, billingAPI, vitalsAPI, labTemplatesAPI } from '../services/api';
+import { consultationAPI, priceListAPI, encountersAPI, patientsAPI, billingAPI, vitalsAPI, labTemplatesAPI, wardsAPI } from '../services/api';
 import { useEncountersStore } from '../stores/encounters';
 import { usePatientsStore } from '../stores/patients';
 import { useAuthStore } from '../stores/auth';
@@ -2344,6 +2336,18 @@ const templateForm = reactive({
   description: '',
   is_shared: false,
 });
+
+const wardOptions = ref([]);
+
+const loadWards = async () => {
+  try {
+    const response = await wardsAPI.getAll(true); // Get only active wards
+    wardOptions.value = (response.data || []).map(ward => ward.name);
+  } catch (error) {
+    console.error('Error loading wards:', error);
+  }
+};
+
 const notesForm = reactive({
   encounter_id: null,
   presenting_complaints: '',
@@ -5189,6 +5193,7 @@ const showPreviousInvestigations = async () => {
 };
 
 onMounted(() => {
+  loadWards();
   loadServiceTypes();
   // Load DRG diagnoses when page mounts
   loadDrgDiagnoses();

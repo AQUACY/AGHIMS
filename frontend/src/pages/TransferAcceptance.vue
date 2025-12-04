@@ -280,7 +280,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useQuasar } from 'quasar';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
 
@@ -297,15 +297,23 @@ const availableBedsForTransfer = ref([]);
 const selectedBedId = ref(null);
 const rejectionReason = ref('');
 
-const wardOptions = [
-  { label: 'Accident & Emergency Ward', value: 'Accident & Emergency Ward' },
-  { label: 'Maternity Ward', value: 'Maternity Ward' },
-  { label: 'Female Ward', value: 'Female Ward' },
-  { label: 'Male Ward', value: 'Male Ward' },
-  { label: 'Kids Ward', value: 'Kids Ward' },
-  { label: 'Nicu', value: 'Nicu' },
-  { label: 'Detention & Observation Ward', value: 'Detention & Observation Ward' },
-];
+const wardOptions = ref([]);
+
+const loadWards = async () => {
+  try {
+    const response = await wardsAPI.getAll(true); // Get only active wards
+    wardOptions.value = (response.data || []).map(ward => ({
+      label: ward.name,
+      value: ward.name
+    }));
+  } catch (error) {
+    console.error('Error loading wards:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to load wards',
+    });
+  }
+};
 
 const loadPendingTransfers = async () => {
   loading.value = true;
@@ -420,6 +428,7 @@ const formatDateTime = (dateString) => {
 };
 
 onMounted(() => {
+  loadWards();
   loadPendingTransfers();
 });
 </script>

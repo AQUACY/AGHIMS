@@ -238,6 +238,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
+        path: '/ipd/ward-management',
+        name: 'WardManagement',
+        component: () => import('../pages/WardManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin'] },
+      },
+      {
         path: '/ipd/admission-recommendations',
         name: 'AdmissionRecommendations',
         component: () => import('../pages/AdmissionRecommendations.vue'),

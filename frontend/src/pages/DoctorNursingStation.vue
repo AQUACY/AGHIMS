@@ -163,7 +163,7 @@
     </q-card>
 
     <!-- Ward Patients Cards -->
-    <div v-else-if="selectedWard && wardPatients.length > 0">
+    <div v-if="selectedWard && wardPatients.length > 0">
       <div class="row items-center q-mb-md">
         <div class="text-h6 glass-text">
           {{ selectedWard }} - Active Patients ({{ filteredPatients.length }})
