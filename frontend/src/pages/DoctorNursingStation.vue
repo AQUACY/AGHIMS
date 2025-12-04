@@ -391,7 +391,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -418,19 +418,45 @@ const selectedBedId = ref(null);
 const rejectionReason = ref('');
 
 
-// Get unique wards from all ward patients
-const wardOptions = computed(() => {
-  const wards = new Set();
-  allWardPatients.value.forEach(patient => {
-    if (patient.ward) {
-      wards.add(patient.ward);
-    }
-  });
-  return Array.from(wards).sort().map(ward => ({
-    label: ward,
-    value: ward
-  }));
-});
+// Dynamic ward options from API
+const wardOptions = ref([]);
+
+// Load wards from API
+const loadWards = async () => {
+  try {
+    const response = await wardsAPI.getAll(true); // Get only active wards
+    const apiWards = (response.data || []).map(ward => ward.name);
+    
+    // Also include any wards found in patients (for backward compatibility)
+    const patientWards = new Set();
+    allWardPatients.value.forEach(patient => {
+      if (patient.ward) {
+        patientWards.add(patient.ward);
+      }
+    });
+    
+    // Merge API wards with patient wards
+    const allWards = new Set([...apiWards, ...Array.from(patientWards)]);
+    
+    wardOptions.value = Array.from(allWards).sort().map(ward => ({
+      label: ward,
+      value: ward
+    }));
+  } catch (error) {
+    console.error('Error loading wards:', error);
+    // Fallback to extracting wards from patients only
+    const wards = new Set();
+    allWardPatients.value.forEach(patient => {
+      if (patient.ward) {
+        wards.add(patient.ward);
+      }
+    });
+    wardOptions.value = Array.from(wards).sort().map(ward => ({
+      label: ward,
+      value: ward
+    }));
+  }
+};
 
 // Filter patients by search
 const filteredPatients = computed(() => {
@@ -482,6 +508,9 @@ const loadWardPatients = async () => {
     
     // Load pending transfers for this ward
     await loadPendingTransfers();
+    
+    // Refresh wards to include any new wards found in patients
+    await loadWards();
   } catch (error) {
     console.error('Error loading ward patients:', error);
     $q.notify({
@@ -712,6 +741,9 @@ const confirmRejectTransfer = async () => {
 };
 
 onMounted(async () => {
+  // Load wards from API first
+  await loadWards();
+  
   // Load all ward patients to get ward options
   try {
     const response = await consultationAPI.getWardAdmissions();
@@ -722,6 +754,9 @@ onMounted(async () => {
       data = response.data.data;
     }
     allWardPatients.value = data;
+    
+    // Refresh wards to include any wards found in patients
+    await loadWards();
     
     // Try to load saved ward if locked
     const wardLoaded = loadWardFromStorage();
