@@ -15,6 +15,7 @@ def main():
     print("1. Add 'other_names' column to 'patients' table")
     print("2. Add discharge fields to 'ward_admissions' table")
     print("3. Add release fields to 'inpatient_inventory_debits' table")
+    print("4. Create wards table and populate with initial wards")
     print("\n" + "=" * 60)
     
     # Check environment variables
@@ -50,17 +51,21 @@ def main():
     
     # Import and run migrations
     try:
-        print("\n[1/3] Running migrate_add_patient_other_names_mysql.py...")
+        print("\n[1/4] Running migrate_add_patient_other_names_mysql.py...")
         from migrate_add_patient_other_names_mysql import migrate as migrate_other_names
         migrate_other_names()
         
-        print("\n[2/3] Running migrate_add_discharge_fields_mysql.py...")
+        print("\n[2/4] Running migrate_add_discharge_fields_mysql.py...")
         from migrate_add_discharge_fields_mysql import migrate as migrate_discharge_fields
         migrate_discharge_fields()
         
-        print("\n[3/3] Running migrate_add_inventory_debit_release_fields_mysql.py...")
+        print("\n[3/4] Running migrate_add_inventory_debit_release_fields_mysql.py...")
         from migrate_add_inventory_debit_release_fields_mysql import migrate as migrate_inventory_debit
         migrate_inventory_debit()
+        
+        print("\n[4/4] Running migrate_create_wards_table_mysql.py...")
+        from migrate_create_wards_table_mysql import migrate as migrate_wards
+        migrate_wards()
         
         print("\n" + "=" * 60)
         print("✓ ALL MIGRATIONS COMPLETED SUCCESSFULLY!")

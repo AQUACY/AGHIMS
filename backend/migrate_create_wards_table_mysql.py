@@ -83,8 +83,8 @@ def populate_wards(connection):
                 print(f"  ⊙ Already exists: {ward_name}")
 
 
-def main():
-    """Main migration function"""
+def migrate():
+    """Migration function called by run_migrations.py"""
     print("=" * 60)
     print("Ward Management Migration Script")
     print("=" * 60)
@@ -130,14 +130,20 @@ def main():
         
     except pymysql.Error as e:
         print(f"✗ Database error: {e}")
-        return 1
+        raise
     except Exception as e:
         print(f"✗ Error: {e}")
         import traceback
         traceback.print_exc()
+        raise
+
+def main():
+    """Main function for direct script execution"""
+    try:
+        migrate()
+        return 0
+    except Exception as e:
         return 1
-    
-    return 0
 
 
 if __name__ == "__main__":
