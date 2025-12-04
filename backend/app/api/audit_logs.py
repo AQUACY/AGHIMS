@@ -25,6 +25,8 @@ class AuditLogResponse(BaseModel):
     action: str
     resource_type: Optional[str]
     resource_id: Optional[int]
+    endpoint_path: Optional[str]
+    http_method: Optional[str]
     details: Optional[str]
     ip_address: Optional[str]
     timestamp: datetime
@@ -48,6 +50,8 @@ def get_audit_logs(
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     action: Optional[str] = Query(None, description="Filter by action"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type"),
+    endpoint_path: Optional[str] = Query(None, description="Filter by endpoint path (partial match)"),
+    http_method: Optional[str] = Query(None, description="Filter by HTTP method"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=500, description="Items per page"),
     db: Session = Depends(get_db),
@@ -78,6 +82,12 @@ def get_audit_logs(
     
     if resource_type:
         filters.append(AuditLog.resource_type == resource_type)
+    
+    if endpoint_path:
+        filters.append(AuditLog.endpoint_path.ilike(f"%{endpoint_path}%"))
+    
+    if http_method:
+        filters.append(AuditLog.http_method == http_method.upper())
     
     # Date range filter
     if start_date:
@@ -156,6 +166,30 @@ def get_available_resource_types(
     """
     resource_types = db.query(AuditLog.resource_type).distinct().all()
     return [rt[0] for rt in resource_types if rt[0]]
+
+
+@router.get("/endpoint-paths", response_model=List[str])
+def get_available_endpoint_paths(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+):
+    """
+    Get list of unique endpoint paths from audit logs
+    """
+    endpoint_paths = db.query(AuditLog.endpoint_path).distinct().all()
+    return [ep[0] for ep in endpoint_paths if ep[0]]
+
+
+@router.get("/http-methods", response_model=List[str])
+def get_available_http_methods(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+):
+    """
+    Get list of unique HTTP methods from audit logs
+    """
+    http_methods = db.query(AuditLog.http_method).distinct().all()
+    return [hm[0] for hm in http_methods if hm[0]]
 
 
 @router.get("/{log_id}", response_model=AuditLogResponse)

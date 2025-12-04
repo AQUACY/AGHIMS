@@ -19,6 +19,8 @@ class AuditLog(Base):
     action = Column(String(100), nullable=False, index=True)  # e.g., "CREATE", "UPDATE", "DELETE", "VIEW", "LOGIN", "LOGOUT"
     resource_type = Column(String(100), nullable=True, index=True)  # e.g., "Patient", "Bill", "Claim", "Encounter"
     resource_id = Column(Integer, nullable=True, index=True)  # ID of the resource being acted upon
+    endpoint_path = Column(String(500), nullable=True, index=True)  # API endpoint path (e.g., "/api/patients/123")
+    http_method = Column(String(10), nullable=True, index=True)  # HTTP method (e.g., "GET", "POST", "PUT", "DELETE")
     details = Column(Text, nullable=True)  # JSON string or detailed description
     ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6
     timestamp = Column(DateTime, default=utcnow_callable, nullable=False, index=True)

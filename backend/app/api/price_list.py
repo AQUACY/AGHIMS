@@ -82,7 +82,7 @@ def create_price_item(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     item_data: PriceItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"]))
 ):
     """Create a new price list item by type (Admin and Pharmacy Head only)"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
@@ -202,7 +202,7 @@ def update_price_item(
     item_id: int,
     update: PriceItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"]))
 ):
     """Update a single price list item by type and id (Admin and Pharmacy Head only)"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
@@ -555,7 +555,7 @@ async def upload_price_list_file(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head", "Store Manager"]))
 ):
     """Upload Excel price list file by file type"""
     # Validate file type
@@ -606,7 +606,7 @@ def search_price_items_endpoint(
     service_type: Optional[str] = None,  # Service Type (department/clinic) filter
     file_type: Optional[str] = None,  # Filter by file type: procedure, surgery, product, unmapped_drg
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Nurse", "PA"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Nurse", "PA"]))
 ):
     """Search price list items across all tables"""
     results = search_price_items_all_tables(db, search_term, service_type, file_type)
@@ -690,7 +690,7 @@ def search_price_items_endpoint(
 def get_procedures_by_service_type(
     service_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
 ):
     """Get procedures grouped by service type. If service_type is provided, returns array. Otherwise returns grouped object."""
     from sqlalchemy import func
@@ -759,7 +759,7 @@ def search_icd10_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
 ):
     """Search ICD-10 codes"""
     from sqlalchemy import or_
@@ -832,7 +832,7 @@ def search_drg_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
 ):
     """Search DRG codes across all sources (procedures, surgeries, unmapped DRG, and existing mappings)"""
     from sqlalchemy import or_
@@ -1237,7 +1237,7 @@ def export_icd10_drg_mapping_csv(
 def export_price_list_csv(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head", "Store Manager"]))
 ):
     """Export price list as CSV file by type"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]

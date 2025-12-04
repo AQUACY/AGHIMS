@@ -24,9 +24,12 @@ from app.api import (
     database_management,
     system,
     audit_logs,
-    mis_reports
+    mis_reports,
+    pharmacy_requisitions
 )
+from app.api import notifications
 from app.core.database import engine, Base
+from app.core.audit_middleware import AuditLoggingMiddleware
 import traceback
 
 # Import all models to ensure they're registered with Base
@@ -79,6 +82,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Add audit logging middleware (after CORS to ensure it processes all requests)
+app.add_middleware(AuditLoggingMiddleware)
 
 # Global exception handler to ensure CORS headers are included in error responses
 @app.exception_handler(Exception)
@@ -183,6 +189,8 @@ app.include_router(database_management.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 app.include_router(audit_logs.router, prefix="/api")
 app.include_router(mis_reports.router, prefix="/api")
+app.include_router(pharmacy_requisitions.router, prefix="/api")
+app.include_router(notifications.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

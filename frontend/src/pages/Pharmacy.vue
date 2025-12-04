@@ -801,7 +801,7 @@
                   />
                   <!-- Edit button for Admin, Pharmacy, and Pharmacy Head (even if confirmed) - for IPD prescriptions -->
                   <q-btn
-                    v-if="authStore.userRole === 'Admin' || authStore.userRole === 'Pharmacy' || authStore.userRole === 'Pharmacy Head'"
+                    v-if="authStore.userRole === 'Admin' || authStore.userRole === 'Pharmacy' || authStore.userRole === 'Pharmacy Head' || authStore.userRole === 'Store Manager'"
                     size="sm"
                     color="secondary"
                     icon="edit"

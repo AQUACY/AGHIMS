@@ -46,6 +46,11 @@ from app.models.xray_result import XrayResult
 from app.models.inpatient_xray_result import InpatientXrayResult
 from app.models.audit_log import AuditLog
 from app.models.consultation_template import ConsultationTemplate
+from app.models.ward_stock import WardStock
+from app.models.pharmacy_requisition import PharmacyRequisition, RequisitionStatus
+from app.models.requisition_item import RequisitionItem
+from app.models.requisition_history import RequisitionHistory, HistoryAction
+from app.models.notification import Notification, NotificationType
 
 __all__ = [
     "User",
@@ -104,5 +109,13 @@ __all__ = [
     "InpatientXrayResult",
     "AuditLog",
     "ConsultationTemplate",
+    "WardStock",
+    "PharmacyRequisition",
+    "RequisitionStatus",
+    "RequisitionItem",
+    "RequisitionHistory",
+    "HistoryAction",
+    "Notification",
+    "NotificationType",
 ]
 

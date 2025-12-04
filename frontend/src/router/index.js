@@ -73,13 +73,31 @@ const routes = [
         path: '/pharmacy',
         name: 'Pharmacy',
         component: () => import('../pages/Pharmacy.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'] },
       },
       {
         path: '/pharmacy/inventory-debits',
         name: 'InventoryDebitManagement',
         component: () => import('../pages/InventoryDebitManagement.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'] },
+      },
+      {
+        path: '/pharmacy/requisitions',
+        name: 'PharmacyRequisitions',
+        component: () => import('../pages/PharmacyRequisitions.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'] },
+      },
+      {
+        path: '/pharmacy/requisitions/create',
+        name: 'CreateRequisition',
+        component: () => import('../pages/CreateRequisition.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: '/pharmacy/ward-stock',
+        name: 'WardStock',
+        component: () => import('../pages/WardStock.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'] },
       },
       {
         path: '/lab',
@@ -151,7 +169,7 @@ const routes = [
         path: '/admin/price-list',
         name: 'PriceListManagement',
         component: () => import('../pages/PriceListManagement.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Pharmacy Head'] },
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Pharmacy Head', 'Store Manager'] },
       },
       {
         path: '/admin/icd10-drg-mapping',

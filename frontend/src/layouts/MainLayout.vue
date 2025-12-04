@@ -38,6 +38,24 @@
         >
           <q-tooltip>Click to view profile and change password</q-tooltip>
         </q-btn>
+        <!-- Notifications -->
+        <q-btn
+          flat
+          round
+          dense
+          icon="notifications"
+          class="q-mr-sm glass-button"
+          @click="showNotifications = true"
+        >
+          <q-badge
+            v-if="unreadNotificationCount > 0"
+            color="negative"
+            :label="unreadNotificationCount > 99 ? '99+' : unreadNotificationCount"
+            floating
+            rounded
+          />
+          <q-tooltip>Notifications ({{ unreadNotificationCount }} unread)</q-tooltip>
+        </q-btn>
         <q-btn
           flat
           round
@@ -57,6 +75,29 @@
         />
       </q-toolbar>
     </q-header>
+
+    <!-- Notifications Dialog -->
+    <q-dialog v-model="showNotifications" style="min-width: 600px; max-width: 800px">
+      <q-card>
+        <q-card-section>
+          <div class="row items-center">
+            <div class="text-h6">Notifications</div>
+            <q-space />
+            <q-btn
+              flat
+              dense
+              round
+              icon="close"
+              v-close-popup
+            />
+          </div>
+        </q-card-section>
+
+        <q-card-section>
+          <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
+        </q-card-section>
+      </q-card>
+    </q-dialog>
 
     <q-drawer
       v-model="drawerOpen"
@@ -260,7 +301,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Admin'])"
+          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Pharmacy' }"
@@ -275,7 +316,7 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Admin'])"
+          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'InventoryDebitManagement' }"
@@ -287,6 +328,36 @@
           </q-item-section>
           <q-item-section>
             <q-item-label>Inventory Debits</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
+          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'PharmacyRequisitions' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="shopping_cart" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Pharmacy Requisitions</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
+          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'WardStock' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="warehouse" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Ward Stock</q-item-label>
           </q-item-section>
         </q-item>
 
@@ -403,7 +474,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Admin', 'Pharmacy Head'])"
+          v-if="canAccess(['Admin', 'Pharmacy Head', 'Store Manager'])"
           clickable
           v-ripple
           :to="{ name: 'PriceListManagement' }"
@@ -546,6 +617,29 @@
       <router-view />
     </q-page-container>
   </q-layout>
+
+  <!-- Notifications Dialog -->
+  <q-dialog v-model="showNotifications" style="min-width: 600px; max-width: 800px">
+    <q-card>
+      <q-card-section>
+        <div class="row items-center">
+          <div class="text-h6">Notifications</div>
+          <q-space />
+          <q-btn
+            flat
+            dense
+            round
+            icon="close"
+            v-close-popup
+          />
+        </div>
+      </q-card-section>
+
+      <q-card-section>
+        <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
+      </q-card-section>
+    </q-card>
+  </q-dialog>
 </template>
 
 <script setup>
@@ -554,7 +648,8 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { useQuasar } from 'quasar';
-import { patientsAPI } from '../services/api';
+import { patientsAPI, notificationsAPI } from '../services/api';
+import NotificationsPanel from '../components/NotificationsPanel.vue';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -566,6 +661,9 @@ const drawerOpen = ref(true);
 const sessionTimeLeft = ref(null);
 const sessionTimerInterval = ref(null);
 const refreshingToken = ref(false);
+const showNotifications = ref(false);
+const unreadNotificationCount = ref(0);
+const notificationPollInterval = ref(null);
 
 // Idle timeout tracking - DISABLED: No idle timeout enforcement
 // Users can stay logged in indefinitely, tokens will auto-refresh
@@ -1032,9 +1130,43 @@ const handleLogout = () => {
     persistent: true,
   }).onOk(() => {
     stopSessionTimer();
+    stopNotificationPolling();
     authStore.logout();
     router.push('/login');
   });
+};
+
+// Load unread notification count
+const loadUnreadNotificationCount = async () => {
+  try {
+    const response = await notificationsAPI.getUnreadCount();
+    unreadNotificationCount.value = response.data.unread_count || 0;
+  } catch (error) {
+    console.error('Error loading notification count:', error);
+  }
+};
+
+// Start notification polling
+const startNotificationPolling = () => {
+  if (notificationPollInterval.value) {
+    clearInterval(notificationPollInterval.value);
+  }
+  // Poll every 30 seconds
+  notificationPollInterval.value = setInterval(() => {
+    if (authStore.isAuthenticated) {
+      loadUnreadNotificationCount();
+    }
+  }, 30000);
+  // Load immediately
+  loadUnreadNotificationCount();
+};
+
+// Stop notification polling
+const stopNotificationPolling = () => {
+  if (notificationPollInterval.value) {
+    clearInterval(notificationPollInterval.value);
+    notificationPollInterval.value = null;
+  }
 };
 
 // Start timer when component mounts
@@ -1043,6 +1175,7 @@ onMounted(() => {
   // This prevents errors on login page where MainLayout might be loaded but not displayed
   if (authStore.isAuthenticated && authStore.token) {
     startSessionTimer();
+    startNotificationPolling();
     // No activity tracking needed - idle timeout is disabled
   }
 });
@@ -1050,6 +1183,7 @@ onMounted(() => {
 // Stop timer when component unmounts
 onUnmounted(() => {
   stopSessionTimer();
+  stopNotificationPolling();
   // No activity tracking listeners to remove - idle timeout is disabled
 });
 
@@ -1057,10 +1191,13 @@ onUnmounted(() => {
 watch(() => authStore.isAuthenticated, (isAuth) => {
   if (isAuth && authStore.token) {
     startSessionTimer();
+    startNotificationPolling();
     // No activity tracking needed - idle timeout is disabled
   } else {
     stopSessionTimer();
+    stopNotificationPolling();
     sessionTimeLeft.value = null;
+    unreadNotificationCount.value = 0;
   }
 });
 
@@ -1068,9 +1205,12 @@ watch(() => authStore.isAuthenticated, (isAuth) => {
 watch(() => authStore.token, (token) => {
   if (token && authStore.isAuthenticated) {
     startSessionTimer();
+    startNotificationPolling();
   } else {
     stopSessionTimer();
+    stopNotificationPolling();
     sessionTimeLeft.value = null;
+    unreadNotificationCount.value = 0;
   }
 });
 </script>

@@ -407,7 +407,7 @@ const billingStore = useBillingStore();
 const authStore = useAuthStore();
 
 // Check if user is admin or pharmacy head
-if (!authStore.canAccess(['Admin', 'Pharmacy Head'])) {
+if (!authStore.canAccess(['Admin', 'Pharmacy Head', 'Store Manager'])) {
   router.push('/dashboard');
 }
 

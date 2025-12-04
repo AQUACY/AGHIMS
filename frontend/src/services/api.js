@@ -762,6 +762,8 @@ export const auditLogsAPI = {
     if (filters.end_date) params.append('end_date', filters.end_date);
     if (filters.action) params.append('action', filters.action);
     if (filters.resource_type) params.append('resource_type', filters.resource_type);
+    if (filters.endpoint_path) params.append('endpoint_path', filters.endpoint_path);
+    if (filters.http_method) params.append('http_method', filters.http_method);
     if (filters.page) params.append('page', filters.page);
     if (filters.page_size) params.append('page_size', filters.page_size);
     return api.get(`/audit-logs?${params.toString()}`);
@@ -770,10 +772,53 @@ export const auditLogsAPI = {
   getRoles: () => api.get('/audit-logs/roles'),
   getActions: () => api.get('/audit-logs/actions'),
   getResourceTypes: () => api.get('/audit-logs/resource-types'),
+  getEndpointPaths: () => api.get('/audit-logs/endpoint-paths'),
+  getHttpMethods: () => api.get('/audit-logs/http-methods'),
 };
 
 export const systemAPI = {
   getApplicationDate: () => api.get('/system/date'),
+};
+
+// Pharmacy Requisitions endpoints
+export const pharmacyRequisitionsAPI = {
+  create: (data) => api.post('/pharmacy-requisitions', data),
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.ward) params.append('ward', filters.ward);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.start_date) params.append('start_date', filters.start_date);
+    if (filters.end_date) params.append('end_date', filters.end_date);
+    if (filters.page) params.append('page', filters.page);
+    if (filters.page_size) params.append('page_size', filters.page_size);
+    return api.get(`/pharmacy-requisitions?${params.toString()}`);
+  },
+  get: (requisitionId) => api.get(`/pharmacy-requisitions/${requisitionId}`),
+  approve: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/approve`),
+  reject: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/reject`, data),
+  cancel: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/cancel`),
+  fulfill: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/fulfill`, data),
+  getWardStock: (ward, productCode = null) => {
+    if (productCode) {
+      return api.get(`/pharmacy-requisitions/ward-stock/${ward}/${productCode}`);
+    }
+    return api.get(`/pharmacy-requisitions/ward-stock/${ward}`);
+  },
+};
+
+// Notifications endpoints
+export const notificationsAPI = {
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.is_read !== undefined) params.append('is_read', filters.is_read);
+    if (filters.page) params.append('page', filters.page);
+    if (filters.page_size) params.append('page_size', filters.page_size);
+    return api.get(`/notifications?${params.toString()}`);
+  },
+  getUnreadCount: () => api.get('/notifications/unread-count'),
+  markRead: (notificationId) => api.put(`/notifications/${notificationId}/read`),
+  markAllRead: () => api.put('/notifications/read-all'),
+  delete: (notificationId) => api.delete(`/notifications/${notificationId}`),
 };
 
 export const misReportsAPI = {

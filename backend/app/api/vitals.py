@@ -64,7 +64,7 @@ class VitalResponse(BaseModel):
 def get_vitals(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records", "Pharmacy", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records", "Pharmacy", "Pharmacy Head", "Store Manager"]))
 ):
     """Get vitals for an encounter"""
     vital = db.query(Vital).filter(Vital.encounter_id == encounter_id).first()

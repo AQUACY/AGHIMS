@@ -30,7 +30,9 @@ def create_audit_log(
     resource_type: Optional[str] = None,
     resource_id: Optional[int] = None,
     details: Optional[Dict[str, Any]] = None,
-    ip_address: Optional[str] = None
+    ip_address: Optional[str] = None,
+    endpoint_path: Optional[str] = None,
+    http_method: Optional[str] = None
 ) -> AuditLog:
     """
     Create an audit log entry
@@ -43,6 +45,8 @@ def create_audit_log(
         resource_id: ID of the resource being acted upon
         details: Additional details as a dictionary (will be JSON serialized)
         ip_address: IP address of the client
+        endpoint_path: API endpoint path (e.g., "/api/patients/123")
+        http_method: HTTP method (e.g., "GET", "POST", "PUT", "DELETE")
     
     Returns:
         AuditLog: The created audit log entry
@@ -64,7 +68,9 @@ def create_audit_log(
         resource_type=resource_type,
         resource_id=resource_id,
         details=details_str,
-        ip_address=ip_address
+        ip_address=ip_address,
+        endpoint_path=endpoint_path,
+        http_method=http_method
     )
     
     db.add(audit_log)
@@ -81,7 +87,9 @@ def log_activity(
     action: str,
     resource_type: Optional[str] = None,
     resource_id: Optional[int] = None,
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None,
+    endpoint_path: Optional[str] = None,
+    http_method: Optional[str] = None
 ):
     """
     Convenience function to log activity with automatic IP extraction
@@ -94,9 +102,16 @@ def log_activity(
         resource_type: Type of resource
         resource_id: ID of the resource
         details: Additional details
+        endpoint_path: API endpoint path (defaults to request.url.path)
+        http_method: HTTP method (defaults to request.method)
     """
     try:
         ip_address = get_client_ip(request)
+        # Use request path and method if not provided
+        if endpoint_path is None:
+            endpoint_path = request.url.path
+        if http_method is None:
+            http_method = request.method
         create_audit_log(
             db=db,
             user=user,
@@ -104,7 +119,9 @@ def log_activity(
             resource_type=resource_type,
             resource_id=resource_id,
             details=details,
-            ip_address=ip_address
+            ip_address=ip_address,
+            endpoint_path=endpoint_path,
+            http_method=http_method
         )
     except Exception as e:
         # Don't let audit logging failures break the application

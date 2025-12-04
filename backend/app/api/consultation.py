@@ -554,7 +554,7 @@ def delete_diagnosis(
 def create_prescription(
     prescription_data: PrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "Pharmacy Head", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "PA"]))
 ):
     """Add a prescription to an encounter"""
     try:
@@ -681,7 +681,7 @@ class DirectPrescriptionCreate(BaseModel):
 def create_direct_prescription(
     prescription_data: DirectPrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Create a direct prescription (walk-in, no consultation). Always uses base_rate pricing (no co-payment)."""
     from app.models.patient import Patient
@@ -1048,7 +1048,7 @@ def dispense_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Mark a prescription as dispensed - only allowed if bill is paid or bill amount is 0 (except for inpatients)"""
     from app.models.bill import Bill, BillItem, ReceiptItem, Receipt
@@ -1124,7 +1124,7 @@ def confirm_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Confirm a prescription (allows pharmacy to update details) and automatically generate a bill item"""
     from app.models.bill import Bill, BillItem
@@ -1274,7 +1274,7 @@ def confirm_prescription(
 def unconfirm_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Revert a confirmed prescription back to pending status (undo confirmation)"""
     from app.models.bill import Bill, BillItem
@@ -1360,7 +1360,7 @@ def unconfirm_prescription(
 def return_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Return a dispensed prescription (undo dispense - patient couldn't pay)"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
@@ -5614,6 +5614,7 @@ class WardAdmissionResponse(BaseModel):
     patient_date_of_birth: Optional[str] = None
     encounter_created_at: Optional[datetime] = None
     encounter_service_type: Optional[str] = None
+    encounter_ccc_number: Optional[str] = None
     admitted_by_name: Optional[str] = None
     admitted_by_role: Optional[str] = None
     
@@ -6059,6 +6060,7 @@ def get_ward_admission(
             "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
             "encounter_created_at": encounter.created_at,
             "encounter_service_type": encounter.department,
+            "encounter_ccc_number": encounter.ccc_number if encounter.ccc_number else None,
             "admitted_by_name": admitted_by_name,
             "admitted_by_role": admitted_by_role,
             "discharged_by_name": discharged_by_name,
@@ -6844,7 +6846,7 @@ def create_inpatient_clinical_review(
 def get_inpatient_clinical_reviews(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager"]))
 ):
     """Get all clinical reviews for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -7173,7 +7175,7 @@ def create_inpatient_prescription(
     clinical_review_id: int,
     prescription_data: InpatientPrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager"]))
 ):
     """Add a prescription to a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -7370,7 +7372,7 @@ def get_all_ward_admission_prescriptions(
 def get_all_inpatient_diagnoses_for_ward_admission(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin", "Nurse", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin", "Nurse", "Doctor", "PA"]))
 ):
     """Get all diagnoses for a ward admission (across all clinical reviews and from OPD encounter)"""
     from app.models.ward_admission import WardAdmission
@@ -7447,7 +7449,7 @@ def get_all_inpatient_diagnoses_for_ward_admission(
 def get_all_inpatient_prescriptions_for_pharmacy(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Get ALL inpatient prescriptions for a ward admission (for pharmacy - includes pending, confirmed, and dispensed)"""
     from app.models.ward_admission import WardAdmission
@@ -7751,7 +7753,7 @@ def confirm_inpatient_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Confirm an inpatient prescription and add to IPD bill (no payment required)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -7912,7 +7914,7 @@ def dispense_inpatient_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Mark an inpatient prescription as dispensed (no payment check - medications accumulate in IPD bills)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -7960,7 +7962,7 @@ def dispense_inpatient_prescription(
 def return_inpatient_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Return a dispensed inpatient prescription (undo dispense)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -7995,7 +7997,7 @@ def update_inpatient_prescription(
     prescription_id: int,
     prescription_data: InpatientPrescriptionUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Pharmacy", "Pharmacy Head"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Pharmacy", "Pharmacy Head", "Store Manager"]))
 ):
     """Update an inpatient prescription"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8106,7 +8108,7 @@ def update_inpatient_prescription(
 def unconfirm_inpatient_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Revert a confirmed inpatient prescription back to pending status (undo confirmation)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8197,7 +8199,7 @@ def get_ward_admissions_by_patient_card(
     card_number: str,
     include_discharged: Optional[bool] = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Billing", "Admin", "Nurse", "Doctor", "PA", "Records"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Billing", "Admin", "Nurse", "Doctor", "PA", "Records"]))
 ):
     """Get ward admissions for a patient by card number. Set include_discharged=True to include discharged admissions."""
     from app.models.ward_admission import WardAdmission
@@ -8258,7 +8260,7 @@ def get_ward_admissions_by_patient_card(
 def get_inpatient_prescriptions_by_patient_card(
     card_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Get all inpatient prescriptions for a patient by card number"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -10790,11 +10792,14 @@ def create_inpatient_inventory_debit(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
 ):
-    """Add an inventory debit (product used) for a ward admission"""
+    """Add an inventory debit (product used) for a ward admission.
+    Checks ward stock first - if insufficient, prompts to request from pharmacy store.
+    """
     from app.models.ward_admission import WardAdmission
     from app.models.inpatient_inventory_debit import InpatientInventoryDebit
     from app.models.encounter import Encounter
     from app.models.bill import Bill, BillItem
+    from app.models.ward_stock import WardStock
     from app.services.price_list_service_v2 import get_price_from_all_tables
     import random
     
@@ -10805,6 +10810,22 @@ def create_inpatient_inventory_debit(
     encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Check ward stock before allowing debit
+    ward_stock = db.query(WardStock).filter(
+        and_(
+            WardStock.ward == ward_admission.ward,
+            WardStock.product_code == debit_data.product_code
+        )
+    ).first()
+    
+    available_quantity = ward_stock.quantity if ward_stock else 0.0
+    
+    if available_quantity < debit_data.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient stock in {ward_admission.ward}. Available: {available_quantity}, Required: {debit_data.quantity}. Please request items from pharmacy store first."
+        )
     
     # Determine if insured based on encounter CCC number
     is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
@@ -10822,6 +10843,18 @@ def create_inpatient_inventory_debit(
             )
     
     total_price = unit_price * debit_data.quantity
+    
+    # Deduct from ward stock
+    if ward_stock:
+        ward_stock.quantity -= debit_data.quantity
+        if ward_stock.quantity < 0:
+            ward_stock.quantity = 0  # Prevent negative stock
+    else:
+        # This shouldn't happen if check above passed, but handle it
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ward stock record not found after validation"
+        )
     
     # Create inventory debit record
     # Store the current ward as requesting_ward to preserve it even if patient is transferred
@@ -11042,7 +11075,7 @@ def get_all_inventory_debits(
     product_code: Optional[str] = None,
     product_name: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin", "Nurse", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin", "Nurse", "Doctor", "PA"]))
 ):
     """Get all inventory debits with optional filtering - for pharmacy staff to view and release"""
     from app.models.inpatient_inventory_debit import InpatientInventoryDebit
@@ -11170,7 +11203,7 @@ def get_all_inventory_debits(
 def release_inventory_debit(
     debit_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Release inventory debit - pharmacy staff marks inventory as released for ward administration"""
     from app.models.inpatient_inventory_debit import InpatientInventoryDebit

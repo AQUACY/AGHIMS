@@ -86,6 +86,34 @@
             </q-select>
 
             <q-input
+              v-model="filters.endpoint_path"
+              label="Endpoint Path"
+              filled
+              clearable
+              class="col-12 col-md-3"
+              @keyup.enter="loadLogs"
+              @clear="loadLogs"
+            >
+              <template v-slot:prepend>
+                <q-icon name="link" />
+              </template>
+            </q-input>
+
+            <q-select
+              v-model="filters.http_method"
+              :options="httpMethodOptions"
+              label="HTTP Method"
+              filled
+              clearable
+              class="col-12 col-md-3"
+              @update:model-value="loadLogs"
+            >
+              <template v-slot:prepend>
+                <q-icon name="http" />
+              </template>
+            </q-select>
+
+            <q-input
               v-model="filters.start_date"
               label="Start Date"
               type="date"
@@ -202,6 +230,17 @@
             </q-td>
           </template>
 
+          <template v-slot:body-cell-http_method="props">
+            <q-td :props="props">
+              <q-badge
+                v-if="props.value"
+                :color="getMethodColor(props.value)"
+                :label="props.value"
+              />
+              <span v-else class="text-grey-6">-</span>
+            </q-td>
+          </template>
+
           <template v-slot:no-data>
             <div class="full-width row flex-center text-grey-6 q-gutter-sm">
               <q-icon name="inbox" size="2em" />
@@ -234,6 +273,13 @@
             <div v-if="selectedLog?.resource_type">
               <strong>Resource:</strong> {{ selectedLog.resource_type }}
               <span v-if="selectedLog.resource_id"> (ID: {{ selectedLog.resource_id }})</span>
+            </div>
+            <div v-if="selectedLog?.endpoint_path">
+              <strong>Endpoint:</strong> {{ selectedLog.endpoint_path }}
+            </div>
+            <div v-if="selectedLog?.http_method">
+              <strong>HTTP Method:</strong> 
+              <q-badge :color="getMethodColor(selectedLog.http_method)" :label="selectedLog.http_method" />
             </div>
             <div>
               <strong>Timestamp:</strong> {{ formatDateTime(selectedLog?.timestamp) }}
@@ -270,6 +316,7 @@ export default {
     const roleOptions = ref([]);
     const actionOptions = ref([]);
     const resourceTypeOptions = ref([]);
+    const httpMethodOptions = ref(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
     const showDetailsDialog = ref(false);
     const selectedLog = ref(null);
 
@@ -279,6 +326,8 @@ export default {
       username: null,
       action: null,
       resource_type: null,
+      endpoint_path: null,
+      http_method: null,
       start_date: null,
       end_date: null,
     });
@@ -340,6 +389,20 @@ export default {
         sortable: true,
       },
       {
+        name: 'endpoint_path',
+        label: 'Endpoint',
+        field: 'endpoint_path',
+        align: 'left',
+        sortable: true,
+      },
+      {
+        name: 'http_method',
+        label: 'Method',
+        field: 'http_method',
+        align: 'left',
+        sortable: true,
+      },
+      {
         name: 'ip_address',
         label: 'IP Address',
         field: 'ip_address',
@@ -368,6 +431,8 @@ export default {
         if (filters.value.username) params.username = filters.value.username;
         if (filters.value.action) params.action = filters.value.action;
         if (filters.value.resource_type) params.resource_type = filters.value.resource_type;
+        if (filters.value.endpoint_path) params.endpoint_path = filters.value.endpoint_path;
+        if (filters.value.http_method) params.http_method = filters.value.http_method;
         if (filters.value.start_date) params.start_date = filters.value.start_date;
         if (filters.value.end_date) params.end_date = filters.value.end_date;
 
@@ -410,6 +475,8 @@ export default {
         username: null,
         action: null,
         resource_type: null,
+        endpoint_path: null,
+        http_method: null,
         start_date: null,
         end_date: null,
       };
@@ -455,6 +522,16 @@ export default {
       return 'primary';
     };
 
+    const getMethodColor = (method) => {
+      if (!method) return 'grey';
+      const methodUpper = method.toUpperCase();
+      if (methodUpper === 'GET') return 'blue';
+      if (methodUpper === 'POST') return 'green';
+      if (methodUpper === 'PUT' || methodUpper === 'PATCH') return 'orange';
+      if (methodUpper === 'DELETE') return 'red';
+      return 'grey';
+    };
+
     onMounted(() => {
       loadFilterOptions();
       loadLogs();
@@ -470,6 +547,7 @@ export default {
       roleOptions,
       actionOptions,
       resourceTypeOptions,
+      httpMethodOptions,
       showDetailsDialog,
       selectedLog,
       loadLogs,
@@ -479,6 +557,7 @@ export default {
       formatDateTime,
       formatDetails,
       getActionColor,
+      getMethodColor,
     };
   },
 };

@@ -47,6 +47,21 @@
                     | DOB: {{ formatDate(patientInfo.patient_date_of_birth) }}
                   </span>
                 </div>
+                <!-- Insurance Status Indicator -->
+                <div v-if="patientInfo.patient_date_of_birth" class="q-mt-sm">
+                  <q-badge
+                    :color="isInsured ? 'positive' : 'negative'"
+                    :label="isInsured ? 'INSURED ADMISSION' : 'CASH & CARRY ADMISSION'"
+                    class="q-pa-sm text-weight-bold"
+                    style="font-size: 14px; letter-spacing: 0.5px;"
+                  >
+                    <q-icon 
+                      :name="isInsured ? 'verified_user' : 'account_balance_wallet'" 
+                      size="18px" 
+                      class="q-mr-xs" 
+                    />
+                  </q-badge>
+                </div>
               </div>
               <div class="col-12 col-md-6">
                 <div class="text-body2 text-secondary">
@@ -2372,6 +2387,14 @@ const wardAdmissionId = computed(() => parseInt(route.params.id));
 const encounterId = computed(() => route.query.encounter_id ? parseInt(route.query.encounter_id) : null);
 const cardNumber = computed(() => route.query.card_number || null);
 const isDischarged = computed(() => patientInfo.value?.discharged_at !== null && patientInfo.value?.discharged_at !== undefined);
+
+// Check if admission is insured (has CCC number)
+const isInsured = computed(() => {
+  if (!patientInfo.value) return false;
+  // Check encounter_ccc_number from the encounter
+  const cccNumber = patientInfo.value.encounter_ccc_number || null;
+  return cccNumber && cccNumber.trim() !== '';
+});
 
 const loadPatientInfo = async () => {
   if (!wardAdmissionId.value) return;
