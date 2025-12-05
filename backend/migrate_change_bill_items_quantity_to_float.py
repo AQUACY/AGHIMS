@@ -2,80 +2,140 @@
 Migration: Change bill_items.quantity from Integer to Float
 This allows fractional quantities for services like additional services (e.g., 6.15 hours)
 """
-from sqlalchemy import create_engine, text, inspect
-from app.core.config import settings
+import pymysql
+import os
+from datetime import datetime
+
+# Database configuration
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD', ''),
+    'database': os.getenv('DB_NAME', 'hms'),
+    'charset': 'utf8mb4',
+    'cursorclass': pymysql.cursors.DictCursor
+}
 
 def migrate():
     """Change bill_items.quantity column from Integer to Float"""
-    engine = create_engine(
-        settings.DATABASE_URL,
-        connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
-    )
+    print("=" * 60)
+    print("Migration: Change bill_items.quantity to Float")
+    print("=" * 60)
+    print()
     
-    inspector = inspect(engine)
-    
-    # Check if table exists
-    if "bill_items" not in inspector.get_table_names():
-        print("✗ bill_items table does not exist")
-        return
-    
-    print("Changing bill_items.quantity from Integer to Float...")
-    
-    with engine.connect() as conn:
-        if "sqlite" in settings.DATABASE_URL:
-            # SQLite doesn't support ALTER COLUMN directly, need to recreate table
-            # First, check current column type
-            result = conn.execute(text("PRAGMA table_info(bill_items)"))
-            columns = {row[1]: row[2] for row in result.fetchall()}
+    try:
+        # Connect to database
+        print("Connecting to database...")
+        connection = pymysql.connect(**DB_CONFIG)
+        print("✓ Connected to database")
+        print()
+        
+        with connection.cursor() as cursor:
+            # Check if table exists
+            cursor.execute("""
+                SELECT COUNT(*) as count
+                FROM information_schema.tables 
+                WHERE table_schema = %s 
+                AND table_name = 'bill_items'
+            """, (DB_CONFIG['database'],))
             
-            if columns.get('quantity') == 'REAL' or columns.get('quantity') == 'FLOAT':
-                print("✓ quantity column is already Float")
+            result = cursor.fetchone()
+            table_exists = result['count'] > 0
+            
+            if not table_exists:
+                print("✗ bill_items table does not exist")
+                connection.close()
                 return
             
-            # SQLite: Create new table with Float quantity, copy data, drop old, rename new
-            conn.execute(text("""
-                CREATE TABLE bill_items_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    bill_id INTEGER NOT NULL,
-                    item_code VARCHAR(50) NOT NULL,
-                    item_name VARCHAR(500) NOT NULL,
-                    category VARCHAR(50),
-                    quantity REAL NOT NULL DEFAULT 1.0,
-                    unit_price REAL NOT NULL,
-                    total_price REAL NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (bill_id) REFERENCES bills(id)
-                )
-            """))
+            # Check current column type
+            cursor.execute("""
+                SELECT DATA_TYPE, COLUMN_TYPE
+                FROM information_schema.columns 
+                WHERE table_schema = %s 
+                AND table_name = 'bill_items'
+                AND column_name = 'quantity'
+            """, (DB_CONFIG['database'],))
             
-            # Copy data, converting quantity to float
-            conn.execute(text("""
-                INSERT INTO bill_items_new 
-                (id, bill_id, item_code, item_name, category, quantity, unit_price, total_price, created_at)
-                SELECT 
-                    id, bill_id, item_code, item_name, category, 
-                    CAST(quantity AS REAL), unit_price, total_price, created_at
-                FROM bill_items
-            """))
+            result = cursor.fetchone()
+            if not result:
+                print("✗ quantity column not found in bill_items table")
+                connection.close()
+                return
             
-            # Drop old table
-            conn.execute(text("DROP TABLE bill_items"))
+            current_type = result['DATA_TYPE'].upper()
+            column_type = result['COLUMN_TYPE']
             
-            # Rename new table
-            conn.execute(text("ALTER TABLE bill_items_new RENAME TO bill_items"))
+            # Check if already Float/Double/Decimal
+            if current_type in ['FLOAT', 'DOUBLE', 'DECIMAL', 'DOUBLE PRECISION']:
+                print(f"✓ quantity column is already {current_type} ({column_type})")
+                print("  No migration needed")
+                connection.close()
+                return
             
-            # Recreate indexes
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_bill_items_bill_id ON bill_items(bill_id)"))
+            print(f"Current column type: {column_type}")
+            print("Changing bill_items.quantity from Integer to Decimal(10,2)...")
+            print()
+            print("⚠ WARNING: This operation may take some time on large tables.")
+            print("  The table will be locked during the operation.")
+            print()
             
-        else:
-            # MySQL: Use ALTER COLUMN
-            conn.execute(text("""
-                ALTER TABLE bill_items 
-                MODIFY COLUMN quantity DECIMAL(10,2) NOT NULL DEFAULT 1.0
-            """))
+            # Get row count for progress indication
+            cursor.execute("SELECT COUNT(*) as count FROM bill_items")
+            row_count = cursor.fetchone()['count']
+            print(f"  Table has {row_count:,} rows")
+            print()
+            
+            # For MySQL, use MODIFY COLUMN with proper type
+            # Using DECIMAL instead of FLOAT for better precision
+            start_time = datetime.now()
+            
+            try:
+                # Set a longer timeout for this operation
+                cursor.execute("SET SESSION innodb_lock_wait_timeout = 300")
+                cursor.execute("SET SESSION lock_wait_timeout = 300")
+                
+                # Perform the ALTER TABLE operation
+                # Using DECIMAL(10,2) for better precision than FLOAT
+                cursor.execute("""
+                    ALTER TABLE bill_items 
+                    MODIFY COLUMN quantity DECIMAL(10,2) NOT NULL DEFAULT 1.0
+                """)
+                
+                connection.commit()
+                
+                end_time = datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                
+                print(f"✓ Successfully changed bill_items.quantity to DECIMAL(10,2)")
+                print(f"  Operation completed in {duration:.2f} seconds")
+                print()
+                
+            except pymysql.Error as e:
+                connection.rollback()
+                if e.args[0] == 1205:  # Lock wait timeout
+                    print("✗ Error: Lock wait timeout exceeded")
+                    print("  The table may be locked by another process.")
+                    print("  Please try again when the table is not in use.")
+                elif e.args[0] == 1213:  # Deadlock
+                    print("✗ Error: Deadlock detected")
+                    print("  Please retry the migration.")
+                else:
+                    print(f"✗ Database error: {e}")
+                raise
         
-        conn.commit()
-        print("✓ Successfully changed bill_items.quantity to Float")
+        connection.close()
+        print("=" * 60)
+        print("Migration completed successfully!")
+        print("=" * 60)
+        
+    except pymysql.Error as e:
+        print(f"✗ Database error: {e}")
+        raise
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 if __name__ == "__main__":
     migrate()
