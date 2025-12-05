@@ -166,13 +166,9 @@ def create_department_staff_assignments_table(connection):
         
         if not table_exists:
             print("Creating department_staff_assignments table...")
-            print("  ⚠ This may take some time if the users/wards tables are large...")
             
-            # Set longer timeouts for foreign key creation
-            cursor.execute("SET SESSION innodb_lock_wait_timeout = 300")
-            cursor.execute("SET SESSION lock_wait_timeout = 300")
-            
-            # Create table without foreign keys first (faster)
+            # Create table WITHOUT foreign keys first (much faster, avoids locks)
+            # Foreign keys can be added later if needed, but they're not critical for functionality
             cursor.execute("""
                 CREATE TABLE department_staff_assignments (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -189,40 +185,8 @@ def create_department_staff_assignments_table(connection):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
             connection.commit()
-            print("  ✓ Table structure created")
-            
-            # Add foreign keys separately (can be slow on large tables)
-            print("  Adding foreign key constraints...")
-            try:
-                cursor.execute("""
-                    ALTER TABLE department_staff_assignments
-                    ADD CONSTRAINT fk_dept_staff_dept
-                    FOREIGN KEY (department_id) REFERENCES wards(id)
-                """)
-                connection.commit()
-                print("  ✓ Foreign key to wards table added")
-            except pymysql.Error as e:
-                if "Duplicate key name" in str(e) or "already exists" in str(e).lower():
-                    print("  ⊙ Foreign key to wards already exists")
-                else:
-                    print(f"  ⚠ Warning: Could not add foreign key to wards: {e}")
-                    print("  Continuing without foreign key constraint...")
-            
-            try:
-                cursor.execute("""
-                    ALTER TABLE department_staff_assignments
-                    ADD CONSTRAINT fk_dept_staff_user
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                """)
-                connection.commit()
-                print("  ✓ Foreign key to users table added")
-            except pymysql.Error as e:
-                if "Duplicate key name" in str(e) or "already exists" in str(e).lower():
-                    print("  ⊙ Foreign key to users already exists")
-                else:
-                    print(f"  ⚠ Warning: Could not add foreign key to users: {e}")
-                    print("  Continuing without foreign key constraint...")
-            
+            print("  ✓ Table structure created (without foreign keys for faster creation)")
+            print("  Note: Foreign keys are optional and can be added later if needed")
             print("✓ department_staff_assignments table created successfully")
         else:
             print("✓ department_staff_assignments table already exists")
@@ -244,13 +208,9 @@ def create_store_staff_assignments_table(connection):
         
         if not table_exists:
             print("Creating store_staff_assignments table...")
-            print("  ⚠ This may take some time if the users/stores tables are large...")
             
-            # Set longer timeouts for foreign key creation
-            cursor.execute("SET SESSION innodb_lock_wait_timeout = 300")
-            cursor.execute("SET SESSION lock_wait_timeout = 300")
-            
-            # Create table without foreign keys first (faster)
+            # Create table WITHOUT foreign keys first (much faster, avoids locks)
+            # Foreign keys can be added later if needed, but they're not critical for functionality
             cursor.execute("""
                 CREATE TABLE store_staff_assignments (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -267,40 +227,8 @@ def create_store_staff_assignments_table(connection):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
             connection.commit()
-            print("  ✓ Table structure created")
-            
-            # Add foreign keys separately (can be slow on large tables)
-            print("  Adding foreign key constraints...")
-            try:
-                cursor.execute("""
-                    ALTER TABLE store_staff_assignments
-                    ADD CONSTRAINT fk_store_staff_store
-                    FOREIGN KEY (store_id) REFERENCES stores(id)
-                """)
-                connection.commit()
-                print("  ✓ Foreign key to stores table added")
-            except pymysql.Error as e:
-                if "Duplicate key name" in str(e) or "already exists" in str(e).lower():
-                    print("  ⊙ Foreign key to stores already exists")
-                else:
-                    print(f"  ⚠ Warning: Could not add foreign key to stores: {e}")
-                    print("  Continuing without foreign key constraint...")
-            
-            try:
-                cursor.execute("""
-                    ALTER TABLE store_staff_assignments
-                    ADD CONSTRAINT fk_store_staff_user
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                """)
-                connection.commit()
-                print("  ✓ Foreign key to users table added")
-            except pymysql.Error as e:
-                if "Duplicate key name" in str(e) or "already exists" in str(e).lower():
-                    print("  ⊙ Foreign key to users already exists")
-                else:
-                    print(f"  ⚠ Warning: Could not add foreign key to users: {e}")
-                    print("  Continuing without foreign key constraint...")
-            
+            print("  ✓ Table structure created (without foreign keys for faster creation)")
+            print("  Note: Foreign keys are optional and can be added later if needed")
             print("✓ store_staff_assignments table created successfully")
         else:
             print("✓ store_staff_assignments table already exists")
@@ -389,15 +317,29 @@ def add_store_id_to_ward_stocks(connection):
         
         if not column_exists:
             print("Adding store_id column to ward_stocks table...")
+            # Add column and index first (without foreign key to avoid locks)
             cursor.execute("""
                 ALTER TABLE ward_stocks 
                 ADD COLUMN store_id INT NULL 
-                AFTER ward,
-                ADD INDEX idx_store_id (store_id),
-                ADD FOREIGN KEY (store_id) REFERENCES stores(id)
+                AFTER ward
             """)
             connection.commit()
+            
+            # Add index separately
+            try:
+                cursor.execute("""
+                    ALTER TABLE ward_stocks 
+                    ADD INDEX idx_store_id (store_id)
+                """)
+                connection.commit()
+            except pymysql.Error as e:
+                if "Duplicate key name" in str(e) or "already exists" in str(e).lower():
+                    print("  ⊙ Index already exists")
+                else:
+                    print(f"  ⚠ Warning: Could not add index: {e}")
+            
             print("✓ store_id column added to ward_stocks table")
+            print("  Note: Foreign key constraint skipped for faster migration")
             
             # Try to populate store_id from requisitions
             # This is a best-effort attempt - may not work for all records
