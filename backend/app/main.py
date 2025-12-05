@@ -26,7 +26,10 @@ from app.api import (
     audit_logs,
     mis_reports,
     pharmacy_requisitions,
-    wards
+    wards,
+    stores,
+    department_staff_assignments,
+    store_staff_assignments
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -193,6 +196,9 @@ app.include_router(mis_reports.router, prefix="/api")
 app.include_router(pharmacy_requisitions.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
 app.include_router(wards.router, prefix="/api")
+app.include_router(stores.router, prefix="/api")
+app.include_router(department_staff_assignments.router, prefix="/api")
+app.include_router(store_staff_assignments.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

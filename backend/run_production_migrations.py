@@ -16,6 +16,8 @@ def main():
     print("2. Add discharge fields to 'ward_admissions' table")
     print("3. Add release fields to 'inpatient_inventory_debits' table")
     print("4. Create wards table and populate with initial wards")
+    print("5. Add department_type to wards, create stores, staff assignments,")
+    print("   update requisitions, and add store_id to ward_stocks")
     print("\n" + "=" * 60)
     
     # Check environment variables
@@ -63,9 +65,13 @@ def main():
         from migrate_add_inventory_debit_release_fields_mysql import migrate as migrate_inventory_debit
         migrate_inventory_debit()
         
-        print("\n[4/4] Running migrate_create_wards_table_mysql.py...")
+        print("\n[4/5] Running migrate_create_wards_table_mysql.py...")
         from migrate_create_wards_table_mysql import migrate as migrate_wards
         migrate_wards()
+        
+        print("\n[5/5] Running migrate_departments_and_stores_mysql.py...")
+        from migrate_departments_and_stores_mysql import migrate as migrate_departments_stores
+        migrate_departments_stores()
         
         print("\n" + "=" * 60)
         print("✓ ALL MIGRATIONS COMPLETED SUCCESSFULLY!")

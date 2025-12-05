@@ -1,29 +1,48 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Create Pharmacy Requisition</div>
+    <div class="text-h4 q-mb-md text-weight-bold glass-text">Create Requisition</div>
     
     <q-banner class="glass-card q-pa-md q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      Request items from the pharmacy store. Your requisition will be reviewed by Pharmacy Head and fulfilled by Store Manager before items are added to your ward stock.
+      Request items from stores. Your requisition will be reviewed by Pharmacy Head and fulfilled by Store Manager before items are added to your department/unit stock.
     </q-banner>
 
     <q-card class="glass-card" flat>
       <q-card-section>
         <q-form @submit="createRequisition" ref="requisitionForm">
-          <!-- Ward Selection -->
+          <!-- Department/Unit Selection -->
           <q-select
-            v-model="requisition.ward"
-            :options="wardOptions"
-            label="Ward *"
+            v-model="requisition.department_id"
+            :options="departmentOptions"
+            label="Department/Unit *"
             filled
             required
             class="q-mb-md"
-            :rules="[val => !!val || 'Please select a ward']"
+            emit-value
+            map-options
+            :rules="[val => !!val || 'Please select a department/unit']"
           >
             <template v-slot:prepend>
               <q-icon name="local_hospital" />
+            </template>
+          </q-select>
+
+          <!-- Store Selection -->
+          <q-select
+            v-model="requisition.store_id"
+            :options="storeOptions"
+            label="Store *"
+            filled
+            required
+            class="q-mb-md"
+            emit-value
+            map-options
+            :rules="[val => !!val || 'Please select a store']"
+          >
+            <template v-slot:prepend>
+              <q-icon name="store" />
             </template>
           </q-select>
 
@@ -180,7 +199,7 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
-import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI } from '../services/api';
+import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, departmentStaffAssignmentsAPI } from '../services/api';
 
 export default {
   name: 'CreateRequisition',
@@ -197,23 +216,68 @@ export default {
     const allProducts = ref([]);
     const filteredProductOptions = ref([]);
 
-    const wardOptions = ref([]);
+    const departmentOptions = ref([]);
+    const storeOptions = ref([]);
 
     const requisition = ref({
-      ward: authStore.userRole || '',
+      department_id: null,
+      store_id: null,
       notes: '',
       items: [],
     });
 
-    const loadWards = async () => {
+    const loadDepartments = async () => {
       try {
-        const response = await wardsAPI.getAll(true); // Get only active wards
-        wardOptions.value = (response.data || []).map(ward => ward.name);
+        // Load all active departments
+        const response = await wardsAPI.getAll(true);
+        const allDepartments = response.data || [];
+        
+        // If user is Admin, show all departments
+        // Otherwise, only show departments where user is IC or Deputy
+        if (authStore.userRole === 'Admin') {
+          departmentOptions.value = allDepartments.map(dept => ({
+            label: dept.name,
+            value: dept.id,
+          }));
+        } else {
+          // Get user's department assignments
+          const assignmentsResponse = await departmentStaffAssignmentsAPI.getAll({
+            user_id: authStore.user?.id,
+            active_only: true,
+          });
+          const assignments = assignmentsResponse.data || [];
+          const assignedDepartmentIds = assignments.map(a => a.department_id);
+          
+          // Filter departments to only those where user is IC or Deputy
+          departmentOptions.value = allDepartments
+            .filter(dept => assignedDepartmentIds.includes(dept.id))
+            .map(dept => ({
+              label: dept.name,
+              value: dept.id,
+            }));
+        }
       } catch (error) {
-        console.error('Error loading wards:', error);
+        console.error('Error loading departments/units:', error);
         Notify.create({
           type: 'negative',
-          message: 'Failed to load wards',
+          message: 'Failed to load departments/units',
+          position: 'top',
+        });
+      }
+    };
+
+    const loadStores = async () => {
+      try {
+        const response = await storesAPI.getAll(true); // Get only active stores
+        storeOptions.value = (response.data || []).map(store => ({
+          label: store.name,
+          value: store.id,
+        }));
+      } catch (error) {
+        console.error('Error loading stores:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load stores',
           position: 'top',
         });
       }
@@ -353,6 +417,24 @@ export default {
     };
 
     const createRequisition = async () => {
+      if (!requisition.value.department_id) {
+        Notify.create({
+          type: 'negative',
+          message: 'Please select a department/unit',
+          position: 'top',
+        });
+        return;
+      }
+
+      if (!requisition.value.store_id) {
+        Notify.create({
+          type: 'negative',
+          message: 'Please select a store',
+          position: 'top',
+        });
+        return;
+      }
+
       if (requisition.value.items.length === 0) {
         Notify.create({
           type: 'negative',
@@ -421,9 +503,10 @@ export default {
       }
     };
 
-    // Load wards on component mount
+    // Load departments and stores on component mount
     onMounted(() => {
-      loadWards();
+      loadDepartments();
+      loadStores();
     });
 
     return {
@@ -431,7 +514,8 @@ export default {
       requisition,
       creating,
       showAddItemDialog,
-      wardOptions,
+      departmentOptions,
+      storeOptions,
       loadProducts,
       filterProducts,
       openAddItemDialog,
@@ -441,7 +525,8 @@ export default {
       loadingProducts,
       removeItem,
       createRequisition,
-      loadWards,
+      loadDepartments,
+      loadStores,
     };
   },
 };

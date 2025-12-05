@@ -1,40 +1,36 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Department/Unit Management</div>
+    <div class="text-h4 q-mb-md text-weight-bold glass-text">Store Management</div>
     <q-banner class="glass-card q-pa-md q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      Manage hospital departments and units. Departments with type "Ward" will appear in IPD activities. Other departments can still request items from stores.
+      Manage hospital stores (Main Store, Pharmacy Store, etc.). Stores are where departments request items from.
     </q-banner>
 
-    <!-- Create New Department -->
+    <!-- Create New Store -->
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Create New Department/Unit</div>
-        <q-form @submit="createDepartment" ref="createForm">
+        <div class="text-h6 q-mb-md glass-text">Create New Store</div>
+        <q-form @submit="createStore" ref="createForm">
           <div class="row q-gutter-md">
             <q-input
-              v-model="departmentForm.name"
-              label="Department/Unit Name *"
+              v-model="storeForm.name"
+              label="Store Name *"
               filled
               class="col-12 col-md-6"
               lazy-rules
-              :rules="[(val) => !!val || 'Department name is required']"
+              :rules="[(val) => !!val || 'Store name is required']"
             />
-            <q-select
-              v-model="departmentForm.department_type"
-              :options="departmentTypeOptions"
-              label="Department Type *"
+            <q-input
+              v-model="storeForm.description"
+              label="Description"
               filled
+              type="textarea"
               class="col-12 col-md-6"
-              emit-value
-              map-options
-              lazy-rules
-              :rules="[(val) => !!val || 'Department type is required']"
             />
             <q-toggle
-              v-model="departmentForm.is_active"
+              v-model="storeForm.is_active"
               label="Active"
               class="col-12 col-md-6"
             />
@@ -42,7 +38,7 @@
               <q-btn
                 type="submit"
                 color="primary"
-                label="Create Department"
+                label="Create Store"
                 :loading="creating"
                 icon="add"
               />
@@ -58,28 +54,17 @@
       </q-card-section>
     </q-card>
 
-    <!-- Wards List -->
+    <!-- Stores List -->
     <q-card class="glass-card" flat>
       <q-card-section>
         <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Departments/Units</div>
+          <div class="text-h6 glass-text">Stores</div>
           <q-space />
-          <q-select
-            v-model="filterType"
-            :options="filterTypeOptions"
-            label="Filter by Type"
-            filled
-            dense
-            clearable
-            emit-value
-            map-options
-            class="col-12 col-md-3 q-mr-md"
-          />
           <q-input
             v-model="searchTerm"
             filled
             dense
-            placeholder="Search departments..."
+            placeholder="Search stores..."
             class="col-12 col-md-4"
           >
             <template v-slot:prepend>
@@ -89,21 +74,13 @@
         </div>
 
         <q-table
-          :rows="filteredDepartments"
+          :rows="filteredStores"
           :columns="columns"
           :loading="loading"
           row-key="id"
           :pagination="pagination"
           flat
         >
-          <template v-slot:body-cell-department_type="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getDepartmentTypeColor(props.value)"
-                :label="getDepartmentTypeLabel(props.value)"
-              />
-            </q-td>
-          </template>
           <template v-slot:body-cell-is_active="props">
             <q-td :props="props">
               <q-badge
@@ -122,7 +99,7 @@
                 color="secondary"
                 @click="openStaffAssignmentDialog(props.row)"
                 class="q-mr-xs"
-                :title="'Manage IC/Deputies'"
+                :title="'Manage Store Managers/Department Heads'"
               />
               <q-btn
                 flat
@@ -149,7 +126,7 @@
     <q-dialog v-model="showStaffDialog" persistent>
       <q-card style="min-width: 600px" class="glass-card">
         <q-card-section>
-          <div class="text-h6 glass-text">Manage IC/Deputies - {{ currentDepartment?.name }}</div>
+          <div class="text-h6 glass-text">Manage Store Managers/Department Heads - {{ currentStore?.name }}</div>
         </q-card-section>
 
         <q-card-section>
@@ -159,7 +136,7 @@
               <q-item v-for="assignment in currentAssignments" :key="assignment.id">
                 <q-item-section>
                   <q-item-label>{{ assignment.user_name }}</q-item-label>
-                  <q-item-label caption>{{ assignment.role === 'ic' ? 'In-Charge (IC)' : 'Deputy' }}</q-item-label>
+                  <q-item-label caption>{{ assignment.role === 'store_manager' ? 'Store Manager' : 'Department Head' }}</q-item-label>
                 </q-item-section>
                 <q-item-section side>
                   <q-btn
@@ -174,7 +151,7 @@
               </q-item>
             </q-list>
             <q-banner v-else class="bg-grey-3">
-              No IC or Deputies assigned yet.
+              No Store Managers or Department Heads assigned yet.
             </q-banner>
           </div>
 
@@ -239,29 +216,25 @@
     <q-dialog v-model="showEditDialog">
       <q-card style="min-width: 400px" class="glass-card">
         <q-card-section>
-          <div class="text-h6 glass-text">Edit Department/Unit</div>
+          <div class="text-h6 glass-text">Edit Store</div>
         </q-card-section>
 
         <q-card-section>
-          <q-form @submit="updateDepartment" ref="editFormRef">
+          <q-form @submit="updateStore" ref="editFormRef">
             <q-input
               v-model="editForm.name"
-              label="Department/Unit Name *"
+              label="Store Name *"
               filled
               class="q-mb-md"
               lazy-rules
-              :rules="[(val) => !!val || 'Department name is required']"
+              :rules="[(val) => !!val || 'Store name is required']"
             />
-            <q-select
-              v-model="editForm.department_type"
-              :options="departmentTypeOptions"
-              label="Department Type *"
+            <q-input
+              v-model="editForm.description"
+              label="Description"
               filled
+              type="textarea"
               class="q-mb-md"
-              emit-value
-              map-options
-              lazy-rules
-              :rules="[(val) => !!val || 'Department type is required']"
             />
             <q-toggle
               v-model="editForm.is_active"
@@ -292,11 +265,11 @@
 <script>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
-import { wardsAPI, staffAPI, departmentStaffAssignmentsAPI } from '../services/api';
+import { storesAPI, staffAPI, storeStaffAssignmentsAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 export default {
-  name: 'DepartmentManagement',
+  name: 'StoreManagement',
   setup() {
     const $q = useQuasar();
     const authStore = useAuthStore();
@@ -304,43 +277,23 @@ export default {
     const loading = ref(false);
     const creating = ref(false);
     const updating = ref(false);
-    const departments = ref([]);
+    const stores = ref([]);
     const searchTerm = ref('');
-    const filterType = ref(null);
     const showEditDialog = ref(false);
     const showStaffDialog = ref(false);
     const createForm = ref(null);
     const editFormRef = ref(null);
     const assignmentFormRef = ref(null);
-    const currentDepartment = ref(null);
+    const currentStore = ref(null);
     const currentAssignments = ref([]);
     const staffList = ref([]);
     const loadingStaff = ref(false);
     const addingAssignment = ref(false);
 
-    const departmentTypeOptions = [
-      { label: 'Ward', value: 'ward' },
-      { label: 'OPD', value: 'opd' },
-      { label: 'IT Unit', value: 'it' },
-      { label: 'Administration', value: 'admin' },
-      { label: 'Pharmacy', value: 'pharmacy' },
-      { label: 'Other', value: 'other' },
-    ];
-
-    const filterTypeOptions = [
-      { label: 'All Types', value: null },
-      ...departmentTypeOptions,
-    ];
-
-    const roleOptions = [
-      { label: 'In-Charge (IC)', value: 'ic' },
-      { label: 'Deputy', value: 'deputy' },
-    ];
-
     const columns = [
       { name: 'id', label: 'ID', field: 'id', align: 'left', sortable: true },
-      { name: 'name', label: 'Department/Unit Name', field: 'name', align: 'left', sortable: true },
-      { name: 'department_type', label: 'Type', field: 'department_type', align: 'center', sortable: true },
+      { name: 'name', label: 'Store Name', field: 'name', align: 'left', sortable: true },
+      { name: 'description', label: 'Description', field: 'description', align: 'left', sortable: true },
       { name: 'is_active', label: 'Status', field: 'is_active', align: 'center', sortable: true },
       { name: 'created_at', label: 'Created', field: 'created_at', align: 'left', sortable: true },
       { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
@@ -350,92 +303,80 @@ export default {
       rowsPerPage: 20,
     };
 
-    const departmentForm = reactive({
+    const storeForm = reactive({
       name: '',
-      department_type: 'ward',
+      description: '',
       is_active: true,
     });
 
     const editForm = reactive({
       id: null,
       name: '',
-      department_type: 'ward',
+      description: '',
       is_active: true,
     });
 
+    const roleOptions = [
+      { label: 'Store Manager', value: 'store_manager' },
+      { label: 'Department Head', value: 'department_head' },
+    ];
+
     const newAssignment = reactive({
       user_id: null,
-      role: 'ic',
+      role: 'store_manager',
     });
 
-    const filteredDepartments = computed(() => {
-      let result = departments.value;
-      
-      // Filter by type
-      if (filterType.value) {
-        result = result.filter(d => d.department_type === filterType.value);
-      }
-      
-      // Filter by search term
-      if (searchTerm.value) {
-        const search = searchTerm.value.toLowerCase();
-        result = result.filter(
-          (d) => d.name?.toLowerCase().includes(search)
-        );
-      }
-      
-      return result;
+    const staffOptions = ref([]);
+    const allStaffOptions = computed(() => {
+      // Filter out staff already assigned to this store
+      const assignedIds = currentAssignments.value.map(a => a.user_id);
+      return staffList.value.filter(s => !assignedIds.includes(s.value));
     });
 
-    const getDepartmentTypeLabel = (type) => {
-      const option = departmentTypeOptions.find(opt => opt.value === type);
-      return option ? option.label : type;
-    };
+    const filteredStores = computed(() => {
+      if (!searchTerm.value) {
+        return stores.value;
+      }
+      const search = searchTerm.value.toLowerCase();
+      return stores.value.filter(
+        (s) => s.name?.toLowerCase().includes(search) ||
+               s.description?.toLowerCase().includes(search)
+      );
+    });
 
-    const getDepartmentTypeColor = (type) => {
-      const colors = {
-        'ward': 'primary',
-        'opd': 'info',
-        'it': 'purple',
-        'admin': 'orange',
-        'other': 'grey',
-      };
-      return colors[type] || 'grey';
-    };
-
-    const loadDepartments = async () => {
+    const loadStores = async () => {
       loading.value = true;
       try {
-        const response = await wardsAPI.getAll(false); // Get all departments including inactive
-        departments.value = response.data || [];
+        const response = await storesAPI.getAll(false); // Get all stores including inactive
+        stores.value = response.data || [];
       } catch (error) {
         $q.notify({
           type: 'negative',
-          message: 'Failed to load departments: ' + (error.response?.data?.detail || error.message),
+          message: 'Failed to load stores: ' + (error.response?.data?.detail || error.message),
         });
       } finally {
         loading.value = false;
       }
     };
 
-    const createDepartment = async () => {
+    const createStore = async () => {
       if (!createForm.value) return;
       const valid = await createForm.value.validate();
       if (!valid) return;
 
       creating.value = true;
       try {
-        await wardsAPI.create(departmentForm);
+        await storesAPI.create(storeForm);
         $q.notify({
           type: 'positive',
-          message: 'Department created successfully',
+          message: 'Store created successfully',
         });
         resetForm();
-        loadDepartments();
+        loadStores();
       } catch (error) {
         $q.notify({
           type: 'negative',
-          message: 'Failed to create department: ' + (error.response?.data?.detail || error.message),
+          message: 'Failed to create store: ' + (error.response?.data?.detail || error.message),
         });
       } finally {
         creating.value = false;
@@ -443,9 +384,9 @@ export default {
     };
 
     const resetForm = () => {
-      departmentForm.name = '';
-      departmentForm.department_type = 'ward';
-      departmentForm.is_active = true;
+      storeForm.name = '';
+      storeForm.description = '';
+      storeForm.is_active = true;
       if (createForm.value) {
         createForm.value.resetValidation();
       }
@@ -454,57 +395,57 @@ export default {
     const openEditDialog = (row) => {
       editForm.id = row.id;
       editForm.name = row.name;
-      editForm.department_type = row.department_type || 'ward';
+      editForm.description = row.description || '';
       editForm.is_active = row.is_active;
       showEditDialog.value = true;
     };
 
-    const updateDepartment = async () => {
+    const updateStore = async () => {
       if (!editFormRef.value) return;
       const valid = await editFormRef.value.validate();
       if (!valid) return;
 
       updating.value = true;
       try {
-        await wardsAPI.update(editForm.id, {
+        await storesAPI.update(editForm.id, {
           name: editForm.name,
-          department_type: editForm.department_type,
+          description: editForm.description,
           is_active: editForm.is_active,
         });
         $q.notify({
           type: 'positive',
-          message: 'Department updated successfully',
+          message: 'Store updated successfully',
         });
         showEditDialog.value = false;
-        loadDepartments();
+        loadStores();
       } catch (error) {
         $q.notify({
           type: 'negative',
-          message: 'Failed to update department: ' + (error.response?.data?.detail || error.message),
+          message: 'Failed to update store: ' + (error.response?.data?.detail || error.message),
         });
       } finally {
         updating.value = false;
       }
     };
 
-    const confirmDelete = (department) => {
+    const confirmDelete = (store) => {
       $q.dialog({
         title: 'Confirm Delete',
-        message: `Are you sure you want to deactivate "${department.name}"? This will mark it as inactive.`,
+        message: `Are you sure you want to deactivate "${store.name}"? This will mark it as inactive.`,
         cancel: true,
         persistent: true,
       }).onOk(async () => {
         try {
-          await wardsAPI.delete(department.id);
+          await storesAPI.delete(store.id);
           $q.notify({
             type: 'positive',
-            message: 'Department deactivated successfully',
+            message: 'Store deactivated successfully',
           });
-          loadDepartments();
+          loadStores();
         } catch (error) {
           $q.notify({
             type: 'negative',
-            message: 'Failed to deactivate department: ' + (error.response?.data?.detail || error.message),
+            message: 'Failed to deactivate store: ' + (error.response?.data?.detail || error.message),
           });
         }
       });
@@ -543,13 +484,6 @@ export default {
       }
     };
 
-    const staffOptions = ref([]);
-    const allStaffOptions = computed(() => {
-      // Filter out staff already assigned to this department
-      const assignedIds = currentAssignments.value.map(a => a.user_id);
-      return staffList.value.filter(s => !assignedIds.includes(s.value));
-    });
-
     const filterStaff = (val, update) => {
       if (val === '') {
         update(() => {
@@ -573,10 +507,10 @@ export default {
       });
     };
 
-    const openStaffAssignmentDialog = async (department) => {
-      currentDepartment.value = department;
+    const openStaffAssignmentDialog = async (store) => {
+      currentStore.value = store;
       newAssignment.user_id = null;
-      newAssignment.role = 'ic';
+      newAssignment.role = 'store_manager';
       
       // Load staff if not already loaded
       if (staffList.value.length === 0) {
@@ -584,7 +518,7 @@ export default {
       }
       
       // Load current assignments first (so allStaffOptions can filter correctly)
-      await loadAssignments(department.id);
+      await loadAssignments(store.id);
       
       // Initialize staff options with all available staff
       staffOptions.value = allStaffOptions.value;
@@ -592,10 +526,10 @@ export default {
       showStaffDialog.value = true;
     };
 
-    const loadAssignments = async (departmentId) => {
+    const loadAssignments = async (storeId) => {
       try {
-        const response = await departmentStaffAssignmentsAPI.getAll({
-          department_id: departmentId,
+        const response = await storeStaffAssignmentsAPI.getAll({
+          store_id: storeId,
           active_only: true,
         });
         currentAssignments.value = response.data || [];
@@ -614,8 +548,8 @@ export default {
 
       addingAssignment.value = true;
       try {
-        await departmentStaffAssignmentsAPI.create({
-          department_id: currentDepartment.value.id,
+        await storeStaffAssignmentsAPI.create({
+          store_id: currentStore.value.id,
           user_id: newAssignment.user_id,
           role: newAssignment.role,
         });
@@ -624,11 +558,13 @@ export default {
           message: 'Assignment added successfully',
         });
         newAssignment.user_id = null;
-        newAssignment.role = 'ic';
+        newAssignment.role = 'store_manager';
         if (assignmentFormRef.value) {
           assignmentFormRef.value.resetValidation();
         }
-        await loadAssignments(currentDepartment.value.id);
+        await loadAssignments(currentStore.value.id);
+        // Update staff options after assignment is added
+        staffOptions.value = allStaffOptions.value;
       } catch (error) {
         $q.notify({
           type: 'negative',
@@ -642,17 +578,17 @@ export default {
     const removeAssignment = async (assignment) => {
       $q.dialog({
         title: 'Confirm Removal',
-        message: `Are you sure you want to remove ${assignment.user_name} as ${assignment.role === 'ic' ? 'IC' : 'Deputy'}?`,
+        message: `Are you sure you want to remove ${assignment.user_name} as ${assignment.role === 'store_manager' ? 'Store Manager' : 'Department Head'}?`,
         cancel: true,
         persistent: true,
       }).onOk(async () => {
         try {
-          await departmentStaffAssignmentsAPI.delete(assignment.id);
+          await storeStaffAssignmentsAPI.delete(assignment.id);
           $q.notify({
             type: 'positive',
             message: 'Assignment removed successfully',
           });
-          await loadAssignments(currentDepartment.value.id);
+          await loadAssignments(currentStore.value.id);
           // Update staff options after assignment is removed
           staffOptions.value = allStaffOptions.value;
         } catch (error) {
@@ -665,7 +601,7 @@ export default {
     };
 
     onMounted(() => {
-      loadDepartments();
+      loadStores();
       loadStaff();
     });
 
@@ -673,31 +609,26 @@ export default {
       loading,
       creating,
       updating,
-      departments,
+      stores,
       searchTerm,
-      filterType,
       showEditDialog,
       showStaffDialog,
       createForm,
       editFormRef,
       assignmentFormRef,
-      departmentForm,
+      storeForm,
       editForm,
       columns,
       pagination,
-      departmentTypeOptions,
-      filterTypeOptions,
-      filteredDepartments,
-      getDepartmentTypeLabel,
-      getDepartmentTypeColor,
-      loadDepartments,
-      createDepartment,
+      filteredStores,
+      loadStores,
+      createStore,
       resetForm,
       openEditDialog,
-      updateDepartment,
+      updateStore,
       confirmDelete,
       formatDate,
-      currentDepartment,
+      currentStore,
       currentAssignments,
       staffList,
       loadingStaff,
@@ -720,6 +651,4 @@ export default {
   color: rgba(255, 255, 255, 0.9);
 }
 </style>
-
-
 

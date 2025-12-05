@@ -19,13 +19,15 @@ class RequisitionStatus(str, enum.Enum):
 
 
 class PharmacyRequisition(Base):
-    """Tracks requisitions from wards to pharmacy store"""
+    """Tracks requisitions from departments to stores"""
     __tablename__ = "pharmacy_requisitions"
     
     id = Column(Integer, primary_key=True, index=True)
     requisition_number = Column(String(50), unique=True, nullable=False, index=True)  # Auto-generated requisition number
-    ward = Column(String(100), nullable=False, index=True)  # Ward requesting
-    requested_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # Ward IC/staff who created request
+    department_id = Column(Integer, ForeignKey("wards.id"), nullable=False, index=True)  # Department requesting
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False, index=True)  # Store being requested from
+    ward = Column(String(100), nullable=True, index=True)  # Legacy field - kept for backward compatibility
+    requested_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # Department IC/Deputy who created request
     status = Column(SQLEnum(RequisitionStatus), default=RequisitionStatus.PENDING, nullable=False, index=True)
     
     # Approval fields
@@ -43,6 +45,8 @@ class PharmacyRequisition(Base):
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable, nullable=False)
     
     # Relationships
+    department = relationship("Ward", foreign_keys=[department_id])
+    store = relationship("Store", foreign_keys=[store_id])
     requester = relationship("User", foreign_keys=[requested_by])
     approver = relationship("User", foreign_keys=[approved_by])
     fulfiller = relationship("User", foreign_keys=[fulfilled_by])
@@ -50,5 +54,5 @@ class PharmacyRequisition(Base):
     history = relationship("RequisitionHistory", back_populates="requisition", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<PharmacyRequisition {self.requisition_number} - {self.ward} - {self.status}>"
+        return f"<PharmacyRequisition {self.requisition_number} - Dept: {self.department_id} - Store: {self.store_id} - {self.status}>"
 

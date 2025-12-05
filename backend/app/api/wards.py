@@ -11,7 +11,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
 from app.core.datetime_utils import utcnow
 from app.models.user import User
-from app.models.ward import Ward
+from app.models.ward import Ward, DepartmentType
 
 router = APIRouter(prefix="/wards", tags=["wards"])
 
@@ -19,17 +19,20 @@ router = APIRouter(prefix="/wards", tags=["wards"])
 # Request/Response Models
 class WardCreate(BaseModel):
     name: str
+    department_type: DepartmentType = DepartmentType.WARD
     is_active: bool = True
 
 
 class WardUpdate(BaseModel):
     name: Optional[str] = None
+    department_type: Optional[DepartmentType] = None
     is_active: Optional[bool] = None
 
 
 class WardResponse(BaseModel):
     id: int
     name: str
+    department_type: DepartmentType
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -41,14 +44,18 @@ class WardResponse(BaseModel):
 @router.get("", response_model=List[WardResponse])
 def get_wards(
     active_only: bool = False,
+    department_type: Optional[DepartmentType] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get all wards (or only active ones)"""
+    """Get all departments/wards (or only active ones, optionally filtered by type)"""
     query = db.query(Ward)
     
     if active_only:
         query = query.filter(Ward.is_active == True)
+    
+    if department_type:
+        query = query.filter(Ward.department_type == department_type)
     
     wards = query.order_by(Ward.name.asc()).all()
     return wards
@@ -87,9 +94,10 @@ def create_ward(
             detail=f"Ward with name '{ward_data.name}' already exists"
         )
     
-    # Create new ward
+    # Create new ward/department
     new_ward = Ward(
         name=ward_data.name,
+        department_type=ward_data.department_type,
         is_active=ward_data.is_active
     )
     
@@ -128,9 +136,12 @@ def update_ward(
         if existing_ward:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Ward with name '{ward_data.name}' already exists"
+                detail=f"Department with name '{ward_data.name}' already exists"
             )
         ward.name = ward_data.name
+    
+    if ward_data.department_type is not None:
+        ward.department_type = ward_data.department_type
     
     if ward_data.is_active is not None:
         ward.is_active = ward_data.is_active

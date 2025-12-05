@@ -421,7 +421,7 @@ const loadInventoryDebits = async () => {
     
     // Load wards from API first, then merge with any additional wards from debits
     try {
-      const wardsResponse = await wardsAPI.getAll(true); // Get only active wards
+      const wardsResponse = await wardsAPI.getAll(true, 'ward'); // Get only active wards (department type = ward)
       const apiWards = (wardsResponse.data || []).map(ward => ward.name);
       const wards = new Set(apiWards);
       

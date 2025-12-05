@@ -244,6 +244,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Admin'] },
       },
       {
+        path: '/ipd/store-management',
+        name: 'StoreManagement',
+        component: () => import('../pages/StoreManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin'] },
+      },
+      {
         path: '/ipd/admission-recommendations',
         name: 'AdmissionRecommendations',
         component: () => import('../pages/AdmissionRecommendations.vue'),

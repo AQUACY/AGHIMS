@@ -1,19 +1,19 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Pharmacy Requisitions</div>
+    <div class="text-h4 q-mb-md text-weight-bold glass-text">Requisitions</div>
     
     <q-banner class="glass-card q-pa-md q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
       <div v-if="isWardStaff">
-        Request items from pharmacy store. Your requisitions must be approved by Pharmacy Head and fulfilled by Store Manager before items are added to your ward stock.
+        Request items from stores. Your requisitions must be approved by Pharmacy Head and fulfilled by Store Manager or Pharmacy Head before items are added to your department/unit stock.
       </div>
       <div v-else-if="isPharmacyHead">
-        Review and approve/reject requisition requests from wards.
+        Review and approve/reject requisition requests from departments/units. You can also fulfill approved requisitions.
       </div>
       <div v-else-if="isStoreManager">
-        Fulfill approved requisitions. You can partially fulfill items if needed.
+        Fulfill approved requisitions for your assigned stores. You can partially fulfill items if needed.
       </div>
     </q-banner>
 
@@ -31,7 +31,7 @@
       <q-btn
         color="secondary"
         icon="inventory_2"
-        label="View Ward Stock"
+        label="View Department/Unit Stock"
         @click="$router.push({ name: 'WardStock' })"
         size="md"
       />
@@ -53,12 +53,28 @@
           <q-select
             v-model="filters.ward"
             :options="wardOptions"
-            label="Ward"
+            label="Department/Unit"
             filled
             clearable
             class="col-12 col-md-2"
             @update:model-value="loadRequisitions"
           />
+          <q-select
+            v-model="filters.store_id"
+            :options="storeOptions"
+            label="Store"
+            filled
+            clearable
+            emit-value
+            map-options
+            class="col-12 col-md-2"
+            @update:model-value="loadRequisitions"
+            :disable="isStoreManagerOrDeptHead && userStoreIds.length > 0"
+          >
+            <template v-slot:prepend>
+              <q-icon name="store" />
+            </template>
+          </q-select>
           <q-select
             v-model="filters.status"
             :options="statusOptions"
@@ -158,7 +174,7 @@
                 <q-tooltip>Reject</q-tooltip>
               </q-btn>
               <q-btn
-                v-if="isStoreManager && props.row.status === 'approved'"
+                v-if="(isStoreManager || isPharmacyHead) && props.row.status === 'approved'"
                 flat
                 dense
                 round
@@ -204,7 +220,7 @@
         <q-card-section>
           <q-input
             v-model="newRequisition.ward"
-            label="Ward"
+            label="Department/Unit"
             filled
             readonly
             class="q-mb-md"
@@ -321,7 +337,7 @@
         <q-card-section v-if="selectedRequisition">
           <div class="q-gutter-md">
             <div><strong>Requisition Number:</strong> {{ selectedRequisition.requisition_number }}</div>
-            <div><strong>Ward:</strong> {{ selectedRequisition.ward }}</div>
+            <div><strong>Department/Unit:</strong> {{ selectedRequisition.ward }}</div>
             <div><strong>Status:</strong> <q-badge :color="getStatusColor(selectedRequisition.status)" :label="selectedRequisition.status" /></div>
             <div><strong>Requested By:</strong> {{ selectedRequisition.requested_by_name }}</div>
             <div v-if="selectedRequisition.approved_by_name"><strong>Approved By:</strong> {{ selectedRequisition.approved_by_name }}</div>
@@ -441,7 +457,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
-import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI } from '../services/api';
+import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, storeStaffAssignmentsAPI } from '../services/api';
 
 export default {
   name: 'PharmacyRequisitions',
@@ -467,14 +483,15 @@ export default {
     const productResults = ref([]);
 
     const filters = ref({
-      ward: null,
+      department_id: null,
+      store_id: null,
       status: null,
       start_date: null,
       end_date: null,
     });
 
     const newRequisition = ref({
-      ward: (authStore.userRole && authStore.userRole !== 'Admin') ? authStore.userRole : '',
+      department_id: (authStore.userRole && authStore.userRole !== 'Admin') ? authStore.userRole : '',
       notes: '',
       items: [],
     });
@@ -494,6 +511,11 @@ export default {
       return role && ['Store Manager', 'Admin'].includes(role);
     });
 
+    const isStoreManagerOrDeptHead = computed(() => {
+      const role = authStore.userRole;
+      return role && ['Store Manager', 'Department Head'].includes(role);
+    });
+
     // Get current user ID safely
     const currentUserId = computed(() => {
       return authStore.user?.id || null;
@@ -505,6 +527,8 @@ export default {
     });
 
     const wardOptions = ref([]);
+    const storeOptions = ref([]);
+    const userStoreIds = ref([]);
     const statusOptions = ref([
       { label: 'Pending', value: 'pending' },
       { label: 'Approved', value: 'approved' },
@@ -515,7 +539,7 @@ export default {
 
     const columns = [
       { name: 'requisition_number', label: 'Requisition #', field: 'requisition_number', align: 'left', sortable: true },
-      { name: 'ward', label: 'Ward', field: 'ward', align: 'left', sortable: true },
+      { name: 'ward', label: 'Department/Unit', field: 'ward', align: 'left', sortable: true },
       { name: 'status', label: 'Status', field: 'status', align: 'left', sortable: true },
       { name: 'requested_by_name', label: 'Requested By', field: 'requested_by_name', align: 'left', sortable: true },
       { name: 'created_at', label: 'Created', field: 'created_at', align: 'left', sortable: true },
@@ -547,7 +571,8 @@ export default {
 
     const clearFilters = () => {
       filters.value = {
-        ward: null,
+        department_id: null,
+        store_id: isStoreManagerOrDeptHead.value && userStoreIds.value.length > 0 ? userStoreIds.value[0] : null,
         status: null,
         start_date: null,
         end_date: null,
@@ -558,12 +583,22 @@ export default {
     const loadRequisitions = async () => {
       loading.value = true;
       try {
-        // Format dates for API (YYYY-MM-DD)
+        // Build filter object
         const apiFilters = {
           ...filters.value,
           start_date: filters.value.start_date ? formatDateForAPI(filters.value.start_date) : null,
           end_date: filters.value.end_date ? formatDateForAPI(filters.value.end_date) : null,
         };
+        
+        // Auto-filter by store for Store Managers/Department Heads
+        // The filter is already set in loadUserStoreAssignments, but ensure it's applied
+        if (isStoreManagerOrDeptHead.value && userStoreIds.value.length > 0) {
+          // Always use the filter value (which is auto-set to first assigned store)
+          if (!apiFilters.store_id) {
+            apiFilters.store_id = filters.value.store_id || userStoreIds.value[0];
+          }
+        }
+        
         const response = await pharmacyRequisitionsAPI.getAll(apiFilters);
         requisitions.value = response.data || [];
       } catch (error) {
@@ -580,7 +615,7 @@ export default {
 
     const openCreateDialog = () => {
       newRequisition.value = {
-        ward: (authStore.userRole && authStore.userRole !== 'Admin') ? authStore.userRole : '',
+        department_id: (authStore.userRole && authStore.userRole !== 'Admin') ? authStore.userRole : '',
         notes: '',
         items: [],
       };
@@ -852,20 +887,60 @@ export default {
 
     const loadWards = async () => {
       try {
-        const response = await wardsAPI.getAll(true); // Get only active wards
-        wardOptions.value = (response.data || []).map(ward => ward.name);
+        const response = await wardsAPI.getAll(true); // Get only active departments/units
+        wardOptions.value = (response.data || []).map(dept => dept.name);
       } catch (error) {
-        console.error('Error loading wards:', error);
+        console.error('Error loading departments/units:', error);
         Notify.create({
           type: 'negative',
-          message: 'Failed to load wards',
+          message: 'Failed to load departments/units',
           position: 'top',
         });
       }
     };
 
-    onMounted(() => {
-      loadWards();
+    const loadStores = async () => {
+      try {
+        const response = await storesAPI.getAll(true); // Get only active stores
+        storeOptions.value = (response.data || []).map(store => ({
+          label: store.name,
+          value: store.id,
+        }));
+      } catch (error) {
+        console.error('Error loading stores:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load stores',
+          position: 'top',
+        });
+      }
+    };
+
+    const loadUserStoreAssignments = async () => {
+      if (!isStoreManagerOrDeptHead.value) {
+        return;
+      }
+
+      try {
+        const response = await storeStaffAssignmentsAPI.getAll({
+          user_id: authStore.user?.id,
+          active_only: true,
+        });
+        userStoreIds.value = (response.data || []).map(assignment => assignment.store_id);
+        
+        // Auto-set filter to first assigned store (always set for Store Managers/Department Heads)
+        if (userStoreIds.value.length > 0) {
+          filters.value.store_id = userStoreIds.value[0];
+        }
+      } catch (error) {
+        console.error('Error loading user store assignments:', error);
+      }
+    };
+
+    onMounted(async () => {
+      await loadWards();
+      await loadStores();
+      await loadUserStoreAssignments();
       loadRequisitions();
     });
 
@@ -893,6 +968,9 @@ export default {
       isAdmin,
       currentUserId,
       wardOptions,
+      storeOptions,
+      userStoreIds,
+      isStoreManagerOrDeptHead,
       statusOptions,
       columns,
       itemColumns,
@@ -913,8 +991,6 @@ export default {
       cancelRequisition,
       getStatusColor,
       formatDateTime,
-      currentUserId,
-      wardOptions,
     };
   },
 };

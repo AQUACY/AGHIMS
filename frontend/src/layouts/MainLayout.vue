@@ -342,7 +342,7 @@
             <q-icon name="shopping_cart" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Pharmacy Requisitions</q-item-label>
+            <q-item-label>Requisitions</q-item-label>
           </q-item-section>
         </q-item>
         <q-item
@@ -357,7 +357,7 @@
             <q-icon name="warehouse" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Ward Stock</q-item-label>
+            <q-item-label>Department/Unit Stock</q-item-label>
           </q-item-section>
         </q-item>
 
@@ -484,7 +484,23 @@
             <q-icon name="meeting_room" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Ward Management</q-item-label>
+            <q-item-label>Department Management</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="canAccess(['Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'StoreManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="store" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Store Management</q-item-label>
           </q-item-section>
         </q-item>
 

@@ -294,7 +294,7 @@ const loadBeds = async () => {
 
 const loadWards = async () => {
   try {
-    const response = await wardsAPI.getAll(true); // Get only active wards
+    const response = await wardsAPI.getAll(true, 'ward'); // Get only active wards (department type = ward)
     const wardNames = (response.data || []).map(ward => ward.name);
     wards.value = wardNames;
     wardOptions.value = wardNames.map(ward => ({

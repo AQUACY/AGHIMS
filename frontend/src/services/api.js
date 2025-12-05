@@ -780,12 +780,14 @@ export const systemAPI = {
   getApplicationDate: () => api.get('/system/date'),
 };
 
-// Pharmacy Requisitions endpoints
+// Requisitions endpoints
 export const pharmacyRequisitionsAPI = {
   create: (data) => api.post('/pharmacy-requisitions', data),
   getAll: (filters = {}) => {
     const params = new URLSearchParams();
-    if (filters.ward) params.append('ward', filters.ward);
+    if (filters.ward) params.append('ward', filters.ward); // Legacy
+    if (filters.department_id) params.append('department_id', filters.department_id);
+    if (filters.store_id) params.append('store_id', filters.store_id);
     if (filters.status) params.append('status', filters.status);
     if (filters.start_date) params.append('start_date', filters.start_date);
     if (filters.end_date) params.append('end_date', filters.end_date);
@@ -798,11 +800,13 @@ export const pharmacyRequisitionsAPI = {
   reject: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/reject`, data),
   cancel: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/cancel`),
   fulfill: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/fulfill`, data),
-  getWardStock: (ward, productCode = null) => {
+  getWardStock: (ward, productCode = null, storeId = null) => {
+    const params = new URLSearchParams();
+    if (storeId) params.append('store_id', storeId);
     if (productCode) {
-      return api.get(`/pharmacy-requisitions/ward-stock/${ward}/${productCode}`);
+      return api.get(`/pharmacy-requisitions/ward-stock/${ward}/${productCode}?${params.toString()}`);
     }
-    return api.get(`/pharmacy-requisitions/ward-stock/${ward}`);
+    return api.get(`/pharmacy-requisitions/ward-stock/${ward}?${params.toString()}`);
   },
 };
 
@@ -878,15 +882,54 @@ export const misReportsAPI = {
 };
 
 export const wardsAPI = {
-  getAll: (activeOnly = true) => {
+  getAll: (activeOnly = true, departmentType = null) => {
     const params = new URLSearchParams();
     if (activeOnly) params.append('active_only', 'true');
+    if (departmentType) params.append('department_type', departmentType);
     return api.get(`/wards?${params.toString()}`);
   },
   get: (wardId) => api.get(`/wards/${wardId}`),
   create: (data) => api.post('/wards', data),
   update: (wardId, data) => api.put(`/wards/${wardId}`, data),
   delete: (wardId) => api.delete(`/wards/${wardId}`),
+};
+
+export const storesAPI = {
+  getAll: (activeOnly = true) => {
+    const params = new URLSearchParams();
+    if (activeOnly) params.append('active_only', 'true');
+    return api.get(`/stores?${params.toString()}`);
+  },
+  get: (storeId) => api.get(`/stores/${storeId}`),
+  create: (data) => api.post('/stores', data),
+  update: (storeId, data) => api.put(`/stores/${storeId}`, data),
+  delete: (storeId) => api.delete(`/stores/${storeId}`),
+};
+
+export const departmentStaffAssignmentsAPI = {
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.department_id) params.append('department_id', filters.department_id);
+    if (filters.user_id) params.append('user_id', filters.user_id);
+    if (filters.active_only !== undefined) params.append('active_only', filters.active_only);
+    return api.get(`/department-staff-assignments?${params.toString()}`);
+  },
+  create: (data) => api.post('/department-staff-assignments', data),
+  update: (assignmentId, data) => api.put(`/department-staff-assignments/${assignmentId}`, data),
+  delete: (assignmentId) => api.delete(`/department-staff-assignments/${assignmentId}`),
+};
+
+export const storeStaffAssignmentsAPI = {
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.store_id) params.append('store_id', filters.store_id);
+    if (filters.user_id) params.append('user_id', filters.user_id);
+    if (filters.active_only !== undefined) params.append('active_only', filters.active_only);
+    return api.get(`/store-staff-assignments?${params.toString()}`);
+  },
+  create: (data) => api.post('/store-staff-assignments', data),
+  update: (assignmentId, data) => api.put(`/store-staff-assignments/${assignmentId}`, data),
+  delete: (assignmentId) => api.delete(`/store-staff-assignments/${assignmentId}`),
 };
 
 export default api;

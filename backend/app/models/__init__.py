@@ -51,7 +51,10 @@ from app.models.pharmacy_requisition import PharmacyRequisition, RequisitionStat
 from app.models.requisition_item import RequisitionItem
 from app.models.requisition_history import RequisitionHistory, HistoryAction
 from app.models.notification import Notification, NotificationType
-from app.models.ward import Ward
+from app.models.ward import Ward, DepartmentType
+from app.models.store import Store
+from app.models.department_staff_assignment import DepartmentStaffAssignment, DepartmentRole
+from app.models.store_staff_assignment import StoreStaffAssignment, StoreRole
 
 __all__ = [
     "User",
@@ -119,5 +122,11 @@ __all__ = [
     "Notification",
     "NotificationType",
     "Ward",
+    "DepartmentType",
+    "Store",
+    "DepartmentStaffAssignment",
+    "DepartmentRole",
+    "StoreStaffAssignment",
+    "StoreRole",
 ]
 

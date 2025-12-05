@@ -2341,7 +2341,7 @@ const wardOptions = ref([]);
 
 const loadWards = async () => {
   try {
-    const response = await wardsAPI.getAll(true); // Get only active wards
+    const response = await wardsAPI.getAll(true, 'ward'); // Get only active wards (department type = ward)
     wardOptions.value = (response.data || []).map(ward => ward.name);
   } catch (error) {
     console.error('Error loading wards:', error);

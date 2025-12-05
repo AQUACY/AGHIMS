@@ -424,7 +424,7 @@ const wardOptions = ref([]);
 // Load wards from API
 const loadWards = async () => {
   try {
-    const response = await wardsAPI.getAll(true); // Get only active wards
+    const response = await wardsAPI.getAll(true, 'ward'); // Get only active wards (department type = ward)
     const apiWards = (response.data || []).map(ward => ward.name);
     
     // Also include any wards found in patients (for backward compatibility)

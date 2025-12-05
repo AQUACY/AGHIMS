@@ -13,15 +13,19 @@ class WardStock(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     ward = Column(String(100), nullable=False, index=True)  # Ward name
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=True, index=True)  # Store that provided the items
     product_code = Column(String(50), nullable=False, index=True)  # Product code
     product_name = Column(String(500), nullable=False)  # Product name
     quantity = Column(Float, nullable=False, default=0.0)  # Available quantity
     created_at = Column(DateTime, default=utcnow_callable, nullable=False)
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable, nullable=False)
     
-    # Unique constraint: one record per ward-product combination
+    # Relationships
+    store = relationship("Store", foreign_keys=[store_id])
+    
+    # Unique constraint: one record per ward-product-store combination
     __table_args__ = (
-        Index('idx_ward_stock_unique', 'ward', 'product_code', unique=True),
+        Index('idx_ward_stock_unique', 'ward', 'product_code', 'store_id', unique=True),
     )
     
     def __repr__(self):
