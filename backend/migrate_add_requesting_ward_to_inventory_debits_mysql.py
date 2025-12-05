@@ -5,18 +5,15 @@ This preserves the original ward that requested inventory even after patient tra
 import pymysql
 import os
 import sys
-from getpass import getpass
 
 def migrate():
-    # Get database connection details from environment or prompt
+    # Get database connection details from environment
     db_host = os.getenv('DB_HOST', 'localhost')
     db_user = os.getenv('DB_USER', 'root')
     db_name = os.getenv('DB_NAME', 'hms')
     
-    # Get password from environment or prompt
-    db_password = os.getenv('DB_PASSWORD')
-    if not db_password:
-        db_password = getpass('Enter database password: ')
+    # Get password from environment (no prompting)
+    db_password = os.getenv('DB_PASSWORD', '')
     
     # Initialize conn and cursor to None
     conn = None

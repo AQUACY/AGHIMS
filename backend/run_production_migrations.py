@@ -5,7 +5,6 @@ Run this script on your production server to add missing columns.
 """
 import os
 import sys
-import getpass
 
 def main():
     print("=" * 60)
@@ -33,13 +32,11 @@ def main():
     print(f"  Database: {db_name}")
     print(f"  User: {db_user}")
     
-    # Prompt for password if not set in environment
-    if not db_password:
-        db_password = getpass.getpass(f"Enter MySQL password for user '{db_user}': ")
-        # Set it in environment so migration scripts can use it
-        os.environ['DB_PASSWORD'] = db_password
-    else:
+    # Use password from environment (no prompting)
+    if db_password:
         print(f"  Password: {'*' * len(db_password)} (from environment)")
+    else:
+        print(f"  Password: (empty - using .env value)")
     
     # Confirm before proceeding
     response = input("\nProceed with migrations? (yes/no): ").strip().lower()
