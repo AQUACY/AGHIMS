@@ -5,6 +5,16 @@ Run this script on your production server to add missing columns.
 """
 import os
 import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
+else:
+    # Try loading from current directory
+    load_dotenv()
 
 def main():
     print("=" * 60)
@@ -19,12 +29,12 @@ def main():
     print("   update requisitions, and add store_id to ward_stocks")
     print("\n" + "=" * 60)
     
-    # Check environment variables
-    db_host = os.getenv('DB_HOST', 'localhost')
-    db_port = int(os.getenv('DB_PORT', 3306))
-    db_name = os.getenv('DB_NAME', 'hms')
-    db_user = os.getenv('DB_USER', 'root')
-    db_password = os.getenv('DB_PASSWORD', '')
+    # Check environment variables (support both DB_* and MYSQL_*)
+    db_host = os.getenv('DB_HOST') or os.getenv('MYSQL_HOST', 'localhost')
+    db_port = int(os.getenv('DB_PORT') or os.getenv('MYSQL_PORT', '3306'))
+    db_name = os.getenv('DB_NAME') or os.getenv('MYSQL_DATABASE', 'hms')
+    db_user = os.getenv('DB_USER') or os.getenv('MYSQL_USER', 'root')
+    db_password = os.getenv('DB_PASSWORD') or os.getenv('MYSQL_PASSWORD', '')
     
     print(f"\nDatabase Configuration:")
     print(f"  Host: {db_host}")

@@ -10,13 +10,23 @@ Migration script to:
 import pymysql
 import os
 from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
+else:
+    # Try loading from current directory
+    load_dotenv()
 
 # Database configuration
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', ''),
-    'database': os.getenv('DB_NAME', 'hms'),
+    'host': os.getenv('DB_HOST') or os.getenv('MYSQL_HOST', 'localhost'),
+    'user': os.getenv('DB_USER') or os.getenv('MYSQL_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD') or os.getenv('MYSQL_PASSWORD', ''),
+    'database': os.getenv('DB_NAME') or os.getenv('MYSQL_DATABASE', 'hms'),
     'charset': 'utf8mb4',
     'cursorclass': pymysql.cursors.DictCursor
 }

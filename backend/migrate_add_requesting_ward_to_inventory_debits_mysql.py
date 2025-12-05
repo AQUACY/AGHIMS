@@ -5,15 +5,25 @@ This preserves the original ward that requested inventory even after patient tra
 import pymysql
 import os
 import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+env_path = Path(__file__).parent.parent / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
+else:
+    # Try loading from current directory
+    load_dotenv()
 
 def migrate():
-    # Get database connection details from environment
-    db_host = os.getenv('DB_HOST', 'localhost')
-    db_user = os.getenv('DB_USER', 'root')
-    db_name = os.getenv('DB_NAME', 'hms')
+    # Get database connection details from environment (support both DB_* and MYSQL_*)
+    db_host = os.getenv('DB_HOST') or os.getenv('MYSQL_HOST', 'localhost')
+    db_user = os.getenv('DB_USER') or os.getenv('MYSQL_USER', 'root')
+    db_name = os.getenv('DB_NAME') or os.getenv('MYSQL_DATABASE', 'hms')
     
     # Get password from environment (no prompting)
-    db_password = os.getenv('DB_PASSWORD', '')
+    db_password = os.getenv('DB_PASSWORD') or os.getenv('MYSQL_PASSWORD', '')
     
     # Initialize conn and cursor to None
     conn = None
