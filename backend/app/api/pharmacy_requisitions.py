@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
@@ -47,6 +48,7 @@ class RequisitionItemResponse(BaseModel):
     product_code: str
     product_name: str
     requested_quantity: float
+    approved_quantity: Optional[float] = None  # Quantity approved by pharmacy head
     fulfilled_quantity: float
     unit_price: Optional[float] = None
     notes: Optional[str] = None
@@ -100,7 +102,15 @@ class PharmacyRequisitionResponse(BaseModel):
         from_attributes = True
 
 
+class RequisitionApproveItemRequest(BaseModel):
+    item_id: int
+    approved_quantity: float  # Quantity to approve for this item (can be partial)
+
 class RequisitionApproveRequest(BaseModel):
+    items: Optional[List[RequisitionApproveItemRequest]] = None  # Optional: specify quantities per item
+    notes: Optional[str] = None  # Optional approval notes
+
+class RequisitionRejectRequest(BaseModel):
     rejection_reason: Optional[str] = None  # Required if rejecting
 
 
@@ -336,7 +346,7 @@ def create_requisition(
         ward=requisition.ward,
         requested_by=requisition.requested_by,
         requested_by_name=requester.full_name if requester else requester.username if requester else None,
-        status=requisition.status.value,
+        status=requisition.status.value if hasattr(requisition.status, 'value') else str(requisition.status),
         approved_by=requisition.approved_by,
         approved_at=requisition.approved_at,
         rejection_reason=requisition.rejection_reason,
@@ -345,7 +355,21 @@ def create_requisition(
         notes=requisition.notes,
         created_at=requisition.created_at,
         updated_at=requisition.updated_at,
-        items=[RequisitionItemResponse(**item.__dict__) for item in requisition.items],
+        items=[
+            RequisitionItemResponse(
+                id=item.id,
+                requisition_id=item.requisition_id,
+                product_code=item.product_code,
+                product_name=item.product_name,
+                requested_quantity=item.requested_quantity,
+                approved_quantity=item.approved_quantity,
+                fulfilled_quantity=item.fulfilled_quantity,
+                unit_price=item.unit_price,
+                notes=item.notes,
+                created_at=item.created_at,
+                updated_at=item.updated_at
+            ) for item in requisition.items
+        ],
         history=[]
     )
     
@@ -479,7 +503,7 @@ def get_requisitions(
             history_list.append(RequisitionHistoryResponse(
                 id=hist.id,
                 requisition_id=hist.requisition_id,
-                action=hist.action.value,
+                action=hist.action.value if hasattr(hist.action, 'value') else str(hist.action),
                 performed_by=hist.performed_by,
                 performed_by_name=hist_user.full_name if hist_user else hist_user.username if hist_user else None,
                 notes=hist.notes,
@@ -504,7 +528,7 @@ def get_requisitions(
             ward=req.ward,  # Legacy field
             requested_by=req.requested_by,
             requested_by_name=requester.full_name if requester else requester.username if requester else None,
-            status=req.status.value,
+            status=req.status.value if hasattr(req.status, 'value') else str(req.status),
             approved_by=req.approved_by,
             approved_by_name=approver.full_name if approver else approver.username if approver else None,
             approved_at=req.approved_at,
@@ -515,7 +539,21 @@ def get_requisitions(
             notes=req.notes,
             created_at=req.created_at,
             updated_at=req.updated_at,
-            items=[RequisitionItemResponse(**item.__dict__) for item in req.items],
+            items=[
+                RequisitionItemResponse(
+                    id=item.id,
+                    requisition_id=item.requisition_id,
+                    product_code=item.product_code,
+                    product_name=item.product_name,
+                    requested_quantity=item.requested_quantity,
+                    approved_quantity=item.approved_quantity,
+                    fulfilled_quantity=item.fulfilled_quantity,
+                    unit_price=item.unit_price,
+                    notes=item.notes,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at
+                ) for item in req.items
+            ],
             history=history_list
         ))
     
@@ -575,7 +613,7 @@ def get_requisition(
         history_list.append(RequisitionHistoryResponse(
             id=hist.id,
             requisition_id=hist.requisition_id,
-            action=hist.action.value,
+            action=hist.action.value if hasattr(hist.action, 'value') else str(hist.action),
             performed_by=hist.performed_by,
             performed_by_name=hist_user.full_name if hist_user else hist_user.username if hist_user else None,
             notes=hist.notes,
@@ -594,7 +632,7 @@ def get_requisition(
         ward=requisition.ward,  # Legacy field
         requested_by=requisition.requested_by,
         requested_by_name=requester.full_name if requester else requester.username if requester else None,
-        status=requisition.status.value,
+        status=requisition.status.value if hasattr(requisition.status, 'value') else str(requisition.status),
         approved_by=requisition.approved_by,
         approved_by_name=approver.full_name if approver else approver.username if approver else None,
         approved_at=requisition.approved_at,
@@ -605,7 +643,21 @@ def get_requisition(
         notes=requisition.notes,
         created_at=requisition.created_at,
         updated_at=requisition.updated_at,
-        items=[RequisitionItemResponse(**item.__dict__) for item in requisition.items],
+        items=[
+            RequisitionItemResponse(
+                id=item.id,
+                requisition_id=item.requisition_id,
+                product_code=item.product_code,
+                product_name=item.product_name,
+                requested_quantity=item.requested_quantity,
+                approved_quantity=item.approved_quantity,
+                fulfilled_quantity=item.fulfilled_quantity,
+                unit_price=item.unit_price,
+                notes=item.notes,
+                created_at=item.created_at,
+                updated_at=item.updated_at
+            ) for item in requisition.items
+        ],
         history=history_list
     )
 
@@ -613,10 +665,11 @@ def get_requisition(
 @router.put("/{requisition_id}/approve", response_model=PharmacyRequisitionResponse)
 def approve_requisition(
     requisition_id: int,
+    approve_data: RequisitionApproveRequest = RequisitionApproveRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy Head", "Admin"]))
 ):
-    """Approve a requisition (Pharmacy Head only)"""
+    """Approve a requisition (Pharmacy Head only). Can specify approved quantities per item for partial approval."""
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
     
     if not requisition:
@@ -631,17 +684,61 @@ def approve_requisition(
             detail=f"Cannot approve requisition with status: {requisition.status.value}"
         )
     
+    # Get all requisition items
+    requisition_items = db.query(RequisitionItem).filter(
+        RequisitionItem.requisition_id == requisition_id
+    ).all()
+    
+    items_dict = {item.id: item for item in requisition_items}
+    
+    # If items are specified, set approved_quantity for each item
+    if approve_data.items:
+        for approve_item in approve_data.items:
+            if approve_item.item_id not in items_dict:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Item ID {approve_item.item_id} not found in requisition"
+                )
+            
+            item = items_dict[approve_item.item_id]
+            
+            # Validate approved quantity
+            if approve_item.approved_quantity < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Approved quantity cannot be negative for item {item.product_name}"
+                )
+            
+            if approve_item.approved_quantity > item.requested_quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot approve {approve_item.approved_quantity} for {item.product_name}. Requested: {item.requested_quantity}"
+                )
+            
+            # Set approved quantity
+            item.approved_quantity = approve_item.approved_quantity
+    else:
+        # If no items specified, approve full requested quantity for all items
+        for item in requisition_items:
+            item.approved_quantity = item.requested_quantity
+    
     # Update requisition
     requisition.status = RequisitionStatus.APPROVED
     requisition.approved_by = current_user.id
     requisition.approved_at = utcnow()
     
     # Create history entry
+    notes = f"Requisition approved by {current_user.full_name or current_user.username}"
+    if approve_data.notes:
+        notes += f". {approve_data.notes}"
+    if approve_data.items:
+        notes += f". Partial approval with specified quantities."
+    
     history = RequisitionHistory(
         requisition_id=requisition.id,
         action=HistoryAction.APPROVED,
         performed_by=current_user.id,
-        notes=f"Requisition approved by {current_user.full_name or current_user.username}"
+        notes=notes
     )
     db.add(history)
     
@@ -680,7 +777,7 @@ def approve_requisition(
 @router.put("/{requisition_id}/reject", response_model=PharmacyRequisitionResponse)
 def reject_requisition(
     requisition_id: int,
-    rejection_data: RequisitionApproveRequest,
+    rejection_data: RequisitionRejectRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy Head", "Admin"]))
 ):
@@ -799,6 +896,152 @@ def cancel_requisition(
     return get_requisition(requisition_id, db, current_user)
 
 
+@router.put("/{requisition_id}", response_model=PharmacyRequisitionResponse)
+def update_requisition(
+    requisition_id: int,
+    requisition_data: RequisitionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a requisition (only by creator if pending, or Admin can update any)"""
+    requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
+    
+    if not requisition:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Requisition not found"
+        )
+    
+    # Check permissions: creator can edit if pending, Admin can edit any
+    is_creator = requisition.requested_by == current_user.id
+    is_admin = current_user.role == "Admin"
+    
+    if not (is_creator or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only edit requisitions you created, or you must be an Admin"
+        )
+    
+    # Creator can only edit if pending, Admin can edit any status
+    if is_creator and requisition.status != RequisitionStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot edit requisition with status: {requisition.status.value}. Only pending requisitions can be edited by creator."
+        )
+    
+    # Update requisition fields
+    requisition.department_id = requisition_data.department_id
+    requisition.store_id = requisition_data.store_id
+    requisition.notes = requisition_data.notes
+    
+    # Update ward field for backward compatibility
+    department = db.query(Ward).filter(Ward.id == requisition_data.department_id).first()
+    if department:
+        requisition.ward = department.name
+    
+    # Delete existing items and create new ones
+    db.query(RequisitionItem).filter(RequisitionItem.requisition_id == requisition_id).delete()
+    
+    # Create new items
+    for item_data in requisition_data.items:
+        item = RequisitionItem(
+            requisition_id=requisition.id,
+            product_code=item_data.product_code,
+            product_name=item_data.product_name,
+            requested_quantity=item_data.requested_quantity,
+            notes=item_data.notes
+        )
+        db.add(item)
+    
+    # Create history entry
+    history = RequisitionHistory(
+        requisition_id=requisition.id,
+        action=HistoryAction.UPDATED,
+        performed_by=current_user.id,
+        notes=f"Requisition updated by {current_user.full_name or current_user.username}"
+    )
+    db.add(history)
+    
+    db.commit()
+    db.refresh(requisition)
+    
+    return get_requisition(requisition_id, db, current_user)
+
+
+@router.put("/{requisition_id}/revert-approval", response_model=PharmacyRequisitionResponse)
+def revert_approval(
+    requisition_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Pharmacy Head", "Admin"]))
+):
+    """Revert an approved requisition back to pending (Pharmacy Head only)"""
+    requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
+    
+    if not requisition:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Requisition not found"
+        )
+    
+    if requisition.status != RequisitionStatus.APPROVED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot revert requisition with status: {requisition.status.value}. Only approved requisitions can be reverted."
+        )
+    
+    # Check if any items have been fulfilled
+    fulfilled_items = db.query(RequisitionItem).filter(
+        RequisitionItem.requisition_id == requisition_id,
+        RequisitionItem.fulfilled_quantity > 0
+    ).first()
+    
+    if fulfilled_items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot revert approval: Some items have already been fulfilled. Please cancel fulfillment first."
+        )
+    
+    # Revert status to pending
+    requisition.status = RequisitionStatus.PENDING
+    requisition.approved_by = None
+    requisition.approved_at = None
+    
+    # Clear approved quantities
+    requisition_items = db.query(RequisitionItem).filter(
+        RequisitionItem.requisition_id == requisition_id
+    ).all()
+    for item in requisition_items:
+        item.approved_quantity = None
+    
+    # Create history entry
+    history = RequisitionHistory(
+        requisition_id=requisition.id,
+        action=HistoryAction.UPDATED,
+        performed_by=current_user.id,
+        notes=f"Approval reverted by {current_user.full_name or current_user.username}. Requisition set back to pending for editing."
+    )
+    db.add(history)
+    
+    # Create notification for the requester
+    try:
+        create_notification_for_user(
+            db=db,
+            user_id=requisition.requested_by,
+            notification_type=NotificationType.REQUISITION_UPDATED,
+            title=f"Requisition Approval Reverted: {requisition.requisition_number}",
+            message=f"Your requisition {requisition.requisition_number} approval has been reverted. You can now make changes to the requisition.",
+            related_id=requisition.id,
+            related_type="requisition"
+        )
+    except Exception as e:
+        print(f"Warning: Failed to create notification: {e}")
+    
+    db.commit()
+    db.refresh(requisition)
+    
+    return get_requisition(requisition_id, db, current_user)
+
+
 @router.put("/{requisition_id}/fulfill", response_model=PharmacyRequisitionResponse)
 def fulfill_requisition(
     requisition_id: int,
@@ -854,36 +1097,107 @@ def fulfill_requisition(
                 detail=f"Fulfilled quantity cannot be negative for item {item.product_name}"
             )
         
-        remaining = item.requested_quantity - item.fulfilled_quantity
+        # Use approved_quantity if available, otherwise use requested_quantity
+        max_quantity = item.approved_quantity if item.approved_quantity is not None else item.requested_quantity
+        remaining = max_quantity - item.fulfilled_quantity
+        
         if fulfill_item.fulfilled_quantity > remaining:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot fulfill {fulfill_item.fulfilled_quantity} for {item.product_name}. Remaining: {remaining}"
+                detail=f"Cannot fulfill {fulfill_item.fulfilled_quantity} for {item.product_name}. Approved/Requested: {max_quantity}, Already fulfilled: {item.fulfilled_quantity}, Remaining: {remaining}"
             )
         
         # Update item fulfillment
         item.fulfilled_quantity += fulfill_item.fulfilled_quantity
         
         # Update or create ward stock
-        ward_stock = db.query(WardStock).filter(
-            and_(
-                WardStock.ward == requisition.ward,
-                WardStock.product_code == item.product_code,
-                WardStock.store_id == requisition.store_id
-            )
-        ).first()
+        # Query for existing ward stock (handle NULL store_id properly)
+        # First, try to find existing record with exact match
+        if requisition.store_id:
+            ward_stock = db.query(WardStock).filter(
+                and_(
+                    WardStock.ward == requisition.ward,
+                    WardStock.product_code == item.product_code,
+                    WardStock.store_id == requisition.store_id
+                )
+            ).first()
+        else:
+            ward_stock = db.query(WardStock).filter(
+                and_(
+                    WardStock.ward == requisition.ward,
+                    WardStock.product_code == item.product_code,
+                    WardStock.store_id.is_(None)
+                )
+            ).first()
         
         if ward_stock:
             ward_stock.quantity += fulfill_item.fulfilled_quantity
         else:
-            ward_stock = WardStock(
-                ward=requisition.ward,
-                store_id=requisition.store_id,
-                product_code=item.product_code,
-                product_name=item.product_name,
-                quantity=fulfill_item.fulfilled_quantity
-            )
-            db.add(ward_stock)
+            # Try to create new ward stock
+            # If it fails due to duplicate key (race condition), fetch and update instead
+            try:
+                ward_stock = WardStock(
+                    ward=requisition.ward,
+                    store_id=requisition.store_id,
+                    product_code=item.product_code,
+                    product_name=item.product_name,
+                    quantity=fulfill_item.fulfilled_quantity
+                )
+                db.add(ward_stock)
+                db.flush()  # Flush to trigger any IntegrityError immediately
+            except IntegrityError as e:
+                # If duplicate key error, rollback the failed insert and fetch existing record
+                db.rollback()
+                # Expire all objects in session to force fresh query from database
+                db.expire_all()
+                
+                # Re-query for the existing record with fresh session state
+                # Try both with and without store_id filter to handle edge cases
+                if requisition.store_id:
+                    ward_stock = db.query(WardStock).filter(
+                        and_(
+                            WardStock.ward == requisition.ward,
+                            WardStock.product_code == item.product_code,
+                            WardStock.store_id == requisition.store_id
+                        )
+                    ).first()
+                else:
+                    ward_stock = db.query(WardStock).filter(
+                        and_(
+                            WardStock.ward == requisition.ward,
+                            WardStock.product_code == item.product_code,
+                            WardStock.store_id.is_(None)
+                        )
+                    ).first()
+                
+                if ward_stock:
+                    ward_stock.quantity += fulfill_item.fulfilled_quantity
+                else:
+                    # If still not found, try a broader search to debug
+                    all_matching = db.query(WardStock).filter(
+                        and_(
+                            WardStock.ward == requisition.ward,
+                            WardStock.product_code == item.product_code
+                        )
+                    ).all()
+                    
+                    # Log for debugging
+                    print(f"DEBUG: Looking for ward_stock with ward='{requisition.ward}', product_code='{item.product_code}', store_id={requisition.store_id}")
+                    print(f"DEBUG: Found {len(all_matching)} matching records:")
+                    for ws in all_matching:
+                        print(f"  - ward='{ws.ward}', product_code='{ws.product_code}', store_id={ws.store_id}")
+                    
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to update ward stock for {item.product_name}. Duplicate entry detected but record not found. Ward: {requisition.ward}, Product: {item.product_code}, Store: {requisition.store_id}"
+                    )
+            except Exception as e:
+                # For other errors, rollback and re-raise
+                db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to update ward stock for {item.product_name}. Error: {str(e)}"
+                )
         
         # Create history entry for item fulfillment
         history = RequisitionHistory(
@@ -899,9 +1213,12 @@ def fulfill_requisition(
         total_fulfilled += item.fulfilled_quantity
         total_requested += item.requested_quantity
     
-    # Check if all items are fully fulfilled
+    # Check if all items are fully fulfilled (based on approved_quantity if set, otherwise requested_quantity)
     all_items = db.query(RequisitionItem).filter(RequisitionItem.requisition_id == requisition_id).all()
-    all_fulfilled = all(item.fulfilled_quantity >= item.requested_quantity for item in all_items)
+    all_fulfilled = all(
+        item.fulfilled_quantity >= (item.approved_quantity if item.approved_quantity is not None else item.requested_quantity)
+        for item in all_items
+    )
     
     if all_fulfilled:
         requisition.status = RequisitionStatus.FULFILLED

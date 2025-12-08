@@ -16,6 +16,7 @@ class RequisitionItem(Base):
     product_code = Column(String(50), nullable=False, index=True)
     product_name = Column(String(500), nullable=False)
     requested_quantity = Column(Float, nullable=False)  # Quantity requested by ward
+    approved_quantity = Column(Float, nullable=True)  # Quantity approved by pharmacy head (can be partial)
     fulfilled_quantity = Column(Float, nullable=False, default=0.0)  # Quantity fulfilled by store manager
     unit_price = Column(Float, nullable=True)  # Price per unit (for reference)
     notes = Column(Text, nullable=True)  # Item-specific notes

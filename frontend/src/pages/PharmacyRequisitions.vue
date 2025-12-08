@@ -51,11 +51,13 @@
       <q-card-section>
         <div class="row q-gutter-md">
           <q-select
-            v-model="filters.ward"
+            v-model="filters.department_id"
             :options="wardOptions"
             label="Department/Unit"
             filled
             clearable
+            emit-value
+            map-options
             class="col-12 col-md-2"
             @update:model-value="loadRequisitions"
           />
@@ -150,13 +152,25 @@
                 <q-tooltip>View Details</q-tooltip>
               </q-btn>
               <q-btn
+                v-if="(isWardStaff && props.row.status === 'pending' && props.row.requested_by === currentUserId) || (isAdmin && props.row.status === 'pending')"
+                flat
+                dense
+                round
+                icon="edit"
+                color="primary"
+                @click="openEditDialog(props.row)"
+                size="sm"
+              >
+                <q-tooltip>Edit</q-tooltip>
+              </q-btn>
+              <q-btn
                 v-if="isPharmacyHead && props.row.status === 'pending'"
                 flat
                 dense
                 round
                 icon="check"
                 color="positive"
-                @click="approveRequisition(props.row.id)"
+                @click="openApproveDialog(props.row)"
                 size="sm"
               >
                 <q-tooltip>Approve</q-tooltip>
@@ -172,6 +186,18 @@
                 size="sm"
               >
                 <q-tooltip>Reject</q-tooltip>
+              </q-btn>
+              <q-btn
+                v-if="isPharmacyHead && props.row.status === 'approved'"
+                flat
+                dense
+                round
+                icon="undo"
+                color="warning"
+                @click="revertApproval(props.row.id)"
+                size="sm"
+              >
+                <q-tooltip>Revert Approval</q-tooltip>
               </q-btn>
               <q-btn
                 v-if="(isStoreManager || isPharmacyHead) && props.row.status === 'approved'"
@@ -352,10 +378,15 @@
             >
               <template v-slot:body-cell-fulfillment="props">
                 <q-td :props="props">
-                  <div>{{ props.row.fulfilled_quantity }} / {{ props.row.requested_quantity }}</div>
+                  <div>
+                    {{ props.row.fulfilled_quantity }} / 
+                    {{ props.row.approved_quantity !== null && props.row.approved_quantity !== undefined ? props.row.approved_quantity : props.row.requested_quantity }}
+                    <q-badge v-if="props.row.approved_quantity !== null && props.row.approved_quantity !== undefined && props.row.approved_quantity < props.row.requested_quantity" 
+                             color="warning" label="Partial Approval" class="q-ml-sm" />
+                  </div>
                   <q-linear-progress
-                    :value="props.row.fulfilled_quantity / props.row.requested_quantity"
-                    :color="props.row.fulfilled_quantity >= props.row.requested_quantity ? 'positive' : 'warning'"
+                    :value="props.row.fulfilled_quantity / (props.row.approved_quantity !== null && props.row.approved_quantity !== undefined ? props.row.approved_quantity : props.row.requested_quantity)"
+                    :color="props.row.fulfilled_quantity >= (props.row.approved_quantity !== null && props.row.approved_quantity !== undefined ? props.row.approved_quantity : props.row.requested_quantity) ? 'positive' : 'warning'"
                   />
                 </q-td>
               </template>
@@ -406,6 +437,166 @@
       </q-card>
     </q-dialog>
 
+    <!-- Approve Dialog -->
+    <q-dialog v-model="showApproveDialog" persistent style="min-width: 800px">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Approve Requisition</div>
+        </q-card-section>
+
+        <q-card-section v-if="selectedRequisition">
+          <div class="text-caption q-mb-md">
+            You can approve partial quantities for each item. Leave blank or set to requested quantity for full approval.
+          </div>
+          <div v-for="item in selectedRequisition.items" :key="item.id" class="q-mb-md">
+            <q-card>
+              <q-card-section>
+                <div class="text-subtitle2">{{ item.product_name }}</div>
+                <div class="text-caption">Requested: {{ item.requested_quantity }}</div>
+                <q-input
+                  v-model.number="approvalItems[item.id]"
+                  label="Quantity to Approve"
+                  filled
+                  type="number"
+                  :min="0"
+                  :max="item.requested_quantity"
+                  step="0.01"
+                  class="q-mt-md"
+                  hint="Leave blank or set to requested quantity for full approval"
+                />
+              </q-card-section>
+            </q-card>
+          </div>
+          <q-input
+            v-model="approvalNotes"
+            label="Approval Notes (Optional)"
+            filled
+            type="textarea"
+            rows="3"
+          />
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn color="positive" label="Approve" @click="approveRequisition" :loading="processing" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Edit Dialog -->
+    <q-dialog v-model="showEditDialog" persistent style="min-width: 800px">
+      <q-card>
+        <q-card-section>
+          <div class="text-h6">Edit Requisition</div>
+        </q-card-section>
+
+        <q-card-section v-if="editingRequisition">
+          <q-select
+            v-model="editingRequisition.department_id"
+            :options="wardOptions"
+            label="Department/Unit"
+            filled
+            emit-value
+            map-options
+            class="q-mb-md"
+            :disable="!isAdmin"
+          />
+          <q-select
+            v-model="editingRequisition.store_id"
+            :options="storeOptions"
+            label="Store"
+            filled
+            emit-value
+            map-options
+            class="q-mb-md"
+            :disable="!isAdmin"
+          />
+          <q-input
+            v-model="editingRequisition.notes"
+            label="Notes"
+            filled
+            type="textarea"
+            rows="3"
+            class="q-mb-md"
+          />
+          <div class="text-subtitle2 q-mb-md">Items</div>
+          
+          <!-- Product Search Select -->
+          <q-select
+            v-model="selectedEditProduct"
+            :options="filteredEditProductOptions"
+            filled
+            use-input
+            input-debounce="300"
+            label="Search Product to Add"
+            hint="Type to search for products - Select to add"
+            @filter="filterEditProducts"
+            @update:model-value="onEditProductSelected"
+            option-label="label"
+            option-value="value"
+            emit-value
+            map-options
+            clearable
+            :loading="loadingEditProducts"
+            class="q-mb-md"
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.label }}</q-item-label>
+                  <q-item-label caption>
+                    Code: {{ scope.opt.value.code }}
+                    <span v-if="scope.opt.value.formulation"> | {{ scope.opt.value.formulation }}</span>
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+            <template v-slot:no-option>
+              <q-item>
+                <q-item-section class="text-grey">
+                  No products found. Type to search.
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+          
+          <div v-for="(item, index) in editingRequisition.items" :key="index" class="q-mb-md">
+            <q-card>
+              <q-card-section>
+                <div class="row items-center q-gutter-md">
+                  <div class="col">
+                    <div class="text-subtitle2">{{ item.product_name }}</div>
+                    <div class="text-caption">{{ item.product_code }}</div>
+                  </div>
+                  <q-input
+                    v-model.number="item.requested_quantity"
+                    label="Quantity"
+                    filled
+                    type="number"
+                    :min="0"
+                    step="0.01"
+                    class="col-3"
+                  />
+                  <q-btn
+                    flat
+                    round
+                    icon="delete"
+                    color="negative"
+                    @click="removeEditItem(index)"
+                  />
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn color="primary" label="Update" @click="updateRequisition" :loading="processing" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- Fulfill Dialog -->
     <q-dialog v-model="showFulfillDialog" persistent style="min-width: 800px">
       <q-card>
@@ -419,15 +610,18 @@
               <q-card-section>
                 <div class="text-subtitle2">{{ item.product_name }}</div>
                 <div class="text-caption">Requested: {{ item.requested_quantity }}</div>
+                <div class="text-caption" v-if="item.approved_quantity !== null && item.approved_quantity !== undefined">
+                  Approved: {{ item.approved_quantity }} <q-badge color="positive" label="Partial" v-if="item.approved_quantity < item.requested_quantity" />
+                </div>
                 <div class="text-caption">Fulfilled: {{ item.fulfilled_quantity }}</div>
-                <div class="text-caption">Remaining: {{ item.requested_quantity - item.fulfilled_quantity }}</div>
+                <div class="text-caption">Remaining: {{ (item.approved_quantity !== null && item.approved_quantity !== undefined ? item.approved_quantity : item.requested_quantity) - item.fulfilled_quantity }}</div>
                 <q-input
                   v-model.number="fulfillmentItems[item.id]"
                   label="Quantity to Fulfill"
                   filled
                   type="number"
                   :min="0"
-                  :max="item.requested_quantity - item.fulfilled_quantity"
+                  :max="(item.approved_quantity !== null && item.approved_quantity !== undefined ? item.approved_quantity : item.requested_quantity) - item.fulfilled_quantity"
                   step="0.01"
                   class="q-mt-md"
                 />
@@ -453,7 +647,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
@@ -474,13 +668,22 @@ export default {
     const showAddItemDialog = ref(false);
     const showViewDialog = ref(false);
     const showRejectDialog = ref(false);
+    const showApproveDialog = ref(false);
+    const showEditDialog = ref(false);
     const showFulfillDialog = ref(false);
     const selectedRequisition = ref(null);
+    const editingRequisition = ref(null);
     const rejectionReason = ref('');
+    const approvalNotes = ref('');
+    const approvalItems = ref({});
     const fulfillmentNotes = ref('');
     const fulfillmentItems = ref({});
     const itemSearch = ref('');
     const productResults = ref([]);
+    const selectedEditProduct = ref(null);
+    const allEditProducts = ref([]);
+    const filteredEditProductOptions = ref([]);
+    const loadingEditProducts = ref(false);
 
     const filters = ref({
       department_id: null,
@@ -642,15 +845,41 @@ export default {
     };
 
     const selectProduct = (product) => {
-      newRequisition.value.items.push({
+      // Check if we're in edit mode
+      const targetItems = showEditDialog.value && editingRequisition.value 
+        ? editingRequisition.value.items 
+        : newRequisition.value.items;
+      
+      // Check if product is already in the list
+      const existingItem = targetItems.find(
+        item => item.product_code === product.code
+      );
+      
+      if (existingItem) {
+        Notify.create({
+          type: 'warning',
+          message: 'This product is already in the requisition',
+          position: 'top',
+        });
+        return;
+      }
+      
+      targetItems.push({
         product_code: product.code,
         product_name: product.name,
         requested_quantity: 1,
         notes: '',
       });
+      
       showAddItemDialog.value = false;
       itemSearch.value = '';
       productResults.value = [];
+      
+      Notify.create({
+        type: 'positive',
+        message: 'Item added to requisition',
+        position: 'top',
+      });
     };
 
     const removeItem = (index) => {
@@ -724,15 +953,50 @@ export default {
       }
     };
 
-    const approveRequisition = async (requisitionId) => {
+    const openApproveDialog = async (requisition) => {
+      try {
+        const response = await pharmacyRequisitionsAPI.get(requisition.id);
+        selectedRequisition.value = response.data;
+        approvalItems.value = {};
+        approvalNotes.value = '';
+        // Initialize approval quantities to requested quantities (full approval by default)
+        selectedRequisition.value.items.forEach(item => {
+          approvalItems.value[item.id] = item.requested_quantity;
+        });
+        showApproveDialog.value = true;
+      } catch (error) {
+        console.error('Error loading requisition:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load requisition details',
+          position: 'top',
+        });
+      }
+    };
+
+    const approveRequisition = async () => {
+      if (!selectedRequisition.value) return;
+      
       processing.value = true;
       try {
-        await pharmacyRequisitionsAPI.approve(requisitionId);
+        // Build items array with approved quantities
+        const items = selectedRequisition.value.items
+          .filter(item => approvalItems.value[item.id] !== undefined && approvalItems.value[item.id] > 0)
+          .map(item => ({
+            item_id: item.id,
+            approved_quantity: approvalItems.value[item.id] || item.requested_quantity,
+          }));
+        
+        await pharmacyRequisitionsAPI.approve(selectedRequisition.value.id, {
+          items: items.length > 0 ? items : undefined, // If no items specified, approve all
+          notes: approvalNotes.value,
+        });
         Notify.create({
           type: 'positive',
           message: 'Requisition approved successfully',
           position: 'top',
         });
+        showApproveDialog.value = false;
         loadRequisitions();
       } catch (error) {
         console.error('Error approving requisition:', error);
@@ -744,6 +1008,211 @@ export default {
       } finally {
         processing.value = false;
       }
+    };
+
+    const openEditDialog = async (requisition) => {
+      try {
+        const response = await pharmacyRequisitionsAPI.get(requisition.id);
+        editingRequisition.value = {
+          id: response.data.id,
+          department_id: response.data.department_id,
+          store_id: response.data.store_id,
+          notes: response.data.notes || '',
+          items: response.data.items.map(item => ({
+            product_code: item.product_code,
+            product_name: item.product_name,
+            requested_quantity: item.requested_quantity,
+            notes: item.notes || '',
+          })),
+        };
+        selectedEditProduct.value = null;
+        // Load products if not already loaded
+        if (allEditProducts.value.length === 0) {
+          loadEditProducts();
+        }
+        showEditDialog.value = true;
+      } catch (error) {
+        console.error('Error loading requisition:', error);
+        Notify.create({
+          type: 'negative',
+          message: 'Failed to load requisition details',
+          position: 'top',
+        });
+      }
+    };
+
+    const loadEditProducts = async () => {
+      try {
+        loadingEditProducts.value = true;
+        const res = await priceListAPI.searchPriceItems(null, null, 'product');
+        
+        let productsData = res.data;
+        if (!Array.isArray(productsData) && res.data?.data) {
+          productsData = res.data.data;
+        }
+        
+        if (productsData && Array.isArray(productsData)) {
+          const mappedProducts = productsData
+            .filter(item => item.is_active !== false && item.file_type === 'product')
+            .map(item => {
+              const productCode = item.medication_code || item.product_id || item.item_code || item.g_drg_code || '';
+              const productName = item.product_name || item.service_name || 'Unknown Product';
+              const formulation = item.formulation || '';
+              
+              return {
+                label: `${productName}${formulation ? ` (${formulation})` : ''} (${productCode})`,
+                value: {
+                  code: productCode,
+                  name: productName,
+                  formulation: formulation,
+                  fullItem: item
+                }
+              };
+            });
+          
+          allEditProducts.value = mappedProducts;
+          filteredEditProductOptions.value = allEditProducts.value.slice(0, 50);
+        } else {
+          allEditProducts.value = [];
+          filteredEditProductOptions.value = [];
+        }
+      } catch (error) {
+        console.error('Error loading products:', error);
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to load products',
+          position: 'top',
+        });
+        allEditProducts.value = [];
+        filteredEditProductOptions.value = [];
+      } finally {
+        loadingEditProducts.value = false;
+      }
+    };
+
+    const filterEditProducts = (val, update) => {
+      if (val === '') {
+        update(() => {
+          filteredEditProductOptions.value = allEditProducts.value.slice(0, 50);
+        });
+        return;
+      }
+
+      update(() => {
+        const needle = val.toLowerCase();
+        filteredEditProductOptions.value = allEditProducts.value.filter(
+          v => v.label.toLowerCase().indexOf(needle) > -1
+        );
+      });
+    };
+
+    const onEditProductSelected = (productValue) => {
+      if (!productValue || !editingRequisition.value) return;
+      
+      const productCode = productValue.code;
+      const productName = productValue.name;
+      
+      if (!productCode || !productName) {
+        Notify.create({
+          type: 'negative',
+          message: 'Invalid product data',
+          position: 'top',
+        });
+        return;
+      }
+      
+      // Check if product is already in the list
+      const existingItem = editingRequisition.value.items.find(
+        item => item.product_code === productCode
+      );
+      
+      if (existingItem) {
+        Notify.create({
+          type: 'warning',
+          message: 'This product is already in the requisition',
+          position: 'top',
+        });
+        selectedEditProduct.value = null;
+        return;
+      }
+
+      editingRequisition.value.items.push({
+        product_code: productCode,
+        product_name: productName,
+        requested_quantity: 1,
+        notes: '',
+      });
+      
+      selectedEditProduct.value = null;
+      
+      Notify.create({
+        type: 'positive',
+        message: 'Item added to requisition',
+        position: 'top',
+      });
+    };
+
+    const removeEditItem = (index) => {
+      editingRequisition.value.items.splice(index, 1);
+    };
+
+    const updateRequisition = async () => {
+      if (!editingRequisition.value) return;
+      
+      processing.value = true;
+      try {
+        await pharmacyRequisitionsAPI.update(editingRequisition.value.id, {
+          department_id: editingRequisition.value.department_id,
+          store_id: editingRequisition.value.store_id,
+          items: editingRequisition.value.items,
+          notes: editingRequisition.value.notes,
+        });
+        Notify.create({
+          type: 'positive',
+          message: 'Requisition updated successfully',
+          position: 'top',
+        });
+        showEditDialog.value = false;
+        loadRequisitions();
+      } catch (error) {
+        console.error('Error updating requisition:', error);
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to update requisition',
+          position: 'top',
+        });
+      } finally {
+        processing.value = false;
+      }
+    };
+
+    const revertApproval = async (requisitionId) => {
+      $q.dialog({
+        title: 'Revert Approval',
+        message: 'Are you sure you want to revert the approval? This will set the requisition back to pending so the requester can make changes.',
+        cancel: true,
+        persistent: true,
+      }).onOk(async () => {
+        processing.value = true;
+        try {
+          await pharmacyRequisitionsAPI.revertApproval(requisitionId);
+          Notify.create({
+            type: 'positive',
+            message: 'Approval reverted successfully',
+            position: 'top',
+          });
+          loadRequisitions();
+        } catch (error) {
+          console.error('Error reverting approval:', error);
+          Notify.create({
+            type: 'negative',
+            message: error.response?.data?.detail || 'Failed to revert approval',
+            position: 'top',
+          });
+        } finally {
+          processing.value = false;
+        }
+      });
     };
 
     const openRejectDialog = (requisition) => {
@@ -807,14 +1276,19 @@ export default {
     };
 
     const openFulfillDialog = async (requisition) => {
+      // Reset processing state when opening dialog
+      processing.value = false;
       try {
         const response = await pharmacyRequisitionsAPI.get(requisition.id);
         selectedRequisition.value = response.data;
         fulfillmentItems.value = {};
         fulfillmentNotes.value = '';
-        // Initialize fulfillment quantities
+        // Initialize fulfillment quantities (use approved_quantity if available, otherwise requested_quantity)
         selectedRequisition.value.items.forEach(item => {
-          fulfillmentItems.value[item.id] = item.requested_quantity - item.fulfilled_quantity;
+          const maxQuantity = item.approved_quantity !== null && item.approved_quantity !== undefined 
+            ? item.approved_quantity 
+            : item.requested_quantity;
+          fulfillmentItems.value[item.id] = maxQuantity - item.fulfilled_quantity;
         });
         showFulfillDialog.value = true;
       } catch (error) {
@@ -859,11 +1333,23 @@ export default {
         loadRequisitions();
       } catch (error) {
         console.error('Error fulfilling requisition:', error);
-        Notify.create({
-          type: 'negative',
-          message: error.response?.data?.detail || 'Failed to fulfill requisition',
-          position: 'top',
-        });
+        // Don't show error notification for aborted requests (user cancellation or timeout)
+        if (error.code === 'ECONNABORTED' || error.message === 'Request aborted' || error.name === 'AxiosError' && error.code === 'ECONNABORTED') {
+          // Request was aborted, likely due to timeout or user action
+          // Don't show error notification, but still reset state in finally block
+          Notify.create({
+            type: 'warning',
+            message: 'Request was cancelled or timed out. Please try again.',
+            position: 'top',
+            timeout: 3000,
+          });
+        } else {
+          Notify.create({
+            type: 'negative',
+            message: error.response?.data?.detail || 'Failed to fulfill requisition',
+            position: 'top',
+          });
+        }
       } finally {
         processing.value = false;
       }
@@ -888,7 +1374,10 @@ export default {
     const loadWards = async () => {
       try {
         const response = await wardsAPI.getAll(true); // Get only active departments/units
-        wardOptions.value = (response.data || []).map(dept => dept.name);
+        wardOptions.value = (response.data || []).map(dept => ({
+          label: dept.name,
+          value: dept.id
+        }));
       } catch (error) {
         console.error('Error loading departments/units:', error);
         Notify.create({
@@ -937,6 +1426,14 @@ export default {
       }
     };
 
+    // Watch for dialog close to reset processing state
+    watch(showFulfillDialog, (newVal) => {
+      if (!newVal) {
+        // Dialog closed - reset processing state
+        processing.value = false;
+      }
+    });
+
     onMounted(async () => {
       await loadWards();
       await loadStores();
@@ -955,11 +1452,19 @@ export default {
       showAddItemDialog,
       showViewDialog,
       showRejectDialog,
+      showApproveDialog,
+      showEditDialog,
       showFulfillDialog,
       selectedRequisition,
+      editingRequisition,
       rejectionReason,
+      approvalNotes,
+      approvalItems,
       fulfillmentNotes,
       fulfillmentItems,
+      selectedEditProduct,
+      filteredEditProductOptions,
+      loadingEditProducts,
       itemSearch,
       productResults,
       isWardStaff,
@@ -983,9 +1488,17 @@ export default {
       removeItem,
       createRequisition,
       viewRequisition,
+      openApproveDialog,
       approveRequisition,
       openRejectDialog,
       rejectRequisition,
+      openEditDialog,
+      removeEditItem,
+      updateRequisition,
+      loadEditProducts,
+      filterEditProducts,
+      onEditProductSelected,
+      revertApproval,
       openFulfillDialog,
       fulfillRequisition,
       cancelRequisition,

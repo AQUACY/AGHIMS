@@ -11,6 +11,7 @@ import enum
 class HistoryAction(str, enum.Enum):
     """History action types"""
     CREATED = "created"
+    UPDATED = "updated"
     APPROVED = "approved"
     REJECTED = "rejected"
     FULFILLED = "fulfilled"

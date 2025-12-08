@@ -783,6 +783,7 @@ export const systemAPI = {
 // Requisitions endpoints
 export const pharmacyRequisitionsAPI = {
   create: (data) => api.post('/pharmacy-requisitions', data),
+  update: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}`, data),
   getAll: (filters = {}) => {
     const params = new URLSearchParams();
     if (filters.ward) params.append('ward', filters.ward); // Legacy
@@ -796,8 +797,9 @@ export const pharmacyRequisitionsAPI = {
     return api.get(`/pharmacy-requisitions?${params.toString()}`);
   },
   get: (requisitionId) => api.get(`/pharmacy-requisitions/${requisitionId}`),
-  approve: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/approve`),
+  approve: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/approve`, data),
   reject: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/reject`, data),
+  revertApproval: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/revert-approval`),
   cancel: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/cancel`),
   fulfill: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/fulfill`, data),
   getWardStock: (ward, productCode = null, storeId = null) => {
