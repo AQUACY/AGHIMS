@@ -1,26 +1,29 @@
 """
-Migration script to add prescription confirmation fields
+Migration: Add prescription confirmation fields (SQLite version)
 Adds 'confirmed_by' and 'confirmed_at' columns to prescriptions table
-
-Run this script if you have an existing database that doesn't have these columns.
-For new databases, these columns will be created automatically via SQLAlchemy.
 """
 import sqlite3
-import os
 from pathlib import Path
 
-def migrate_add_prescription_confirmation():
+def migrate():
     """Add confirmed_by and confirmed_at columns to prescriptions table"""
+    print("=" * 60)
+    print("Migration: Add prescription confirmation fields")
+    print("=" * 60)
+    print()
+    
     db_path = Path(__file__).parent / "hms.db"
     
     if not db_path.exists():
-        print("Database not found. Running init_db.py will create the table with these columns.")
+        print("⚠ SQLite database not found. This migration is SQLite-specific.")
+        print("  For MySQL, use migrate_add_prescription_confirmation_mysql.py instead.")
+        print("  Skipping this migration.")
         return
     
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    
+    conn = None
     try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
         # Check if columns already exist
         cursor.execute("PRAGMA table_info(prescriptions)")
         columns = [col[1] for col in cursor.fetchall()]
@@ -43,12 +46,18 @@ def migrate_add_prescription_confirmation():
         
     except sqlite3.OperationalError as e:
         print(f"✗ Error: {e}")
-        conn.rollback()
+        if conn:
+            conn.rollback()
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+    
+    print()
+    print("=" * 60)
+    print("Migration completed successfully!")
+    print("=" * 60)
 
 if __name__ == "__main__":
-    print("Migrating database to add prescription confirmation fields...")
-    migrate_add_prescription_confirmation()
-    print("Migration complete!")
+    migrate()
 

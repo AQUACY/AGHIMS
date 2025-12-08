@@ -365,10 +365,10 @@ def show_migration_status():
             name = migration_file.name
             if name in executed:
                 exec_time, status, time_ms = executed_details.get(name, ('', 'success', 0))
-                status_icon = "✓" if status == 'success' else "✗"
+                status_icon = "[OK]" if status == 'success' else "[FAIL]"
                 print(f"{status_icon} {name} - {exec_time} ({time_ms}ms)")
             else:
-                print(f"○ {name} - PENDING")
+                print(f"[PENDING] {name} - PENDING")
         
         print(f"\n{'='*60}\n")
         

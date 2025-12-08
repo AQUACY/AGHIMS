@@ -1,23 +1,28 @@
 """
-Migration script to add 'archived' column to encounters table
-Run this script if you have an existing database
+Migration: Add archived column to encounters table (SQLite version)
 """
 import sqlite3
-import os
 from pathlib import Path
 
-def migrate_add_archived():
+def migrate():
     """Add archived column to encounters table"""
+    print("=" * 60)
+    print("Migration: Add archived column to encounters table")
+    print("=" * 60)
+    print()
+    
     db_path = Path(__file__).parent / "hms.db"
     
     if not db_path.exists():
-        print("Database not found. Running init_db.py will create the table with the archived column.")
+        print("⚠ SQLite database not found. This migration is SQLite-specific.")
+        print("  For MySQL, use migrate_add_archived_mysql.py instead.")
+        print("  Skipping this migration.")
         return
     
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    
+    conn = None
     try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
         # Check if column already exists
         cursor.execute("PRAGMA table_info(encounters)")
         columns = [col[1] for col in cursor.fetchall()]
@@ -32,12 +37,17 @@ def migrate_add_archived():
         
     except sqlite3.OperationalError as e:
         print(f"✗ Error: {e}")
-        conn.rollback()
+        if conn:
+            conn.rollback()
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+    
+    print("=" * 60)
+    print("Migration completed successfully!")
+    print("=" * 60)
 
 if __name__ == "__main__":
-    print("Migrating database to add 'archived' column...")
-    migrate_add_archived()
-    print("Migration complete!")
+    migrate()
 

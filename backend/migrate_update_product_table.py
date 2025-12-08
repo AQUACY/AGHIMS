@@ -11,7 +11,7 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
 )
 
-def run_migration():
+def migrate():
     """Updates product_prices table to match new structure"""
     try:
         # Check if table exists
@@ -94,5 +94,5 @@ def run_migration():
 
 if __name__ == "__main__":
     print("Starting database migration to update product_prices table structure...")
-    run_migration()
+    migrate()
 

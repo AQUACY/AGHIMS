@@ -16,29 +16,67 @@ def add_column_if_missing(conn, table: str, column_def: str, column_name: str):
         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column_def}"))
 
 
-def upgrade():
-    engine = create_engine(f"sqlite:///{DB_PATH}")
-    meta = MetaData()
-    meta.reflect(bind=engine)
-    if "vitals" not in meta.tables:
+def migrate():
+    """Add extended vitals fields (SQLite version)"""
+    print("=" * 60)
+    print("Migration: Add extended vitals fields")
+    print("=" * 60)
+    print()
+    
+    # Check if SQLite database exists
+    if not DB_PATH.exists():
+        print("⚠ SQLite database not found. This migration is SQLite-specific.")
+        print("  For MySQL, use migrate_update_vitals_fields_mysql.py instead.")
+        print("  Skipping this migration.")
         return
-    with engine.begin() as conn:
-        add_column_if_missing(conn, "vitals", "respiration INTEGER", "respiration")
-        add_column_if_missing(conn, "vitals", "bmi FLOAT", "bmi")
-        add_column_if_missing(conn, "vitals", "spo2 INTEGER", "spo2")
-        add_column_if_missing(conn, "vitals", "rbs FLOAT", "rbs")
-        add_column_if_missing(conn, "vitals", "fbs FLOAT", "fbs")
-        add_column_if_missing(conn, "vitals", "upt TEXT", "upt")
-        add_column_if_missing(conn, "vitals", "rdt_malaria TEXT", "rdt_malaria")
-        add_column_if_missing(conn, "vitals", "retro_rdt TEXT", "retro_rdt")
-
-
-def downgrade():
-    # SQLite does not support easy column drops; no-op
-    pass
-
+    
+    try:
+        engine = create_engine(f"sqlite:///{DB_PATH}")
+        
+        # Check if vitals table exists without reflecting all tables
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='vitals'
+            """))
+            if result.fetchone() is None:
+                print("⚠ vitals table does not exist, skipping")
+                return
+        
+        # Use direct approach to avoid issues with broken foreign keys in other tables
+        # This avoids meta.reflect() which tries to reflect all tables
+        with engine.begin() as conn:
+            # Check columns directly using PRAGMA
+            result = conn.execute(text("PRAGMA table_info(vitals)"))
+            existing_cols = {row[1] for row in result.fetchall()}
+            
+            columns_to_add = [
+                ("respiration", "INTEGER"),
+                ("bmi", "FLOAT"),
+                ("spo2", "INTEGER"),
+                ("rbs", "FLOAT"),
+                ("fbs", "FLOAT"),
+                ("upt", "TEXT"),
+                ("rdt_malaria", "TEXT"),
+                ("retro_rdt", "TEXT"),
+            ]
+            
+            for col_name, col_type in columns_to_add:
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE vitals ADD COLUMN {col_name} {col_type}"))
+                    print(f"✓ Added {col_name} column")
+                else:
+                    print(f"✓ Column {col_name} already exists")
+        
+        print("✓ Migration completed successfully!")
+        print("=" * 60)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 if __name__ == "__main__":
-    upgrade()
+    migrate()
 
 

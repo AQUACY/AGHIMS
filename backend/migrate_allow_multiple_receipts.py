@@ -1,10 +1,32 @@
 """
-Migration script to allow multiple receipts per bill (remove unique constraint on bill_id)
+Migration: Allow multiple receipts per bill (remove unique constraint on bill_id)
 """
+import sys
+import os
+from pathlib import Path
+
+# Add parent directory to path to import app modules
+sys.path.insert(0, str(Path(__file__).parent))
+
 from app.core.database import engine
 from sqlalchemy import text
 
-if __name__ == "__main__":
+def migrate():
+    """Allow multiple receipts per bill"""
+    print("=" * 60)
+    print("Migration: Allow multiple receipts per bill")
+    print("=" * 60)
+    print()
+    
+    # Check database type
+    db_url = str(engine.url)
+    is_sqlite = 'sqlite' in db_url.lower()
+    
+    if not is_sqlite:
+        print("⚠ This migration is SQLite-specific. For MySQL, manually remove the unique constraint.")
+        print("  ALTER TABLE receipts DROP INDEX unique_bill_id_constraint_name;")
+        return
+    
     with engine.connect() as conn:
         try:
             # SQLite doesn't support DROP CONSTRAINT directly
@@ -62,10 +84,19 @@ if __name__ == "__main__":
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_receipts_receipt_number ON receipts(receipt_number)"))
                 
                 conn.commit()
+                conn.commit()
                 print("✓ Migration completed successfully")
             else:
                 print("No unique constraint found on bill_id. Table already allows multiple receipts.")
         except Exception as e:
-            print(f"Error during migration: {e}")
+            print(f"✗ Error during migration: {e}")
             conn.rollback()
             raise
+    
+    print()
+    print("=" * 60)
+    print("Migration completed successfully!")
+    print("=" * 60)
+
+if __name__ == "__main__":
+    migrate()

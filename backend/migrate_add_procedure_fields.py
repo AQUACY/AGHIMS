@@ -11,7 +11,7 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
 )
 
-def run_migration():
+def migrate():
     """Adds the 'procedure_g_drg_code' and 'procedure_name' columns to the encounters table."""
     try:
         # First, check if the encounters table exists
@@ -79,5 +79,5 @@ def run_migration():
 
 if __name__ == "__main__":
     print("Starting database migration to add procedure fields to encounters...")
-    run_migration()
+    migrate()
 

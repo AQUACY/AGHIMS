@@ -1,60 +1,79 @@
 """
-Migration: add outcome to consultation_notes and create admission_recommendations table
+Migration: add outcome to consultation_notes and create admission_recommendations table (SQLite version)
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, MetaData, Table, text
-from sqlalchemy import create_engine
-from datetime import datetime
+import sqlite3
 from pathlib import Path
+from datetime import datetime
 
-
-DB_PATH = Path(__file__).resolve().parent / "hms.db"
-
-
-def upgrade():
-    engine = create_engine(f"sqlite:///{DB_PATH}")
-    meta = MetaData()
-    meta.reflect(bind=engine)
-
-    # 1) Add outcome column to consultation_notes if not exists
-    if "consultation_notes" in meta.tables:
-        # SQLite needs a table rebuild for adding nullable columns in older versions,
-        # but modern versions support simple ALTER for new nullable column.
-        with engine.connect() as conn:
-            # Check if column exists
-            result = conn.execute(text("PRAGMA table_info(consultation_notes)")).fetchall()
-            existing_cols = {row[1] for row in result}
-            if "outcome" not in existing_cols:
-                conn.execute(text("ALTER TABLE consultation_notes ADD COLUMN outcome TEXT"))
-
-    # 2) Create admission_recommendations table if not exists
-    if "admission_recommendations" not in meta.tables:
-        admission_recommendations = Table(
-            "admission_recommendations",
-            meta,
-            Column("id", Integer, primary_key=True, index=True),
-            Column("encounter_id", Integer, ForeignKey("encounters.id"), nullable=False, unique=True),
-            Column("ward", String, nullable=False),
-            Column("recommended_by", Integer, ForeignKey("users.id"), nullable=False),
-            Column("created_at", DateTime, default=datetime.utcnow),
-            Column("updated_at", DateTime, default=datetime.utcnow),
-        )
-        admission_recommendations.create(bind=engine, checkfirst=True)
-
-
-def downgrade():
-    engine = create_engine(f"sqlite:///{DB_PATH}")
-    meta = MetaData()
-    meta.reflect(bind=engine)
-
-    # Drop admission_recommendations table
-    if "admission_recommendations" in meta.tables:
-        meta.tables["admission_recommendations"].drop(bind=engine)
-
-    # Can't easily drop a column in SQLite without table rebuild; skipping drop of outcome
-    # Leaving outcome column in consultation_notes.
-
+def migrate():
+    """Add outcome column to consultation_notes and create admission_recommendations table"""
+    print("=" * 60)
+    print("Migration: Add outcome to consultation_notes and create admission_recommendations")
+    print("=" * 60)
+    print()
+    
+    db_path = Path(__file__).parent / "hms.db"
+    
+    if not db_path.exists():
+        print("⚠ SQLite database not found. This migration is SQLite-specific.")
+        print("  For MySQL, use migrate_add_consultation_outcome_and_admission_mysql.py instead.")
+        print("  Skipping this migration.")
+        return
+    
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        # 1) Add outcome column to consultation_notes if not exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='consultation_notes'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(consultation_notes)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'outcome' not in columns:
+                cursor.execute("ALTER TABLE consultation_notes ADD COLUMN outcome TEXT")
+                print("✓ Added outcome column to consultation_notes")
+            else:
+                print("✓ outcome column already exists in consultation_notes")
+        else:
+            print("⚠ consultation_notes table does not exist, skipping")
+        
+        # 2) Create admission_recommendations table if not exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='admission_recommendations'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE admission_recommendations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    encounter_id INTEGER NOT NULL UNIQUE,
+                    ward TEXT NOT NULL,
+                    recommended_by INTEGER NOT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (encounter_id) REFERENCES encounters(id),
+                    FOREIGN KEY (recommended_by) REFERENCES users(id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_admission_recommendations_encounter_id ON admission_recommendations(encounter_id)")
+            print("✓ Created admission_recommendations table")
+        else:
+            print("✓ admission_recommendations table already exists")
+        
+        conn.commit()
+        
+    except sqlite3.Error as e:
+        print(f"✗ Database error: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+    
+    print()
+    print("=" * 60)
+    print("Migration completed successfully!")
+    print("=" * 60)
 
 if __name__ == "__main__":
-    upgrade()
+    migrate()
 
 

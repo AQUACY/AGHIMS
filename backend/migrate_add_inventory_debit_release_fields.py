@@ -7,6 +7,12 @@ import os
 import sys
 
 def migrate():
+    """Add release fields to inpatient_inventory_debits table (SQLite version)"""
+    print("=" * 60)
+    print("Migration: Add release fields to inpatient_inventory_debits")
+    print("=" * 60)
+    print()
+    
     # Get database path from environment or use default
     # Default SQLite path from config is "./hms.db" relative to backend directory
     db_path = os.getenv('SQLITE_DB_PATH', './hms.db')
@@ -21,11 +27,10 @@ def migrate():
     db_path = os.path.normpath(db_path)
     
     if not os.path.exists(db_path):
-        print(f"✗ Database file not found at: {db_path}")
-        print("Please ensure the database file exists or set SQLITE_DB_PATH environment variable.")
-        print(f"Current working directory: {os.getcwd()}")
-        print(f"Script directory: {os.path.dirname(os.path.abspath(__file__))}")
-        sys.exit(1)
+        print("⚠ SQLite database not found. This migration is SQLite-specific.")
+        print("  For MySQL, use migrate_add_inventory_debit_release_fields_mysql.py instead.")
+        print("  Skipping this migration.")
+        return
     
     # Initialize conn and cursor to None
     conn = None
@@ -49,7 +54,6 @@ def migrate():
         if not table_exists:
             print("⚠ Table 'inpatient_inventory_debits' does not exist. Skipping migration.")
             print("This is normal if you're using MySQL in production.")
-            conn.close()
             return
         
         # Check if columns already exist
@@ -100,23 +104,23 @@ def migrate():
         # Commit changes
         conn.commit()
         print("\n✓ Migration completed successfully!")
+        print("=" * 60)
         
     except sqlite3.Error as e:
         print(f"\n✗ SQLite Error during migration: {e}")
         if conn:
             conn.rollback()
-        sys.exit(1)
+        raise
     except Exception as e:
         print(f"\n✗ Error during migration: {e}")
         if conn:
             conn.rollback()
-        sys.exit(1)
+        raise
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
-            print("Database connection closed")
 
 if __name__ == '__main__':
     migrate()

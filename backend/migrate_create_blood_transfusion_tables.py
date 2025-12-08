@@ -1,28 +1,43 @@
 """
-Migration script to create blood_transfusion_types and blood_transfusion_requests tables
+Migration: Create blood_transfusion_types and blood_transfusion_requests tables
 """
 import sys
 import os
+from pathlib import Path
 
 # Add the parent directory to the path so we can import from app
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from app.core.database import engine, Base
 from app.models.blood_transfusion_type import BloodTransfusionType
 from app.models.blood_transfusion_request import BloodTransfusionRequest
 
-def create_tables():
+def migrate():
     """Create the blood transfusion tables"""
-    print("Creating blood_transfusion_types table...")
-    BloodTransfusionType.__table__.create(bind=engine, checkfirst=True)
-    print("✓ blood_transfusion_types table created")
+    print("=" * 60)
+    print("Migration: Create blood transfusion tables")
+    print("=" * 60)
+    print()
     
-    print("Creating blood_transfusion_requests table...")
-    BloodTransfusionRequest.__table__.create(bind=engine, checkfirst=True)
-    print("✓ blood_transfusion_requests table created")
-    
-    print("\nMigration completed successfully!")
+    try:
+        print("Creating blood_transfusion_types table...")
+        BloodTransfusionType.__table__.create(bind=engine, checkfirst=True)
+        print("✓ blood_transfusion_types table created")
+        
+        print("Creating blood_transfusion_requests table...")
+        BloodTransfusionRequest.__table__.create(bind=engine, checkfirst=True)
+        print("✓ blood_transfusion_requests table created")
+        
+        print()
+        print("=" * 60)
+        print("Migration completed successfully!")
+        print("=" * 60)
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 if __name__ == "__main__":
-    create_tables()
+    migrate()
 
