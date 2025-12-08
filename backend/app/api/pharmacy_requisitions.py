@@ -1111,27 +1111,22 @@ def fulfill_requisition(
         item.fulfilled_quantity += fulfill_item.fulfilled_quantity
         
         # Update or create ward stock
-        # Query for existing ward stock (handle NULL store_id properly)
-        # First, try to find existing record with exact match
-        if requisition.store_id:
-            ward_stock = db.query(WardStock).filter(
-                and_(
-                    WardStock.ward == requisition.ward,
-                    WardStock.product_code == item.product_code,
-                    WardStock.store_id == requisition.store_id
-                )
-            ).first()
-        else:
-            ward_stock = db.query(WardStock).filter(
-                and_(
-                    WardStock.ward == requisition.ward,
-                    WardStock.product_code == item.product_code,
-                    WardStock.store_id.is_(None)
-                )
-            ).first()
+        # Note: The unique index might be on (ward, product_code) only (legacy)
+        # or on (ward, product_code, store_id) (new). Query for any matching record first.
+        # This handles both cases and legacy records with NULL store_id.
+        ward_stock = db.query(WardStock).filter(
+            and_(
+                WardStock.ward == requisition.ward,
+                WardStock.product_code == item.product_code
+            )
+        ).first()
         
         if ward_stock:
+            # Found existing record - update quantity and store_id if needed
             ward_stock.quantity += fulfill_item.fulfilled_quantity
+            # Update store_id if it's NULL or different (migrate legacy records)
+            if ward_stock.store_id != requisition.store_id:
+                ward_stock.store_id = requisition.store_id
         else:
             # Try to create new ward stock
             # If it fails due to duplicate key (race condition), fetch and update instead
@@ -1152,7 +1147,11 @@ def fulfill_requisition(
                 db.expire_all()
                 
                 # Re-query for the existing record with fresh session state
-                # Try both with and without store_id filter to handle edge cases
+                # The duplicate key means a record exists, but it might have a different store_id
+                # Try multiple queries to find the existing record
+                ward_stock = None
+                
+                # First, try exact match
                 if requisition.store_id:
                     ward_stock = db.query(WardStock).filter(
                         and_(
@@ -1161,7 +1160,9 @@ def fulfill_requisition(
                             WardStock.store_id == requisition.store_id
                         )
                     ).first()
-                else:
+                
+                # If not found, try with NULL store_id (legacy records)
+                if not ward_stock:
                     ward_stock = db.query(WardStock).filter(
                         and_(
                             WardStock.ward == requisition.ward,
@@ -1170,10 +1171,8 @@ def fulfill_requisition(
                         )
                     ).first()
                 
-                if ward_stock:
-                    ward_stock.quantity += fulfill_item.fulfilled_quantity
-                else:
-                    # If still not found, try a broader search to debug
+                # If still not found, try any matching ward+product (might have different store_id)
+                if not ward_stock:
                     all_matching = db.query(WardStock).filter(
                         and_(
                             WardStock.ward == requisition.ward,
@@ -1181,12 +1180,17 @@ def fulfill_requisition(
                         )
                     ).all()
                     
-                    # Log for debugging
-                    print(f"DEBUG: Looking for ward_stock with ward='{requisition.ward}', product_code='{item.product_code}', store_id={requisition.store_id}")
-                    print(f"DEBUG: Found {len(all_matching)} matching records:")
-                    for ws in all_matching:
-                        print(f"  - ward='{ws.ward}', product_code='{ws.product_code}', store_id={ws.store_id}")
-                    
+                    if all_matching:
+                        # Use the first matching record (prefer non-NULL store_id if available)
+                        ward_stock = next((ws for ws in all_matching if ws.store_id is not None), all_matching[0])
+                        # If the existing record has a different store_id, update it to match the requisition
+                        if ward_stock.store_id != requisition.store_id:
+                            ward_stock.store_id = requisition.store_id
+                
+                if ward_stock:
+                    ward_stock.quantity += fulfill_item.fulfilled_quantity
+                else:
+                    # This should not happen if IntegrityError was raised, but handle it anyway
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail=f"Failed to update ward stock for {item.product_name}. Duplicate entry detected but record not found. Ward: {requisition.ward}, Product: {item.product_code}, Store: {requisition.store_id}"
