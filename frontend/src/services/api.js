@@ -330,6 +330,8 @@ export const consultationAPI = {
     api.put(`/consultation/inpatient-investigation/${investigationId}/revert-status`),
   revertInpatientInvestigationToRequested: (investigationId, reason) => 
     api.put(`/consultation/inpatient-investigation/${investigationId}/revert-to-requested`, { reason }),
+  updateInpatientInvestigationDetails: (investigationId, data) =>
+    api.put(`/consultation/inpatient-investigation/${investigationId}/update-details`, data),
   bulkConfirmInpatientInvestigations: (investigationIds, addToIpdBill = true) => 
     api.put('/consultation/inpatient-investigations/bulk-confirm', { 
       investigation_ids: investigationIds,
@@ -448,6 +450,7 @@ export const consultationAPI = {
     // Inpatient Clinical Reviews
     createInpatientClinicalReview: (wardAdmissionId, reviewData) => api.post(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews`, reviewData),
     getInpatientClinicalReviews: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews`),
+  getInpatientClinicalReview: (clinicalReviewId) => api.get(`/consultation/clinical-reviews/${clinicalReviewId}`),
     updateInpatientClinicalReview: (wardAdmissionId, clinicalReviewId, reviewData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}`, reviewData),
     deleteInpatientClinicalReview: (wardAdmissionId, clinicalReviewId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/clinical-reviews/${clinicalReviewId}`),
     // Inpatient Diagnoses
@@ -800,6 +803,7 @@ export const pharmacyRequisitionsAPI = {
   approve: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/approve`, data),
   reject: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/reject`, data),
   revertApproval: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/revert-approval`),
+  revertFulfillment: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/revert-fulfillment`),
   cancel: (requisitionId) => api.put(`/pharmacy-requisitions/${requisitionId}/cancel`),
   fulfill: (requisitionId, data) => api.put(`/pharmacy-requisitions/${requisitionId}/fulfill`, data),
   getWardStock: (ward, productCode = null, storeId = null) => {

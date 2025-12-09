@@ -167,6 +167,16 @@
                   <q-tooltip>View Remarks/Notes</q-tooltip>
                 </q-btn>
                 <q-btn
+                  size="sm"
+                  color="purple"
+                  icon="description"
+                  flat
+                  round
+                  @click="viewDoctorNotes(props.row)"
+                >
+                  <q-tooltip>View Doctor Notes / Treatment Plan</q-tooltip>
+                </q-btn>
+                <q-btn
                   v-if="props.row.status === 'requested'"
                   size="sm"
                   color="primary"
@@ -346,6 +356,39 @@
       </q-card>
     </q-dialog>
 
+    <!-- View Doctor Notes / Treatment Plan Dialog -->
+    <q-dialog v-model="showDoctorNotesDialog">
+      <q-card style="min-width: 500px; max-width: 800px">
+        <q-card-section>
+          <div class="text-h6">{{ viewingDoctorNotes?.isInpatient ? 'Treatment Plan' : 'Doctor Notes' }}</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="viewingDoctorNotes">
+            {{ viewingDoctorNotes?.procedure_name || 'Investigation' }} ({{ viewingDoctorNotes?.gdrg_code }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div v-if="loadingDoctorNotes" class="text-center q-pa-md">
+            <q-spinner color="primary" size="3em" />
+            <div class="q-mt-md">Loading...</div>
+          </div>
+          <div v-else-if="viewingDoctorNotes?.notes" class="text-body1 q-pa-md" style="background-color: #f5f5f5; border-radius: 4px; white-space: pre-wrap;">
+            {{ viewingDoctorNotes.notes }}
+          </div>
+          <div v-else class="text-grey-6 text-center q-pa-md">
+            {{ viewingDoctorNotes?.isInpatient ? 'No treatment plan available for this clinical review' : 'No doctor notes available for this consultation' }}
+          </div>
+          <div v-if="viewingDoctorNotes?.reviewed_by_name && !loadingDoctorNotes" class="text-caption text-grey-7 q-mt-md">
+            Reviewed by: {{ viewingDoctorNotes.reviewed_by_name }} 
+            <span v-if="viewingDoctorNotes.reviewed_at">
+              on {{ new Date(viewingDoctorNotes.reviewed_at).toLocaleString() }}
+            </span>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn label="Close" color="primary" flat v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- Confirm IPD Investigation Dialog -->
     <q-dialog v-model="showConfirmInpatientDialog" persistent>
       <q-card style="min-width: 400px">
@@ -435,6 +478,9 @@ const resultForm = ref({
 });
 const showRemarksDialog = ref(false);
 const viewingRemarks = ref(null);
+const showDoctorNotesDialog = ref(false);
+const viewingDoctorNotes = ref(null);
+const loadingDoctorNotes = ref(false);
 const showConfirmInpatientDialog = ref(false);
 const confirmInpatientForm = ref({
   id: null,
@@ -1002,6 +1048,46 @@ const confirmInpatientInvestigation = async () => {
 const viewRemarks = (investigation) => {
   viewingRemarks.value = investigation;
   showRemarksDialog.value = true;
+};
+
+const viewDoctorNotes = async (investigation) => {
+  viewingDoctorNotes.value = {
+    ...investigation,
+    notes: null,
+    isInpatient: investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient'
+  };
+  showDoctorNotesDialog.value = true;
+  loadingDoctorNotes.value = true;
+  
+  try {
+    if (investigation.source === 'inpatient' || investigation.prescription_type === 'inpatient') {
+      // IPD: Get treatment plan from clinical review
+      if (investigation.clinical_review_id) {
+        const response = await consultationAPI.getInpatientClinicalReview(investigation.clinical_review_id);
+        if (response.data) {
+          viewingDoctorNotes.value.notes = response.data.review_notes || null;
+          viewingDoctorNotes.value.reviewed_by_name = response.data.reviewed_by_name || null;
+          viewingDoctorNotes.value.reviewed_at = response.data.reviewed_at || null;
+        }
+      }
+    } else {
+      // OPD: Get doctor notes from consultation
+      if (investigation.encounter_id) {
+        const response = await consultationAPI.getConsultationNotes(investigation.encounter_id);
+        if (response.data) {
+          viewingDoctorNotes.value.notes = response.data.doctor_notes || null;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error loading doctor notes:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load notes',
+    });
+  } finally {
+    loadingDoctorNotes.value = false;
+  }
 };
 
 const viewRemarksForLabResult = (labResult) => {

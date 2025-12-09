@@ -1532,6 +1532,26 @@
           <div class="text-caption text-info q-mt-sm" v-else>
             This prescription will be marked as external (to be filled outside). No bill will be generated.
           </div>
+          
+          <!-- Active Prescription Alert -->
+          <q-banner 
+            v-if="activePrescriptionAlert" 
+            class="q-mt-md bg-orange-1 text-orange-9"
+            rounded
+          >
+            <template v-slot:avatar>
+              <q-icon name="warning" color="orange" />
+            </template>
+            <div class="text-weight-bold">Active Prescription Detected</div>
+            <div class="text-body2 q-mt-xs">
+              {{ activePrescriptionAlert.message }}
+            </div>
+            <div class="text-caption q-mt-xs text-grey-7">
+              Original: {{ activePrescriptionAlert.original_quantity }} tablets/doses | 
+              Remaining: ~{{ Math.round(activePrescriptionAlert.remaining_quantity) }} tablets/doses | 
+              Days elapsed: {{ activePrescriptionAlert.days_elapsed }} / {{ activePrescriptionAlert.duration_days }}
+            </div>
+          </q-banner>
         </q-card-section>
 
         <q-card-section>
@@ -1631,6 +1651,26 @@
           <div class="text-caption text-info q-mt-sm">
             Review and update prescription details if needed. IPD medications can be dispensed but must be added to IPD bill to be charged at discharge.
           </div>
+          
+          <!-- Active Prescription Alert -->
+          <q-banner 
+            v-if="activePrescriptionAlert" 
+            class="q-mt-md bg-orange-1 text-orange-9"
+            rounded
+          >
+            <template v-slot:avatar>
+              <q-icon name="warning" color="orange" />
+            </template>
+            <div class="text-weight-bold">Active Prescription Detected</div>
+            <div class="text-body2 q-mt-xs">
+              {{ activePrescriptionAlert.message }}
+            </div>
+            <div class="text-caption q-mt-xs text-grey-7">
+              Original: {{ activePrescriptionAlert.original_quantity }} tablets/doses | 
+              Remaining: ~{{ Math.round(activePrescriptionAlert.remaining_quantity) }} tablets/doses | 
+              Days elapsed: {{ activePrescriptionAlert.days_elapsed }} / {{ activePrescriptionAlert.duration_days }}
+            </div>
+          </q-banner>
         </q-card-section>
 
         <q-card-section>
@@ -1997,6 +2037,8 @@ const clinicalReviews = ref([]); // Clinical reviews for IPD
 const loadingData = ref(false);
 const showDispenseDialog = ref(false);
 const showConfirmDialog = ref(false);
+const showConfirmInpatientDialog = ref(false);
+const activePrescriptionAlert = ref(null);
 const showAddPrescriptionDialog = ref(false);
 const showAddExternalPrescriptionDialog = ref(false);
 const showDirectPrescriptionDialog = ref(false);
@@ -2025,7 +2067,6 @@ const confirmForm = ref({
   instructions: '',
   is_external: false,
 });
-const showConfirmInpatientDialog = ref(false);
 const confirmInpatientForm = ref({
   id: null,
   medicine_name: '',
@@ -3406,6 +3447,9 @@ const loadPrescriptions = async () => {
 };
 
 const confirmPrescription = (prescription) => {
+  // Reset alert when opening dialog
+  activePrescriptionAlert.value = null;
+  
   // Check if this is an inpatient prescription
   if (prescription.prescription_type === 'inpatient' || prescription.source === 'inpatient') {
     // Prevent confirming already external prescriptions
@@ -3481,7 +3525,23 @@ const confirmInpatientPrescriptionSubmit = async () => {
       add_to_ipd_bill: confirmInpatientForm.value.is_external ? false : (confirmInpatientForm.value.add_to_ipd_bill !== false), // Don't add to bill if external
     };
 
-    await consultationAPI.confirmInpatientPrescription(confirmInpatientForm.value.id, confirmData);
+    const response = await consultationAPI.confirmInpatientPrescription(confirmInpatientForm.value.id, confirmData);
+    
+    // Check for active prescription alert
+    if (response.data?.active_prescription_alert) {
+      activePrescriptionAlert.value = response.data.active_prescription_alert;
+      // Show warning notification
+      $q.notify({
+        type: 'warning',
+        message: response.data.active_prescription_alert.message,
+        timeout: 8000,
+        position: 'top',
+        actions: [{ icon: 'close', color: 'white' }]
+      });
+    } else {
+      activePrescriptionAlert.value = null;
+    }
+    
     $q.notify({
       type: 'positive',
       message: confirmInpatientForm.value.is_external
@@ -3491,6 +3551,7 @@ const confirmInpatientPrescriptionSubmit = async () => {
           : 'Inpatient prescription confirmed (not added to bill)',
     });
     showConfirmInpatientDialog.value = false;
+    activePrescriptionAlert.value = null; // Clear alert after closing
     await loadInpatientPrescriptions();
   } catch (error) {
     console.error('Error confirming inpatient prescription:', error);
@@ -3518,7 +3579,23 @@ const confirmPrescriptionSubmit = async () => {
       is_external: confirmForm.value.is_external || false,
     };
 
-    await consultationAPI.confirmPrescription(confirmForm.value.id, confirmData);
+    const response = await consultationAPI.confirmPrescription(confirmForm.value.id, confirmData);
+    
+    // Check for active prescription alert
+    if (response.data?.active_prescription_alert) {
+      activePrescriptionAlert.value = response.data.active_prescription_alert;
+      // Show warning notification
+      $q.notify({
+        type: 'warning',
+        message: response.data.active_prescription_alert.message,
+        timeout: 8000,
+        position: 'top',
+        actions: [{ icon: 'close', color: 'white' }]
+      });
+    } else {
+      activePrescriptionAlert.value = null;
+    }
+    
     $q.notify({
       type: 'positive',
       message: confirmForm.value.is_external 

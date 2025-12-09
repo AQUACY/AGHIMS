@@ -18,6 +18,8 @@ class HistoryAction(str, enum.Enum):
     PARTIALLY_FULFILLED = "partially_fulfilled"
     CANCELLED = "cancelled"
     ITEM_FULFILLED = "item_fulfilled"  # Individual item fulfillment
+    FULFILLMENT_REVERTED = "fulfillment_reverted"  # Fulfillment reverted
+    REVERTED = "reverted"  # Approval reverted (legacy)
 
 
 class RequisitionHistory(Base):

@@ -30,6 +30,155 @@ from app.models.consultation_template import ConsultationTemplate
 router = APIRouter(prefix="/consultation", tags=["consultation"])
 
 
+def check_active_prescription_alert(
+    db: Session,
+    patient_id: int,
+    medicine_code: str,
+    current_prescription_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Check if patient has an active prescription for the same medication.
+    Returns alert information if active prescription found, None otherwise.
+    
+    Args:
+        db: Database session
+        patient_id: Patient ID
+        medicine_code: Medicine code to check
+        current_prescription_id: ID of current prescription (to exclude from check)
+    
+    Returns:
+        Dict with alert information or None
+    """
+    from app.models.prescription import Prescription
+    from app.models.inpatient_prescription import InpatientPrescription
+    from app.models.encounter import Encounter
+    from app.models.ward_admission import WardAdmission
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    import re
+    
+    now = utcnow()
+    
+    # Check OPD prescriptions
+    opd_prescriptions = db.query(Prescription).join(Encounter).filter(
+        Encounter.patient_id == patient_id,
+        Prescription.medicine_code == medicine_code,
+        Prescription.confirmed_by.isnot(None),  # Only confirmed prescriptions
+        Prescription.id != current_prescription_id if current_prescription_id else True
+    ).order_by(Prescription.confirmed_at.desc()).all()
+    
+    # Check IPD prescriptions
+    ipd_prescriptions = db.query(InpatientPrescription).join(
+        InpatientClinicalReview
+    ).join(WardAdmission).join(Encounter).filter(
+        Encounter.patient_id == patient_id,
+        InpatientPrescription.medicine_code == medicine_code,
+        InpatientPrescription.confirmed_by.isnot(None),  # Only confirmed prescriptions
+        InpatientPrescription.id != current_prescription_id if current_prescription_id else True
+    ).order_by(InpatientPrescription.confirmed_at.desc()).all()
+    
+    # Combine and check most recent active prescription
+    all_prescriptions = []
+    for presc in opd_prescriptions:
+        all_prescriptions.append({
+            'type': 'opd',
+            'prescription': presc,
+            'confirmed_at': presc.confirmed_at or presc.created_at,
+            'quantity': presc.quantity,
+            'duration': presc.duration,
+            'frequency_value': presc.frequency_value,
+            'dose': presc.dose,
+            'unit': presc.unit
+        })
+    
+    for presc in ipd_prescriptions:
+        all_prescriptions.append({
+            'type': 'ipd',
+            'prescription': presc,
+            'confirmed_at': presc.confirmed_at or presc.created_at,
+            'quantity': presc.quantity,
+            'duration': presc.duration,
+            'frequency_value': presc.frequency_value,
+            'dose': presc.dose,
+            'unit': presc.unit
+        })
+    
+    if not all_prescriptions:
+        return None
+    
+    # Get most recent prescription
+    most_recent = max(all_prescriptions, key=lambda x: x['confirmed_at'])
+    presc_data = most_recent
+    
+    # Calculate days elapsed since prescription was confirmed
+    confirmed_date = presc_data['confirmed_at']
+    if confirmed_date:
+        days_elapsed = (now - confirmed_date).days
+    else:
+        days_elapsed = 0
+    
+    # Parse duration to get total days
+    duration_str = presc_data['duration'] or ""
+    duration_days = 0
+    if duration_str:
+        try:
+            # Try to parse as number directly
+            duration_days = int(float(duration_str))
+        except (ValueError, TypeError):
+            # Extract number from string (e.g., "30 DAYS" -> 30)
+            duration_match = re.search(r'\d+', duration_str)
+            if duration_match:
+                duration_days = int(duration_match.group())
+    
+    if duration_days == 0:
+        # Can't calculate if duration is unknown
+        return None
+    
+    # Calculate daily consumption
+    frequency_value = presc_data['frequency_value'] or 1
+    dose_str = presc_data['dose'] or "1"
+    unit = (presc_data['unit'] or "").strip().upper()
+    
+    try:
+        dose_num = float(dose_str)
+    except (ValueError, TypeError):
+        dose_num = 1.0
+    
+    # Calculate units per dose
+    units_per_dose = dose_num
+    if unit == "MG":
+        units_per_dose = dose_num / 100.0  # 100mg = 1 unit
+    elif unit == "MCG":
+        units_per_dose = dose_num / 1000.0  # 1000mcg = 1 unit
+    
+    # Daily consumption = units per dose × frequency per day
+    daily_consumption = units_per_dose * frequency_value
+    
+    # Calculate remaining quantity
+    original_quantity = presc_data['quantity'] or 0
+    consumed_quantity = daily_consumption * days_elapsed
+    remaining_quantity = max(0, original_quantity - consumed_quantity)
+    
+    # Check if prescription is still active (days_elapsed < duration_days)
+    is_still_active = days_elapsed < duration_days
+    
+    if not is_still_active or remaining_quantity <= 0:
+        # Prescription has expired or all consumed
+        return None
+    
+    # Return alert information
+    return {
+        'has_active_prescription': True,
+        'remaining_quantity': round(remaining_quantity, 2),
+        'original_quantity': original_quantity,
+        'days_elapsed': days_elapsed,
+        'duration_days': duration_days,
+        'prescription_type': presc_data['type'],
+        'medicine_name': presc_data['prescription'].medicine_name,
+        'confirmed_date': confirmed_date.isoformat() if confirmed_date else None,
+        'message': f"Patient has approximately {round(remaining_quantity, 0)} tablets/doses remaining from previous prescription (prescribed {days_elapsed} days ago, {duration_days} days total duration)"
+    }
+
+
 def _generate_and_store_sample_id(db: Session, investigation, entered_by_user_id: int):
     """
     Generate a sample ID for a lab investigation and create a minimal lab_result record.
@@ -295,6 +444,19 @@ class PrescriptionCreate(BaseModel):
     is_external: Optional[bool] = False  # True if prescription is to be filled outside (external pharmacy)
 
 
+class ActivePrescriptionAlert(BaseModel):
+    """Alert information for active prescription"""
+    has_active_prescription: bool
+    remaining_quantity: float
+    original_quantity: int
+    days_elapsed: int
+    duration_days: int
+    prescription_type: str
+    medicine_name: str
+    confirmed_date: Optional[str] = None
+    message: str
+
+
 class PrescriptionResponse(BaseModel):
     """Prescription response model"""
     id: int
@@ -316,6 +478,7 @@ class PrescriptionResponse(BaseModel):
     confirmed_by: Optional[int] = None
     dispensed_by: Optional[int] = None
     dispenser_name: Optional[str] = None  # Full name of the dispenser
+    active_prescription_alert: Optional[ActivePrescriptionAlert] = None  # Alert for active prescription
     confirmed_at: Optional[datetime] = None
     service_date: datetime
     created_at: datetime
@@ -639,7 +802,23 @@ def create_prescription(
         
         db.commit()
         db.refresh(prescription)
-        return add_prescriber_info_to_response(prescription, db)
+        
+        # Check for active prescription alert after creating
+        active_prescription_alert = None
+        try:
+            encounter = db.query(Encounter).filter(Encounter.id == prescription.encounter_id).first()
+            if encounter:
+                active_prescription_alert = check_active_prescription_alert(
+                    db=db,
+                    patient_id=encounter.patient_id,
+                    medicine_code=prescription.medicine_code,
+                    current_prescription_id=prescription.id
+                )
+        except Exception as e:
+            print(f"Warning: Error checking active prescription: {e}")
+            # Don't fail prescription creation if alert check fails
+        
+        return add_prescriber_info_to_response(prescription, db, active_prescription_alert)
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
@@ -909,7 +1088,7 @@ def create_direct_prescription(
     return response
 
 
-def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionResponse:
+def add_prescriber_info_to_response(prescription, db: Session, active_prescription_alert: Optional[Dict[str, Any]] = None) -> PrescriptionResponse:
     """Helper function to add prescriber and dispenser information to a prescription response"""
     # Get prescriber information (handle missing user gracefully)
     prescriber_name = None
@@ -970,6 +1149,11 @@ def add_prescriber_info_to_response(prescription, db: Session) -> PrescriptionRe
         'is_confirmed': is_confirmed,
         'is_dispensed': is_dispensed,
     }
+    
+    # Add active prescription alert if provided
+    if active_prescription_alert:
+        prescription_dict['active_prescription_alert'] = ActivePrescriptionAlert(**active_prescription_alert)
+    
     return PrescriptionResponse(**prescription_dict)
 
 
@@ -1151,6 +1335,19 @@ def confirm_prescription(
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
     
+    # Check for active prescription alert before confirming
+    active_prescription_alert = None
+    try:
+        active_prescription_alert = check_active_prescription_alert(
+            db=db,
+            patient_id=encounter.patient_id,
+            medicine_code=prescription.medicine_code,
+            current_prescription_id=prescription.id
+        )
+    except Exception as e:
+        print(f"Warning: Error checking active prescription: {e}")
+        # Don't fail confirmation if alert check fails
+    
     # Allow pharmacy to update prescription details during confirmation
     # Also allow marking as external if drug is not in stock
     mark_as_external = False
@@ -1267,7 +1464,7 @@ def confirm_prescription(
     
     db.commit()
     db.refresh(prescription)
-    return add_prescriber_info_to_response(prescription, db)
+    return add_prescriber_info_to_response(prescription, db, active_prescription_alert)
 
 
 @router.put("/prescription/{prescription_id}/unconfirm", response_model=PrescriptionResponse)
@@ -2159,6 +2356,9 @@ def update_investigation_details(
     current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
 ):
     """Update investigation details (gdrg_code, procedure_name, investigation_type) - allows staff to change service"""
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
@@ -2172,6 +2372,10 @@ def update_investigation_details(
         elif investigation.investigation_type == "xray" and current_user.role != "Xray" and current_user.role != "Xray Head":
             raise HTTPException(status_code=403, detail="Only Xray staff can update xray investigations")
     
+    # Store old values for bill update
+    old_gdrg_code = investigation.gdrg_code
+    old_procedure_name = investigation.procedure_name
+    
     # Update both gdrg_code and procedure_name together (required)
     investigation.gdrg_code = update_data.gdrg_code
     investigation.procedure_name = update_data.procedure_name
@@ -2184,9 +2388,127 @@ def update_investigation_details(
     if update_data.notes is not None:
         investigation.notes = update_data.notes
     
-    # Update price if provided
+    # Check for existing bill items (even if investigation was reverted, there might be a bill item)
+    if investigation.encounter_id:
+        try:
+            encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
+            if encounter:
+                # Find the bill for this encounter
+                bill = db.query(Bill).filter(
+                    Bill.encounter_id == encounter.id,
+                    Bill.is_paid == False  # Only update unpaid bills
+                ).first()
+                
+                if bill:
+                    # Find the bill item matching the old investigation details
+                    bill_item = db.query(BillItem).filter(
+                        BillItem.bill_id == bill.id,
+                        or_(
+                            BillItem.item_code == old_gdrg_code,
+                            BillItem.item_code == investigation.gdrg_code  # Also check current code
+                        ),
+                        or_(
+                            BillItem.item_name.like(f"%{old_procedure_name}%"),
+                            BillItem.item_name.like(f"%Investigation: {old_procedure_name}%"),
+                            BillItem.item_name == old_procedure_name
+                        )
+                    ).first()
+                    
+                    # If not found by name, try to find by code only
+                    if not bill_item:
+                        bill_item = db.query(BillItem).filter(
+                            BillItem.bill_id == bill.id,
+                            BillItem.item_code == old_gdrg_code
+                        ).first()
+                    
+                    if bill_item:
+                        # If investigation is no longer confirmed (was reverted), remove the bill item
+                        if investigation.confirmed_by is None:
+                            from app.models.bill import Receipt, ReceiptItem
+                            receipt_items = db.query(ReceiptItem).join(Receipt).filter(
+                                Receipt.bill_id == bill.id,
+                                ReceiptItem.bill_item_id == bill_item.id
+                            ).all()
+                            
+                            if receipt_items:
+                                print(f"WARNING update_investigation_details: Cannot remove bill item for investigation {investigation_id} - it has been paid")
+                            else:
+                                # Remove the bill item
+                                bill.total_amount -= (bill_item.total_price or 0.0)
+                                if bill.total_amount < 0:
+                                    bill.total_amount = 0
+                                db.delete(bill_item)
+                                print(f"DEBUG update_investigation_details: Removed bill item for reverted investigation {investigation_id}")
+                        elif investigation.confirmed_by is not None:
+                            # Investigation is confirmed, update the bill item price
+                            is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+                            
+                            # Determine service type for price lookup
+                            service_type = None
+                            inv_type = update_data.investigation_type if update_data.investigation_type else investigation.investigation_type
+                            if inv_type == "lab":
+                                service_type = "Lab"
+                            elif inv_type == "scan":
+                                service_type = "Scan"
+                            elif inv_type == "xray":
+                                service_type = "X-ray"
+                            
+                            # Get new price for the updated service
+                            new_unit_price = 0.0
+                            if update_data.gdrg_code:
+                                try:
+                                    new_unit_price = get_price_from_all_tables(
+                                        db, 
+                                        update_data.gdrg_code, 
+                                        is_insured_encounter, 
+                                        service_type, 
+                                        update_data.procedure_name
+                                    )
+                                    print(f"DEBUG update_investigation_details: Looked up new price for gdrg_code='{update_data.gdrg_code}', procedure_name='{update_data.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={new_unit_price}")
+                                except Exception as e:
+                                    print(f"ERROR update_investigation_details: Failed to get price from price list: {e}")
+                            
+                            # If price lookup failed, use provided price
+                            if new_unit_price == 0.0:
+                                if update_data.price:
+                                    try:
+                                        new_unit_price = float(update_data.price)
+                                    except (ValueError, TypeError):
+                                        pass
+                            
+                            if new_unit_price > 0:
+                                # Calculate price difference
+                                old_total = bill_item.total_price or 0.0
+                                new_total = new_unit_price  # Investigations are typically quantity 1
+                                price_difference = new_total - old_total
+                                
+                                # Update bill item with new details and price
+                                bill_item.item_code = update_data.gdrg_code
+                                bill_item.item_name = f"Investigation: {update_data.procedure_name or update_data.gdrg_code}"
+                                bill_item.unit_price = new_unit_price
+                                bill_item.total_price = new_total
+                                
+                                # Update bill total
+                                bill.total_amount = (bill.total_amount or 0.0) + price_difference
+                                if bill.total_amount < 0:
+                                    bill.total_amount = 0  # Safety check
+                                
+                                print(f"DEBUG update_investigation_details: Updated bill item. Old price: {old_total}, New price: {new_total}, Difference: {price_difference}, New bill total: {bill.total_amount}")
+                            else:
+                                print(f"WARNING update_investigation_details: New price is 0.0, not updating bill item")
+        except Exception as e:
+            print(f"ERROR update_investigation_details: Failed to update bill: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't fail the update if bill update fails, but log it
+    
+    # Update stored price if new price was calculated or provided
     if update_data.price is not None:
         investigation.price = update_data.price
+    elif investigation.confirmed_by is not None:
+        # If investigation is confirmed, update stored price with new calculated price
+        # (This will be set above if bill update was successful)
+        pass
     
     db.commit()
     db.refresh(investigation)
@@ -2252,6 +2574,8 @@ def revert_investigation_to_requested(
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Revert investigation status from confirmed to requested - Admin only"""
+    from app.models.bill import Bill, BillItem, Receipt, ReceiptItem
+    
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
@@ -2262,6 +2586,48 @@ def revert_investigation_to_requested(
             status_code=400,
             detail=f"Cannot revert status. Current status is '{investigation.status}'. Only confirmed investigations can be reverted to requested."
         )
+    
+    # Remove bill item if investigation was confirmed and has a bill
+    if investigation.encounter_id:
+        encounter = db.query(Encounter).filter(Encounter.id == investigation.encounter_id).first()
+        if encounter:
+            # Find the bill for this encounter
+            bill = db.query(Bill).filter(
+                Bill.encounter_id == encounter.id,
+                Bill.is_paid == False  # Only remove from unpaid bills
+            ).first()
+            
+            if bill:
+                # Find the bill item matching this investigation
+                bill_item = db.query(BillItem).filter(
+                    BillItem.bill_id == bill.id,
+                    or_(
+                        BillItem.item_code == investigation.gdrg_code,
+                        BillItem.item_name.like(f"%{investigation.procedure_name}%"),
+                        BillItem.item_name.like(f"%Investigation: {investigation.procedure_name}%")
+                    )
+                ).first()
+                
+                if bill_item:
+                    # Check if this bill item has been paid
+                    receipt_items = db.query(ReceiptItem).join(Receipt).filter(
+                        Receipt.bill_id == bill.id,
+                        ReceiptItem.bill_item_id == bill_item.id
+                    ).all()
+                    
+                    if receipt_items:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Cannot revert investigation. The bill item has already been paid. Please refund the payment first."
+                        )
+                    
+                    # Remove the bill item and update bill total
+                    bill.total_amount -= (bill_item.total_price or 0.0)
+                    if bill.total_amount < 0:
+                        bill.total_amount = 0
+                    
+                    db.delete(bill_item)
+                    print(f"DEBUG revert_investigation_to_requested: Removed bill item for investigation {investigation_id}")
     
     # Revert status to requested
     investigation.status = InvestigationStatus.REQUESTED.value
@@ -6874,6 +7240,35 @@ def get_inpatient_clinical_reviews(
     return result
 
 
+@router.get("/clinical-reviews/{clinical_review_id}")
+def get_inpatient_clinical_review(
+    clinical_review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Scan", "Xray", "Lab Head", "Scan Head", "Xray Head"]))
+):
+    """Get a single clinical review by ID"""
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == clinical_review_id
+    ).first()
+    
+    if not clinical_review:
+        raise HTTPException(status_code=404, detail="Clinical review not found")
+    
+    reviewer = db.query(User).filter(User.id == clinical_review.reviewed_by).first()
+    
+    return {
+        "id": clinical_review.id,
+        "review_notes": clinical_review.review_notes,
+        "reviewed_by": clinical_review.reviewed_by,
+        "reviewed_by_name": reviewer.full_name if reviewer else None,
+        "reviewed_at": clinical_review.reviewed_at,
+        "created_at": clinical_review.created_at,
+        "updated_at": clinical_review.updated_at,
+    }
+
+
 @router.put("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}")
 def update_inpatient_clinical_review(
     ward_admission_id: int,
@@ -7796,6 +8191,19 @@ def confirm_inpatient_prescription(
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
     
+    # Check for active prescription alert before confirming
+    active_prescription_alert = None
+    try:
+        active_prescription_alert = check_active_prescription_alert(
+            db=db,
+            patient_id=encounter.patient_id,
+            medicine_code=prescription.medicine_code,
+            current_prescription_id=prescription.id
+        )
+    except Exception as e:
+        print(f"Warning: Error checking active prescription: {e}")
+        # Don't fail confirmation if alert check fails
+    
     # Update prescription details if provided
     # Also allow marking as external if drug is not in stock
     mark_as_external = False
@@ -7905,7 +8313,8 @@ def confirm_inpatient_prescription(
         "medicine_name": prescription.medicine_name,
         "confirmed_by": prescription.confirmed_by,
         "confirmed_at": prescription.confirmed_at,
-        "message": "Inpatient prescription confirmed and added to IPD bill"
+        "message": "Inpatient prescription confirmed and added to IPD bill",
+        "active_prescription_alert": active_prescription_alert
     }
 
 
@@ -8944,6 +9353,267 @@ class InpatientInvestigationConfirm(BaseModel):
     add_to_ipd_bill: bool = True
 
 
+class InpatientInvestigationUpdateDetails(BaseModel):
+    """Inpatient investigation update details model"""
+    gdrg_code: str
+    procedure_name: str
+    investigation_type: Optional[str] = None
+    notes: Optional[str] = None
+    price: Optional[str] = None
+
+
+@router.put("/inpatient-investigation/{investigation_id}/update-details")
+def update_inpatient_investigation_details(
+    investigation_id: int,
+    update_data: InpatientInvestigationUpdateDetails,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+):
+    """Update inpatient investigation details (gdrg_code, procedure_name, investigation_type) - allows staff to change service"""
+    from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.bill import Bill, BillItem
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    
+    investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
+    if not investigation:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check permissions - only staff matching investigation type or Admin/Head can update
+    if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head", "Scan"]:
+        if investigation.investigation_type == "lab" and current_user.role != "Lab":
+            raise HTTPException(status_code=403, detail="Only Lab staff can update lab investigations")
+        elif investigation.investigation_type == "scan" and current_user.role != "Scan" and current_user.role != "Scan Head":
+            raise HTTPException(status_code=403, detail="Only Scan staff and Scan Head can update scan investigations")
+        elif investigation.investigation_type == "xray" and current_user.role != "Xray" and current_user.role != "Xray Head":
+            raise HTTPException(status_code=403, detail="Only Xray staff can update xray investigations")
+    
+    # Store old values for bill update
+    old_gdrg_code = investigation.gdrg_code
+    old_procedure_name = investigation.procedure_name
+    
+    # Update both gdrg_code and procedure_name together (required)
+    investigation.gdrg_code = update_data.gdrg_code
+    investigation.procedure_name = update_data.procedure_name
+    
+    # Update investigation_type if provided
+    if update_data.investigation_type is not None:
+        investigation.investigation_type = update_data.investigation_type
+    
+    # Update notes if provided
+    if update_data.notes is not None:
+        investigation.notes = update_data.notes
+    
+    # Check for existing bill items (even if investigation was reverted, there might be a bill item)
+    try:
+        # Get clinical review and ward admission to access encounter
+        clinical_review = db.query(InpatientClinicalReview).filter(
+            InpatientClinicalReview.id == investigation.clinical_review_id
+        ).first()
+        if not clinical_review:
+            raise HTTPException(status_code=404, detail="Clinical review not found")
+        
+        ward_admission = db.query(WardAdmission).filter(
+            WardAdmission.id == clinical_review.ward_admission_id
+        ).first()
+        if not ward_admission:
+            raise HTTPException(status_code=404, detail="Ward admission not found")
+        
+        encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
+        if not encounter:
+            raise HTTPException(status_code=404, detail="Encounter not found")
+        
+        # Find the bill for this encounter
+        bill = db.query(Bill).filter(
+            Bill.encounter_id == encounter.id,
+            Bill.is_paid == False  # Only update unpaid bills
+        ).first()
+        
+        if bill:
+            # Find the bill item matching the old investigation details
+            bill_item = db.query(BillItem).filter(
+                BillItem.bill_id == bill.id,
+                or_(
+                    BillItem.item_code == old_gdrg_code,
+                    BillItem.item_code == investigation.gdrg_code  # Also check current code
+                ),
+                or_(
+                    BillItem.item_name.like(f"%{old_procedure_name}%"),
+                    BillItem.item_name.like(f"%Investigation: {old_procedure_name}%"),
+                    BillItem.item_name == old_procedure_name
+                )
+            ).first()
+            
+            # If not found by name, try to find by code only
+            if not bill_item:
+                bill_item = db.query(BillItem).filter(
+                    BillItem.bill_id == bill.id,
+                    BillItem.item_code == old_gdrg_code
+                ).first()
+            
+            if bill_item:
+                # If investigation is no longer confirmed (was reverted), remove the bill item
+                if investigation.confirmed_by is None:
+                    from app.models.bill import Receipt, ReceiptItem
+                    receipt_items = db.query(ReceiptItem).join(Receipt).filter(
+                        Receipt.bill_id == bill.id,
+                        ReceiptItem.bill_item_id == bill_item.id
+                    ).all()
+                    
+                    if receipt_items:
+                        print(f"WARNING update_inpatient_investigation_details: Cannot remove bill item for investigation {investigation_id} - it has been paid")
+                    else:
+                        # Remove the bill item
+                        bill.total_amount -= (bill_item.total_price or 0.0)
+                        if bill.total_amount < 0:
+                            bill.total_amount = 0
+                        db.delete(bill_item)
+                        print(f"DEBUG update_inpatient_investigation_details: Removed bill item for reverted investigation {investigation_id}")
+                elif investigation.confirmed_by is not None:
+                    # Investigation is confirmed, update the bill item price
+                    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+                    
+                    # Determine service type for price lookup
+                    service_type = None
+                    inv_type = update_data.investigation_type if update_data.investigation_type else investigation.investigation_type
+                    if inv_type == "lab":
+                        service_type = "Lab"
+                    elif inv_type == "scan":
+                        service_type = "Scan"
+                    elif inv_type == "xray":
+                        service_type = "X-ray"
+                    
+                    # Get new price for the updated service
+                    new_unit_price = 0.0
+                    if update_data.gdrg_code:
+                        try:
+                            new_unit_price = get_price_from_all_tables(
+                                db, 
+                                update_data.gdrg_code, 
+                                is_insured_encounter, 
+                                service_type, 
+                                update_data.procedure_name
+                            )
+                            print(f"DEBUG update_inpatient_investigation_details: Looked up new price for gdrg_code='{update_data.gdrg_code}', procedure_name='{update_data.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={new_unit_price}")
+                        except Exception as e:
+                            print(f"ERROR update_inpatient_investigation_details: Failed to get price from price list: {e}")
+                    
+                    # If price lookup failed, use provided price
+                    if new_unit_price == 0.0:
+                        if update_data.price:
+                            try:
+                                new_unit_price = float(update_data.price)
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    if new_unit_price > 0:
+                        # Calculate price difference
+                        old_total = bill_item.total_price or 0.0
+                        new_total = new_unit_price  # Investigations are typically quantity 1
+                        price_difference = new_total - old_total
+                        
+                        # Update bill item with new details and price
+                        bill_item.item_code = update_data.gdrg_code
+                        bill_item.item_name = f"Investigation: {update_data.procedure_name or update_data.gdrg_code}"
+                        bill_item.unit_price = new_unit_price
+                        bill_item.total_price = new_total
+                        
+                        # Update bill total
+                        bill.total_amount = (bill.total_amount or 0.0) + price_difference
+                        if bill.total_amount < 0:
+                            bill.total_amount = 0  # Safety check
+                        
+                        print(f"DEBUG update_inpatient_investigation_details: Updated bill item. Old price: {old_total}, New price: {new_total}, Difference: {price_difference}, New bill total: {bill.total_amount}")
+                    else:
+                        print(f"WARNING update_inpatient_investigation_details: New price is 0.0, not updating bill item")
+    except Exception as e:
+        print(f"ERROR update_inpatient_investigation_details: Failed to update bill: {e}")
+        import traceback
+        traceback.print_exc()
+        # Don't fail the update if bill update fails, but log it
+    
+    # Update stored price if new price was calculated or provided
+    if update_data.price is not None:
+        investigation.price = update_data.price
+    
+    db.commit()
+    db.refresh(investigation)
+    
+    # Return investigation details using the existing get endpoint logic
+    # Get user names
+    requested_by_name = None
+    if investigation.requested_by:
+        requested_user = db.query(User).filter(User.id == investigation.requested_by).first()
+        requested_by_name = requested_user.full_name if requested_user else None
+    
+    confirmed_by_name = None
+    if investigation.confirmed_by:
+        confirmed_user = db.query(User).filter(User.id == investigation.confirmed_by).first()
+        confirmed_by_name = confirmed_user.full_name if confirmed_user else None
+    
+    completed_by_name = None
+    if investigation.completed_by:
+        completed_user = db.query(User).filter(User.id == investigation.completed_by).first()
+        completed_by_name = completed_user.full_name if completed_user else None
+    
+    # Access relationships
+    clinical_review = investigation.clinical_review
+    ward_admission = clinical_review.ward_admission if clinical_review else None
+    encounter = ward_admission.encounter if ward_admission else None
+    patient = encounter.patient if encounter else None
+    
+    # Build patient name safely
+    patient_name = "Unknown"
+    patient_card_number = None
+    ward = None
+    bed_number = None
+    encounter_id = None
+    ward_admission_id = None
+    
+    patient_id = None
+    if patient:
+        patient_name = f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown"
+        patient_card_number = patient.card_number
+        patient_id = patient.id
+    
+    if ward_admission:
+        ward = ward_admission.ward
+        bed_number = ward_admission.bed.bed_number if ward_admission.bed else None
+        encounter_id = ward_admission.encounter_id
+        ward_admission_id = ward_admission.id
+    
+    return {
+        "id": investigation.id,
+        "clinical_review_id": investigation.clinical_review_id,
+        "ward_admission_id": ward_admission_id,
+        "encounter_id": encounter_id,
+        "patient_id": patient_id,
+        "gdrg_code": investigation.gdrg_code,
+        "procedure_name": investigation.procedure_name,
+        "investigation_type": investigation.investigation_type,
+        "notes": investigation.notes,
+        "price": investigation.price,
+        "status": investigation.status,
+        "confirmed_by": investigation.confirmed_by,
+        "completed_by": investigation.completed_by,
+        "cancelled_by": investigation.cancelled_by,
+        "cancellation_reason": investigation.cancellation_reason,
+        "cancelled_at": investigation.cancelled_at,
+        "created_at": investigation.created_at,
+        "patient_name": patient_name,
+        "patient_card_number": patient_card_number,
+        "encounter_date": investigation.created_at,
+        "requested_by_name": requested_by_name,
+        "confirmed_by_name": confirmed_by_name,
+        "completed_by_name": completed_by_name,
+        "ward": ward,
+        "bed_number": bed_number,
+        "source": "inpatient",
+        "prescription_type": "inpatient"
+    }
+
+
 @router.put("/inpatient-investigation/{investigation_id}/confirm")
 def confirm_inpatient_investigation(
     investigation_id: int,
@@ -9160,6 +9830,10 @@ def revert_inpatient_investigation_to_requested(
 ):
     """Revert IPD investigation status from confirmed to requested - Admin only"""
     from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
+    from app.models.inpatient_clinical_review import InpatientClinicalReview
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.bill import Bill, BillItem, Receipt, ReceiptItem
     from datetime import datetime
     
     investigation = db.query(InpatientInvestigation).filter(InpatientInvestigation.id == investigation_id).first()
@@ -9172,6 +9846,55 @@ def revert_inpatient_investigation_to_requested(
             status_code=400,
             detail=f"Cannot revert status. Current status is '{investigation.status}'. Only confirmed investigations can be reverted to requested."
         )
+    
+    # Remove bill item if investigation was confirmed and has a bill
+    clinical_review = db.query(InpatientClinicalReview).filter(
+        InpatientClinicalReview.id == investigation.clinical_review_id
+    ).first()
+    if clinical_review:
+        ward_admission = db.query(WardAdmission).filter(
+            WardAdmission.id == clinical_review.ward_admission_id
+        ).first()
+        if ward_admission:
+            encounter = db.query(Encounter).filter(Encounter.id == ward_admission.encounter_id).first()
+            if encounter:
+                # Find the bill for this encounter
+                bill = db.query(Bill).filter(
+                    Bill.encounter_id == encounter.id,
+                    Bill.is_paid == False  # Only remove from unpaid bills
+                ).first()
+                
+                if bill:
+                    # Find the bill item matching this investigation
+                    bill_item = db.query(BillItem).filter(
+                        BillItem.bill_id == bill.id,
+                        or_(
+                            BillItem.item_code == investigation.gdrg_code,
+                            BillItem.item_name.like(f"%{investigation.procedure_name}%"),
+                            BillItem.item_name.like(f"%Investigation: {investigation.procedure_name}%")
+                        )
+                    ).first()
+                    
+                    if bill_item:
+                        # Check if this bill item has been paid
+                        receipt_items = db.query(ReceiptItem).join(Receipt).filter(
+                            Receipt.bill_id == bill.id,
+                            ReceiptItem.bill_item_id == bill_item.id
+                        ).all()
+                        
+                        if receipt_items:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="Cannot revert investigation. The bill item has already been paid. Please refund the payment first."
+                            )
+                        
+                        # Remove the bill item and update bill total
+                        bill.total_amount -= (bill_item.total_price or 0.0)
+                        if bill.total_amount < 0:
+                            bill.total_amount = 0
+                        
+                        db.delete(bill_item)
+                        print(f"DEBUG revert_inpatient_investigation_to_requested: Removed bill item for investigation {investigation_id}")
     
     # Revert status to requested
     investigation.status = InpatientInvestigationStatus.REQUESTED.value

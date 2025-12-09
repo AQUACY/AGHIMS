@@ -188,7 +188,7 @@
                 <q-tooltip>Reject</q-tooltip>
               </q-btn>
               <q-btn
-                v-if="isPharmacyHead && props.row.status === 'approved'"
+                v-if="isPharmacyHead && (props.row.status === 'approved' || props.row.status === 'partially_fulfilled')"
                 flat
                 dense
                 round
@@ -200,7 +200,7 @@
                 <q-tooltip>Revert Approval</q-tooltip>
               </q-btn>
               <q-btn
-                v-if="(isStoreManager || isPharmacyHead) && props.row.status === 'approved'"
+                v-if="(isStoreManager || isPharmacyHead) && (props.row.status === 'approved' || props.row.status === 'partially_fulfilled')"
                 flat
                 dense
                 round
@@ -210,6 +210,19 @@
                 size="sm"
               >
                 <q-tooltip>Fulfill</q-tooltip>
+              </q-btn>
+              <!-- Revert Fulfillment: Only show for fulfilled or partially_fulfilled, NOT for approved -->
+              <q-btn
+                v-if="(isStoreManager || isPharmacyHead || isAdmin) && (props.row.status === 'fulfilled' || props.row.status === 'partially_fulfilled')"
+                flat
+                dense
+                round
+                icon="undo"
+                color="warning"
+                @click="revertFulfillment(props.row.id)"
+                size="sm"
+              >
+                <q-tooltip>Revert Fulfillment</q-tooltip>
               </q-btn>
               <q-btn
                 v-if="(isWardStaff && props.row.status === 'pending' && props.row.requested_by === currentUserId) || (isAdmin && props.row.status === 'pending')"
@@ -1187,9 +1200,17 @@ export default {
     };
 
     const revertApproval = async (requisitionId) => {
+      // Get requisition to check status
+      const requisition = requisitions.value.find(r => r.id === requisitionId);
+      const hasFulfillment = requisition && (requisition.status === 'partially_fulfilled' || requisition.status === 'fulfilled');
+      
+      const message = hasFulfillment
+        ? 'Are you sure you want to revert the approval? Any remaining fulfillment will be automatically reverted first (only unused quantities will be returned). This will set the requisition back to pending so the requester can make changes.'
+        : 'Are you sure you want to revert the approval? This will set the requisition back to pending so the requester can make changes.';
+      
       $q.dialog({
         title: 'Revert Approval',
-        message: 'Are you sure you want to revert the approval? This will set the requisition back to pending so the requester can make changes.',
+        message: message,
         cancel: true,
         persistent: true,
       }).onOk(async () => {
@@ -1207,6 +1228,36 @@ export default {
           Notify.create({
             type: 'negative',
             message: error.response?.data?.detail || 'Failed to revert approval',
+            position: 'top',
+          });
+        } finally {
+          processing.value = false;
+        }
+      });
+    };
+
+    const revertFulfillment = async (requisitionId) => {
+      $q.dialog({
+        title: 'Revert Fulfillment',
+        message: 'Are you sure you want to revert the fulfillment? Only unused quantities will be returned. If items have been used (debited to patients), only the unused portion will be returned.',
+        cancel: true,
+        persistent: true,
+      }).onOk(async () => {
+        processing.value = true;
+        try {
+          await pharmacyRequisitionsAPI.revertFulfillment(requisitionId);
+          Notify.create({
+            type: 'positive',
+            message: 'Fulfillment reverted successfully. Only unused quantities were returned.',
+            position: 'top',
+            timeout: 5000,
+          });
+          loadRequisitions();
+        } catch (error) {
+          console.error('Error reverting fulfillment:', error);
+          Notify.create({
+            type: 'negative',
+            message: error.response?.data?.detail || 'Failed to revert fulfillment',
             position: 'top',
           });
         } finally {
@@ -1499,6 +1550,7 @@ export default {
       filterEditProducts,
       onEditProductSelected,
       revertApproval,
+      revertFulfillment,
       openFulfillDialog,
       fulfillRequisition,
       cancelRequisition,

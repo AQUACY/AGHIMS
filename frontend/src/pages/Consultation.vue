@@ -3107,7 +3107,19 @@ const applyTemplate = async (template) => {
             encounter_id: encounterStore.currentEncounter.id,
             ...presc,
           };
-          await consultationAPI.createPrescription(prescriptionData);
+          const response = await consultationAPI.createPrescription(prescriptionData);
+          
+          // Check for active prescription alert
+          if (response.data?.active_prescription_alert) {
+            const alert = response.data.active_prescription_alert;
+            $q.notify({
+              type: 'warning',
+              message: `Active prescription detected for ${presc.medicine_name}: ${alert.message}`,
+              timeout: 8000,
+              position: 'top',
+              actions: [{ icon: 'close', color: 'white' }]
+            });
+          }
         }
       }
 
@@ -3850,7 +3862,20 @@ const savePrescription = async () => {
       });
     } else {
       // Create new prescription
-      await consultationAPI.createPrescription(prescriptionData);
+      const response = await consultationAPI.createPrescription(prescriptionData);
+      
+      // Check for active prescription alert
+      if (response.data?.active_prescription_alert) {
+        const alert = response.data.active_prescription_alert;
+        $q.notify({
+          type: 'warning',
+          message: alert.message,
+          timeout: 8000,
+          position: 'top',
+          actions: [{ icon: 'close', color: 'white' }]
+        });
+      }
+      
       $q.notify({
         type: 'positive',
         message: 'Prescription added successfully',

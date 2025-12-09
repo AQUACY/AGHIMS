@@ -15,6 +15,7 @@ class NotificationType(str, enum.Enum):
     REQUISITION_REJECTED = "requisition_rejected"
     REQUISITION_FULFILLED = "requisition_fulfilled"
     REQUISITION_PARTIALLY_FULFILLED = "requisition_partially_fulfilled"
+    REQUISITION_FULFILLMENT_REVERTED = "requisition_fulfillment_reverted"
 
 
 class Notification(Base):

@@ -974,7 +974,12 @@ def revert_approval(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy Head", "Admin"]))
 ):
-    """Revert an approved requisition back to pending (Pharmacy Head only)"""
+    """
+    Revert an approved requisition back to pending (Pharmacy Head only).
+    If requisition is PARTIALLY_FULFILLED, automatically reverts all remaining fulfillment first.
+    """
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
     
     if not requisition:
@@ -983,23 +988,86 @@ def revert_approval(
             detail="Requisition not found"
         )
     
-    if requisition.status != RequisitionStatus.APPROVED:
+    if requisition.status not in [RequisitionStatus.APPROVED, RequisitionStatus.PARTIALLY_FULFILLED]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot revert requisition with status: {requisition.status.value}. Only approved requisitions can be reverted."
+            detail=f"Cannot revert requisition with status: {requisition.status.value}. Only approved or partially fulfilled requisitions can have their approval reverted."
         )
     
-    # Check if any items have been fulfilled
+    # Get department name for checking usage
+    department_name = None
+    if requisition.department_id:
+        department = db.query(Ward).filter(Ward.id == requisition.department_id).first()
+        if department:
+            department_name = department.name
+    if not department_name:
+        department_name = requisition.ward
+    
+    # Check if any items have been fulfilled - if so, revert all fulfillment first
     fulfilled_items = db.query(RequisitionItem).filter(
         RequisitionItem.requisition_id == requisition_id,
         RequisitionItem.fulfilled_quantity > 0
-    ).first()
+    ).all()
     
     if fulfilled_items:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot revert approval: Some items have already been fulfilled. Please cancel fulfillment first."
+        # Revert all remaining fulfillment first
+        for item in fulfilled_items:
+            # Check how much has been used
+            used_debits = db.query(
+                func.sum(InpatientInventoryDebit.quantity).label('total_used')
+            ).filter(
+                and_(
+                    InpatientInventoryDebit.requesting_ward == department_name,
+                    InpatientInventoryDebit.product_code == item.product_code
+                )
+            ).scalar() or 0.0
+            
+            # Calculate returnable quantity
+            returnable_quantity = item.fulfilled_quantity - used_debits
+            if returnable_quantity < 0:
+                returnable_quantity = 0
+            
+            if returnable_quantity > 0:
+                # Update ward stock
+                ward_stock = db.query(WardStock).filter(
+                    and_(
+                        WardStock.ward == department_name,
+                        WardStock.product_code == item.product_code
+                    )
+                ).first()
+                
+                if ward_stock:
+                    ward_stock.quantity -= returnable_quantity
+                    if ward_stock.quantity < 0:
+                        ward_stock.quantity = 0
+                
+                # Create history entry
+                history = RequisitionHistory(
+                    requisition_id=requisition.id,
+                    action=HistoryAction.FULFILLMENT_REVERTED,
+                    performed_by=current_user.id,
+                    item_id=item.id,
+                    quantity_fulfilled=-returnable_quantity,
+                    notes=f"Fulfillment reverted before approval reversion. Used: {used_debits}, Returned: {returnable_quantity}"
+                )
+                db.add(history)
+            
+            # Reset fulfilled quantity
+            item.fulfilled_quantity = 0
+        
+        # Update requisition status and fulfillment fields
+        requisition.status = RequisitionStatus.APPROVED
+        requisition.fulfilled_by = None
+        requisition.fulfilled_at = None
+        
+        # Create history entry for automatic fulfillment reversion
+        history = RequisitionHistory(
+            requisition_id=requisition.id,
+            action=HistoryAction.FULFILLMENT_REVERTED,
+            performed_by=current_user.id,
+            notes=f"All remaining fulfillment automatically reverted before approval reversion by {current_user.full_name or current_user.username}"
         )
+        db.add(history)
     
     # Revert status to pending
     requisition.status = RequisitionStatus.PENDING
@@ -1058,10 +1126,11 @@ def fulfill_requisition(
             detail="Requisition not found"
         )
     
-    if requisition.status != RequisitionStatus.APPROVED:
+    # Allow fulfillment for APPROVED and PARTIALLY_FULFILLED statuses
+    if requisition.status not in [RequisitionStatus.APPROVED, RequisitionStatus.PARTIALLY_FULFILLED]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot fulfill requisition with status: {requisition.status.value}"
+            detail=f"Cannot fulfill requisition with status: {requisition.status.value}. Only approved or partially fulfilled requisitions can be fulfilled."
         )
     
     if not fulfill_data.items:
@@ -1260,6 +1329,229 @@ def fulfill_requisition(
             related_id=requisition.id,
             related_type="requisition"
         )
+    except Exception as e:
+        print(f"Warning: Failed to create notification: {e}")
+    
+    db.commit()
+    db.refresh(requisition)
+    
+    # Return updated requisition
+    return get_requisition(requisition_id, db, current_user)
+
+
+@router.put("/{requisition_id}/revert-fulfillment", response_model=PharmacyRequisitionResponse)
+def revert_fulfillment(
+    requisition_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Store Manager", "Pharmacy Head", "Admin"]))
+):
+    """
+    Revert fulfillment of a requisition.
+    Only returns unused quantities - if items have been used (debited), only the unused portion is returned.
+    """
+    from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+    
+    requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
+    
+    if not requisition:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Requisition not found"
+        )
+    
+    # Only allow reverting fulfilled or partially fulfilled requisitions
+    if requisition.status not in [RequisitionStatus.FULFILLED, RequisitionStatus.PARTIALLY_FULFILLED]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot revert fulfillment for requisition with status: {requisition.status.value}. Only fulfilled or partially fulfilled requisitions can be reverted."
+        )
+    
+    # Get department name for checking usage
+    department_name = None
+    if requisition.department_id:
+        department = db.query(Ward).filter(Ward.id == requisition.department_id).first()
+        if department:
+            department_name = department.name
+    # Fallback to legacy ward field if department_id not available
+    if not department_name:
+        department_name = requisition.ward
+    
+    if not department_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot determine department/ward for this requisition"
+        )
+    
+    # Get all requisition items with fulfilled quantities
+    requisition_items = db.query(RequisitionItem).filter(
+        RequisitionItem.requisition_id == requisition_id,
+        RequisitionItem.fulfilled_quantity > 0
+    ).all()
+    
+    if not requisition_items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fulfilled items found in this requisition"
+        )
+    
+    # Process each item to check usage and calculate returnable quantity
+    items_to_revert = []
+    total_returned = 0
+    usage_details = []  # Track usage details for notification
+    
+    for item in requisition_items:
+        # Check how much of this item has been used (debited to patients)
+        # Query InpatientInventoryDebit for this department/ward and product_code
+        used_debits = db.query(
+            func.sum(InpatientInventoryDebit.quantity).label('total_used')
+        ).filter(
+            and_(
+                InpatientInventoryDebit.requesting_ward == department_name,
+                InpatientInventoryDebit.product_code == item.product_code
+            )
+        ).scalar() or 0.0
+        
+        # Calculate returnable quantity (fulfilled - used)
+        returnable_quantity = item.fulfilled_quantity - used_debits
+        
+        if returnable_quantity < 0:
+            returnable_quantity = 0  # Safety check - shouldn't happen
+        
+        if returnable_quantity > 0:
+            items_to_revert.append({
+                'item': item,
+                'returnable_quantity': returnable_quantity,
+                'used_quantity': used_debits,
+                'fulfilled_quantity': item.fulfilled_quantity
+            })
+            total_returned += returnable_quantity
+        
+        # Track usage details for notification
+        if used_debits > 0:
+            usage_details.append(
+                f"{item.product_name}: {used_debits} of {item.fulfilled_quantity} used, {returnable_quantity} returned"
+            )
+        else:
+            usage_details.append(
+                f"{item.product_name}: {item.fulfilled_quantity} returned (none used)"
+            )
+    
+    if not items_to_revert:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="All fulfilled items have been used. Nothing to return."
+        )
+    
+    # Revert each item
+    for item_data in items_to_revert:
+        item = item_data['item']
+        returnable_quantity = item_data['returnable_quantity']
+        used_quantity = item_data['used_quantity']
+        
+        # Update item fulfilled_quantity
+        item.fulfilled_quantity -= returnable_quantity
+        if item.fulfilled_quantity < 0:
+            item.fulfilled_quantity = 0
+        
+        # Update ward stock (subtract the returnable quantity)
+        ward_stock = db.query(WardStock).filter(
+            and_(
+                WardStock.ward == department_name,
+                WardStock.product_code == item.product_code
+            )
+        ).first()
+        
+        if ward_stock:
+            ward_stock.quantity -= returnable_quantity
+            if ward_stock.quantity < 0:
+                ward_stock.quantity = 0  # Safety check
+            
+            # If ward stock becomes zero or negative, we might want to delete it
+            # But for now, we'll keep it at 0
+        else:
+            # Ward stock doesn't exist - this shouldn't happen if fulfillment worked correctly
+            # But handle it gracefully
+            pass
+        
+        # Create history entry for item reversion
+        history = RequisitionHistory(
+            requisition_id=requisition.id,
+            action=HistoryAction.FULFILLMENT_REVERTED,
+            performed_by=current_user.id,
+            item_id=item.id,
+            quantity_fulfilled=-returnable_quantity,  # Negative to indicate reversal
+            notes=f"Reverted {returnable_quantity} of {item.product_name}. Used: {used_quantity}, Fulfilled: {item_data['fulfilled_quantity']}"
+        )
+        db.add(history)
+    
+    # Update requisition status
+    # Check if any items still have fulfilled quantities
+    remaining_items = db.query(RequisitionItem).filter(
+        RequisitionItem.requisition_id == requisition_id,
+        RequisitionItem.fulfilled_quantity > 0
+    ).all()
+    
+    if remaining_items:
+        # Some items still fulfilled - set to partially fulfilled
+        requisition.status = RequisitionStatus.PARTIALLY_FULFILLED
+        action = HistoryAction.PARTIALLY_FULFILLED
+    else:
+        # All items reverted - set back to approved
+        requisition.status = RequisitionStatus.APPROVED
+        requisition.fulfilled_by = None
+        requisition.fulfilled_at = None
+        action = HistoryAction.APPROVED
+    
+    # Create overall reversion history entry
+    usage_summary = "; ".join(usage_details)
+    history = RequisitionHistory(
+        requisition_id=requisition.id,
+        action=HistoryAction.FULFILLMENT_REVERTED,
+        performed_by=current_user.id,
+        notes=f"Fulfillment reverted by {current_user.full_name or current_user.username}. {usage_summary}"
+    )
+    db.add(history)
+    
+    # Create notifications
+    try:
+        # Notify the requester
+        notification_message = f"Fulfillment of requisition {requisition.requisition_number} has been reverted. "
+        if usage_details:
+            notification_message += "Usage details: " + "; ".join(usage_details)
+        else:
+            notification_message += "All items have been returned."
+        
+        create_notification_for_user(
+            db=db,
+            user_id=requisition.requested_by,
+            notification_type=NotificationType.REQUISITION_FULFILLMENT_REVERTED,
+            title=f"Fulfillment Reverted: {requisition.requisition_number}",
+            message=notification_message,
+            related_id=requisition.id,
+            related_type="requisition"
+        )
+        
+        # Notify Store Managers and Department Heads for the store
+        if requisition.store_id:
+            store_assignments = db.query(StoreStaffAssignment).filter(
+                and_(
+                    StoreStaffAssignment.store_id == requisition.store_id,
+                    StoreStaffAssignment.is_active == True,
+                    StoreStaffAssignment.role.in_([StoreRole.STORE_MANAGER, StoreRole.DEPARTMENT_HEAD])
+                )
+            ).all()
+            
+            for assignment in store_assignments:
+                if assignment.user_id != current_user.id:  # Don't notify the person who did it
+                    create_notification_for_user(
+                        db=db,
+                        user_id=assignment.user_id,
+                        notification_type=NotificationType.REQUISITION_FULFILLMENT_REVERTED,
+                        title=f"Fulfillment Reverted: {requisition.requisition_number}",
+                        message=notification_message,
+                        related_id=requisition.id,
+                        related_type="requisition"
+                    )
     except Exception as e:
         print(f"Warning: Failed to create notification: {e}")
     
