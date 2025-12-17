@@ -11959,6 +11959,327 @@ def release_inventory_debit(
     }
 
 
+# Encounter Inventory Debit endpoints (for OPD encounters)
+class EncounterInventoryDebitCreate(BaseModel):
+    product_code: str
+    product_name: str
+    quantity: float = 1.0
+    unit_price: Optional[float] = None  # If not provided, will be looked up from price list
+    notes: Optional[str] = None
+
+
+class EncounterInventoryDebitResponse(BaseModel):
+    id: int
+    encounter_id: int
+    department: str
+    product_code: str
+    product_name: str
+    quantity: float
+    unit_price: float
+    total_price: float
+    notes: Optional[str] = None
+    is_billed: bool
+    bill_item_id: Optional[int] = None
+    used_by: int
+    used_by_name: Optional[str] = None
+    used_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+@router.post("/encounters/{encounter_id}/inventory-debits", response_model=EncounterInventoryDebitResponse, status_code=status.HTTP_201_CREATED)
+def create_encounter_inventory_debit(
+    encounter_id: int,
+    debit_data: EncounterInventoryDebitCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Add an inventory debit (product used) for an OPD encounter.
+    Checks department stock first - if insufficient, prompts to request from pharmacy store.
+    """
+    from app.models.encounter_inventory_debit import EncounterInventoryDebit
+    from app.models.encounter import Encounter
+    from app.models.ward_stock import WardStock
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Validation: Check if Malaria RDT is being debited without RDT result in vitals
+    is_malaria_rdt = (
+        'malaria' in debit_data.product_name.lower() and 
+        ('rdt' in debit_data.product_name.lower() or 'rdt' in debit_data.product_code.lower())
+    )
+    
+    if is_malaria_rdt:
+        # Check if vitals exist and have rdt_malaria value
+        from app.models.vital import Vital
+        vital = db.query(Vital).filter(Vital.encounter_id == encounter_id).first()
+        if not vital or not vital.rdt_malaria:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot debit Malaria RDT without recording RDT result in vitals. Please record the RDT result first."
+            )
+    
+    # Use encounter department as the ward/department for stock checking
+    department = encounter.department
+    
+    # Check if this department can use General OPD stock
+    # Look up the department in the Ward table to check its type
+    from app.models.ward import Ward, DepartmentType
+    
+    department_ward = db.query(Ward).filter(
+        Ward.name == department
+    ).first()
+    
+    # If department is OPD type, it can use General OPD stock
+    # Also check if department name contains "General" (for General OPD itself)
+    can_use_general_opd = False
+    if department_ward:
+        # Check if department type is OPD
+        can_use_general_opd = department_ward.department_type == DepartmentType.OPD
+    else:
+        # Fallback: if department not found in Ward table, check name patterns
+        # This handles legacy departments or departments not yet in the Ward table
+        department_lower = department.lower()
+        legacy_opd_departments = [
+            'paediatric', 'pediatrics', 'paediatric clinic',
+            'ent', 'ent clinic',
+            'eye', 'eye clinic',
+            'diabetic & hypertension clinic', 'diabetic', 'hypertension'
+        ]
+        can_use_general_opd = any(
+            dept in department_lower 
+            for dept in legacy_opd_departments
+        ) or ('diabetic' in department_lower and 'hypertension' in department_lower)
+    
+    # Check department stock first
+    ward_stock = db.query(WardStock).filter(
+        and_(
+            WardStock.ward == department,
+            WardStock.product_code == debit_data.product_code
+        )
+    ).first()
+    
+    available_quantity = ward_stock.quantity if ward_stock else 0.0
+    
+    # Check if this is General OPD department itself
+    is_general_opd = department.lower() in ['general opd', 'general']
+    
+    # If department stock is insufficient (or zero) and can use General OPD, check General OPD stock
+    # Allow using General OPD stock even if department has 0 stock
+    # BUT: For non-General OPD departments, only allow Malaria RDT from General OPD
+    if available_quantity < debit_data.quantity and can_use_general_opd and not is_general_opd:
+        # For non-General OPD departments, only allow Malaria RDT
+        is_malaria_rdt = (
+            'malaria' in debit_data.product_name.lower() and
+            ('rdt' in debit_data.product_name.lower() or 'rdt' in debit_data.product_code.lower())
+        )
+        
+        if not is_malaria_rdt:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Only Malaria RDT can be debited from General OPD stock for {department} department. Other items must be requested from pharmacy store."
+            )
+        
+        # Query General OPD stock (not "General")
+        general_opd_stock = db.query(WardStock).filter(
+            and_(
+                WardStock.ward == 'General OPD',
+                WardStock.product_code == debit_data.product_code
+            )
+        ).first()
+        
+        general_opd_quantity = general_opd_stock.quantity if general_opd_stock else 0.0
+        
+        # Use General OPD stock if it has sufficient quantity
+        if general_opd_quantity >= debit_data.quantity:
+            # Use General OPD stock
+            ward_stock = general_opd_stock
+            available_quantity = general_opd_quantity
+        elif available_quantity + general_opd_quantity >= debit_data.quantity:
+            # Combined stock is sufficient - use General OPD to fulfill the remainder
+            ward_stock = general_opd_stock
+            available_quantity = general_opd_quantity
+    
+    if available_quantity < debit_data.quantity:
+        # Build error message
+        error_msg = f"Insufficient stock in {encounter.department}"
+        if can_use_general_opd and not is_general_opd:
+            error_msg += " and General OPD (Malaria RDT only)"
+        elif is_general_opd:
+            error_msg += " (General OPD)"
+        error_msg += f". Available: {available_quantity}, Required: {debit_data.quantity}. Please request items from pharmacy store first."
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_msg
+        )
+    
+    # Get unit price - use provided price or look up from price list (for record keeping only, not billing)
+    # Determine if insured based on encounter CCC number (for price lookup reference)
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    if debit_data.unit_price is not None:
+        unit_price = debit_data.unit_price
+    else:
+        # Look up price from price list for record keeping (not for billing)
+        unit_price = get_price_from_all_tables(db, debit_data.product_code, is_insured_encounter)
+        # If no price found, use 0.0 (for record keeping only, not billed)
+        if unit_price == 0.0:
+            unit_price = 0.0
+    
+    total_price = unit_price * debit_data.quantity
+    
+    # Deduct from department stock
+    if ward_stock:
+        ward_stock.quantity -= debit_data.quantity
+        if ward_stock.quantity < 0:
+            ward_stock.quantity = 0  # Prevent negative stock
+    else:
+        # This shouldn't happen if check above passed, but handle it
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Department stock record not found after validation"
+        )
+    
+    # Create inventory debit record
+    # Note: OPD inventory debits are for stock management and accountability only, not billed to clients
+    # The department field records the encounter's department (where the client is from)
+    inventory_debit = EncounterInventoryDebit(
+        encounter_id=encounter_id,
+        department=encounter.department,
+        product_code=debit_data.product_code,
+        product_name=debit_data.product_name,
+        quantity=debit_data.quantity,
+        unit_price=unit_price,
+        total_price=total_price,
+        notes=debit_data.notes,
+        is_billed=False,  # Not billed to client - for stock management only
+        bill_item_id=None,
+        used_by=current_user.id,
+        used_at=utcnow()
+    )
+    db.add(inventory_debit)
+    db.flush()
+    
+    db.commit()
+    db.refresh(inventory_debit)
+    
+    # Load user for response
+    user = db.query(User).filter(User.id == inventory_debit.used_by).first()
+    
+    return {
+        "id": inventory_debit.id,
+        "encounter_id": inventory_debit.encounter_id,
+        "department": inventory_debit.department,
+        "product_code": inventory_debit.product_code,
+        "product_name": inventory_debit.product_name,
+        "quantity": inventory_debit.quantity,
+        "unit_price": inventory_debit.unit_price,
+        "total_price": inventory_debit.total_price,
+        "notes": inventory_debit.notes,
+        "is_billed": inventory_debit.is_billed,
+        "bill_item_id": inventory_debit.bill_item_id,
+        "used_by": inventory_debit.used_by,
+        "used_by_name": user.full_name if user else None,
+        "used_at": inventory_debit.used_at,
+        "created_at": inventory_debit.created_at,
+        "updated_at": inventory_debit.updated_at,
+    }
+
+
+@router.get("/encounters/{encounter_id}/inventory-debits", response_model=List[EncounterInventoryDebitResponse])
+def get_encounter_inventory_debits(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all inventory debits for an encounter"""
+    from app.models.encounter_inventory_debit import EncounterInventoryDebit
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    debits = db.query(EncounterInventoryDebit).filter(
+        EncounterInventoryDebit.encounter_id == encounter_id
+    ).order_by(EncounterInventoryDebit.used_at.desc()).all()
+    
+    # Load user names
+    result = []
+    for debit in debits:
+        user = db.query(User).filter(User.id == debit.used_by).first()
+        result.append({
+            "id": debit.id,
+            "encounter_id": debit.encounter_id,
+            "department": debit.department,
+            "product_code": debit.product_code,
+            "product_name": debit.product_name,
+            "quantity": debit.quantity,
+            "unit_price": debit.unit_price,
+            "total_price": debit.total_price,
+            "notes": debit.notes,
+            "is_billed": debit.is_billed,
+            "bill_item_id": debit.bill_item_id,
+            "used_by": debit.used_by,
+            "used_by_name": user.full_name if user else None,
+            "used_at": debit.used_at,
+            "created_at": debit.created_at,
+            "updated_at": debit.updated_at,
+        })
+    
+    return result
+
+
+@router.delete("/encounters/{encounter_id}/inventory-debits/{debit_id}")
+def delete_encounter_inventory_debit(
+    encounter_id: int,
+    debit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Delete an encounter inventory debit. Stock will be restored.
+    Note: OPD inventory debits are not billed, so no bill items are affected."""
+    from app.models.encounter_inventory_debit import EncounterInventoryDebit
+    from app.models.ward_stock import WardStock
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    debit = db.query(EncounterInventoryDebit).filter(
+        EncounterInventoryDebit.id == debit_id,
+        EncounterInventoryDebit.encounter_id == encounter_id
+    ).first()
+    
+    if not debit:
+        raise HTTPException(status_code=404, detail="Inventory debit not found")
+    
+    # Restore stock
+    ward_stock = db.query(WardStock).filter(
+        and_(
+            WardStock.ward == debit.department,
+            WardStock.product_code == debit.product_code
+        )
+    ).first()
+    
+    if ward_stock:
+        ward_stock.quantity += debit.quantity
+    
+    # Note: OPD inventory debits are not billed, so no bill item to delete
+    
+    # Delete the inventory debit record
+    db.delete(debit)
+    db.commit()
+    
+    return {"message": "Inventory debit deleted successfully"}
+
+
 @router.put("/inpatient-investigations/bulk-confirm")
 def bulk_confirm_inpatient_investigations(
     bulk_data: BulkConfirmInpatientInvestigations,

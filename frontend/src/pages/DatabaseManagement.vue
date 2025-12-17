@@ -269,6 +269,92 @@
       </q-card-section>
     </q-card>
 
+    <!-- Audit Log Cleanup Section -->
+    <q-card class="q-mb-md glass-card" flat bordered>
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">
+          <q-icon name="cleaning_services" color="primary" class="q-mr-sm" />
+          Audit Log Cleanup
+        </div>
+        
+        <q-banner class="q-mb-md bg-info text-white">
+          <template v-slot:avatar>
+            <q-icon name="info" />
+          </template>
+          Clean up GET request audit logs to reduce database size. Only logs for creates, updates, deletes, and logins will be kept.
+        </q-banner>
+
+        <!-- Cleanup Statistics -->
+        <div v-if="cleanupStats" class="q-mb-md">
+          <div class="row q-gutter-md">
+            <div class="col-12 col-md-3">
+              <div class="text-caption text-grey-7">Total Logs Before</div>
+              <div class="text-body1 text-weight-medium">{{ cleanupStats.total_logs_before?.toLocaleString() || 0 }}</div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="text-caption text-grey-7">GET Request Logs</div>
+              <div class="text-body1 text-weight-medium text-warning">{{ cleanupStats.get_logs_count?.toLocaleString() || 0 }}</div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="text-caption text-grey-7">Deleted</div>
+              <div class="text-body1 text-weight-medium text-negative">{{ cleanupStats.deleted_count?.toLocaleString() || 0 }}</div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="text-caption text-grey-7">Remaining Logs</div>
+              <div class="text-body1 text-weight-medium text-positive">{{ cleanupStats.total_logs_after?.toLocaleString() || 0 }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cleanup Options -->
+        <div class="q-mb-md">
+          <div class="row q-gutter-md items-center">
+            <q-input
+              v-model.number="cleanupOlderThanDays"
+              label="Delete logs older than (days)"
+              type="number"
+              filled
+              hint="Leave empty to delete all GET request logs"
+              class="col-12 col-md-4"
+              :disable="cleaningUp"
+            >
+              <template v-slot:prepend>
+                <q-icon name="calendar_today" />
+              </template>
+            </q-input>
+            <q-toggle
+              v-model="cleanupDryRun"
+              label="Dry Run (Preview Only)"
+              color="primary"
+              :disable="cleaningUp"
+              class="q-mt-md"
+            />
+          </div>
+        </div>
+
+        <!-- Cleanup Actions -->
+        <div class="q-mt-md">
+          <q-btn
+            color="primary"
+            icon="cleaning_services"
+            :label="cleanupDryRun ? 'Preview Cleanup' : 'Clean Up GET Logs'"
+            @click="runCleanup"
+            :loading="cleaningUp"
+            class="q-mr-sm"
+          />
+          <q-btn
+            v-if="cleanupStats"
+            flat
+            color="primary"
+            icon="refresh"
+            label="Refresh Database Info"
+            @click="loadDatabaseInfo"
+            :loading="loadingInfo"
+          />
+        </div>
+      </q-card-section>
+    </q-card>
+
     <!-- Import Backup Dialog -->
     <q-dialog v-model="showImportDialog" persistent>
       <q-card style="min-width: 400px">
@@ -345,6 +431,10 @@ const syncing = ref(false);
 const showImportDialog = ref(false);
 const importFile = ref(null);
 const showSyncGuide = ref(false);
+const cleaningUp = ref(false);
+const cleanupStats = ref(null);
+const cleanupOlderThanDays = ref(null);
+const cleanupDryRun = ref(true);
 
 const backupSchedule = ref({
   enabled: false,
@@ -634,6 +724,53 @@ const runSync = async () => {
     });
   } finally {
     syncing.value = false;
+  }
+};
+
+const runCleanup = async () => {
+  if (!cleanupDryRun.value) {
+    const confirmed = await $q.dialog({
+      title: 'Confirm Cleanup',
+      message: cleanupOlderThanDays.value
+        ? `This will permanently delete all GET request audit logs older than ${cleanupOlderThanDays.value} days. This action cannot be undone. Continue?`
+        : 'This will permanently delete ALL GET request audit logs. This action cannot be undone. Continue?',
+      cancel: true,
+      persistent: true,
+    });
+    
+    if (!confirmed) {
+      return;
+    }
+  }
+  
+  cleaningUp.value = true;
+  try {
+    const response = await databaseAPI.cleanupAuditLogs({
+      older_than_days: cleanupOlderThanDays.value || null,
+      dry_run: cleanupDryRun.value,
+    });
+    
+    cleanupStats.value = response.data.statistics;
+    
+    $q.notify({
+      type: cleanupDryRun.value ? 'info' : 'positive',
+      message: cleanupDryRun.value
+        ? 'Preview completed. Review statistics above.'
+        : 'Cleanup completed successfully!',
+      position: 'top',
+    });
+    
+    // Refresh database info to show updated size
+    await loadDatabaseInfo();
+  } catch (error) {
+    console.error('Error running cleanup:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to run cleanup',
+      position: 'top',
+    });
+  } finally {
+    cleaningUp.value = false;
   }
 };
 

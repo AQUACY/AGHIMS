@@ -281,6 +281,126 @@
           </div>
         </q-form>
       </q-card-section>
+
+      <!-- Inventory Debit Section -->
+      <q-card-section v-if="selectedEncounter" class="q-pt-md">
+        <q-separator class="q-mb-md" />
+        <div class="text-h6 q-mb-md">Inventory Debits (Stock Management Only)</div>
+        <q-banner dense class="q-mb-md bg-info text-white">
+          <template v-slot:avatar>
+            <q-icon name="info" />
+          </template>
+          OPD inventory debits are for stock management and accountability only. Items are NOT billed to the patient.
+        </q-banner>
+        
+        <!-- Stock Levels -->
+        <q-card flat bordered class="q-mb-md">
+          <q-card-section>
+            <div class="text-subtitle2 q-mb-sm">
+              Available Stock 
+              <span v-if="selectedEncounter?.department">
+                ({{ selectedEncounter.department }}
+                <span v-if="canUseGeneralOPDStock && selectedEncounter.department.toLowerCase() !== 'general opd' && selectedEncounter.department.toLowerCase() !== 'general'">
+                  + General OPD (Malaria RDT only)
+                </span>
+                <span v-else-if="selectedEncounter.department.toLowerCase() === 'general opd' || selectedEncounter.department.toLowerCase() === 'general'">
+                  - All Items
+                </span>
+                )
+              </span>
+              <span v-else>N/A</span>
+            </div>
+            <div v-if="loadingStock" class="text-center q-pa-md">
+              <q-spinner color="primary" size="sm" />
+              <div class="text-caption q-mt-sm">Loading stock...</div>
+            </div>
+            <div v-else-if="departmentStock.length === 0" class="text-grey-6 text-center q-pa-md">
+              No stock available for this department
+            </div>
+            <div v-else class="row q-gutter-sm">
+              <q-chip
+                v-for="stock in filteredStock"
+                :key="`${stock.product_code}-${stock.ward || 'dept'}`"
+                :color="getStockColor(stock.quantity)"
+                text-color="white"
+                :label="`${stock.product_name}: ${stock.quantity.toFixed(0)}`"
+                size="sm"
+              />
+            </div>
+          </q-card-section>
+        </q-card>
+
+        <!-- Existing Inventory Debits -->
+        <div v-if="inventoryDebits.length > 0" class="q-mb-md">
+          <div class="text-subtitle2 q-mb-sm">Debited Items</div>
+          <q-table
+            :rows="inventoryDebits"
+            :columns="inventoryDebitColumns"
+            row-key="id"
+            flat
+            dense
+            :loading="loadingDebits"
+          >
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  size="xs"
+                  color="negative"
+                  icon="delete"
+                  flat
+                  @click="deleteInventoryDebit(props.row.id)"
+                  :loading="deletingDebit === props.row.id"
+                />
+              </q-td>
+            </template>
+          </q-table>
+        </div>
+
+        <!-- Add Inventory Debit -->
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="text-subtitle2 q-mb-sm">Debit Item</div>
+            <div class="row q-gutter-md">
+              <q-select
+                v-model="newDebit.product_code"
+                :options="stockProductOptions"
+                option-label="label"
+                option-value="value"
+                emit-value
+                map-options
+                label="Product"
+                filled
+                class="col-12 col-md-6"
+                @update:model-value="onProductSelected"
+              />
+              <q-input
+                v-model.number="newDebit.quantity"
+                filled
+                type="number"
+                label="Quantity"
+                class="col-12 col-md-3"
+                min="0.1"
+                step="0.1"
+              />
+              <q-btn
+                label="Debit"
+                color="primary"
+                icon="add"
+                class="col-12 col-md-3"
+                @click="addInventoryDebit"
+                :loading="addingDebit"
+                :disable="!newDebit.product_code || !newDebit.quantity || newDebit.quantity <= 0"
+              />
+            </div>
+            <q-input
+              v-model="newDebit.notes"
+              filled
+              label="Notes (optional)"
+              class="q-mt-md"
+            />
+          </q-card-section>
+        </q-card>
+      </q-card-section>
     </q-card>
     </q-dialog>
   </q-page>
@@ -289,7 +409,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { vitalsAPI, encountersAPI, patientsAPI, billingAPI } from '../services/api';
+import { vitalsAPI, encountersAPI, patientsAPI, billingAPI, consultationAPI, pharmacyRequisitionsAPI, wardsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 
 const $q = useQuasar();
@@ -307,6 +427,74 @@ const encounterBillInfo = ref({
   totalAmount: null,
   paidAmount: null,
   remainingBalance: null,
+});
+
+const inventoryDebits = ref([]);
+const loadingDebits = ref(false);
+const departmentStock = ref([]);
+const loadingStock = ref(false);
+const addingDebit = ref(false);
+const deletingDebit = ref(null);
+
+const newDebit = reactive({
+  product_code: null,
+  product_name: '',
+  quantity: 1,
+  notes: '',
+});
+
+const inventoryDebitColumns = [
+  { name: 'product_name', label: 'Product', field: 'product_name', align: 'left' },
+  { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'center' },
+  { name: 'used_at', label: 'Date', field: 'used_at', align: 'left', format: (val) => val ? new Date(val).toLocaleString() : '' },
+  { name: 'actions', label: 'Actions', align: 'center' },
+];
+
+const stockProductOptions = computed(() => {
+  return departmentStock.value.map(stock => ({
+    label: `${stock.product_name} (Stock: ${stock.quantity.toFixed(0)})`,
+    value: stock.product_code,
+    product_name: stock.product_name,
+    stock_quantity: stock.quantity,
+  }));
+});
+
+const filteredStock = computed(() => {
+  // Show all items with stock > 0 (including from General OPD)
+  return departmentStock.value.filter(stock => (stock.quantity || 0) > 0);
+});
+
+// Load departments to check their type
+const departments = ref([]);
+const departmentTypeMap = computed(() => {
+  const map = {};
+  departments.value.forEach(dept => {
+    map[dept.name] = dept.department_type;
+  });
+  return map;
+});
+
+const canUseGeneralOPDStock = computed(() => {
+  if (!selectedEncounter.value?.department) return false;
+  const department = selectedEncounter.value.department;
+  
+  // Check if department is OPD type from the database
+  const deptType = departmentTypeMap.value[department];
+  if (deptType === 'opd') {
+    return true;
+  }
+  
+  // Fallback: check legacy department name patterns if not found in database
+  const departmentsUsingGeneralOPD = [
+    'Paediatric', 'Pediatrics', 'Paediatric Clinic',
+    'ENT', 'ENT Clinic',
+    'Eye', 'Eye Clinic',
+    'Diabetic & Hypertension Clinic', 'Diabetic', 'Hypertension', 'DIABETIC & HYPERTENSION CLINIC'
+  ];
+  const deptLower = department.toLowerCase();
+  return departmentsUsingGeneralOPD.some(
+    dept => deptLower.includes(dept.toLowerCase()) || (deptLower.includes('diabetic') && deptLower.includes('hypertension'))
+  );
 });
 
 const columns = [
@@ -460,6 +648,10 @@ const recordVitals = async (encounter) => {
   // Load bills for this encounter
   await loadEncounterBills(encounter.id);
   
+  // Load inventory debits and stock
+  await loadInventoryDebits(encounter.id);
+  await loadDepartmentStock(encounter.department);
+  
   try {
     // Always fetch full patient details to ensure we have the latest data
     if (encounter.patient_card_number) {
@@ -547,6 +739,260 @@ const recordVitals = async (encounter) => {
 const closeVitalsDialog = () => {
   showVitalsDialog.value = false;
   selectedEncounter.value = null;
+  inventoryDebits.value = [];
+  departmentStock.value = [];
+  Object.assign(newDebit, {
+    product_code: null,
+    product_name: '',
+    quantity: 1,
+    notes: '',
+  });
+};
+
+const loadInventoryDebits = async (encounterId) => {
+  if (!encounterId) return;
+  
+  loadingDebits.value = true;
+  try {
+    const response = await consultationAPI.getEncounterInventoryDebits(encounterId);
+    inventoryDebits.value = response.data || [];
+  } catch (error) {
+    console.error('Error loading inventory debits:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load inventory debits',
+    });
+    inventoryDebits.value = [];
+  } finally {
+    loadingDebits.value = false;
+  }
+};
+
+const loadDepartmentStock = async (department) => {
+  if (!department) return;
+  
+  loadingStock.value = true;
+  try {
+    // Load department stock
+    const response = await pharmacyRequisitionsAPI.getWardStock(department);
+    let stock = response.data || [];
+    
+    // Check if department can use General OPD stock
+    // First check if department is OPD type from database
+    const deptType = departmentTypeMap.value[department];
+    let canUseGeneralOPD = deptType === 'opd';
+    
+    // Fallback: check legacy department name patterns if not found in database
+    if (!canUseGeneralOPD) {
+      const departmentsUsingGeneralOPD = [
+        'Paediatric', 'Pediatrics', 'Paediatric Clinic',
+        'ENT', 'ENT Clinic',
+        'Eye', 'Eye Clinic',
+        'Diabetic & Hypertension Clinic', 'Diabetic', 'Hypertension', 'DIABETIC & HYPERTENSION CLINIC'
+      ];
+      const deptLower = department.toLowerCase();
+      canUseGeneralOPD = departmentsUsingGeneralOPD.some(
+        dept => deptLower.includes(dept.toLowerCase()) || (deptLower.includes('diabetic') && deptLower.includes('hypertension'))
+      );
+    }
+    
+    // Check if this is General OPD department itself
+    const isGeneralOPD = department.toLowerCase() === 'general opd' || department.toLowerCase() === 'general';
+    
+    if (canUseGeneralOPD && !isGeneralOPD) {
+      // For non-General OPD departments, only load Malaria RDT from General OPD
+      try {
+        const generalOPDResponse = await pharmacyRequisitionsAPI.getWardStock('General OPD');
+        const generalOPDStock = generalOPDResponse.data || [];
+        
+        // Filter to only Malaria RDT items
+        const malariaRDTStock = generalOPDStock.filter(item => {
+          const productName = (item.product_name || '').toLowerCase();
+          const productCode = (item.product_code || '').toLowerCase();
+          return productName.includes('malaria') && (productName.includes('rdt') || productCode.includes('rdt'));
+        });
+        
+        // Merge stocks - if same product exists in both, combine quantities
+        const stockMap = new Map();
+        
+        // Add department stock first (even if 0, to show it exists)
+        stock.forEach(item => {
+          stockMap.set(item.product_code, {
+            ...item,
+            source: department,
+            combined_quantity: item.quantity || 0,
+            dept_quantity: item.quantity || 0
+          });
+        });
+        
+        // Add or merge General OPD Malaria RDT stock only
+        malariaRDTStock.forEach(item => {
+          const productCode = item.product_code;
+          if (stockMap.has(productCode)) {
+            // Merge quantities - add General OPD to existing department stock
+            const existing = stockMap.get(productCode);
+            existing.combined_quantity = (existing.dept_quantity || 0) + (item.quantity || 0);
+            existing.source = `${department} + General OPD`;
+            existing.general_opd_quantity = item.quantity || 0;
+          } else {
+            // Add General OPD Malaria RDT stock item (not in department)
+            stockMap.set(productCode, {
+              ...item,
+              source: 'General OPD',
+              combined_quantity: item.quantity || 0,
+              dept_quantity: 0,
+              general_opd_quantity: item.quantity || 0
+            });
+          }
+        });
+        
+        // Convert back to array and update quantities to show combined
+        stock = Array.from(stockMap.values()).map(item => {
+          // Ensure all required fields are present
+          // Use General OPD id if source is General OPD, otherwise use department id
+          const stockId = item.source === 'General OPD' ? item.id : (item.id || `dept-${item.product_code}`);
+          return {
+            id: stockId,
+            ward: item.ward || (item.source === 'General OPD' ? 'General' : department),
+            store_id: item.store_id,
+            store_name: item.store_name,
+            product_code: item.product_code,
+            product_name: item.product_name,
+            quantity: item.combined_quantity || 0,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+            source_info: item.source,
+            dept_quantity: item.dept_quantity || 0,
+            general_opd_quantity: item.general_opd_quantity || 0
+          };
+        });
+      } catch (error) {
+        console.warn('Could not load General OPD stock:', error);
+        // Continue with department stock only
+      }
+    }
+    
+    departmentStock.value = stock;
+  } catch (error) {
+    console.error('Error loading department stock:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load department stock',
+    });
+    departmentStock.value = [];
+  } finally {
+    loadingStock.value = false;
+  }
+};
+
+const onProductSelected = (productCode) => {
+  const selected = stockProductOptions.value.find(opt => opt.value === productCode);
+  if (selected) {
+    newDebit.product_name = selected.product_name;
+  }
+};
+
+const addInventoryDebit = async () => {
+  if (!selectedEncounter.value || !newDebit.product_code || !newDebit.quantity || newDebit.quantity <= 0) {
+    return;
+  }
+
+  // Validation: Check if Malaria RDT is being debited
+  const isMalariaRDT = newDebit.product_name.toLowerCase().includes('malaria') && 
+                       (newDebit.product_name.toLowerCase().includes('rdt') || 
+                        newDebit.product_code.toLowerCase().includes('rdt'));
+  
+  if (isMalariaRDT && !vitalsForm.rdt_malaria) {
+    $q.notify({
+      type: 'negative',
+      message: 'Cannot debit Malaria RDT without recording RDT result in vitals. Please record the RDT result first.',
+      position: 'top',
+      timeout: 5000,
+    });
+    return;
+  }
+
+  addingDebit.value = true;
+  try {
+    const debitData = {
+      product_code: newDebit.product_code,
+      product_name: newDebit.product_name,
+      quantity: newDebit.quantity,
+      notes: newDebit.notes || null,
+    };
+
+    await consultationAPI.createEncounterInventoryDebit(selectedEncounter.value.id, debitData);
+    
+    $q.notify({
+      type: 'positive',
+      message: 'Inventory debited successfully',
+      position: 'top',
+    });
+
+    // Reload debits and stock
+    await loadInventoryDebits(selectedEncounter.value.id);
+    await loadDepartmentStock(selectedEncounter.value.department);
+    
+    // Note: OPD inventory debits are not billed, so no need to reload bills
+
+    // Reset form
+    Object.assign(newDebit, {
+      product_code: null,
+      product_name: '',
+      quantity: 1,
+      notes: '',
+    });
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to debit inventory',
+      position: 'top',
+    });
+  } finally {
+    addingDebit.value = false;
+  }
+};
+
+const deleteInventoryDebit = async (debitId) => {
+  if (!selectedEncounter.value || !debitId) return;
+
+  $q.dialog({
+    title: 'Confirm Delete',
+    message: 'Are you sure you want to delete this inventory debit? Stock will be restored.',
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    deletingDebit.value = debitId;
+    try {
+      await consultationAPI.deleteEncounterInventoryDebit(selectedEncounter.value.id, debitId);
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Inventory debit deleted successfully',
+        position: 'top',
+      });
+
+      // Reload debits and stock
+      await loadInventoryDebits(selectedEncounter.value.id);
+      await loadDepartmentStock(selectedEncounter.value.department);
+      
+      // Note: OPD inventory debits are not billed, so no need to reload bills
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to delete inventory debit',
+        position: 'top',
+      });
+    } finally {
+      deletingDebit.value = null;
+    }
+  });
+};
+
+const getStockColor = (quantity) => {
+  if (quantity <= 0) return 'negative';
+  if (quantity < 10) return 'warning';
+  return 'positive';
 };
 
 const vitalsForm = reactive({
@@ -575,6 +1021,41 @@ const onSubmit = async () => {
       message: 'Please select an encounter first',
     });
     return;
+  }
+
+  // Check if RDT has value but no inventory debited
+  if (vitalsForm.rdt_malaria && inventoryDebits.value.length === 0) {
+    // Check if any debit is for Malaria RDT
+    const hasMalariaRDTDebit = inventoryDebits.value.some(debit => 
+      debit.product_name.toLowerCase().includes('malaria') && 
+      (debit.product_name.toLowerCase().includes('rdt') || debit.product_code.toLowerCase().includes('rdt'))
+    );
+    
+    if (!hasMalariaRDTDebit) {
+      // Show alert but allow them to continue
+      // Use a promise wrapper to properly handle the dialog result
+      const dialogResult = await new Promise((resolve) => {
+        $q.dialog({
+          title: 'Inventory Not Debited',
+          message: 'You have recorded an RDT result but have not debited Malaria RDT inventory for this patient. You can continue to save the vitals without debiting inventory.',
+          ok: {
+            label: 'Continue & Save',
+            color: 'primary',
+            flat: false
+          },
+          cancel: {
+            label: 'Cancel',
+            flat: true
+          },
+          persistent: true
+        }).onOk(() => resolve(true)).onCancel(() => resolve(false));
+      });
+      
+      // If user cancels, don't save
+      if (!dialogResult) {
+        return;
+      }
+    }
   }
 
   saving.value = true;
@@ -658,7 +1139,19 @@ watch(() => route.query.encounterId, (newEncounterId) => {
   }
 });
 
+// Load departments to check their type
+const loadDepartments = async () => {
+  try {
+    const response = await wardsAPI.getAll(false); // Get all departments including inactive
+    departments.value = response.data || [];
+  } catch (error) {
+    console.warn('Failed to load departments:', error);
+    departments.value = [];
+  }
+};
+
 onMounted(() => {
+  loadDepartments();
   autoLoadFromRoute();
 });
 </script>

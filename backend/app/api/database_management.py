@@ -42,22 +42,56 @@ def export_backup(
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Export database backup immediately"""
+    from pathlib import Path
+    from fastapi.responses import StreamingResponse
+    import os
+    
     try:
         backup_service = DatabaseBackupService()
         backup_path, error = backup_service.export_backup()
         
         if error:
+            logger.error(f"Backup export error: {error}")
             raise HTTPException(status_code=500, detail=error)
         
         if not backup_path:
+            logger.error("Backup export returned no path")
             raise HTTPException(status_code=500, detail="Backup export failed")
         
-        # Return file for download
-        return FileResponse(
-            backup_path,
+        # Convert to Path object for cross-platform handling
+        backup_file = Path(backup_path)
+        
+        if not backup_file.exists():
+            logger.error(f"Backup file does not exist: {backup_path}")
+            raise HTTPException(status_code=500, detail=f"Backup file not found: {backup_path}")
+        
+        # Log backup file details for debugging
+        file_size = backup_file.stat().st_size
+        file_mtime = backup_file.stat().st_mtime
+        logger.info(f"Exporting backup: {backup_file.name}, size: {file_size} bytes, modified: {file_mtime}")
+        
+        # Get filename from path (works on both Windows and Unix)
+        filename = backup_file.name
+        
+        # Read file and stream it to ensure fresh content
+        def generate():
+            with open(backup_file, 'rb') as f:
+                while True:
+                    chunk = f.read(8192)  # Read in 8KB chunks
+                    if not chunk:
+                        break
+                    yield chunk
+        
+        # Return streaming response with no-cache headers
+        return StreamingResponse(
+            generate(),
             media_type="application/octet-stream",
-            filename=backup_path.split("/")[-1],
-            headers={"Content-Disposition": f'attachment; filename="{backup_path.split("/")[-1]}"'}
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
         )
     
     except HTTPException:
@@ -324,3 +358,54 @@ def get_database_info(
         logger.error(f"Error getting database info: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class CleanupAuditLogsRequest(BaseModel):
+    """Request model for audit log cleanup"""
+    older_than_days: Optional[int] = None  # If provided, only delete logs older than this many days
+    dry_run: bool = False  # If True, only count and report, don't actually delete
+
+
+@router.post("/cleanup-audit-logs")
+def cleanup_audit_logs(
+    request: CleanupAuditLogsRequest,
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """
+    Clean up GET request audit logs to reduce database size.
+    Only Admin users can perform this operation.
+    """
+    try:
+        import sys
+        from pathlib import Path
+        # Add backend directory to path to import migration script
+        backend_dir = Path(__file__).parent.parent.parent
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        
+        from migrate_cleanup_get_audit_logs import cleanup_get_audit_logs
+        
+        result = cleanup_get_audit_logs(
+            older_than_days=request.older_than_days,
+            dry_run=request.dry_run
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error", "Unknown error during cleanup")
+            )
+        
+        return {
+            "message": "Cleanup completed successfully" if not request.dry_run else "Dry run completed",
+            "statistics": {
+                "total_logs_before": result.get("total_logs_before", 0),
+                "get_logs_count": result.get("get_logs_count", 0),
+                "deleted_count": result.get("deleted_count", 0),
+                "total_logs_after": result.get("total_logs_after", 0),
+                "dry_run": request.dry_run
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Error cleaning up audit logs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

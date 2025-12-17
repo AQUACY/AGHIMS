@@ -14,8 +14,10 @@ from app.models.user import User
 
 class AuditLoggingMiddleware(BaseHTTPMiddleware):
     """
-    Middleware that automatically logs all API endpoint calls to the audit trail.
-    This ensures every endpoint activity is tracked without manual logging in each endpoint.
+    Middleware that automatically logs API endpoint calls to the audit trail.
+    Only logs POST, PUT, PATCH, DELETE requests (not GET requests) to reduce database growth.
+    GET requests are excluded as they are read-only operations.
+    Login actions are logged separately in auth.py.
     """
     
     # Endpoints to exclude from audit logging (health checks, docs, etc.)
@@ -37,6 +39,8 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """
         Process the request and log it to audit trail
+        Only logs POST, PUT, PATCH, DELETE requests (not GET requests)
+        Also logs LOGIN actions which are handled separately in auth.py
         """
         # Skip excluded paths
         if request.url.path in self.EXCLUDED_PATHS or request.url.path.startswith("/api/uploads"):
@@ -44,6 +48,11 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
         
         # Skip OPTIONS requests (CORS preflight)
         if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        # Skip GET requests - only log creates, updates, deletes, and logins
+        # GET requests are not logged to reduce database growth
+        if request.method == "GET":
             return await call_next(request)
         
         # Get database session using context manager pattern

@@ -493,6 +493,10 @@ export const consultationAPI = {
     deleteInpatientInventoryDebit: (wardAdmissionId, debitId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits/${debitId}`),
     getAllInventoryDebits: (params = {}) => api.get('/consultation/inventory-debits', { params }),
     releaseInventoryDebit: (debitId) => api.put(`/consultation/inventory-debits/${debitId}/release`),
+    // Encounter Inventory Debits (for OPD)
+    createEncounterInventoryDebit: (encounterId, debitData) => api.post(`/consultation/encounters/${encounterId}/inventory-debits`, debitData),
+    getEncounterInventoryDebits: (encounterId) => api.get(`/consultation/encounters/${encounterId}/inventory-debits`),
+    deleteEncounterInventoryDebit: (encounterId, debitId) => api.delete(`/consultation/encounters/${encounterId}/inventory-debits/${debitId}`),
     // Ward Admission Transfers
     getWardAdmissionTransfers: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/transfers`),
     // Direct Admission
@@ -700,6 +704,7 @@ export const staffAPI = {
 
 // Lab Templates API
 export const databaseAPI = {
+  cleanupAuditLogs: (data) => api.post('/database/cleanup-audit-logs', data),
   // Backup operations
   exportBackup: () =>
     api.get('/database/backup/export', { responseType: 'blob' }),
@@ -881,6 +886,19 @@ export const misReportsAPI = {
     };
     if (departments) params.departments = departments;
     return api.get('/mis-reports/opd-morbidity/export', { 
+      params,
+      responseType: 'blob'
+    });
+  },
+  getInhouseLabParameters: (startDate, endDate, departments = null) => {
+    const params = { start_date: startDate, end_date: endDate };
+    if (departments) params.departments = departments;
+    return api.get('/mis-reports/inhouse-lab-parameters', { params });
+  },
+  exportInhouseLabParameters: (startDate, endDate, departments = null) => {
+    const params = { start_date: startDate, end_date: endDate };
+    if (departments) params.departments = departments;
+    return api.get('/mis-reports/inhouse-lab-parameters/export', {
       params,
       responseType: 'blob'
     });

@@ -33,6 +33,7 @@ from app.models.inpatient_surgery import InpatientSurgery
 from app.models.additional_service import AdditionalService
 from app.models.inpatient_additional_service import InpatientAdditionalService
 from app.models.inpatient_inventory_debit import InpatientInventoryDebit
+from app.models.encounter_inventory_debit import EncounterInventoryDebit
 from app.models.treatment_sheet_administration import TreatmentSheetAdministration
 from app.models.ward_transfer import WardTransfer
 from app.models.lab_result import LabResult
@@ -100,6 +101,7 @@ __all__ = [
     "AdditionalService",
     "InpatientAdditionalService",
     "InpatientInventoryDebit",
+    "EncounterInventoryDebit",
     "TreatmentSheetAdministration",
     "WardTransfer",
     "LabResult",

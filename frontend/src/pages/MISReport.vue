@@ -211,6 +211,7 @@ export default {
     const hasSearched = ref(false);
     const departmentOptions = ref([]);
     const reportInfo = ref('');
+    const reportSummary = ref(null);
 
     // Report options
     const reportOptions = [
@@ -228,6 +229,11 @@ export default {
         label: 'OPD Morbidity Report',
         value: 'opd_morbidity',
         description: 'Disease-specific morbidity statistics by age and gender for DHIMS'
+      },
+      {
+        label: 'Inhouse Lab Parameters',
+        value: 'inhouse_lab_parameters',
+        description: 'Malaria RDT tests and results - Summary and detailed report'
       }
     ];
 
@@ -421,6 +427,72 @@ export default {
             sortable: true
           }
         ];
+      } else if (selectedReport.value === 'inhouse_lab_parameters') {
+        return [
+          {
+            name: 'sr_no',
+            label: 'Sr.No.',
+            field: 'sr_no',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'date',
+            label: 'Date',
+            field: 'date',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'time',
+            label: 'Time',
+            field: 'time',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'patient_name',
+            label: 'Patient Name',
+            field: 'patient_name',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'card_number',
+            label: 'Card Number',
+            field: 'card_number',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'age',
+            label: 'Age',
+            field: 'age',
+            align: 'center',
+            sortable: true
+          },
+          {
+            name: 'gender',
+            label: 'Gender',
+            field: 'gender',
+            align: 'center',
+            sortable: true
+          },
+          {
+            name: 'department',
+            label: 'Department',
+            field: 'department',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'rdt_result',
+            label: 'RDT Result',
+            field: 'rdt_result',
+            align: 'center',
+            sortable: true
+          }
+        ];
       } else if (selectedReport.value === 'opd_morbidity') {
         return [
           {
@@ -558,6 +630,20 @@ export default {
           const deptInfo = departmentsStr ? ` (${selectedDepartments.value.length} department(s))` : ' (All departments)';
           const grandTotal = reportData.value.reduce((sum, r) => sum + (r.grand_total || 0), 0);
           reportInfo.value = `Total: ${grandTotal} cases across ${reportData.value.length} disease categories for ${data.start_date} to ${data.end_date}${deptInfo}`;
+        } else if (selectedReport.value === 'inhouse_lab_parameters') {
+          response = await misReportsAPI.getInhouseLabParameters(
+            startDate.value,
+            endDate.value,
+            departmentsStr
+          );
+          const data = response.data || {};
+          reportData.value = data.data || [];
+          const summary = data.summary || {};
+          reportSummary.value = summary;
+          const deptInfo = departmentsStr ? ` (${selectedDepartments.value.length} department(s))` : ' (All departments)';
+          reportInfo.value = `Total: ${summary.total_tests || 0} tests (${summary.positive || 0} Positive, ${summary.negative || 0} Negative) for ${data.start_date} to ${data.end_date}${deptInfo}`;
+        } else {
+          reportSummary.value = null;
         }
         
         if (reportData.value.length === 0) {
@@ -628,6 +714,15 @@ export default {
           const startFormatted = startDate.value.replace(/-/g, '_');
           const endFormatted = endDate.value.replace(/-/g, '_');
           filename = `OPD_MORBIDITY_${startFormatted}_TO_${endFormatted}.xlsx`;
+        } else if (selectedReport.value === 'inhouse_lab_parameters') {
+          response = await misReportsAPI.exportInhouseLabParameters(
+            startDate.value,
+            endDate.value,
+            departmentsStr
+          );
+          const startFormatted = startDate.value.replace(/-/g, '_');
+          const endFormatted = endDate.value.replace(/-/g, '_');
+          filename = `INHOUSE_LAB_PARAMETERS_${startFormatted}_TO_${endFormatted}.xlsx`;
         }
 
         // Create blob and download

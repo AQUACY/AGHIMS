@@ -1085,3 +1085,194 @@ def export_opd_morbidity(
             detail=f"Error exporting report: {str(e)}"
         )
 
+
+import pandas as pd
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+
+router = APIRouter(prefix="/mis-reports", tags=["mis-reports"])
+
+
+@router.get("/inhouse-lab-parameters")
+def get_inhouse_lab_parameters(
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    departments: Optional[str] = Query(None, description="Comma-separated department names"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"]))
+):
+    """
+    Get inhouse lab parameters report - Malaria RDT tests and results
+    Returns summary and detailed data
+    """
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Build query for encounters with vitals that have rdt_malaria
+    query = db.query(Encounter, Vital, Patient).join(
+        Vital, Encounter.id == Vital.encounter_id
+    ).join(
+        Patient, Encounter.patient_id == Patient.id
+    ).filter(
+        and_(
+            func.date(Encounter.created_at) >= start_dt,
+            func.date(Encounter.created_at) <= end_dt,
+            Vital.rdt_malaria.isnot(None),
+            Vital.rdt_malaria != '',
+            Encounter.archived == False
+        )
+    )
+    
+    # Filter by departments if provided
+    if departments:
+        dept_list = [d.strip() for d in departments.split(',')]
+        query = query.filter(Encounter.department.in_(dept_list))
+    
+    results = query.order_by(Encounter.created_at.desc()).all()
+    
+    # Process results
+    detailed_data = []
+    summary = {
+        'total_tests': 0,
+        'positive': 0,
+        'negative': 0,
+    }
+    
+    for encounter, vital, patient in results:
+        result = vital.rdt_malaria.lower()
+        summary['total_tests'] += 1
+        
+        if result == 'positive':
+            summary['positive'] += 1
+        elif result == 'negative':
+            summary['negative'] += 1
+        
+        # Format patient name
+        patient_name = f"{patient.name or ''} {patient.surname or ''} {patient.other_names or ''}".strip()
+        
+        # Calculate age
+        age = None
+        if patient.date_of_birth:
+            age_delta = encounter.created_at.date() - patient.date_of_birth
+            age = age_delta.days // 365
+        elif patient.age is not None:
+            age = patient.age
+        
+        detailed_data.append({
+            'sr_no': len(detailed_data) + 1,
+            'encounter_id': encounter.id,
+            'date': encounter.created_at.strftime('%Y-%m-%d'),
+            'time': encounter.created_at.strftime('%H:%M:%S'),
+            'patient_name': patient_name,
+            'card_number': patient.card_number or 'N/A',
+            'age': age,
+            'gender': 'Male' if patient.gender == 'M' else 'Female' if patient.gender == 'F' else 'N/A',
+            'department': encounter.department,
+            'rdt_result': vital.rdt_malaria.capitalize(),
+        })
+    
+    return {
+        'start_date': start_date,
+        'end_date': end_date,
+        'summary': summary,
+        'data': detailed_data,
+        'total_records': len(detailed_data)
+    }
+
+
+@router.get("/inhouse-lab-parameters/export")
+def export_inhouse_lab_parameters(
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    departments: Optional[str] = Query(None, description="Comma-separated department names"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"]))
+):
+    """
+    Export inhouse lab parameters report to Excel
+    """
+    # Get the data
+    report_response = get_inhouse_lab_parameters(start_date, end_date, departments, db, current_user)
+    report_data = report_response if isinstance(report_response, dict) else report_response.__dict__
+    
+    summary = report_data.get('summary', {})
+    detailed_data = report_data.get('data', [])
+    
+    # Format dates
+    start_formatted = datetime.strptime(start_date, "%Y-%m-%d").strftime("%B %d, %Y")
+    end_formatted = datetime.strptime(end_date, "%Y-%m-%d").strftime("%B %d, %Y")
+    
+    # Get clinic name from settings or use default
+    clinic_name = "Health Facility"
+    clinic_district = "District"
+    clinic_city = "City"
+    clinic_region = "Region"
+    
+    # Get current date for report generation
+    report_gen_date = datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y")
+    
+    # Create header rows
+    header_rows = [
+        [f"Inhouse Lab Parameters - Malaria RDT Tests From {start_formatted} To {end_formatted}", None, None, None, None, None, None, None, None, None],
+        [f"Clinic : {clinic_name}", None, None, None, None, None, None, None, None, None],
+        [f"Report Generation Date: {report_gen_date}", None, None, None, None, None, None, None, None, None],
+        [f"District : {clinic_district}", None, f"Location : {clinic_city}", None, f"Region : {clinic_region}", None, None, None, None, None],
+        [None, None, None, None, None, None, None, None, None, None],
+        ["SUMMARY", None, None, None, None, None, None, None, None, None],
+        ["Total Tests", summary.get('total_tests', 0), None, None, None, None, None, None, None, None],
+        ["Positive", summary.get('positive', 0), None, None, None, None, None, None, None, None],
+        ["Negative", summary.get('negative', 0), None, None, None, None, None, None, None, None],
+        [None, None, None, None, None, None, None, None, None, None],
+        ["DETAILED REPORT", None, None, None, None, None, None, None, None, None],
+        ["Sr.No.", "Date", "Time", "Patient Name", "Card Number", "Age", "Gender", "Department", "RDT Result", None]
+    ]
+    
+    # Create data rows
+    data_rows = []
+    for record in detailed_data:
+        data_rows.append([
+            record.get("sr_no", ""),
+            record.get("date", ""),
+            record.get("time", ""),
+            record.get("patient_name", ""),
+            record.get("card_number", ""),
+            record.get("age", ""),
+            record.get("gender", ""),
+            record.get("department", ""),
+            record.get("rdt_result", ""),
+            None
+        ])
+    
+    # Add footer rows
+    footer_rows = [
+        [None, None, None, None, None, None, None, None, None, None],
+        [None, None, None, None, None, None, None, None, None, None],
+        ["Signature", None, None, None, None, None, None, None, None, None],
+        ["Rank", None, None, None, None, None, None, None, None, None],
+        ["Date", datetime.now().strftime("%b %d %Y"), None, None, None, None, None, None, None, None]
+    ]
+    
+    # Combine all rows
+    all_rows = header_rows + data_rows + footer_rows
+    
+    # Create DataFrame
+    df = pd.DataFrame(all_rows)
+    
+    # Create Excel file in memory
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, header=False, sheet_name='Inhouse Lab Parameters')
+    
+    output.seek(0)
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=inhouse_lab_parameters_{start_date}_{end_date}.xlsx"
+        }
+    )
+
