@@ -836,6 +836,42 @@ export const notificationsAPI = {
   delete: (notificationId) => api.delete(`/notifications/${notificationId}`),
 };
 
+// Vendors endpoints
+export const vendorsAPI = {
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.search) params.append('search', filters.search);
+    if (filters.is_active !== undefined) params.append('is_active', filters.is_active);
+    return api.get(`/vendors?${params.toString()}`);
+  },
+  get: (vendorId) => api.get(`/vendors/${vendorId}`),
+  create: (data) => api.post('/vendors', data),
+  update: (vendorId, data) => api.put(`/vendors/${vendorId}`, data),
+  delete: (vendorId) => api.delete(`/vendors/${vendorId}`),
+};
+
+// Store Stock endpoints
+export const storeStockAPI = {
+  getAll: (filters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.store_id) params.append('store_id', filters.store_id);
+    if (filters.product_code) params.append('product_code', filters.product_code);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.vendor_id) params.append('vendor_id', filters.vendor_id);
+    return api.get(`/store-stock?${params.toString()}`);
+  },
+  get: (stockId) => api.get(`/store-stock/${stockId}`),
+  create: (data) => api.post('/store-stock', data),
+  update: (stockId, data) => api.put(`/store-stock/${stockId}`, data),
+  delete: (stockId) => api.delete(`/store-stock/${stockId}`),
+  approve: (stockId, data) => api.put(`/store-stock/${stockId}/approve`, data),
+  getSummaryByProduct: (storeId = null) => {
+    const params = new URLSearchParams();
+    if (storeId) params.append('store_id', storeId);
+    return api.get(`/store-stock/summary/by-product?${params.toString()}`);
+  },
+};
+
 export const misReportsAPI = {
   getConsultingRoomRegister: (startDate, endDate, department = null) => {
     const params = { start_date: startDate, end_date: endDate };

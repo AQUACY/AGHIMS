@@ -1,6 +1,15 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Department/Unit Management</div>
+    <div class="row items-center q-mb-md">
+      <q-btn
+        flat
+        icon="arrow_back"
+        label="Back to Inventory"
+        @click="$router.push('/inventory')"
+        class="q-mr-md"
+      />
+      <div class="text-h4 text-weight-bold glass-text">Department/Unit Management</div>
+    </div>
     <q-banner class="glass-card q-pa-md q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />

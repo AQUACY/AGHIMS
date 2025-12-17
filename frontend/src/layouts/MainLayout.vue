@@ -316,10 +316,10 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'])"
+          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy', 'Pharmacy Head', 'Store Manager', 'Department Head', 'Admin'])"
           clickable
           v-ripple
-          :to="{ name: 'InventoryDebitManagement' }"
+          :to="{ name: 'InventoryManagement' }"
           class="glass-nav-item"
           active-class="glass-nav-active"
         >
@@ -327,37 +327,7 @@
             <q-icon name="inventory_2" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Inventory Debits</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'PharmacyRequisitions' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="shopping_cart" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Requisitions</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'WardStock' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="warehouse" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Department/Unit Stock</q-item-label>
+            <q-item-label>Inventory Management</q-item-label>
           </q-item-section>
         </q-item>
 
@@ -472,38 +442,6 @@
             <q-item-label>IPD</q-item-label>
           </q-item-section>
         </q-item>
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'WardManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="meeting_room" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Department Management</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'StoreManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="store" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Store Management</q-item-label>
-          </q-item-section>
-        </q-item>
-
         <q-item
           v-if="canAccess(['Admin', 'Pharmacy Head', 'Store Manager'])"
           clickable

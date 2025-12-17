@@ -172,6 +172,18 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Admin', 'Pharmacy Head', 'Store Manager'] },
       },
       {
+        path: '/inventory',
+        name: 'InventoryManagement',
+        component: () => import('../pages/InventoryManagement.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: '/admin/store-stock',
+        name: 'StoreStockManagement',
+        component: () => import('../pages/StoreStockManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Store Manager', 'Department Head', 'Pharmacy Head'] },
+      },
+      {
         path: '/admin/icd10-drg-mapping',
         name: 'Icd10DrgMapping',
         component: () => import('../pages/Icd10DrgMapping.vue'),

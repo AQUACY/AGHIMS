@@ -1,7 +1,16 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h4 text-weight-bold glass-text q-mb-md">
-      Inventory Debit Management
+    <div class="row items-center q-mb-md">
+      <q-btn
+        flat
+        icon="arrow_back"
+        label="Back to Inventory"
+        @click="$router.push('/inventory')"
+        class="q-mr-md"
+      />
+      <div class="text-h4 text-weight-bold glass-text">
+        Inventory Debit Management
+      </div>
     </div>
 
     <!-- Filters -->
