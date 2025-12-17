@@ -11966,6 +11966,7 @@ class EncounterInventoryDebitCreate(BaseModel):
     quantity: float = 1.0
     unit_price: Optional[float] = None  # If not provided, will be looked up from price list
     notes: Optional[str] = None
+    rdt_malaria_value: Optional[str] = None  # RDT value from form (for validation when vitals not saved yet)
 
 
 class EncounterInventoryDebitResponse(BaseModel):
@@ -12016,10 +12017,17 @@ def create_encounter_inventory_debit(
     )
     
     if is_malaria_rdt:
-        # Check if vitals exist and have rdt_malaria value
+        # Check if RDT value exists (either in saved vitals or provided in request)
         from app.models.vital import Vital
         vital = db.query(Vital).filter(Vital.encounter_id == encounter_id).first()
-        if not vital or not vital.rdt_malaria:
+        
+        # Check saved vitals first
+        has_rdt_in_vitals = vital and vital.rdt_malaria
+        
+        # If not in saved vitals, check if provided in request (from form)
+        has_rdt_in_request = debit_data.rdt_malaria_value is not None and debit_data.rdt_malaria_value.strip() != ""
+        
+        if not has_rdt_in_vitals and not has_rdt_in_request:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot debit Malaria RDT without recording RDT result in vitals. Please record the RDT result first."

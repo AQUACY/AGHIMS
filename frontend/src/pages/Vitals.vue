@@ -242,7 +242,8 @@
                 map-options 
                 label="RDT for Malaria" 
                 class="col-12 col-md-4" 
-                clearable 
+                clearable
+                @update:model-value="onRDTSelected"
               />
               <q-select 
                 v-model="vitalsForm.retro_rdt" 
@@ -286,6 +287,19 @@
       <q-card-section v-if="selectedEncounter" class="q-pt-md">
         <q-separator class="q-mb-md" />
         <div class="text-h6 q-mb-md">Inventory Debits (Stock Management Only)</div>
+        
+        <!-- Reminder to debit when RDT is selected -->
+        <q-banner 
+          v-if="vitalsForm.rdt_malaria && !hasMalariaRDTDebit" 
+          dense 
+          class="q-mb-md bg-warning text-white"
+        >
+          <template v-slot:avatar>
+            <q-icon name="warning" />
+          </template>
+          <strong>RDT Result Recorded:</strong> Please debit Malaria RDT inventory before saving vitals.
+        </q-banner>
+        
         <q-banner dense class="q-mb-md bg-info text-white">
           <template v-slot:avatar>
             <q-icon name="info" />
@@ -462,6 +476,15 @@ const stockProductOptions = computed(() => {
 const filteredStock = computed(() => {
   // Show all items with stock > 0 (including from General OPD)
   return departmentStock.value.filter(stock => (stock.quantity || 0) > 0);
+});
+
+// Computed property to check if Malaria RDT has been debited
+const hasMalariaRDTDebit = computed(() => {
+  if (!vitalsForm.rdt_malaria) return false;
+  return inventoryDebits.value.some(debit => 
+    debit.product_name.toLowerCase().includes('malaria') && 
+    (debit.product_name.toLowerCase().includes('rdt') || debit.product_code.toLowerCase().includes('rdt'))
+  );
 });
 
 // Load departments to check their type
@@ -892,6 +915,40 @@ const onProductSelected = (productCode) => {
   }
 };
 
+const onRDTSelected = (value) => {
+  // When RDT is selected, auto-select Malaria RDT product and remind user to debit
+  if (value && !hasMalariaRDTDebit.value) {
+    // Auto-select Malaria RDT in the product dropdown if available
+    const malariaRDTProduct = stockProductOptions.value.find(opt => {
+      const name = opt.product_name?.toLowerCase() || '';
+      const code = opt.value?.toLowerCase() || '';
+      return name.includes('malaria') && (name.includes('rdt') || code.includes('rdt'));
+    });
+    
+    if (malariaRDTProduct) {
+      // Auto-select the Malaria RDT product
+      newDebit.product_code = malariaRDTProduct.value;
+      newDebit.product_name = malariaRDTProduct.product_name;
+      
+      $q.notify({
+        type: 'info',
+        message: 'Malaria RDT product auto-selected. Please debit inventory before saving vitals.',
+        position: 'top',
+        timeout: 3000,
+        icon: 'info'
+      });
+    } else {
+      $q.notify({
+        type: 'info',
+        message: 'Please debit Malaria RDT inventory before saving vitals.',
+        position: 'top',
+        timeout: 3000,
+        icon: 'info'
+      });
+    }
+  }
+};
+
 const addInventoryDebit = async () => {
   if (!selectedEncounter.value || !newDebit.product_code || !newDebit.quantity || newDebit.quantity <= 0) {
     return;
@@ -919,6 +976,8 @@ const addInventoryDebit = async () => {
       product_name: newDebit.product_name,
       quantity: newDebit.quantity,
       notes: newDebit.notes || null,
+      // Include RDT value from form if available (for validation when vitals not saved yet)
+      rdt_malaria_value: vitalsForm.rdt_malaria || null,
     };
 
     await consultationAPI.createEncounterInventoryDebit(selectedEncounter.value.id, debitData);
@@ -1023,40 +1082,8 @@ const onSubmit = async () => {
     return;
   }
 
-  // Check if RDT has value but no inventory debited
-  if (vitalsForm.rdt_malaria && inventoryDebits.value.length === 0) {
-    // Check if any debit is for Malaria RDT
-    const hasMalariaRDTDebit = inventoryDebits.value.some(debit => 
-      debit.product_name.toLowerCase().includes('malaria') && 
-      (debit.product_name.toLowerCase().includes('rdt') || debit.product_code.toLowerCase().includes('rdt'))
-    );
-    
-    if (!hasMalariaRDTDebit) {
-      // Show alert but allow them to continue
-      // Use a promise wrapper to properly handle the dialog result
-      const dialogResult = await new Promise((resolve) => {
-        $q.dialog({
-          title: 'Inventory Not Debited',
-          message: 'You have recorded an RDT result but have not debited Malaria RDT inventory for this patient. You can continue to save the vitals without debiting inventory.',
-          ok: {
-            label: 'Continue & Save',
-            color: 'primary',
-            flat: false
-          },
-          cancel: {
-            label: 'Cancel',
-            flat: true
-          },
-          persistent: true
-        }).onOk(() => resolve(true)).onCancel(() => resolve(false));
-      });
-      
-      // If user cancels, don't save
-      if (!dialogResult) {
-        return;
-      }
-    }
-  }
+  // No validation check - allow saving even if RDT is recorded but not debited
+  // The visual banner and auto-selection will remind users to debit before saving
 
   saving.value = true;
   try {
