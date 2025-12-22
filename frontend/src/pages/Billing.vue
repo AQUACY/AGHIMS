@@ -85,6 +85,17 @@
               Ward: {{ selectedWardAdmission.ward }} | Bed: {{ selectedWardAdmission.bed_number || 'N/A' }}
             </q-badge>
           </div>
+          <div v-if="showRecalculateButton" class="q-mt-md">
+            <q-btn
+              color="warning"
+              icon="calculate"
+              label="Update to Insured & Recalculate Billing"
+              @click="openRecalculateDialog"
+              class="glass-button"
+            >
+              <q-tooltip>Update encounter CCC number and recalculate all bills with insurance co-payment rates</q-tooltip>
+            </q-btn>
+          </div>
         </div>
         <div v-else class="text-grey-7 q-mt-md">
           {{ billingModule === 'opd' ? 'No active OPD encounters found for this patient' : 'No active IPD admissions found for this patient' }}
@@ -939,6 +950,151 @@
       </q-card>
     </q-dialog>
 
+    <!-- Recalculate Billing Dialog -->
+    <q-dialog v-model="showRecalculateDialog" persistent>
+      <q-card style="min-width: 500px; max-width: 700px">
+        <q-card-section>
+          <div class="row items-center">
+            <div class="text-h6">Update to Insured & Recalculate Billing</div>
+            <q-space />
+            <q-btn icon="close" flat round dense v-close-popup />
+          </div>
+          <div class="text-caption text-warning q-mt-sm">
+            This will update the encounter CCC number and recalculate all bill items (paid and unpaid) with insurance co-payment rates.
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div v-if="loadingOpdCcc" class="text-center q-pa-md">
+            <q-spinner color="primary" size="3em" />
+            <div class="q-mt-md">Loading OPD CCC information...</div>
+          </div>
+          <div v-else>
+            <div v-if="opdCccNumber" class="q-mb-md">
+              <q-banner class="bg-positive text-white q-mb-md">
+                <template v-slot:avatar>
+                  <q-icon name="check_circle" />
+                </template>
+                <div class="text-weight-bold">CCC Number Auto-Detected</div>
+                <div class="text-caption">
+                  Found CCC number from OPD consultation
+                  <span v-if="opdEncounterInfo">
+                    (Encounter #{{ opdEncounterInfo.id }} - {{ opdEncounterInfo.department }})
+                  </span>
+                </div>
+                <div class="text-h6 q-mt-sm">{{ opdCccNumber }}</div>
+              </q-banner>
+            </div>
+            <div v-else class="q-mb-md">
+              <q-banner class="bg-warning text-dark q-mb-md">
+                <template v-slot:avatar>
+                  <q-icon name="warning" />
+                </template>
+                <div class="text-weight-bold">No OPD CCC Found</div>
+                <div class="text-caption">
+                  Could not auto-detect CCC number. Please enter manually.
+                </div>
+              </q-banner>
+            </div>
+            
+            <q-input
+              v-model="manualCccNumber"
+              filled
+              label="CCC Number *"
+              hint="Enter or confirm the CCC number for this encounter"
+              :rules="[(val) => !!val || 'CCC number is required']"
+              class="q-mb-md"
+            />
+            
+            <div class="text-caption text-grey-7 q-mt-md">
+              <strong>Note:</strong> After recalculation, if bills were overpaid (paid more than the new insured amount), you will be prompted to process refunds.
+            </div>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn
+            label="Cancel"
+            flat
+            v-close-popup
+            :disable="recalculating"
+          />
+          <q-btn
+            label="Recalculate"
+            color="primary"
+            @click="recalculateBilling"
+            :loading="recalculating"
+            :disable="!manualCccNumber.trim() || loadingOpdCcc"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Refund Prompt Dialog -->
+    <q-dialog v-model="showRefundPrompt" persistent>
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="row items-center">
+            <div class="text-h6 text-warning">
+              <q-icon name="warning" color="warning" class="q-mr-sm" />
+              Excess Payment Detected
+            </div>
+            <q-space />
+            <q-btn icon="close" flat round dense v-close-popup />
+          </div>
+        </q-card-section>
+        <q-card-section v-if="recalculationResult">
+          <div class="text-body1 q-mb-md">
+            Billing has been recalculated successfully. However, the patient was overcharged and there is an excess payment that needs to be refunded.
+          </div>
+          
+          <div class="q-mb-md">
+            <div class="text-subtitle2 q-mb-sm">Summary:</div>
+            <div class="text-body2">
+              <strong>Total Excess Payment:</strong> 
+              <span class="text-negative text-weight-bold">₵{{ recalculationResult.total_excess_payment.toFixed(2) }}</span>
+            </div>
+            <div class="text-body2 q-mt-xs">
+              <strong>Bills Updated:</strong> {{ recalculationResult.bills_updated }}
+            </div>
+          </div>
+          
+          <div v-if="recalculationResult.bills_with_excess && recalculationResult.bills_with_excess.length > 0" class="q-mb-md">
+            <div class="text-subtitle2 q-mb-sm">Bills with Excess Payments:</div>
+            <q-table
+              :rows="recalculationResult.bills_with_excess"
+              :columns="[
+                { name: 'bill_number', label: 'Bill #', field: 'bill_number', align: 'left' },
+                { name: 'old_total', label: 'Old Total', field: 'old_total', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
+                { name: 'new_total', label: 'New Total', field: 'new_total', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
+                { name: 'paid_amount', label: 'Paid', field: 'paid_amount', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
+                { name: 'excess_payment', label: 'Excess', field: 'excess_payment', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
+              ]"
+              row-key="bill_id"
+              flat
+              dense
+              class="q-mb-md"
+            />
+          </div>
+          
+          <q-banner class="bg-info text-white">
+            <template v-slot:avatar>
+              <q-icon name="info" />
+            </template>
+            <div class="text-weight-bold">Next Steps:</div>
+            <div class="text-caption q-mt-xs">
+              Please process refunds for the excess payments. You can view each bill and refund the appropriate receipts.
+            </div>
+          </q-banner>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn
+            label="Close"
+            color="primary"
+            @click="closeRefundPrompt"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- Add Item Dialog -->
     <q-dialog v-model="showAddItemDialog">
       <q-card style="min-width: 700px; max-width: 900px">
@@ -1117,6 +1273,24 @@ const selectedBillItems = ref([]);
 const receiptPaymentMethod = ref('cash');
 const showAddReceiptDialog = ref(false);
 // For receipt dialog - store receipt number and amount per item
+
+// Recalculate billing with insurance
+const showRecalculateDialog = ref(false);
+const loadingOpdCcc = ref(false);
+const opdCccNumber = ref(null);
+const opdEncounterInfo = ref(null);
+const manualCccNumber = ref('');
+const recalculating = ref(false);
+const recalculationResult = ref(null);
+const showRefundPrompt = ref(false);
+
+const closeRefundPrompt = () => {
+  showRefundPrompt.value = false;
+  recalculationResult.value = null;
+  // Reload encounter data and bills
+  loadEncounterData();
+  loadExistingBills();
+};
 const receiptItemData = ref({}); // { bill_item_id: { receipt_number: '', amount_paid: 0 } }
 const currentBillItemForReceipt = ref(null);
 const manualReceiptForm = ref({
@@ -2650,6 +2824,125 @@ const refundReceipt = (bill) => {
       });
     }
   });
+};
+
+// Computed property to check if recalculate button should be shown
+const showRecalculateButton = computed(() => {
+  // Only show for Admin
+  if (authStore.userRole !== 'Admin') {
+    return false;
+  }
+  
+  // Must have a selected encounter
+  if (!selectedEncounter.value || !patient.value) {
+    return false;
+  }
+  
+  // Patient must be insured
+  if (!patient.value.insured) {
+    return false;
+  }
+  
+  // Encounter must not have CCC number
+  if (selectedEncounter.value.ccc_number) {
+    return false;
+  }
+  
+  // For OPD: only show if encounter is from today
+  if (billingModule.value === 'opd') {
+    const encounterDate = new Date(selectedEncounter.value.created_at);
+    const today = new Date();
+    const isToday = encounterDate.toDateString() === today.toDateString();
+    if (!isToday) {
+      return false;
+    }
+  }
+  
+  // For IPD: always show if conditions above are met
+  return true;
+});
+
+// Load OPD CCC for auto-detection
+const loadOpdCcc = async () => {
+  if (!selectedEncounterId.value) return;
+  
+  loadingOpdCcc.value = true;
+  opdCccNumber.value = null;
+  opdEncounterInfo.value = null;
+  manualCccNumber.value = '';
+  
+  try {
+    const response = await billingAPI.getOpdCccForEncounter(selectedEncounterId.value);
+    if (response.data.found) {
+      opdCccNumber.value = response.data.ccc_number;
+      opdEncounterInfo.value = response.data.opd_encounter;
+      manualCccNumber.value = response.data.ccc_number; // Pre-fill with auto-detected
+    }
+  } catch (error) {
+    console.error('Failed to load OPD CCC:', error);
+    $q.notify({
+      type: 'warning',
+      message: error.response?.data?.detail || 'Failed to load OPD CCC information',
+    });
+  } finally {
+    loadingOpdCcc.value = false;
+  }
+};
+
+// Open recalculate dialog
+const openRecalculateDialog = async () => {
+  if (!showRecalculateButton.value) return;
+  
+  showRecalculateDialog.value = true;
+  await loadOpdCcc();
+};
+
+// Recalculate billing with insurance
+const recalculateBilling = async () => {
+  if (!selectedEncounterId.value) return;
+  
+  const cccToUse = manualCccNumber.value.trim();
+  if (!cccToUse) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a CCC number',
+    });
+    return;
+  }
+  
+  recalculating.value = true;
+  try {
+    const response = await billingAPI.recalculateBillingWithInsurance(selectedEncounterId.value, {
+      ccc_number: cccToUse
+    });
+    
+    recalculationResult.value = response.data;
+    
+    // Check if there's excess payment
+    if (response.data.total_excess_payment > 0) {
+      showRecalculateDialog.value = false;
+      showRefundPrompt.value = true;
+    } else {
+      $q.notify({
+        type: 'positive',
+        message: response.data.message,
+        timeout: 5000,
+      });
+      showRecalculateDialog.value = false;
+      
+      // Reload encounter data and bills
+      await loadEncounterData();
+      await loadExistingBills();
+    }
+  } catch (error) {
+    console.error('Failed to recalculate billing:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to recalculate billing',
+    });
+  } finally {
+    recalculating.value = false;
+  }
 };
 
 const clearSearch = () => {

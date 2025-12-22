@@ -8,6 +8,7 @@ from typing import Optional, List, Union
 from datetime import datetime
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
+from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.encounter import Encounter
 from app.models.patient import Patient
@@ -1124,4 +1125,253 @@ def auto_calculate_bill_items(
         patient_insured=is_insured_encounter,
         items=bill_items,
         total_amount=sum(item.total_price for item in bill_items)
+    )
+
+
+class RecalculateBillingRequest(BaseModel):
+    """Request to recalculate billing with insurance rates"""
+    ccc_number: str  # CCC number to update the encounter with
+
+
+class RecalculateBillingResponse(BaseModel):
+    """Response from recalculating billing"""
+    encounter_id: int
+    bills_updated: int
+    total_excess_payment: float  # Total excess payment that needs refund
+    bills_with_excess: List[dict]  # List of bills with excess payments
+    message: str
+
+
+@router.get("/encounter/{encounter_id}/opd-ccc")
+def get_opd_ccc_for_encounter(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Billing"]))
+):
+    """Get CCC number from OPD consultation that led to this IPD admission (for auto-detection)"""
+    from sqlalchemy import func
+    from app.models.ward_admission import WardAdmission
+    from app.models.admission import AdmissionRecommendation
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Check if this is an IPD encounter (has ward admission)
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.encounter_id == encounter_id
+    ).first()
+    
+    ccc_number = None
+    opd_encounter_info = None
+    
+    if ward_admission:
+        # This is an IPD encounter - try to find OPD encounter via admission recommendation
+        admission_recommendation = db.query(AdmissionRecommendation).filter(
+            AdmissionRecommendation.encounter_id == encounter_id
+        ).first()
+        
+        if admission_recommendation and admission_recommendation.recommended_from_encounter_id:
+            # Get the OPD encounter that led to this admission
+            opd_encounter = db.query(Encounter).filter(
+                Encounter.id == admission_recommendation.recommended_from_encounter_id
+            ).first()
+            
+            if opd_encounter and opd_encounter.ccc_number:
+                ccc_number = opd_encounter.ccc_number
+                opd_encounter_info = {
+                    "id": opd_encounter.id,
+                    "department": opd_encounter.department,
+                    "created_at": opd_encounter.created_at.isoformat() if opd_encounter.created_at else None
+                }
+    
+    # Fallback: Look for OPD encounter with CCC for same patient on same day
+    if not ccc_number:
+        # Get all ward admission encounter IDs to exclude IPD encounters
+        ward_admission_encounter_ids = [wa[0] for wa in db.query(WardAdmission.encounter_id).filter(
+            WardAdmission.encounter_id.isnot(None)
+        ).all()]
+        
+        # Find OPD encounter with CCC for same patient today
+        opd_query = db.query(Encounter).filter(
+            Encounter.patient_id == encounter.patient_id,
+            Encounter.id != encounter_id,
+            Encounter.archived == False,
+            Encounter.ccc_number.isnot(None),
+            Encounter.ccc_number != "",
+            func.date(Encounter.created_at) == func.date(encounter.created_at)
+        )
+        
+        # Exclude IPD encounters
+        if ward_admission_encounter_ids:
+            opd_query = opd_query.filter(~Encounter.id.in_(ward_admission_encounter_ids))
+        
+        opd_encounter_with_ccc = opd_query.order_by(Encounter.created_at.desc()).first()
+        
+        if opd_encounter_with_ccc and opd_encounter_with_ccc.ccc_number:
+            ccc_number = opd_encounter_with_ccc.ccc_number
+            opd_encounter_info = {
+                "id": opd_encounter_with_ccc.id,
+                "department": opd_encounter_with_ccc.department,
+                "created_at": opd_encounter_with_ccc.created_at.isoformat() if opd_encounter_with_ccc.created_at else None
+            }
+    
+    return {
+        "ccc_number": ccc_number,
+        "opd_encounter": opd_encounter_info,
+        "found": ccc_number is not None
+    }
+
+
+@router.post("/encounter/{encounter_id}/recalculate-insurance", response_model=RecalculateBillingResponse)
+def recalculate_billing_with_insurance(
+    encounter_id: int,
+    request: RecalculateBillingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Recalculate all bill items for an encounter using insurance co-payment rates instead of cash rates.
+    Works for both paid and unpaid bills. Returns excess payment information if bills were overpaid.
+    """
+    from app.models.diagnosis import Diagnosis
+    from sqlalchemy import func
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Verify patient is insured
+    if not encounter.patient or not encounter.patient.insured:
+        raise HTTPException(
+            status_code=400,
+            detail="Patient is not marked as insured. Cannot recalculate with insurance rates."
+        )
+    
+    # Update encounter CCC number
+    encounter.ccc_number = request.ccc_number.strip()
+    encounter.updated_at = utcnow()
+    
+    # Get all bills for this encounter (both paid and unpaid)
+    all_bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).all()
+    
+    if not all_bills:
+        raise HTTPException(
+            status_code=404,
+            detail="No bills found for this encounter"
+        )
+    
+    bills_updated = 0
+    total_excess_payment = 0.0
+    bills_with_excess = []
+    
+    # Recalculate each bill
+    for bill in all_bills:
+        old_total = bill.total_amount
+        old_paid = bill.paid_amount
+        
+        # Update bill insurance flag
+        bill.is_insured = True
+        
+        # Get all bill items for this bill
+        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+        
+        new_total = 0.0
+        
+        # Recalculate each bill item with insurance rates
+        for item in bill_items:
+            # Skip items that don't have item codes (miscellaneous items)
+            if not item.item_code or item.item_code == "MISC":
+                new_total += item.total_price
+                continue
+            
+            # Handle special IPD admission fee item
+            if item.item_code == "IPD-ADM-FEE":
+                # Admission fee: 50 for insured, 30 for non-insured
+                new_unit_price = 50.0
+                item.unit_price = new_unit_price
+                item.total_price = new_unit_price * item.quantity
+                # Update item name to reflect insured status
+                item.item_name = "IPD Admission Fee (Insured)"
+                new_total += item.total_price
+                continue
+            
+            # Determine if this is a product/prescription or a procedure/surgery
+            # Products use medication_code lookup, procedures use g_drg_code
+            is_product = item.category in ["product", "pharmacy"] or "Prescription:" in (item.item_name or "")
+            
+            # For procedures/surgeries, we might need procedure_name for exact matching
+            # For products, we should NOT pass procedure_name as it might interfere
+            procedure_name_for_lookup = None
+            if not is_product and item.item_name:
+                # For procedures, try to extract the procedure name
+                # But for now, let's not pass it to avoid mismatches
+                procedure_name_for_lookup = None
+            
+            # Get new price using insurance co-payment rates
+            new_unit_price = get_price_from_all_tables(
+                db,
+                item.item_code,
+                is_insured=True,  # Now using insurance rates
+                service_type=encounter.department if not is_product else None,  # Don't pass service_type for products
+                procedure_name=procedure_name_for_lookup
+            )
+            
+            # Log the price lookup result for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Recalculating item: code='{item.item_code}', category='{item.category}', "
+                f"old_price={item.unit_price}, new_price={new_unit_price}, "
+                f"is_insured=True, is_product={is_product}"
+            )
+            
+            # If price lookup returned 0 and we couldn't find the item, that's a problem
+            # But if co-payment is legitimately 0 (free for insured), that's correct
+            # We'll trust the price lookup result
+            
+            # Update item prices
+            item.unit_price = new_unit_price
+            item.total_price = new_unit_price * item.quantity
+            new_total += item.total_price
+        
+        # Update bill total
+        bill.total_amount = new_total
+        
+        # Check for excess payment
+        if old_paid > new_total:
+            excess = old_paid - new_total
+            total_excess_payment += excess
+            bills_with_excess.append({
+                "bill_id": bill.id,
+                "bill_number": bill.bill_number,
+                "old_total": old_total,
+                "new_total": new_total,
+                "paid_amount": old_paid,
+                "excess_payment": excess,
+                "is_paid": bill.is_paid
+            })
+        
+        # Update bill payment status
+        if bill.paid_amount > bill.total_amount:
+            bill.paid_amount = bill.total_amount
+        
+        if bill.paid_amount >= bill.total_amount and bill.total_amount > 0:
+            bill.is_paid = True
+        else:
+            bill.is_paid = False
+        
+        bills_updated += 1
+    
+    db.commit()
+    
+    message = f"Successfully recalculated {bills_updated} bill(s) with insurance rates."
+    if total_excess_payment > 0:
+        message += f" Total excess payment: ₵{total_excess_payment:.2f} requires refund."
+    
+    return RecalculateBillingResponse(
+        encounter_id=encounter_id,
+        bills_updated=bills_updated,
+        total_excess_payment=total_excess_payment,
+        bills_with_excess=bills_with_excess,
+        message=message
     )
