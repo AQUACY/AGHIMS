@@ -520,7 +520,7 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin', 'Lab Head'])"
           clickable
           v-ripple
           :to="{ name: 'BloodTransfusionTypesManagement' }"
@@ -535,7 +535,7 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="canAccess(['Lab', 'Admin'])"
+          v-if="canAccess(['Lab', 'Lab Head', 'Admin'])"
           clickable
           v-ripple
           :to="{ name: 'BloodTransfusionLabManagement' }"

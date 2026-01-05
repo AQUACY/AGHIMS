@@ -524,6 +524,7 @@ export const consultationAPI = {
     deleteBloodTransfusionType: (typeId) => api.delete(`/consultation/blood-transfusion-types/${typeId}`),
     // Blood Transfusion Requests
     createBloodTransfusionRequest: (requestData) => api.post('/consultation/blood-transfusion-requests', requestData),
+    updateBloodTransfusionRequest: (requestId, updateData) => api.put(`/consultation/blood-transfusion-requests/${requestId}`, updateData),
     getBloodTransfusionRequests: (status = null, ward = null) => {
       const params = {};
       if (status) params.status = status;
@@ -535,6 +536,7 @@ export const consultationAPI = {
     cancelBloodTransfusionRequest: (requestId, reason) => api.post(`/consultation/blood-transfusion-requests/${requestId}/cancel`, { cancellation_reason: reason }),
     deleteBloodTransfusionRequest: (requestId) => api.delete(`/consultation/blood-transfusion-requests/${requestId}`),
     returnBloodTransfusionRequest: (requestId) => api.post(`/consultation/blood-transfusion-requests/${requestId}/return`),
+    addProcessingFeeToBloodRequest: (requestId, serviceData) => api.post(`/consultation/blood-transfusion-requests/${requestId}/add-processing-fee`, serviceData),
   getWards: () => api.get('/consultation/wards'),
   getBeds: (ward, availableOnly = false) => {
     const params = {};

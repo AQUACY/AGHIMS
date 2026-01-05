@@ -67,6 +67,39 @@
               rows="2"
             />
           </div>
+          <div class="col-12">
+            <q-select
+              v-model="typeForm.blood_processing_fee_gdrg_code"
+              filled
+              :options="processingFeeOptions"
+              option-label="service_name"
+              option-value="g_drg_code"
+              label="Blood Processing Fee (optional)"
+              hint="Select a service from the service list for blood processing fee"
+              use-input
+              input-debounce="300"
+              @filter="filterProcessingFees"
+              clearable
+              emit-value
+              map-options
+            >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.service_name }}</q-item-label>
+                    <q-item-label caption>G-DRG: {{ scope.opt.g_drg_code }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No services found
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+          </div>
           <div class="col-12 flex items-end q-gutter-sm">
             <q-btn
               v-if="editingType"
@@ -180,7 +213,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useQuasar } from 'quasar';
-import { consultationAPI } from '../services/api';
+import { consultationAPI, priceListAPI } from '../services/api';
 
 const $q = useQuasar();
 
@@ -196,7 +229,12 @@ const typeForm = ref({
   description: '',
   unit_price: null,
   unit_type: 'unit',
+  blood_processing_fee_gdrg_code: null,
 });
+
+const allProcessingFeeOptions = ref([]);
+const processingFeeOptions = ref([]);
+const loadingProcessingFees = ref(false);
 
 const unitTypeOptions = [
   { label: 'Unit', value: 'unit' },
@@ -233,6 +271,14 @@ const columns = [
     align: 'center',
     field: 'unit_type',
     sortable: true,
+  },
+  {
+    name: 'blood_processing_fee_gdrg_code',
+    label: 'Processing Fee',
+    align: 'left',
+    field: 'blood_processing_fee_gdrg_code',
+    sortable: true,
+    format: (val) => val || 'N/A',
   },
   {
     name: 'is_active',
@@ -296,8 +342,55 @@ const resetForm = () => {
     description: '',
     unit_price: null,
     unit_type: 'unit',
+    blood_processing_fee_gdrg_code: null,
   };
   editingType.value = null;
+};
+
+const loadProcessingFees = async () => {
+  if (allProcessingFeeOptions.value.length > 0) return; // Already loaded
+  
+  loadingProcessingFees.value = true;
+  try {
+    const response = await priceListAPI.getProceduresByServiceType();
+    let procedures = [];
+    
+    if (Array.isArray(response.data)) {
+      procedures = response.data;
+    } else if (response.data && typeof response.data === 'object') {
+      // Flatten grouped object
+      for (const key in response.data) {
+        if (Array.isArray(response.data[key])) {
+          procedures = procedures.concat(response.data[key]);
+        }
+      }
+    }
+    
+    allProcessingFeeOptions.value = procedures;
+    processingFeeOptions.value = procedures;
+  } catch (error) {
+    console.error('Failed to load processing fees:', error);
+  } finally {
+    loadingProcessingFees.value = false;
+  }
+};
+
+const filterProcessingFees = (val, update) => {
+  if (val === '') {
+    update(() => {
+      processingFeeOptions.value = allProcessingFeeOptions.value;
+    });
+    return;
+  }
+  
+  update(() => {
+    const needle = val.toLowerCase();
+    processingFeeOptions.value = allProcessingFeeOptions.value.filter(
+      (service) =>
+        (service.service_name && service.service_name.toLowerCase().includes(needle)) ||
+        (service.g_drg_code && service.g_drg_code.toLowerCase().includes(needle))
+    );
+  });
 };
 
 const saveType = async () => {
@@ -340,14 +433,18 @@ const saveType = async () => {
   }
 };
 
-const editType = (type) => {
+const editType = async (type) => {
   editingType.value = type;
   typeForm.value = {
     type_name: type.type_name,
     description: type.description || '',
     unit_price: type.unit_price,
     unit_type: type.unit_type,
+    blood_processing_fee_gdrg_code: type.blood_processing_fee_gdrg_code || null,
   };
+  
+  // Load processing fees if not already loaded
+  await loadProcessingFees();
   
   // Scroll to top
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -387,8 +484,9 @@ const formatDate = (dateString) => {
   return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
-onMounted(() => {
-  loadTypes();
+onMounted(async () => {
+  await loadProcessingFees();
+  await loadTypes();
 });
 </script>
 

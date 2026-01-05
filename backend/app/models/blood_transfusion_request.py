@@ -16,6 +16,7 @@ class BloodTransfusionRequest(Base):
     ward_admission_id = Column(Integer, ForeignKey("ward_admissions.id"), nullable=False)
     encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=False)
     transfusion_type_id = Column(Integer, ForeignKey("blood_transfusion_types.id"), nullable=False)
+    blood_type = Column(String(5), nullable=True)  # Patient's blood type: A+, A-, B+, B-, AB+, AB-, O+, O-
     quantity = Column(Float, nullable=False, default=1.0)  # Number of units requested
     request_reason = Column(Text, nullable=True)  # Reason for blood request
     status = Column(String(20), default="pending", nullable=False)  # pending, accepted, fulfilled, returned, cancelled

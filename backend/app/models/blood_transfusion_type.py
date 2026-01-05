@@ -17,6 +17,7 @@ class BloodTransfusionType(Base):
     description = Column(Text, nullable=True)  # Optional description
     unit_price = Column(Float, nullable=False)  # Price per unit
     unit_type = Column(String(50), nullable=False, default="unit")  # "unit", "pack", etc.
+    blood_processing_fee_gdrg_code = Column(String(50), nullable=True)  # G-DRG code for blood processing fee service
     is_active = Column(Boolean, default=True)  # Whether type is available
     created_by = Column(Integer, nullable=False)  # Admin who created it
     created_at = Column(DateTime, default=utcnow_callable)

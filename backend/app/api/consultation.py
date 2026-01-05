@@ -10638,12 +10638,13 @@ def delete_additional_service(
     return None
 
 
-# Blood Transfusion Type Management endpoints (Admin only)
+# Blood Transfusion Type Management endpoints (Admin and Lab Head)
 class BloodTransfusionTypeCreate(BaseModel):
     type_name: str
     description: Optional[str] = None
     unit_price: float
     unit_type: str = "unit"  # "unit", "pack", etc.
+    blood_processing_fee_gdrg_code: Optional[str] = None  # G-DRG code for blood processing fee service
 
 
 class BloodTransfusionTypeUpdate(BaseModel):
@@ -10652,6 +10653,7 @@ class BloodTransfusionTypeUpdate(BaseModel):
     unit_price: Optional[float] = None
     unit_type: Optional[str] = None
     is_active: Optional[bool] = None
+    blood_processing_fee_gdrg_code: Optional[str] = None  # G-DRG code for blood processing fee service
 
 
 class BloodTransfusionTypeResponse(BaseModel):
@@ -10661,6 +10663,7 @@ class BloodTransfusionTypeResponse(BaseModel):
     unit_price: float
     unit_type: str
     is_active: bool
+    blood_processing_fee_gdrg_code: Optional[str] = None
     created_by: int
     created_at: datetime
     updated_at: datetime
@@ -10673,9 +10676,9 @@ class BloodTransfusionTypeResponse(BaseModel):
 def create_blood_transfusion_type(
     type_data: BloodTransfusionTypeCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head"]))
 ):
-    """Create a new blood transfusion type - Admin only"""
+    """Create a new blood transfusion type - Admin and Lab Head"""
     from app.models.blood_transfusion_type import BloodTransfusionType
     
     # Check if type with same name already exists
@@ -10694,6 +10697,7 @@ def create_blood_transfusion_type(
         description=type_data.description,
         unit_price=type_data.unit_price,
         unit_type=type_data.unit_type,
+        blood_processing_fee_gdrg_code=type_data.blood_processing_fee_gdrg_code,
         created_by=current_user.id
     )
     db.add(transfusion_type)
@@ -10707,7 +10711,7 @@ def create_blood_transfusion_type(
 def get_blood_transfusion_types(
     active_only: Optional[bool] = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab", "Lab Head"]))
 ):
     """Get all blood transfusion types"""
     from app.models.blood_transfusion_type import BloodTransfusionType
@@ -10742,9 +10746,9 @@ def update_blood_transfusion_type(
     type_id: int,
     type_data: BloodTransfusionTypeUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head"]))
 ):
-    """Update a blood transfusion type - Admin only"""
+    """Update a blood transfusion type - Admin and Lab Head"""
     from app.models.blood_transfusion_type import BloodTransfusionType
     
     transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == type_id).first()
@@ -10778,9 +10782,9 @@ def update_blood_transfusion_type(
 def delete_blood_transfusion_type(
     type_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head"]))
 ):
-    """Delete (soft delete) a blood transfusion type - Admin only"""
+    """Delete (soft delete) a blood transfusion type - Admin and Lab Head"""
     from app.models.blood_transfusion_type import BloodTransfusionType
     
     transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == type_id).first()
@@ -10800,7 +10804,15 @@ class BloodTransfusionRequestCreate(BaseModel):
     ward_admission_id: int
     encounter_id: int
     transfusion_type_id: int
+    blood_type: Optional[str] = None  # A+, A-, B+, B-, AB+, AB-, O+, O-
     quantity: float = 1.0
+    request_reason: Optional[str] = None
+
+
+class BloodTransfusionRequestUpdate(BaseModel):
+    transfusion_type_id: Optional[int] = None
+    blood_type: Optional[str] = None  # A+, A-, B+, B-, AB+, AB-, O+, O-
+    quantity: Optional[float] = None
     request_reason: Optional[str] = None
 
 
@@ -10810,6 +10822,7 @@ class BloodTransfusionRequestResponse(BaseModel):
     encounter_id: int
     transfusion_type_id: int
     transfusion_type_name: str
+    blood_type: Optional[str]  # A+, A-, B+, B-, AB+, AB-, O+, O-
     quantity: float
     request_reason: Optional[str]
     status: str
@@ -10877,18 +10890,34 @@ def create_blood_transfusion_request(
         ward_admission_id=request_data.ward_admission_id,
         encounter_id=request_data.encounter_id,
         transfusion_type_id=request_data.transfusion_type_id,
+        blood_type=request_data.blood_type,  # Patient's blood type from sample test
         quantity=request_data.quantity,
         request_reason=request_data.request_reason,
         status="pending",
         requested_by=current_user.id
     )
     db.add(blood_request)
-    db.commit()
-    db.refresh(blood_request)
+    try:
+        db.commit()
+        db.refresh(blood_request)
+    except Exception as e:
+        db.rollback()
+        # Check if error is related to missing blood_type column
+        error_msg = str(e).lower()
+        if 'blood_type' in error_msg or 'unknown column' in error_msg:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database error: The 'blood_type' column may not exist in the database. Please run the migration script: migrate_add_blood_type_to_transfusion_requests_mysql.py. Original error: {str(e)}"
+            )
+        raise
     
     # Load relationships for response
     patient = encounter.patient
     requester = db.query(User).filter(User.id == current_user.id).first()
+    
+    # Ensure blood_type is included in response (even if column doesn't exist yet)
+    # Use getattr to safely get the value, defaulting to None if attribute doesn't exist
+    blood_type_value = getattr(blood_request, 'blood_type', None)
     
     return {
         "id": blood_request.id,
@@ -10896,6 +10925,7 @@ def create_blood_transfusion_request(
         "encounter_id": blood_request.encounter_id,
         "transfusion_type_id": blood_request.transfusion_type_id,
         "transfusion_type_name": transfusion_type.type_name,
+        "blood_type": blood_type_value,
         "quantity": blood_request.quantity,
         "request_reason": blood_request.request_reason,
         "status": blood_request.status,
@@ -10923,12 +10953,111 @@ def create_blood_transfusion_request(
     }
 
 
+@router.put("/blood-transfusion-requests/{request_id}", response_model=BloodTransfusionRequestResponse)
+def update_blood_transfusion_request(
+    request_id: int,
+    update_data: BloodTransfusionRequestUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Update a blood transfusion request - Only pending requests can be updated"""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    
+    # Get the blood request
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    # Only allow updates for pending requests
+    if blood_request.status != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot update request with status '{blood_request.status}'. Only pending requests can be updated."
+        )
+    
+    # Normal users can only update their own requests
+    if current_user.role != "Admin":
+        if blood_request.requested_by != current_user.id:
+            raise HTTPException(status_code=403, detail="You can only update your own requests")
+    
+    # Verify transfusion type if being updated
+    if update_data.transfusion_type_id is not None:
+        transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == update_data.transfusion_type_id).first()
+        if not transfusion_type:
+            raise HTTPException(status_code=404, detail="Blood transfusion type not found")
+        if not transfusion_type.is_active:
+            raise HTTPException(status_code=400, detail="Blood transfusion type is not active")
+        blood_request.transfusion_type_id = update_data.transfusion_type_id
+    
+    # Update other fields
+    if update_data.blood_type is not None:
+        blood_request.blood_type = update_data.blood_type
+    
+    if update_data.quantity is not None:
+        if update_data.quantity <= 0:
+            raise HTTPException(status_code=400, detail="Quantity must be greater than 0")
+        blood_request.quantity = update_data.quantity
+    
+    if update_data.request_reason is not None:
+        blood_request.request_reason = update_data.request_reason
+    
+    db.commit()
+    db.refresh(blood_request)
+    
+    # Load relationships for response
+    from sqlalchemy.orm import joinedload
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == blood_request.ward_admission_id).first()
+    encounter = db.query(Encounter).filter(Encounter.id == blood_request.encounter_id).first()
+    transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == blood_request.transfusion_type_id).first()
+    patient = encounter.patient if encounter else None
+    requester = db.query(User).filter(User.id == blood_request.requested_by).first()
+    
+    # Ensure blood_type is included in response
+    blood_type_value = getattr(blood_request, 'blood_type', None)
+    
+    return {
+        "id": blood_request.id,
+        "ward_admission_id": blood_request.ward_admission_id,
+        "encounter_id": blood_request.encounter_id,
+        "transfusion_type_id": blood_request.transfusion_type_id,
+        "transfusion_type_name": transfusion_type.type_name if transfusion_type else "",
+        "blood_type": blood_type_value,
+        "quantity": blood_request.quantity,
+        "request_reason": blood_request.request_reason,
+        "status": blood_request.status,
+        "requested_by": blood_request.requested_by,
+        "requested_by_name": requester.full_name if requester else None,
+        "accepted_by": None,
+        "accepted_by_name": None,
+        "fulfilled_by": None,
+        "fulfilled_by_name": None,
+        "returned_by": None,
+        "returned_by_name": None,
+        "bill_item_id": None,
+        "return_bill_item_id": None,
+        "requested_at": blood_request.requested_at,
+        "accepted_at": None,
+        "fulfilled_at": None,
+        "returned_at": None,
+        "cancelled_at": None,
+        "cancellation_reason": None,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else "",
+        "patient_card_number": patient.card_number or "" if patient else "",
+        "ward": ward_admission.ward if ward_admission else "",
+        "unit_price": transfusion_type.unit_price if transfusion_type else 0.0,
+        "total_price": (transfusion_type.unit_price * blood_request.quantity) if transfusion_type else 0.0,
+    }
+
+
 @router.get("/blood-transfusion-requests", response_model=List[BloodTransfusionRequestResponse])
 def get_blood_transfusion_requests(
     status: Optional[str] = Query(None),  # Filter by status: pending, accepted, fulfilled, returned, cancelled
     ward: Optional[str] = Query(None),  # Filter by ward
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab", "Lab Head"]))
 ):
     """Get blood transfusion requests"""
     from app.models.blood_transfusion_request import BloodTransfusionRequest
@@ -10964,6 +11093,7 @@ def get_blood_transfusion_requests(
             "encounter_id": req.encounter_id,
             "transfusion_type_id": req.transfusion_type_id,
             "transfusion_type_name": req.transfusion_type.type_name if req.transfusion_type else "",
+            "blood_type": req.blood_type,
             "quantity": req.quantity,
             "request_reason": req.request_reason,
             "status": req.status,
@@ -10997,9 +11127,9 @@ def get_blood_transfusion_requests(
 def accept_blood_transfusion_request(
     request_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
 ):
-    """Accept a blood transfusion request - Lab only. Creates bill item. Can accept pending or returned requests."""
+    """Accept a blood transfusion request - Lab and Lab Head. Creates bill item. Can accept pending or returned requests."""
     from app.models.blood_transfusion_request import BloodTransfusionRequest
     from app.models.bill import Bill, BillItem
     from app.models.encounter import Encounter
@@ -11100,6 +11230,7 @@ def accept_blood_transfusion_request(
         "encounter_id": blood_request.encounter_id,
         "transfusion_type_id": blood_request.transfusion_type_id,
         "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "blood_type": blood_request.blood_type,
         "quantity": blood_request.quantity,
         "request_reason": blood_request.request_reason,
         "status": blood_request.status,
@@ -11131,9 +11262,9 @@ def accept_blood_transfusion_request(
 def fulfill_blood_transfusion_request(
     request_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
 ):
-    """Fulfill a blood transfusion request - Lab only"""
+    """Fulfill a blood transfusion request - Lab and Lab Head"""
     from app.models.blood_transfusion_request import BloodTransfusionRequest
     
     blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
@@ -11168,6 +11299,7 @@ def fulfill_blood_transfusion_request(
         "encounter_id": blood_request.encounter_id,
         "transfusion_type_id": blood_request.transfusion_type_id,
         "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "blood_type": blood_request.blood_type,
         "quantity": blood_request.quantity,
         "request_reason": blood_request.request_reason,
         "status": blood_request.status,
@@ -11204,7 +11336,7 @@ def cancel_blood_transfusion_request(
     request_id: int,
     cancel_data: CancelBloodRequestRequest = Body(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Lab", "Lab Head"]))
 ):
     """Cancel a blood transfusion request - Normal users can cancel their own requests, Admin can cancel any"""
     from app.models.blood_transfusion_request import BloodTransfusionRequest
@@ -11250,6 +11382,7 @@ def cancel_blood_transfusion_request(
         "encounter_id": blood_request.encounter_id,
         "transfusion_type_id": blood_request.transfusion_type_id,
         "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "blood_type": blood_request.blood_type,
         "quantity": blood_request.quantity,
         "request_reason": blood_request.request_reason,
         "status": blood_request.status,
@@ -11274,6 +11407,150 @@ def cancel_blood_transfusion_request(
         "ward": blood_request.ward_admission.ward if blood_request.ward_admission else "",
         "unit_price": blood_request.transfusion_type.unit_price if blood_request.transfusion_type else 0.0,
         "total_price": (blood_request.transfusion_type.unit_price * blood_request.quantity) if blood_request.transfusion_type else 0.0,
+    }
+
+
+class AddProcessingFeeRequest(BaseModel):
+    g_drg_code: str
+    service_name: str
+
+
+@router.post("/blood-transfusion-requests/{request_id}/add-processing-fee", response_model=dict)
+def add_processing_fee_to_blood_request(
+    request_id: int,
+    fee_data: AddProcessingFeeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Lab Head"]))
+):
+    """Add blood processing fee as a bill item to the encounter/IPD clinical review that led to the blood request"""
+    from app.models.blood_transfusion_request import BloodTransfusionRequest
+    from app.models.blood_transfusion_type import BloodTransfusionType
+    from app.models.bill import Bill, BillItem
+    from app.models.encounter import Encounter
+    from app.services.price_list_service_v2 import get_price_from_all_tables
+    import random
+    
+    # Get the blood transfusion request
+    blood_request = db.query(BloodTransfusionRequest).filter(BloodTransfusionRequest.id == request_id).first()
+    if not blood_request:
+        raise HTTPException(status_code=404, detail="Blood transfusion request not found")
+    
+    # Get the transfusion type for display name
+    transfusion_type = db.query(BloodTransfusionType).filter(BloodTransfusionType.id == blood_request.transfusion_type_id).first()
+    if not transfusion_type:
+        raise HTTPException(status_code=404, detail="Blood transfusion type not found")
+    
+    # Get encounter to check if patient is insured
+    encounter = db.query(Encounter).filter(Encounter.id == blood_request.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    is_insured = bool(encounter.ccc_number and encounter.ccc_number.strip())
+    
+    # Get or create bill for encounter
+    bill = db.query(Bill).filter(
+        Bill.encounter_id == blood_request.encounter_id,
+        Bill.is_paid == False  # Only use unpaid bills
+    ).first()
+    
+    if not bill:
+        # Create new bill
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=blood_request.encounter_id,
+            bill_number=bill_number,
+            total_amount=0.0,
+            is_insured=is_insured,
+            created_by=current_user.id
+        )
+        db.add(bill)
+        db.flush()
+    
+    # Check if processing fee bill item already exists for this request with the same G-DRG code
+    existing_item = db.query(BillItem).filter(
+        BillItem.bill_id == bill.id,
+        BillItem.item_code == fee_data.g_drg_code,
+        BillItem.item_name.like("%Blood Processing Fee%")
+    ).first()
+    
+    if existing_item:
+        raise HTTPException(
+            status_code=400,
+            detail="Processing fee has already been added to the bill for this blood request"
+        )
+    
+    # Get price for the processing fee service
+    # Use "Transfusion Medicine Unit" as service type for price lookup
+    unit_price = get_price_from_all_tables(
+        db, 
+        fee_data.g_drg_code, 
+        is_insured, 
+        "Transfusion Medicine Unit",
+        fee_data.service_name  # Use service name for better matching
+    )
+    
+    if unit_price == 0.0:
+        # Try without service type filter
+        unit_price = get_price_from_all_tables(
+            db, 
+            fee_data.g_drg_code, 
+            is_insured, 
+            None,
+            fee_data.service_name
+        )
+    
+    # Determine category
+    category = "procedure"  # Default
+    from app.models.procedure_price import ProcedurePrice
+    from app.models.surgery_price import SurgeryPrice
+    from app.models.unmapped_drg_price import UnmappedDRGPrice
+    
+    procedure = db.query(ProcedurePrice).filter(
+        ProcedurePrice.g_drg_code == fee_data.g_drg_code,
+        ProcedurePrice.is_active == True
+    ).first()
+    if procedure:
+        category = "procedure"
+    else:
+        surgery = db.query(SurgeryPrice).filter(
+            SurgeryPrice.g_drg_code == fee_data.g_drg_code,
+            SurgeryPrice.is_active == True
+        ).first()
+        if surgery:
+            category = "surgery"
+        else:
+            unmapped = db.query(UnmappedDRGPrice).filter(
+                UnmappedDRGPrice.g_drg_code == fee_data.g_drg_code,
+                UnmappedDRGPrice.is_active == True
+            ).first()
+            if unmapped:
+                category = "drg"
+    
+    # Create bill item for processing fee
+    bill_item = BillItem(
+        bill_id=bill.id,
+        item_code=fee_data.g_drg_code,
+        item_name=f"Blood Processing Fee - {fee_data.service_name}",
+        category=category,
+        quantity=1,
+        unit_price=unit_price,
+        total_price=unit_price
+    )
+    db.add(bill_item)
+    
+    # Update bill total
+    bill.total_amount += unit_price
+    
+    db.commit()
+    db.refresh(bill_item)
+    
+    return {
+        "message": "Processing fee added to bill successfully",
+        "bill_item_id": bill_item.id,
+        "bill_id": bill.id,
+        "bill_number": bill.bill_number,
+        "unit_price": unit_price,
+        "total_price": unit_price
     }
 
 
@@ -11388,6 +11665,7 @@ def return_blood_transfusion_request(
         "encounter_id": blood_request.encounter_id,
         "transfusion_type_id": blood_request.transfusion_type_id,
         "transfusion_type_name": blood_request.transfusion_type.type_name if blood_request.transfusion_type else "",
+        "blood_type": blood_request.blood_type,
         "quantity": blood_request.quantity,
         "request_reason": blood_request.request_reason,
         "status": blood_request.status,
