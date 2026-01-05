@@ -245,7 +245,7 @@
           <template v-slot:body-cell-insurance_covered="props">
             <q-td :props="props">
               <q-badge 
-                v-if="props.row.file_type === 'product'"
+                v-if="props.row.file_type === 'product' || props.row.file_type === 'procedure'"
                 :color="props.value && props.value.toLowerCase() === 'no' ? 'negative' : 'positive'"
                 :label="props.value && props.value.toLowerCase() === 'no' ? 'No' : 'Yes'"
               />
@@ -310,6 +310,14 @@
               <q-input v-model.number="addForm.nhia_app" type="number" step="0.01" filled label="NHIA App" />
               <q-input v-model.number="addForm.nhia_claim_co_payment" type="number" step="0.01" filled label="Co-Payment" hint="For insured patients. If null, patient pays 0 (free)." />
               <q-input v-model="addForm.clinic_bill_effective" filled label="Clinic Bill Effective" />
+              <q-select 
+                v-if="addForm.file_type === 'procedure'"
+                v-model="addForm.insurance_covered"
+                :options="insuranceCoveredOptions"
+                filled
+                label="Insurance Covered"
+                hint="If 'No', procedure will always charge base_rate regardless of patient insurance status"
+              />
             </template>
             
             <q-toggle v-model="addForm.is_active" label="Active" />
@@ -368,6 +376,14 @@
                 <q-input v-model="editForm.service_ty" filled label="Service Ty" />
                 <q-input v-model="editForm.service_id" filled label="Service ID" />
                 <q-input v-model="editForm.clinic_bill_effective" filled label="Clinic Bill Effective" />
+                <q-select 
+                  v-if="editingItem?.file_type === 'procedure'"
+                  v-model="editForm.insurance_covered"
+                  :options="insuranceCoveredOptions"
+                  filled
+                  label="Insurance Covered"
+                  hint="If 'No', procedure will always charge base_rate regardless of patient insurance status"
+                />
               </template>
               
               <!-- Common pricing fields -->
@@ -648,7 +664,7 @@ const openAddDialog = () => {
     nhia_app: null,
     nhia_claim_co_payment: 0.0,  // Default to 0.0 instead of null
     claim_amount: null,
-    insurance_covered: 'yes',
+    insurance_covered: 'yes',  // Default for both products and procedures
     clinic_bill_effective: '',
     is_active: true
   };
@@ -762,6 +778,8 @@ const openEditItem = (row) => {
       base_rate: row.base_rate || 0.0,
       nhia_app: row.nhia_app || null,
       nhia_claim_co_payment: row.nhia_claim_co_payment !== null && row.nhia_claim_co_payment !== undefined ? row.nhia_claim_co_payment : 0.0,
+      // Insurance covered (for procedures)
+      insurance_covered: row.insurance_covered || 'yes',
       // Status
       is_active: row.is_active ?? true,
     };
