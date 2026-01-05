@@ -10328,7 +10328,7 @@ def create_inpatient_surgery(
 def get_inpatient_surgeries(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
 ):
     """Get all surgeries for a ward admission"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10348,7 +10348,7 @@ def get_inpatient_surgeries(
 @router.get("/surgeries/calendar/debug")
 def get_surgeries_calendar_debug(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
 ):
     """Debug endpoint to see all surgeries - helps diagnose date filtering issues"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10385,7 +10385,7 @@ def get_surgeries_calendar_debug(
 def get_surgeries_calendar(
     date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD). If not provided, shows today's surgeries"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
 ):
     """Get all surgeries for calendar view, optionally filtered by date"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10540,7 +10540,7 @@ def get_inpatient_surgery(
     ward_admission_id: int,
     surgery_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
 ):
     """Get a single surgery by ID"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10686,7 +10686,7 @@ def update_surgery_anaesthetist_info(
     surgery_id: int,
     anaesthetist_data: AnaesthetistInfoUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Anaesthetist"]))
 ):
     """Update anaesthetist information for a surgery - Can be done even after operation is completed"""
     from app.models.inpatient_surgery import InpatientSurgery

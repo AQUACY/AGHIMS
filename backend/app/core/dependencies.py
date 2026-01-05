@@ -47,14 +47,30 @@ def get_current_user(
 def require_role(allowed_roles: List[str]):
     """
     Dependency factory to require specific roles
+    Checks both primary role and additional roles assigned to the user
     """
-    def role_checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {', '.join(allowed_roles)}"
-            )
-        return current_user
+    def role_checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ) -> User:
+        # Check primary role
+        if current_user.role in allowed_roles:
+            return current_user
+        
+        # Check additional roles (load relationship if not already loaded)
+        from sqlalchemy.orm import joinedload
+        user_with_roles = db.query(User).options(joinedload(User.additional_roles)).filter(User.id == current_user.id).first()
+        
+        if user_with_roles:
+            # Check if any additional role matches
+            user_roles = [ur.role for ur in user_with_roles.additional_roles]
+            if any(role in allowed_roles for role in user_roles):
+                return current_user
+        
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access denied. Required roles: {', '.join(allowed_roles)}"
+        )
     
     return role_checker
 

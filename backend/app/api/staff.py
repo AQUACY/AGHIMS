@@ -13,6 +13,8 @@ from app.core.database import get_db
 from app.core.security import get_password_hash
 from app.core.dependencies import get_current_user, require_role
 from app.models.user import User
+from app.models.user_role import UserRole
+from sqlalchemy.orm import joinedload
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 
@@ -45,6 +47,23 @@ class StaffResponse(BaseModel):
     full_name: Optional[str]
     role: str
     is_active: bool
+    additional_roles: List[str] = []  # List of additional role names
+
+    class Config:
+        from_attributes = True
+
+
+class UserRoleAdd(BaseModel):
+    """Add role to user"""
+    role: str
+
+
+class UserRoleResponse(BaseModel):
+    """User role response model"""
+    id: int
+    user_id: int
+    role: str
+    created_at: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -56,8 +75,20 @@ def get_all_staff(
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Get all staff members - Admin only"""
-    staff = db.query(User).all()
-    return staff
+    staff = db.query(User).options(joinedload(User.additional_roles)).all()
+    result = []
+    for user in staff:
+        additional_roles = [ur.role for ur in user.additional_roles]
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_active": user.is_active,
+            "additional_roles": additional_roles
+        })
+    return result
 
 
 @router.post("/", response_model=StaffResponse, status_code=status.HTTP_201_CREATED)
@@ -99,7 +130,16 @@ def create_staff(
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        return new_user
+        # Return with empty additional_roles list
+        return {
+            "id": new_user.id,
+            "username": new_user.username,
+            "email": new_user.email,
+            "full_name": new_user.full_name,
+            "role": new_user.role,
+            "is_active": new_user.is_active,
+            "additional_roles": []
+        }
     except IntegrityError as e:
         db.rollback()
         raise HTTPException(
@@ -155,8 +195,19 @@ def update_staff(
     
     try:
         db.commit()
+        # Reload user with additional roles for response
         db.refresh(user)
-        return user
+        user_with_roles = db.query(User).options(joinedload(User.additional_roles)).filter(User.id == user_id).first()
+        additional_roles = [ur.role for ur in user_with_roles.additional_roles] if user_with_roles else []
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_active": user.is_active,
+            "additional_roles": additional_roles
+        }
     except IntegrityError as e:
         db.rollback()
         raise HTTPException(
@@ -318,3 +369,154 @@ def import_staff_from_excel(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Error processing Excel file: {str(e)}"
         )
+
+
+# User Roles Management Endpoints
+
+@router.get("/{user_id}/roles", response_model=List[UserRoleResponse])
+def get_user_roles(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Get all additional roles for a user - Admin only"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    roles = db.query(UserRole).filter(UserRole.user_id == user_id).all()
+    # Convert to dict format with proper datetime serialization
+    result = []
+    for role in roles:
+        result.append({
+            "id": role.id,
+            "user_id": role.user_id,
+            "role": role.role,
+            "created_at": role.created_at.isoformat() if role.created_at else None
+        })
+    return result
+
+
+@router.post("/{user_id}/roles", response_model=UserRoleResponse, status_code=status.HTTP_201_CREATED)
+def add_user_role(
+    user_id: int,
+    role_data: UserRoleAdd,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Add an additional role to a user - Admin only"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    # Don't allow adding the same role as primary role
+    if role_data.role == user.role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot add role '{role_data.role}' as additional role - it's already the user's primary role"
+        )
+    
+    # Check if role already exists
+    existing_role = db.query(UserRole).filter(
+        UserRole.user_id == user_id,
+        UserRole.role == role_data.role
+    ).first()
+    
+    if existing_role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User already has role '{role_data.role}'"
+        )
+    
+    # Create new user role
+    new_user_role = UserRole(
+        user_id=user_id,
+        role=role_data.role,
+        created_by=current_user.id
+    )
+    
+    try:
+        db.add(new_user_role)
+        db.commit()
+        db.refresh(new_user_role)
+        # Return with proper datetime serialization
+        return {
+            "id": new_user_role.id,
+            "user_id": new_user_role.user_id,
+            "role": new_user_role.role,
+            "created_at": new_user_role.created_at.isoformat() if new_user_role.created_at else None
+        }
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Database error: {str(e)}"
+        )
+
+
+@router.delete("/{user_id}/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_user_role(
+    user_id: int,
+    role_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Remove an additional role from a user - Admin only"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    user_role = db.query(UserRole).filter(
+        UserRole.id == role_id,
+        UserRole.user_id == user_id
+    ).first()
+    
+    if not user_role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role with ID {role_id} not found for user {user_id}"
+        )
+    
+    db.delete(user_role)
+    db.commit()
+    return None
+
+
+@router.delete("/{user_id}/roles/by-name/{role_name}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_user_role_by_name(
+    user_id: int,
+    role_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Remove an additional role from a user by role name - Admin only"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    user_role = db.query(UserRole).filter(
+        UserRole.user_id == user_id,
+        UserRole.role == role_name
+    ).first()
+    
+    if not user_role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role '{role_name}' not found for user {user_id}"
+        )
+    
+    db.delete(user_role)
+    db.commit()
+    return None

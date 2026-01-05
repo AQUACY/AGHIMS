@@ -11,8 +11,11 @@ from app.core.database import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token
 from app.core.config import settings
 from app.models.user import User
+from app.models.user_role import UserRole
 from app.core.dependencies import get_current_user
 from app.core.audit import log_activity
+from sqlalchemy.orm import joinedload
+from typing import List
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -30,6 +33,7 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     role: str
+    additional_roles: List[str] = []  # List of additional role names
     
     class Config:
         from_attributes = True
@@ -80,9 +84,26 @@ def login(
 
 
 @router.get("/me", response_model=UserResponse)
-def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """Get current user information"""
-    return current_user
+def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user information including additional roles"""
+    # Load additional roles
+    user_with_roles = db.query(User).options(joinedload(User.additional_roles)).filter(User.id == current_user.id).first()
+    
+    additional_roles = []
+    if user_with_roles:
+        additional_roles = [ur.role for ur in user_with_roles.additional_roles]
+    
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+        "additional_roles": additional_roles
+    }
 
 
 class PasswordChange(BaseModel):
