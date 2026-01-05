@@ -13,11 +13,15 @@
             label="Search by Card Number or Patient Name"
             class="col-12 col-md-4"
             @keyup.enter="loadRequests"
-            clearable
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
             @clear="loadRequests"
           >
             <template v-slot:prepend>
               <q-icon name="search" />
+            </template>
+            <template v-slot:hint v-if="filtersLocked">
+              <span class="text-warning">Locked - unlock to change</span>
             </template>
           </q-input>
 
@@ -29,8 +33,9 @@
             type="date"
             class="col-12 col-md-3"
             @update:model-value="loadRequests"
-            clearable
-            hint="Leave empty to show all dates"
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
+            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show all dates'"
           >
             <template v-slot:prepend>
               <q-icon name="event" />
@@ -52,6 +57,20 @@
             </template>
           </q-select>
 
+          <!-- Lock Filter Button -->
+          <q-btn
+            :color="filtersLocked ? 'positive' : 'grey'"
+            :icon="filtersLocked ? 'lock' : 'lock_open'"
+            :label="filtersLocked ? 'Unlock Filters' : 'Lock Filters'"
+            @click="toggleFilterLock"
+            class="col-12 col-md-2"
+            outline
+          >
+            <q-tooltip>
+              {{ filtersLocked ? 'Filters are locked. Click to unlock and clear.' : 'Lock current filters (client and date) to persist across refreshes' }}
+            </q-tooltip>
+          </q-btn>
+          
           <!-- Refresh Button -->
           <q-btn
             color="primary"
@@ -61,6 +80,24 @@
             :loading="loadingRequests"
             class="col-12 col-md-2"
           />
+        </div>
+        
+        <!-- Locked Filter Indicator -->
+        <div v-if="filtersLocked" class="q-mt-md">
+          <q-banner class="bg-positive text-white">
+            <template v-slot:avatar>
+              <q-icon name="lock" />
+            </template>
+            <div class="text-weight-bold">Filters Locked</div>
+            <div class="text-caption">
+              <span v-if="lockedSearchTerm">Client: {{ lockedSearchTerm }}</span>
+              <span v-if="lockedSearchTerm && lockedFilterDate"> • </span>
+              <span v-if="lockedFilterDate">Date: {{ formatLockedDate(lockedFilterDate) }}</span>
+            </div>
+            <template v-slot:action>
+              <q-btn flat label="Unlock" @click="unlockFilters" />
+            </template>
+          </q-banner>
         </div>
       </q-card-section>
     </q-card>
@@ -439,6 +476,12 @@ const loadingRequests = ref(false);
 const searchTerm = ref('');
 const filterDate = ref('');
 const statusFilter = ref(null);
+
+// Filter lock functionality
+const filtersLocked = ref(false);
+const lockedSearchTerm = ref('');
+const lockedFilterDate = ref('');
+const FILTER_LOCK_KEY = 'lab_page_locked_filters';
 const statusOptions = [
   { label: 'Requested', value: 'requested' },
   { label: 'Confirmed', value: 'confirmed' },
@@ -899,6 +942,16 @@ const loadLabResults = async () => {
 
 // Load requests with filters
 const loadRequests = async () => {
+  // If filters are locked, restore them before loading
+  if (filtersLocked.value) {
+    if (lockedSearchTerm.value && searchTerm.value !== lockedSearchTerm.value) {
+      searchTerm.value = lockedSearchTerm.value;
+    }
+    if (lockedFilterDate.value && filterDate.value !== lockedFilterDate.value) {
+      filterDate.value = lockedFilterDate.value;
+    }
+  }
+  
   loadingRequests.value = true;
   try {
     const filters = {
@@ -971,6 +1024,128 @@ const initializeDate = () => {
   filterDate.value = `${year}-${month}-${day}`;
   // Note: User can clear the date filter to see all investigations
 };
+
+// Filter lock functions
+const loadLockedFilters = () => {
+  try {
+    const locked = localStorage.getItem(FILTER_LOCK_KEY);
+    if (locked) {
+      const filterData = JSON.parse(locked);
+      filtersLocked.value = true;
+      lockedSearchTerm.value = filterData.searchTerm || '';
+      lockedFilterDate.value = filterData.filterDate || '';
+      
+      // Apply locked filters
+      if (filterData.searchTerm) {
+        searchTerm.value = filterData.searchTerm;
+      }
+      if (filterData.filterDate) {
+        filterDate.value = filterData.filterDate;
+      }
+      
+      return true;
+    }
+  } catch (error) {
+    console.error('Failed to load locked filters:', error);
+  }
+  return false;
+};
+
+const saveLockedFilters = () => {
+  try {
+    const filterData = {
+      searchTerm: searchTerm.value || '',
+      filterDate: filterDate.value || '',
+      lockedAt: Date.now(),
+    };
+    localStorage.setItem(FILTER_LOCK_KEY, JSON.stringify(filterData));
+    lockedSearchTerm.value = filterData.searchTerm;
+    lockedFilterDate.value = filterData.filterDate;
+    filtersLocked.value = true;
+  } catch (error) {
+    console.error('Failed to save locked filters:', error);
+  }
+};
+
+const clearLockedFilters = () => {
+  try {
+    localStorage.removeItem(FILTER_LOCK_KEY);
+    filtersLocked.value = false;
+    lockedSearchTerm.value = '';
+    lockedFilterDate.value = '';
+  } catch (error) {
+    console.error('Failed to clear locked filters:', error);
+  }
+};
+
+const toggleFilterLock = () => {
+  if (filtersLocked.value) {
+    unlockFilters();
+  } else {
+    lockFilters();
+  }
+};
+
+const lockFilters = () => {
+  if (!searchTerm.value && !filterDate.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please set at least a client search or date filter before locking',
+    });
+    return;
+  }
+  
+  saveLockedFilters();
+  $q.notify({
+    type: 'positive',
+    message: 'Filters locked. They will persist across refreshes and finalizations.',
+    timeout: 3000,
+  });
+};
+
+const unlockFilters = () => {
+  $q.dialog({
+    title: 'Unlock Filters',
+    message: 'Are you sure you want to unlock and clear the locked filters?',
+    cancel: true,
+    persistent: true,
+  }).onOk(() => {
+    clearLockedFilters();
+    // Optionally clear the current filters too
+    // searchTerm.value = '';
+    // filterDate.value = '';
+    $q.notify({
+      type: 'info',
+      message: 'Filters unlocked',
+    });
+  });
+};
+
+// Helper to format date for locked filter display (uses existing formatDate function)
+const formatLockedDate = (dateString) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+// Watch for filter changes and prevent clearing if locked
+watch([searchTerm, filterDate], ([newSearch, newDate], [oldSearch, oldDate]) => {
+  if (filtersLocked.value) {
+    // If filters are locked and user tries to clear them, restore locked values
+    if (lockedSearchTerm.value && !newSearch && oldSearch) {
+      // User cleared search, restore it
+      nextTick(() => {
+        searchTerm.value = lockedSearchTerm.value;
+      });
+    }
+    if (lockedFilterDate.value && !newDate && oldDate) {
+      // User cleared date, restore it
+      nextTick(() => {
+        filterDate.value = lockedFilterDate.value;
+      });
+    }
+  }
+}, { deep: true });
 
 const confirmInvestigation = async (investigation) => {
   // Check if this is an IPD investigation
@@ -1578,7 +1753,14 @@ const bulkConfirmInvestigations = async () => {
 };
 
 onMounted(() => {
-  initializeDate();
+  // Load locked filters first (before initializing date)
+  const hadLockedFilters = loadLockedFilters();
+  
+  // Only initialize date if no locked filters were loaded
+  if (!hadLockedFilters) {
+    initializeDate();
+  }
+  
   loadRequests();
   autoLoadFromRoute();
 });

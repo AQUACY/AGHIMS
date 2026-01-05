@@ -20,6 +20,7 @@ class ConsultationTemplate(Base):
     is_shared = Column(Boolean, default=False, nullable=False)  # Whether template is shared with all users
     prescriptions_data = Column(Text, nullable=True)  # JSON string of prescriptions
     investigations_data = Column(Text, nullable=True)  # JSON string of investigations
+    diagnoses_data = Column(Text, nullable=True)  # JSON string of diagnoses
     created_at = Column(DateTime, default=utcnow_callable, nullable=False)
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
 
@@ -51,6 +52,19 @@ class ConsultationTemplate(Base):
     def set_investigations(self, investigations_list):
         """Set investigations data from list"""
         self.investigations_data = json.dumps(investigations_list) if investigations_list else None
+
+    def get_diagnoses(self):
+        """Parse and return diagnoses data as list"""
+        if not self.diagnoses_data:
+            return []
+        try:
+            return json.loads(self.diagnoses_data)
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def set_diagnoses(self, diagnoses_list):
+        """Set diagnoses data from list"""
+        self.diagnoses_data = json.dumps(diagnoses_list) if diagnoses_list else None
 
     def __repr__(self):
         return f"<ConsultationTemplate {self.name} - Created by {self.created_by}>"

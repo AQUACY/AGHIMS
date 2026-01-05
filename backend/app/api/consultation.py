@@ -5081,6 +5081,7 @@ class ConsultationTemplateCreate(BaseModel):
     is_shared: bool = False
     prescriptions: Optional[List[Dict[str, Any]]] = None  # List of prescription data
     investigations: Optional[List[Dict[str, Any]]] = None  # List of investigation data
+    diagnoses: Optional[List[Dict[str, Any]]] = None  # List of diagnosis data
 
 
 class ConsultationTemplateUpdate(BaseModel):
@@ -5090,6 +5091,7 @@ class ConsultationTemplateUpdate(BaseModel):
     is_shared: Optional[bool] = None
     prescriptions: Optional[List[Dict[str, Any]]] = None
     investigations: Optional[List[Dict[str, Any]]] = None
+    diagnoses: Optional[List[Dict[str, Any]]] = None
 
 
 class ConsultationTemplateResponse(BaseModel):
@@ -5102,6 +5104,7 @@ class ConsultationTemplateResponse(BaseModel):
     is_shared: bool
     prescriptions: List[Dict[str, Any]] = []
     investigations: List[Dict[str, Any]] = []
+    diagnoses: List[Dict[str, Any]] = []
     created_at: datetime
     updated_at: datetime
     
@@ -5146,6 +5149,7 @@ def get_consultation_templates(
             "is_shared": template.is_shared,
             "prescriptions": template.get_prescriptions(),
             "investigations": template.get_investigations(),
+            "diagnoses": template.get_diagnoses(),
             "created_at": template.created_at,
             "updated_at": template.updated_at,
         })
@@ -5170,6 +5174,7 @@ def create_consultation_template(
     )
     template.set_prescriptions(template_data.prescriptions)
     template.set_investigations(template_data.investigations)
+    template.set_diagnoses(template_data.diagnoses)
     
     db.add(template)
     db.commit()
@@ -5185,6 +5190,7 @@ def create_consultation_template(
         "is_shared": template.is_shared,
         "prescriptions": template.get_prescriptions(),
         "investigations": template.get_investigations(),
+        "diagnoses": template.get_diagnoses(),
         "created_at": template.created_at,
         "updated_at": template.updated_at,
     }
@@ -5218,6 +5224,8 @@ def update_consultation_template(
         template.set_prescriptions(template_data.prescriptions)
     if template_data.investigations is not None:
         template.set_investigations(template_data.investigations)
+    if template_data.diagnoses is not None:
+        template.set_diagnoses(template_data.diagnoses)
     
     template.updated_at = utcnow()
     db.commit()
@@ -5233,6 +5241,7 @@ def update_consultation_template(
         "is_shared": template.is_shared,
         "prescriptions": template.get_prescriptions(),
         "investigations": template.get_investigations(),
+        "diagnoses": template.get_diagnoses(),
         "created_at": template.created_at,
         "updated_at": template.updated_at,
     }
@@ -5287,6 +5296,7 @@ def get_consultation_template(
         "is_shared": template.is_shared,
         "prescriptions": template.get_prescriptions(),
         "investigations": template.get_investigations(),
+        "diagnoses": template.get_diagnoses(),
         "created_at": template.created_at,
         "updated_at": template.updated_at,
     }
@@ -7676,6 +7686,9 @@ def get_inpatient_prescriptions(
             "instructions": p.instructions,
             "quantity": p.quantity,
             "prescribed_by": p.prescribed_by,
+            "confirmed_by": p.confirmed_by,
+            "dispensed_by": p.dispensed_by,
+            "is_external": bool(p.is_external) if p.is_external is not None else False,
             "created_at": p.created_at,
         }
         for p in prescriptions

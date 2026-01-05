@@ -21,6 +21,7 @@ class ProcedurePrice(Base):
     nhia_app = Column(Float, nullable=True)  # NHIA Approved price (insured price)
     nhia_claim_co_payment = Column(Float, nullable=True)
     clinic_bill_effective = Column(String(100), nullable=True)
+    insurance_covered = Column(String(10), nullable=True, default="yes")  # "yes" or "no" - whether procedure is covered by insurance
     is_active = Column(Boolean, default=True)
     
     def __repr__(self):

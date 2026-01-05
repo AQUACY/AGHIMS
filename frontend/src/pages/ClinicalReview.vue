@@ -72,6 +72,15 @@
         <div class="row items-center q-mb-md">
           <div class="text-h6 glass-text">Diagnoses</div>
           <q-space />
+          <!-- <q-btn
+            flat
+            dense
+            icon="bookmark"
+            label="Templates"
+            @click="openTemplateDialog('diagnoses')"
+            :disable="!currentClinicalReviewId"
+            class="q-mr-sm"
+          /> -->
           <q-btn
             color="primary"
             label="Add Diagnosis"
@@ -142,6 +151,15 @@
           <div class="text-h6 glass-text">Prescriptions</div>
           <q-space />
           <q-btn
+            flat
+            dense
+            icon="bookmark"
+            label="Templates"
+            @click="openTemplateDialog('prescriptions')"
+            :disable="!currentClinicalReviewId"
+            class="q-mr-sm"
+          />
+          <q-btn
             color="primary"
             label="Add Prescription"
             @click="resetPrescriptionForm(); showPrescriptionDialog = true"
@@ -157,6 +175,14 @@
           flat
           v-if="prescriptions.length > 0"
         >
+          <template v-slot:body-cell-status="props">
+            <q-td :props="props">
+              <q-badge
+                :color="getPrescriptionStatusColor(props.row)"
+                :label="getPrescriptionStatusLabel(props.row)"
+              />
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <q-btn
@@ -184,6 +210,15 @@
           <div class="text-h6 glass-text">Investigations</div>
           <q-space />
           <q-btn
+            flat
+            dense
+            icon="bookmark"
+            label="Templates"
+            @click="openTemplateDialog('investigations')"
+            :disable="!currentClinicalReviewId"
+            class="q-mr-sm"
+          />
+          <q-btn
             color="primary"
             label="Add Investigation"
             @click="resetInvestigationForm(); showInvestigationDialog = true"
@@ -199,6 +234,14 @@
           flat
           v-if="investigations.length > 0"
         >
+          <template v-slot:body-cell-status="props">
+            <q-td :props="props">
+              <q-badge
+                :color="getInvestigationStatusColor(props.row.status)"
+                :label="getInvestigationStatusLabel(props.row.status)"
+              />
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <q-btn
@@ -361,6 +404,109 @@
       </q-card>
     </q-dialog>
 
+    <!-- Template Dialog -->
+    <q-dialog v-model="showTemplateDialog" persistent>
+      <q-card style="min-width: 600px; max-width: 800px">
+        <q-card-section>
+          <div class="row items-center">
+            <div class="text-h6">Templates - {{ templateSection === 'diagnoses' ? 'Diagnoses' : templateSection === 'prescriptions' ? 'Prescriptions' : 'Investigations' }}</div>
+            <q-space />
+            <q-btn icon="close" flat round dense v-close-popup />
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div class="row q-mb-md">
+            <q-btn
+              color="primary"
+              label="Create Template from Current"
+              @click="showCreateTemplateDialog = true"
+              :disable="!hasItemsForTemplate"
+              class="q-mr-sm"
+            />
+            <q-btn
+              flat
+              label="Refresh"
+              @click="loadTemplates"
+              :loading="loadingTemplates"
+            />
+          </div>
+          
+          <div v-if="loadingTemplates" class="text-center q-pa-md">
+            <q-spinner color="primary" size="3em" />
+          </div>
+          
+          <q-list v-else-if="filteredTemplates.length > 0" bordered separator>
+            <q-item
+              v-for="template in filteredTemplates"
+              :key="template.id"
+              clickable
+              @click="applyTemplate(template)"
+            >
+              <q-item-section>
+                <q-item-label>{{ template.name }}</q-item-label>
+                <q-item-label caption v-if="template.description">{{ template.description }}</q-item-label>
+                <q-item-label caption>
+                  Created by: {{ template.created_by_name || 'Unknown' }}
+                  <span v-if="template.is_shared" class="text-primary"> • Shared</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-badge
+                  v-if="getTemplateItemCount(template) > 0"
+                  color="primary"
+                  :label="`${getTemplateItemCount(template)} item(s)`"
+                />
+              </q-item-section>
+            </q-item>
+          </q-list>
+          
+          <div v-else class="text-center text-grey-6 q-pa-md">
+            No templates found. Create one from your current {{ templateSection }}.
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn label="Close" flat v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Create Template Dialog -->
+    <q-dialog v-model="showCreateTemplateDialog" persistent>
+      <q-card style="min-width: 500px">
+        <q-card-section>
+          <div class="text-h6">Create Template</div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="saveTemplate" class="q-gutter-md">
+            <q-input
+              v-model="templateForm.name"
+              filled
+              label="Template Name *"
+              :rules="[val => !!val || 'Required']"
+            />
+            <q-input
+              v-model="templateForm.description"
+              filled
+              type="textarea"
+              label="Description"
+              rows="2"
+            />
+            <q-toggle
+              v-model="templateForm.is_shared"
+              label="Share with all users"
+            />
+            <div class="text-caption text-grey-7">
+              This template will include {{ getCurrentItemsForTemplate().length }} {{ templateSection }}.
+            </div>
+            <div class="row q-gutter-md q-mt-md">
+              <q-btn label="Cancel" flat v-close-popup @click="resetTemplateForm" />
+              <q-btn label="Create" type="submit" color="primary" :loading="savingTemplate" />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
     <!-- Investigation Dialog -->
     <q-dialog v-model="showInvestigationDialog">
       <q-card style="min-width: 500px">
@@ -509,6 +655,19 @@ const investigationForm = ref({
 const draftSaveTimer = ref(null);
 const DRAFT_SAVE_DELAY = 2000;
 
+// Template management
+const showTemplateDialog = ref(false);
+const showCreateTemplateDialog = ref(false);
+const templateSection = ref(''); // 'diagnoses', 'prescriptions', or 'investigations'
+const templates = ref([]);
+const loadingTemplates = ref(false);
+const savingTemplate = ref(false);
+const templateForm = ref({
+  name: '',
+  description: '',
+  is_shared: false,
+});
+
 const autoSaveDraft = () => {
   if (draftSaveTimer.value) {
     clearTimeout(draftSaveTimer.value);
@@ -542,6 +701,7 @@ const prescriptionColumns = [
   { name: 'frequency', label: 'Frequency', field: 'frequency', align: 'left' },
   { name: 'duration', label: 'Duration', field: 'duration', align: 'left' },
   { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'left' },
+  { name: 'status', label: 'Status', field: 'status', align: 'center' },
   { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
 ];
 
@@ -549,7 +709,7 @@ const investigationColumns = [
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left' },
   { name: 'gdrg_code', label: 'GDRG Code', field: 'gdrg_code', align: 'left' },
   { name: 'investigation_type', label: 'Type', field: 'investigation_type', align: 'left' },
-  { name: 'status', label: 'Status', field: 'status', align: 'left' },
+  { name: 'status', label: 'Status', field: 'status', align: 'center' },
   { name: 'price', label: 'Price', field: 'price', align: 'left' },
   { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
 ];
@@ -979,6 +1139,294 @@ const resetInvestigationForm = () => {
     price: '',
   };
   selectedProcedure.value = null;
+};
+
+// Template functions
+const openTemplateDialog = async (section) => {
+  templateSection.value = section;
+  showTemplateDialog.value = true;
+  await loadTemplates();
+};
+
+const loadTemplates = async () => {
+  loadingTemplates.value = true;
+  try {
+    const response = await consultationAPI.getConsultationTemplates(true);
+    templates.value = response.data || [];
+  } catch (error) {
+    console.error('Failed to load templates:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load templates',
+    });
+    templates.value = [];
+  } finally {
+    loadingTemplates.value = false;
+  }
+};
+
+const filteredTemplates = computed(() => {
+  return templates.value.filter(template => {
+    if (templateSection.value === 'diagnoses') {
+      return template.diagnoses && template.diagnoses.length > 0;
+    } else if (templateSection.value === 'prescriptions') {
+      return template.prescriptions && template.prescriptions.length > 0;
+    } else if (templateSection.value === 'investigations') {
+      return template.investigations && template.investigations.length > 0;
+    }
+    return false;
+  });
+});
+
+const getTemplateItemCount = (template) => {
+  if (templateSection.value === 'diagnoses') {
+    return template.diagnoses?.length || 0;
+  } else if (templateSection.value === 'prescriptions') {
+    return template.prescriptions?.length || 0;
+  } else if (templateSection.value === 'investigations') {
+    return template.investigations?.length || 0;
+  }
+  return 0;
+};
+
+const hasItemsForTemplate = computed(() => {
+  return getCurrentItemsForTemplate().length > 0;
+});
+
+const getCurrentItemsForTemplate = () => {
+  if (templateSection.value === 'diagnoses') {
+    return diagnoses.value.map(d => ({
+      icd10: d.icd10,
+      diagnosis: d.diagnosis,
+      gdrg_code: d.gdrg_code,
+      diagnosis_status: d.diagnosis_status,
+      is_provisional: d.is_provisional,
+      is_chief: d.is_chief,
+    }));
+  } else if (templateSection.value === 'prescriptions') {
+    return prescriptions.value.map(p => ({
+      medicine_code: p.medicine_code,
+      medicine_name: p.medicine_name,
+      dose: p.dose,
+      unit: p.unit,
+      frequency: p.frequency,
+      duration: p.duration,
+      instructions: p.instructions,
+      quantity: p.quantity,
+    }));
+  } else if (templateSection.value === 'investigations') {
+    return investigations.value.map(i => ({
+      service_type: i.service_type,
+      gdrg_code: i.gdrg_code,
+      procedure_name: i.procedure_name,
+      investigation_type: i.investigation_type,
+      notes: i.notes,
+      price: i.price,
+    }));
+  }
+  return [];
+};
+
+const saveTemplate = async () => {
+  if (!templateForm.value.name.trim()) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please enter a template name',
+    });
+    return;
+  }
+  
+  const items = getCurrentItemsForTemplate();
+  if (items.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: `No ${templateSection.value} to save in template`,
+    });
+    return;
+  }
+  
+  savingTemplate.value = true;
+  try {
+    const templateData = {
+      name: templateForm.value.name,
+      description: templateForm.value.description || null,
+      is_shared: templateForm.value.is_shared,
+    };
+    
+    if (templateSection.value === 'diagnoses') {
+      templateData.diagnoses = items;
+    } else if (templateSection.value === 'prescriptions') {
+      templateData.prescriptions = items;
+    } else if (templateSection.value === 'investigations') {
+      templateData.investigations = items;
+    }
+    
+    await consultationAPI.createConsultationTemplate(templateData);
+    $q.notify({
+      type: 'positive',
+      message: 'Template created successfully',
+    });
+    resetTemplateForm();
+    showCreateTemplateDialog.value = false;
+    await loadTemplates();
+  } catch (error) {
+    console.error('Failed to create template:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to create template',
+    });
+  } finally {
+    savingTemplate.value = false;
+  }
+};
+
+const applyTemplate = async (template) => {
+  if (!currentClinicalReviewId.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please save the clinical review first',
+    });
+    return;
+  }
+  
+  let items = [];
+  let itemType = '';
+  
+  if (templateSection.value === 'diagnoses') {
+    items = template.diagnoses || [];
+    itemType = 'diagnosis';
+  } else if (templateSection.value === 'prescriptions') {
+    items = template.prescriptions || [];
+    itemType = 'prescription';
+  } else if (templateSection.value === 'investigations') {
+    items = template.investigations || [];
+    itemType = 'investigation';
+  }
+  
+  if (items.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'This template has no items',
+    });
+    return;
+  }
+  
+  $q.dialog({
+    title: 'Apply Template',
+    message: `Apply template "${template.name}"? This will add ${items.length} ${itemType}(s) to the current clinical review.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      // Apply diagnoses
+      if (templateSection.value === 'diagnoses' && items.length > 0) {
+        for (const diag of items) {
+          const diagnosisData = {
+            clinical_review_id: currentClinicalReviewId.value,
+            ...diag,
+          };
+          await consultationAPI.createInpatientDiagnosis(wardAdmissionId.value, currentClinicalReviewId.value, diagnosisData);
+        }
+      }
+      
+      // Apply prescriptions
+      if (templateSection.value === 'prescriptions' && items.length > 0) {
+        for (const presc of items) {
+          const prescriptionData = {
+            clinical_review_id: currentClinicalReviewId.value,
+            ...presc,
+          };
+          await consultationAPI.createInpatientPrescription(wardAdmissionId.value, currentClinicalReviewId.value, prescriptionData);
+        }
+      }
+      
+      // Apply investigations
+      if (templateSection.value === 'investigations' && items.length > 0) {
+        for (const inv of items) {
+          const investigationData = {
+            clinical_review_id: currentClinicalReviewId.value,
+            ...inv,
+          };
+          await consultationAPI.createInpatientInvestigation(wardAdmissionId.value, currentClinicalReviewId.value, investigationData);
+        }
+      }
+      
+      $q.notify({
+        type: 'positive',
+        message: 'Template applied successfully',
+      });
+      
+      showTemplateDialog.value = false;
+      await loadReviewData();
+    } catch (error) {
+      console.error('Failed to apply template:', error);
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to apply template',
+      });
+    }
+  });
+};
+
+const resetTemplateForm = () => {
+  templateForm.value = {
+    name: '',
+    description: '',
+    is_shared: false,
+  };
+};
+
+// Status helper functions
+const getPrescriptionStatusLabel = (prescription) => {
+  if (prescription.is_external) {
+    return 'External';
+  }
+  if (prescription.dispensed_by) {
+    return 'Dispensed';
+  }
+  if (prescription.confirmed_by) {
+    return 'Confirmed';
+  }
+  return 'Pending';
+};
+
+const getPrescriptionStatusColor = (prescription) => {
+  if (prescription.is_external) {
+    return 'info';
+  }
+  if (prescription.dispensed_by) {
+    return 'positive';
+  }
+  if (prescription.confirmed_by) {
+    return 'primary';
+  }
+  return 'warning';
+};
+
+const getInvestigationStatusLabel = (status) => {
+  if (!status) return 'Unknown';
+  const statusMap = {
+    'requested': 'Requested',
+    'confirmed': 'Confirmed',
+    'completed': 'Completed',
+    'cancelled': 'Cancelled',
+  };
+  return statusMap[status.toLowerCase()] || status;
+};
+
+const getInvestigationStatusColor = (status) => {
+  if (!status) return 'grey';
+  const statusLower = status.toLowerCase();
+  if (statusLower === 'completed') {
+    return 'positive';
+  } else if (statusLower === 'confirmed') {
+    return 'primary';
+  } else if (statusLower === 'cancelled') {
+    return 'negative';
+  } else if (statusLower === 'requested') {
+    return 'warning';
+  }
+  return 'grey';
 };
 
 // Load initial data

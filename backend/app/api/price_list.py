@@ -1325,6 +1325,7 @@ def export_price_list_csv(
             'NHIA App',
             'NHIA Claim Co-Payment',
             'Clinic Bill Effective',
+            'Insurance Covered',
             'Is Active'
         ])
         
@@ -1340,6 +1341,7 @@ def export_price_list_csv(
                 item.nhia_app or '',
                 item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 item.clinic_bill_effective or '',
+                item.insurance_covered or 'yes',  # Default to "yes" if not set
                 'True' if item.is_active else 'False'
             ])
         

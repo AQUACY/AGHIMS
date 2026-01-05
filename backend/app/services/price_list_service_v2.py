@@ -376,6 +376,7 @@ def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Di
     nhia_app_col = None
     nhia_co_pay_col = None
     clinic_col = None
+    insurance_covered_col = None
     
     # Check original column names too (before normalization)
     for i, orig_col in enumerate(original_columns):
@@ -429,6 +430,11 @@ def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Di
         elif 'clinic' in col_lower or 'bill_effective' in col_lower or \
              ('clinic' in orig_col_lower or 'bill' in orig_col_lower):
             clinic_col = col
+        
+        # Insurance Covered - Check multiple variations
+        elif 'insurance_covered' in col_lower or 'insurancecovered' in col_lower or \
+             ('insurance' in orig_col_lower and 'covered' in orig_col_lower):
+            insurance_covered_col = col
     
     # Validate required columns (skip validation if we already handled product file)
     if not code_col:
@@ -522,6 +528,20 @@ def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Di
         else:
             item['clinic_bill_effective'] = None
         
+        # Insurance Covered (default to "yes" if not specified)
+        if insurance_covered_col and insurance_covered_col in df.columns:
+            insurance_val_raw = row[insurance_covered_col]
+            if pd.notna(insurance_val_raw):
+                insurance_val = str(insurance_val_raw).strip().lower()
+                if insurance_val in ['no', 'n', 'false', '0']:
+                    item['insurance_covered'] = 'no'
+                else:
+                    item['insurance_covered'] = 'yes'
+            else:
+                item['insurance_covered'] = 'yes'  # Default to "yes" if empty
+        else:
+            item['insurance_covered'] = 'yes'  # Default to "yes" if column not found
+        
         items.append(item)
     
     if not items:
@@ -538,6 +558,10 @@ def upload_procedure_prices(db: Session, items: List[Dict]):
             .filter(ProcedurePrice.g_drg_code == item_data['g_drg_code'])
             .first()
         )
+        
+        # Ensure insurance_covered is set (default to "yes" if not provided)
+        if 'insurance_covered' not in item_data or not item_data['insurance_covered']:
+            item_data['insurance_covered'] = 'yes'
         
         if existing:
             # Update existing item
