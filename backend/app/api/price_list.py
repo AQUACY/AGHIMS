@@ -145,6 +145,7 @@ def create_price_item(
                 nhia_app=item_data.nhia_app,
                 nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 clinic_bill_effective=item_data.clinic_bill_effective,
+                insurance_covered=item_data.insurance_covered if item_data.insurance_covered else "yes",  # Default to "yes" if not provided
                 is_active=item_data.is_active,
                 sr_no=item_data.sr_no
             )
@@ -283,6 +284,8 @@ def update_price_item(
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
         if update.clinic_bill_effective is not None:
             item.clinic_bill_effective = update.clinic_bill_effective
+        if update.insurance_covered is not None:
+            item.insurance_covered = update.insurance_covered
         if update.sr_no is not None:
             item.sr_no = update.sr_no
         if update.is_active is not None:
@@ -672,6 +675,7 @@ def search_price_items_endpoint(
                 "base_rate": cash_price,
                 "nhia_app": nhia_app,
                 "nhia_claim_co_payment": nhia_claim_co_payment,
+                "insurance_covered": getattr(item, 'insurance_covered', 'yes') if type_name == 'procedure' else None,  # Include insurance_covered for procedures
                 "is_active": item.is_active,
                 # For backward compatibility with billing page
                 "item_code": item.g_drg_code,
