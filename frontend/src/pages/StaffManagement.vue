@@ -168,6 +168,20 @@
               <q-badge :color="getRoleColor(props.value)" :label="props.value" />
             </q-td>
           </template>
+          <template v-slot:body-cell-additional_roles="props">
+            <q-td :props="props">
+              <div class="q-gutter-xs">
+                <q-badge
+                  v-for="role in (props.row.additional_roles || [])"
+                  :key="role"
+                  :color="getRoleColor(role)"
+                  :label="role"
+                  class="q-mr-xs"
+                />
+                <span v-if="!props.row.additional_roles || props.row.additional_roles.length === 0" class="text-grey-6 text-caption">None</span>
+              </div>
+            </q-td>
+          </template>
           <template v-slot:body-cell-is_active="props">
             <q-td :props="props">
               <q-badge
@@ -188,6 +202,17 @@
                 size="sm"
               >
                 <q-tooltip>Edit Staff</q-tooltip>
+              </q-btn>
+              <q-btn
+                flat
+                dense
+                round
+                icon="badge"
+                color="secondary"
+                @click="openManageRolesDialog(props.row)"
+                size="sm"
+              >
+                <q-tooltip>Manage Roles</q-tooltip>
               </q-btn>
               <q-btn
                 flat
@@ -277,6 +302,61 @@
         </q-card-section>
       </q-card>
     </q-dialog>
+
+    <!-- Manage Roles Dialog -->
+    <q-dialog v-model="showManageRolesDialog">
+      <q-card style="min-width: 500px">
+        <q-card-section>
+          <div class="text-h6">Manage Additional Roles</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+            {{ selectedUserForRoles?.full_name || selectedUserForRoles?.username }} (Primary: {{ selectedUserForRoles?.role }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div class="q-mb-md">
+            <div class="text-subtitle2 q-mb-sm">Current Additional Roles:</div>
+            <div v-if="userAdditionalRoles.length === 0" class="text-grey-6 text-caption q-mb-md">No additional roles assigned</div>
+            <div v-else class="q-gutter-xs q-mb-md">
+              <q-chip
+                v-for="role in userAdditionalRoles"
+                :key="role.id"
+                :color="getRoleColor(role.role)"
+                text-color="white"
+                removable
+                @remove="removeRole(role.id)"
+              >
+                {{ role.role }}
+              </q-chip>
+            </div>
+          </div>
+          
+          <q-separator class="q-mb-md" />
+          
+          <div>
+            <div class="text-subtitle2 q-mb-sm">Add New Role:</div>
+            <q-select
+              v-model="newRoleToAdd"
+              :options="availableRolesForUser"
+              label="Select Role to Add"
+              filled
+              clearable
+              @update:model-value="addRole"
+            >
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No available roles to add
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="primary" @click="showManageRolesDialog = false" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -302,7 +382,12 @@ export default {
     const importFile = ref(null);
     const defaultPassword = ref('password123');
     const showEditDialog = ref(false);
+    const showManageRolesDialog = ref(false);
     const createForm = ref(null);
+    const selectedUserForRoles = ref(null);
+    const userAdditionalRoles = ref([]);
+    const newRoleToAdd = ref(null);
+    const loadingRoles = ref(false);
 
     const roleOptions = [
       'Lab Head',
@@ -312,6 +397,7 @@ export default {
       'Nurse',
       'Doctor',
       'PA',
+      'Anaesthetist',
       'Billing',
       'Pharmacy',
       'Pharmacy Head',
@@ -328,7 +414,8 @@ export default {
       { name: 'username', label: 'Username', field: 'username', align: 'left', sortable: true },
       { name: 'full_name', label: 'Full Name', field: 'full_name', align: 'left', sortable: true },
       { name: 'email', label: 'Email', field: 'email', align: 'left', sortable: true },
-      { name: 'role', label: 'Role', field: 'role', align: 'left', sortable: true },
+      { name: 'role', label: 'Primary Role', field: 'role', align: 'left', sortable: true },
+      { name: 'additional_roles', label: 'Additional Roles', field: 'additional_roles', align: 'left', sortable: false },
       { name: 'is_active', label: 'Status', field: 'is_active', align: 'center', sortable: true },
       { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
     ];
@@ -374,6 +461,7 @@ export default {
         Admin: 'red',
         Doctor: 'blue',
         PA: 'indigo',
+        Anaesthetist: 'purple',
         Nurse: 'green',
         Lab: 'orange',
         'Lab Head': 'deep-orange',
@@ -451,6 +539,83 @@ export default {
       editForm.role = row.role || '';
       editForm.is_active = row.is_active ?? true;
       showEditDialog.value = true;
+    };
+
+    const openManageRolesDialog = async (row) => {
+      selectedUserForRoles.value = row;
+      loadingRoles.value = true;
+      try {
+        const response = await staffAPI.getUserRoles(row.id);
+        userAdditionalRoles.value = response.data || [];
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to load roles: ' + (error.response?.data?.detail || error.message),
+        });
+        userAdditionalRoles.value = [];
+      } finally {
+        loadingRoles.value = false;
+      }
+      showManageRolesDialog.value = true;
+    };
+
+    const availableRolesForUser = computed(() => {
+      if (!selectedUserForRoles.value) return [];
+      const primaryRole = selectedUserForRoles.value.role;
+      const existingAdditionalRoles = userAdditionalRoles.value.map(ur => ur.role);
+      return roleOptions.filter(role => role !== primaryRole && !existingAdditionalRoles.includes(role));
+    });
+
+    const addRole = async (role) => {
+      if (!role || !selectedUserForRoles.value) return;
+      
+      try {
+        await staffAPI.addUserRole(selectedUserForRoles.value.id, role);
+        $q.notify({
+          type: 'positive',
+          message: `Role '${role}' added successfully`,
+        });
+        // Reload roles
+        const response = await staffAPI.getUserRoles(selectedUserForRoles.value.id);
+        userAdditionalRoles.value = response.data || [];
+        // Reload staff list to update the table
+        await loadStaff();
+        newRoleToAdd.value = null;
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to add role: ' + (error.response?.data?.detail || error.message),
+        });
+      }
+    };
+
+    const removeRole = async (roleId) => {
+      if (!selectedUserForRoles.value) return;
+      
+      $q.dialog({
+        title: 'Remove Role',
+        message: 'Are you sure you want to remove this role?',
+        cancel: true,
+        persistent: true,
+      }).onOk(async () => {
+        try {
+          await staffAPI.removeUserRole(selectedUserForRoles.value.id, roleId);
+          $q.notify({
+            type: 'positive',
+            message: 'Role removed successfully',
+          });
+          // Reload roles
+          const response = await staffAPI.getUserRoles(selectedUserForRoles.value.id);
+          userAdditionalRoles.value = response.data || [];
+          // Reload staff list to update the table
+          await loadStaff();
+        } catch (error) {
+          $q.notify({
+            type: 'negative',
+            message: 'Failed to remove role: ' + (error.response?.data?.detail || error.message),
+          });
+        }
+      });
     };
 
     const updateStaff = async () => {
@@ -576,6 +741,14 @@ export default {
       updateStaff,
       confirmDelete,
       importStaff,
+      openManageRolesDialog,
+      addRole,
+      removeRole,
+      availableRolesForUser,
+      userAdditionalRoles,
+      newRoleToAdd,
+      loadingRoles,
+      showManageRolesDialog,
     };
   },
 };

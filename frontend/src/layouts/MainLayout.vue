@@ -459,7 +459,7 @@
         </q-item>
 
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin'])"
           clickable
           v-ripple
           :to="{ name: 'StaffManagement' }"
@@ -475,7 +475,7 @@
         </q-item>
         
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin'])"
           clickable
           v-ripple
           :to="{ name: 'PatientUpload' }"
@@ -490,7 +490,7 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin'])"
           clickable
           v-ripple
           :to="{ name: 'Icd10DrgMapping' }"
@@ -505,7 +505,7 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin'])"
           clickable
           v-ripple
           :to="{ name: 'AdditionalServicesManagement' }"
@@ -550,7 +550,7 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="authStore.userRole === 'Admin'"
+          v-if="canAccess(['Admin'])"
           clickable
           v-ripple
           :to="{ name: 'DatabaseManagement' }"

@@ -10,27 +10,44 @@ export const useAuthStore = defineStore('auth', {
   }),
 
   getters: {
-    userRole: (state) => state.user?.role || null,
+    userRole: (state) => state.user?.role || null, // Primary role (for layout)
     userName: (state) => state.user?.full_name || state.user?.username || null,
+    allUserRoles: (state) => {
+      // Get all roles (primary + additional)
+      if (!state.user) return [];
+      const roles = [state.user.role];
+      if (state.user.additional_roles && Array.isArray(state.user.additional_roles)) {
+        roles.push(...state.user.additional_roles);
+      }
+      return roles;
+    },
     canAccess: (state) => (roles) => {
       if (!state.user) {
         console.warn('canAccess: No user in state');
         return false;
       }
       const userRole = state.user.role;
+      const additionalRoles = state.user.additional_roles || [];
+      
+      // Get all user roles (primary + additional)
+      const allUserRoles = [userRole, ...additionalRoles];
+      
       // Trim whitespace and compare (handles any whitespace issues)
-      const normalizedUserRole = userRole ? userRole.trim() : '';
+      const normalizedUserRoles = allUserRoles.map(r => r ? r.trim() : '');
       const normalizedRoles = roles.map(r => r ? r.trim() : '');
-      const hasAccess = normalizedRoles.includes(normalizedUserRole) || normalizedUserRole === 'Admin';
+      
+      // Check if any user role (primary or additional) matches any allowed role
+      const hasAccess = normalizedUserRoles.some(userRole => 
+        normalizedRoles.includes(userRole) || userRole === 'Admin'
+      );
+      
       if (!hasAccess) {
         console.warn('canAccess: Access denied', {
           userRole,
-          normalizedUserRole,
+          additionalRoles,
+          allUserRoles: normalizedUserRoles,
           allowedRoles: roles,
           normalizedRoles,
-          rolesIncludes: normalizedRoles.includes(normalizedUserRole),
-          isAdmin: normalizedUserRole === 'Admin',
-          roleComparison: normalizedRoles.map(r => `"${r}" === "${normalizedUserRole}": ${r === normalizedUserRole}`)
         });
       }
       return hasAccess;

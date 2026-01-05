@@ -319,7 +319,7 @@ const routes = [
         path: '/ipd/operation-theatre-calendar',
         name: 'OperationTheatreCalendar',
         component: () => import('../pages/OperationTheatreCalendar.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin', 'Anaesthetist'] },
       },
       {
         path: '/ipd/nurse-mid-documentation/:id',
@@ -373,7 +373,8 @@ router.beforeEach((to, from, next) => {
       next('/');
     } else if (to.meta.requiresRole) {
       // Check for specific role requirement (e.g., Admin only)
-      if (authStore.userRole !== to.meta.requiresRole) {
+      // Check both primary role and additional roles
+      if (!authStore.canAccess([to.meta.requiresRole])) {
         next('/');
       } else {
         next();
@@ -384,6 +385,7 @@ router.beforeEach((to, from, next) => {
         console.warn('Access denied:', {
           path: to.path,
           userRole: authStore.userRole,
+          allUserRoles: authStore.allUserRoles,
           allowedRoles: to.meta.allowedRoles,
           user: authStore.user
         });

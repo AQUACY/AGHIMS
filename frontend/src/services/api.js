@@ -710,6 +710,11 @@ export const staffAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  // User roles management
+  getUserRoles: (userId) => api.get(`/staff/${userId}/roles`),
+  addUserRole: (userId, role) => api.post(`/staff/${userId}/roles`, { role }),
+  removeUserRole: (userId, roleId) => api.delete(`/staff/${userId}/roles/${roleId}`),
+  removeUserRoleByName: (userId, roleName) => api.delete(`/staff/${userId}/roles/by-name/${roleName}`),
 };
 
 // Lab Templates API

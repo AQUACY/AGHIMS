@@ -187,7 +187,7 @@
               </div>
 
              <!-- Operation Theatre Calendar Module -->
-             <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
+             <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin', 'Anaesthetist'])" class="col-12 col-md-6 col-lg-3">
                <q-card 
                  class="glass-card module-card cursor-pointer" 
                  flat 
