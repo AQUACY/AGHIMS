@@ -764,16 +764,41 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
         item = query.first()
         if item:
             print(f"DEBUG: Found item in {table_name} table with service_type='{service_type}'")
+            
+            # Check insurance_covered status (only for ProcedurePrice)
+            insurance_covered = None
+            if table_name == "ProcedurePrice":
+                insurance_covered = getattr(item, 'insurance_covered', None)
+                if insurance_covered:
+                    insurance_covered = str(insurance_covered).strip().lower()
+                else:
+                    insurance_covered = 'yes'  # Default to 'yes' if not set
+            else:
+                # For SurgeryPrice and UnmappedDRGPrice, assume insurance_covered = 'yes' (they don't have this field)
+                insurance_covered = 'yes'
+            
+            # If insurance_covered = "no", always charge base_rate regardless of insurance status
+            if insurance_covered == 'no':
+                print(f"DEBUG: insurance_covered='no' for {table_name}, returning base_rate: {item.base_rate}")
+                return float(item.base_rate)
+            
+            # If insurance_covered = "yes" (or not set), use normal logic
             if is_insured:
                 # For insured patients: use Co-Payment (top-up amount)
-                # If Co-Payment is not available, fall back to Base Rate
+                # If Co-Payment is 0 or not available, return 0 (free for insured)
+                # CRITICAL: Never return base_rate for insured patients when insurance_covered = "yes"
                 if item.nhia_claim_co_payment is not None:
-                    print(f"DEBUG: Returning co-payment from {table_name}: {item.nhia_claim_co_payment}")
-                    return float(item.nhia_claim_co_payment)
+                    co_payment = float(item.nhia_claim_co_payment)
+                    print(f"DEBUG: Returning co-payment from {table_name}: {co_payment} (insurance_covered={insurance_covered}, is_insured={is_insured}, base_rate={item.base_rate})")
+                    # Explicitly return 0.0 if co-payment is 0 (even if it's 0.0, we want to return 0.0, not base_rate)
+                    # This ensures insured patients with co-payment=0 are charged 0.0, not base_rate
+                    if co_payment == 0.0:
+                        print(f"DEBUG: Co-payment is 0.0, explicitly returning 0.0 (NOT base_rate={item.base_rate}) for insured patient")
+                    return co_payment  # This will be 0.0 if co-payment is 0
                 else:
-                    # Fallback to base rate if co-payment not specified
-                    print(f"DEBUG: No co-payment, returning base_rate from {table_name}: {item.base_rate}")
-                    return float(item.base_rate)
+                    # No co-payment specified means free for insured patients
+                    print(f"DEBUG: No co-payment specified (None), returning 0.0 (free for insured) from {table_name} (insurance_covered={insurance_covered}, base_rate={item.base_rate})")
+                    return 0.0
             else:
                 # For cash patients: use Base Rate
                 print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
@@ -806,13 +831,30 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
                 item = query.first()
                 if item:
                     print(f"DEBUG: Found item in {table_name} table (with procedure_name='{procedure_name}', without service_type filter)")
+                    
+                    # Check insurance_covered status (only for ProcedurePrice)
+                    insurance_covered = None
+                    if table_name == "ProcedurePrice":
+                        insurance_covered = getattr(item, 'insurance_covered', None)
+                        if insurance_covered:
+                            insurance_covered = str(insurance_covered).strip().lower()
+                        else:
+                            insurance_covered = 'yes'  # Default to 'yes' if not set
+                    
+                    # If insurance_covered = "no", always charge base_rate
+                    if insurance_covered == 'no':
+                        print(f"DEBUG: insurance_covered='no' for {table_name}, returning base_rate: {item.base_rate}")
+                        return float(item.base_rate)
+                    
+                    # If insurance_covered = "yes", use normal logic
                     if is_insured:
                         if item.nhia_claim_co_payment is not None:
-                            print(f"DEBUG: Returning co-payment from {table_name}: {item.nhia_claim_co_payment}")
-                            return float(item.nhia_claim_co_payment)
+                            co_payment = float(item.nhia_claim_co_payment)
+                            print(f"DEBUG: Returning co-payment from {table_name}: {co_payment}")
+                            return co_payment
                         else:
-                            print(f"DEBUG: No co-payment, returning base_rate from {table_name}: {item.base_rate}")
-                            return float(item.base_rate)
+                            print(f"DEBUG: No co-payment specified, returning 0.0 (free for insured) from {table_name}")
+                            return 0.0
                     else:
                         print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
                         return float(item.base_rate)
@@ -842,13 +884,30 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
                 item = query.first()
                 if item:
                     print(f"DEBUG: Found item in {table_name} table (with service_type='{service_type}', without procedure_name filter)")
+                    
+                    # Check insurance_covered status (only for ProcedurePrice)
+                    insurance_covered = None
+                    if table_name == "ProcedurePrice":
+                        insurance_covered = getattr(item, 'insurance_covered', None)
+                        if insurance_covered:
+                            insurance_covered = str(insurance_covered).strip().lower()
+                        else:
+                            insurance_covered = 'yes'  # Default to 'yes' if not set
+                    
+                    # If insurance_covered = "no", always charge base_rate
+                    if insurance_covered == 'no':
+                        print(f"DEBUG: insurance_covered='no' for {table_name}, returning base_rate: {item.base_rate}")
+                        return float(item.base_rate)
+                    
+                    # If insurance_covered = "yes", use normal logic
                     if is_insured:
                         if item.nhia_claim_co_payment is not None:
-                            print(f"DEBUG: Returning co-payment from {table_name}: {item.nhia_claim_co_payment}")
-                            return float(item.nhia_claim_co_payment)
+                            co_payment = float(item.nhia_claim_co_payment)
+                            print(f"DEBUG: Returning co-payment from {table_name}: {co_payment}")
+                            return co_payment
                         else:
-                            print(f"DEBUG: No co-payment, returning base_rate from {table_name}: {item.base_rate}")
-                            return float(item.base_rate)
+                            print(f"DEBUG: No co-payment specified, returning 0.0 (free for insured) from {table_name}")
+                            return 0.0
                     else:
                         print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
                         return float(item.base_rate)
@@ -865,13 +924,30 @@ def get_price_from_all_tables(db: Session, item_code: str, is_insured: bool = Fa
             item = query.first()
             if item:
                 print(f"DEBUG: Found item in {table_name} table (G-DRG code only, no filters)")
+                
+                # Check insurance_covered status (only for ProcedurePrice)
+                insurance_covered = None
+                if table_name == "ProcedurePrice":
+                    insurance_covered = getattr(item, 'insurance_covered', None)
+                    if insurance_covered:
+                        insurance_covered = str(insurance_covered).strip().lower()
+                    else:
+                        insurance_covered = 'yes'  # Default to 'yes' if not set
+                
+                # If insurance_covered = "no", always charge base_rate
+                if insurance_covered == 'no':
+                    print(f"DEBUG: insurance_covered='no' for {table_name}, returning base_rate: {item.base_rate}")
+                    return float(item.base_rate)
+                
+                # If insurance_covered = "yes", use normal logic
                 if is_insured:
                     if item.nhia_claim_co_payment is not None:
-                        print(f"DEBUG: Returning co-payment from {table_name}: {item.nhia_claim_co_payment}")
-                        return float(item.nhia_claim_co_payment)
+                        co_payment = float(item.nhia_claim_co_payment)
+                        print(f"DEBUG: Returning co-payment from {table_name}: {co_payment}")
+                        return co_payment
                     else:
-                        print(f"DEBUG: No co-payment, returning base_rate from {table_name}: {item.base_rate}")
-                        return float(item.base_rate)
+                        print(f"DEBUG: No co-payment specified, returning 0.0 (free for insured) from {table_name}")
+                        return 0.0
                 else:
                     print(f"DEBUG: Returning base_rate from {table_name}: {item.base_rate}")
                     return float(item.base_rate)
@@ -958,14 +1034,15 @@ def get_surgery_price(db: Session, g_drg_code: str, is_insured: bool = False, se
         print(f"DEBUG: Found surgery in SurgeryPrice table with service_type='{service_type}'")
         if is_insured:
             # For insured patients: use Co-Payment (top-up amount)
-            # If Co-Payment is not available, fall back to Base Rate
+            # If Co-Payment is 0 or not available, return 0 (free for insured)
             if surgery.nhia_claim_co_payment is not None:
-                print(f"DEBUG: Returning co-payment from SurgeryPrice: {surgery.nhia_claim_co_payment}")
-                return float(surgery.nhia_claim_co_payment)
+                co_payment = float(surgery.nhia_claim_co_payment)
+                print(f"DEBUG: Returning co-payment from SurgeryPrice: {co_payment}")
+                return co_payment
             else:
-                # Fallback to base rate if co-payment not specified
-                print(f"DEBUG: No co-payment, returning base_rate from SurgeryPrice: {surgery.base_rate}")
-                return float(surgery.base_rate)
+                # No co-payment specified means free for insured patients
+                print(f"DEBUG: No co-payment specified, returning 0.0 (free for insured) from SurgeryPrice")
+                return 0.0
         else:
             # For cash patients: use Base Rate
             print(f"DEBUG: Returning base_rate from SurgeryPrice: {surgery.base_rate}")
@@ -983,11 +1060,13 @@ def get_surgery_price(db: Session, g_drg_code: str, is_insured: bool = False, se
             print(f"DEBUG: Found surgery in SurgeryPrice table (without service_type filter)")
             if is_insured:
                 if fallback_surgery.nhia_claim_co_payment is not None:
-                    print(f"DEBUG: Returning co-payment from SurgeryPrice: {fallback_surgery.nhia_claim_co_payment}")
-                    return float(fallback_surgery.nhia_claim_co_payment)
+                    co_payment = float(fallback_surgery.nhia_claim_co_payment)
+                    print(f"DEBUG: Returning co-payment from SurgeryPrice: {co_payment}")
+                    return co_payment
                 else:
-                    print(f"DEBUG: No co-payment, returning base_rate from SurgeryPrice: {fallback_surgery.base_rate}")
-                    return float(fallback_surgery.base_rate)
+                    # No co-payment specified means free for insured patients
+                    print(f"DEBUG: No co-payment specified, returning 0.0 (free for insured) from SurgeryPrice")
+                    return 0.0
             else:
                 print(f"DEBUG: Returning base_rate from SurgeryPrice: {fallback_surgery.base_rate}")
                 return float(fallback_surgery.base_rate)

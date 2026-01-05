@@ -11,13 +11,17 @@
             v-model="searchTerm"
             filled
             label="Search by Card Number or Patient Name"
-            class="col-12 col-md-4"
+            class="col-12 col-md-3"
             @keyup.enter="loadRequests"
-            clearable
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
             @clear="loadRequests"
           >
             <template v-slot:prepend>
               <q-icon name="search" />
+            </template>
+            <template v-slot:hint v-if="filtersLocked">
+              <span class="text-warning">Locked - unlock to change</span>
             </template>
           </q-input>
 
@@ -27,10 +31,11 @@
             filled
             label="Date (optional)"
             type="date"
-            class="col-12 col-md-3"
+            class="col-12 col-md-2"
             @update:model-value="loadRequests"
-            clearable
-            hint="Leave empty to show all dates"
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
+            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show all dates'"
           >
             <template v-slot:prepend>
               <q-icon name="event" />
@@ -43,14 +48,60 @@
             filled
             :options="statusOptions"
             label="Status"
-            class="col-12 col-md-3"
+            class="col-12 col-md-2"
             @update:model-value="loadRequests"
-            clearable
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
           >
             <template v-slot:prepend>
               <q-icon name="filter_list" />
             </template>
+            <template v-slot:hint v-if="filtersLocked">
+              <span class="text-warning">Locked - unlock to change</span>
+            </template>
           </q-select>
+
+          <!-- Procedure Filter -->
+          <q-select
+            v-model="procedureFilter"
+            filled
+            :options="procedureOptions"
+            label="Procedure"
+            class="col-12 col-md-2"
+            @update:model-value="loadRequests"
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
+            use-input
+            input-debounce="0"
+            @filter="filterProcedures"
+          >
+            <template v-slot:prepend>
+              <q-icon name="medical_services" />
+            </template>
+            <template v-slot:hint v-if="filtersLocked">
+              <span class="text-warning">Locked - unlock to change</span>
+            </template>
+            <template v-slot:no-option>
+              <q-item>
+                <q-item-section class="text-grey">
+                  No procedures found
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+
+          <!-- Lock Filter Button -->
+          <q-btn
+            :color="filtersLocked ? 'positive' : 'grey'"
+            :icon="filtersLocked ? 'lock' : 'lock_open'"
+            :label="filtersLocked ? 'Unlock' : 'Lock'"
+            @click="toggleFilterLock"
+            class="col-12 col-md-1"
+          >
+            <q-tooltip>
+              {{ filtersLocked ? 'Filters are locked. Click to unlock and allow auto-refresh.' : 'Lock filters to prevent auto-refresh when completing services' }}
+            </q-tooltip>
+          </q-btn>
 
           <!-- Refresh Button -->
           <q-btn
@@ -61,6 +112,27 @@
             :loading="loadingRequests"
             class="col-12 col-md-2"
           />
+        </div>
+        <!-- Locked Filter Indicator -->
+        <div v-if="filtersLocked" class="q-mt-md">
+          <q-banner class="bg-positive text-white" rounded>
+            <template v-slot:avatar>
+              <q-icon name="lock" />
+            </template>
+            <div class="text-weight-bold">Filters Locked</div>
+            <div class="text-caption">
+              <span v-if="lockedSearchTerm">Search: {{ lockedSearchTerm }}</span>
+              <span v-if="lockedSearchTerm && lockedFilterDate"> • </span>
+              <span v-if="lockedFilterDate">Date: {{ formatLockedDate(lockedFilterDate) }}</span>
+              <span v-if="(lockedSearchTerm || lockedFilterDate) && lockedStatusFilter"> • </span>
+              <span v-if="lockedStatusFilter">Status: {{ lockedStatusFilter }}</span>
+              <span v-if="(lockedSearchTerm || lockedFilterDate || lockedStatusFilter) && lockedProcedureFilter"> • </span>
+              <span v-if="lockedProcedureFilter">Procedure: {{ lockedProcedureFilter }}</span>
+            </div>
+            <template v-slot:action>
+              <q-btn flat label="Unlock" @click="unlockFilters" />
+            </template>
+          </q-banner>
         </div>
       </q-card-section>
     </q-card>
@@ -602,7 +674,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, priceListAPI, patientsAPI } from '../services/api';
@@ -619,12 +691,23 @@ const loadingRequests = ref(false);
 const searchTerm = ref('');
 const filterDate = ref('');
 const statusFilter = ref(null);
+const procedureFilter = ref(null);
 const statusOptions = [
   { label: 'Requested', value: 'requested' },
   { label: 'Confirmed', value: 'confirmed' },
   { label: 'Completed', value: 'completed' },
   { label: 'Cancelled', value: 'cancelled' }
 ];
+const procedureOptions = ref([]);
+const allProcedureOptions = ref([]);
+
+// Filter lock functionality
+const filtersLocked = ref(false);
+const lockedSearchTerm = ref('');
+const lockedFilterDate = ref('');
+const lockedStatusFilter = ref(null);
+const lockedProcedureFilter = ref(null);
+const FILTER_LOCK_KEY = 'scan_page_locked_filters';
 
 const confirmingId = ref(null);
 const revertingId = ref(null);
@@ -698,6 +781,22 @@ const getStatusColor = (status) => {
 
 // Load requests with filters
 const loadRequests = async () => {
+  // If filters are locked, restore them before loading
+  if (filtersLocked.value) {
+    if (lockedSearchTerm.value && searchTerm.value !== lockedSearchTerm.value) {
+      searchTerm.value = lockedSearchTerm.value;
+    }
+    if (lockedFilterDate.value && filterDate.value !== lockedFilterDate.value) {
+      filterDate.value = lockedFilterDate.value;
+    }
+    if (lockedStatusFilter.value !== null && statusFilter.value !== lockedStatusFilter.value) {
+      statusFilter.value = lockedStatusFilter.value;
+    }
+    if (lockedProcedureFilter.value !== null && procedureFilter.value !== lockedProcedureFilter.value) {
+      procedureFilter.value = lockedProcedureFilter.value;
+    }
+  }
+  
   loadingRequests.value = true;
   try {
     const filters = {
@@ -714,6 +813,12 @@ const loadRequests = async () => {
     
     if (filterDate.value) {
       filters.date = filterDate.value;
+    }
+    
+    if (procedureFilter.value) {
+      filters.procedure = typeof procedureFilter.value === 'object' 
+        ? procedureFilter.value.value || procedureFilter.value.label
+        : procedureFilter.value;
     }
     
     // Load both OPD and IPD investigations
@@ -738,6 +843,9 @@ const loadRequests = async () => {
     
     // Merge both lists
     requests.value = [...opdMarked, ...ipdMarked];
+    
+    // Update procedure options from loaded requests
+    updateProcedureOptions();
   } catch (error) {
     console.error('Failed to load requests:', error);
     $q.notify({
@@ -784,7 +892,10 @@ const confirmInvestigation = async (investigation) => {
           type: 'positive',
           message: 'Investigation confirmed',
         });
-        await loadRequests();
+        // Only auto-refresh if filters are not locked
+        if (!filtersLocked.value) {
+          await loadRequests();
+        }
       } catch (error) {
         $q.notify({
           type: 'negative',
@@ -861,7 +972,10 @@ const confirmInpatientInvestigation = async () => {
       message: 'IPD investigation confirmed',
     });
     showConfirmInpatientDialog.value = false;
-    await loadRequests();
+    // Only auto-refresh if filters are not locked
+    if (!filtersLocked.value) {
+      await loadRequests();
+    }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -900,7 +1014,10 @@ const revertToRequested = async (investigation) => {
       type: 'positive',
         message: 'Status reverted to requested successfully',
     });
-      await loadRequests();
+      // Only auto-refresh if filters are not locked
+      if (!filtersLocked.value) {
+        await loadRequests();
+      }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -931,7 +1048,10 @@ const revertInvestigationStatus = async (investigation) => {
       type: 'positive',
         message: 'Status reverted to confirmed successfully',
     });
-      await loadRequests();
+      // Only auto-refresh if filters are not locked
+      if (!filtersLocked.value) {
+        await loadRequests();
+      }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -1207,7 +1327,10 @@ const updateService = async () => {
       message: 'Service updated successfully',
     });
     showUpdateServiceDialog.value = false;
-    await loadRequests();
+    // Only auto-refresh if filters are not locked
+    if (!filtersLocked.value) {
+      await loadRequests();
+    }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -1267,6 +1390,35 @@ const filterServices = (val, update) => {
       (service) =>
         (service.service_name && service.service_name.toLowerCase().includes(needle)) ||
         (service.g_drg_code && service.g_drg_code.toLowerCase().includes(needle))
+    );
+  });
+};
+
+// Update procedure options from requests
+const updateProcedureOptions = () => {
+  const procedures = new Set();
+  requests.value.forEach(request => {
+    if (request.procedure_name && request.procedure_name.trim()) {
+      procedures.add(request.procedure_name.trim());
+    }
+  });
+  allProcedureOptions.value = Array.from(procedures).sort().map(p => ({ label: p, value: p }));
+  procedureOptions.value = allProcedureOptions.value;
+};
+
+// Filter procedures for the dropdown
+const filterProcedures = (val, update) => {
+  if (val === '') {
+    update(() => {
+      procedureOptions.value = allProcedureOptions.value;
+    });
+    return;
+  }
+  
+  update(() => {
+    const needle = val.toLowerCase();
+    procedureOptions.value = allProcedureOptions.value.filter(
+      (proc) => proc.label.toLowerCase().includes(needle)
     );
   });
 };
@@ -1396,7 +1548,10 @@ const bulkConfirmInvestigations = async () => {
     
     // Clear selection and reload
     selectedInvestigations.value = [];
-    await loadRequests();
+    // Only auto-refresh if filters are not locked
+    if (!filtersLocked.value) {
+      await loadRequests();
+    }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -1582,7 +1737,10 @@ const addService = async () => {
     };
     selectedPatients.value = [];
     availablePatients.value = [];
-    await loadRequests();
+    // Only auto-refresh if filters are not locked
+    if (!filtersLocked.value) {
+      await loadRequests();
+    }
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -1625,8 +1783,165 @@ const openAddServiceDialogForNew = async () => {
   showAddServiceDialog.value = true;
 };
 
+// Filter lock functions
+const loadLockedFilters = () => {
+  try {
+    const locked = localStorage.getItem(FILTER_LOCK_KEY);
+    if (locked) {
+      const filterData = JSON.parse(locked);
+      filtersLocked.value = true;
+      lockedSearchTerm.value = filterData.searchTerm || '';
+      lockedFilterDate.value = filterData.filterDate || '';
+      lockedStatusFilter.value = filterData.statusFilter || null;
+      lockedProcedureFilter.value = filterData.procedureFilter || null;
+      
+      // Apply locked filters
+      if (lockedSearchTerm.value) {
+        searchTerm.value = lockedSearchTerm.value;
+      }
+      if (lockedFilterDate.value) {
+        filterDate.value = lockedFilterDate.value;
+      }
+      if (lockedStatusFilter.value !== null) {
+        statusFilter.value = lockedStatusFilter.value;
+      }
+      if (lockedProcedureFilter.value !== null) {
+        procedureFilter.value = lockedProcedureFilter.value;
+      }
+      
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Failed to load locked filters:', error);
+    return false;
+  }
+};
+
+const saveLockedFilters = () => {
+  try {
+    const filterData = {
+      searchTerm: searchTerm.value || '',
+      filterDate: filterDate.value || '',
+      statusFilter: statusFilter.value || null,
+      procedureFilter: procedureFilter.value || null,
+      lockedAt: Date.now(),
+    };
+    localStorage.setItem(FILTER_LOCK_KEY, JSON.stringify(filterData));
+    lockedSearchTerm.value = filterData.searchTerm;
+    lockedFilterDate.value = filterData.filterDate;
+    lockedStatusFilter.value = filterData.statusFilter;
+    lockedProcedureFilter.value = filterData.procedureFilter;
+    filtersLocked.value = true;
+  } catch (error) {
+    console.error('Failed to save locked filters:', error);
+  }
+};
+
+const clearLockedFilters = () => {
+  try {
+    localStorage.removeItem(FILTER_LOCK_KEY);
+    filtersLocked.value = false;
+    lockedSearchTerm.value = '';
+    lockedFilterDate.value = '';
+    lockedStatusFilter.value = null;
+    lockedProcedureFilter.value = null;
+  } catch (error) {
+    console.error('Failed to clear locked filters:', error);
+  }
+};
+
+const toggleFilterLock = () => {
+  if (filtersLocked.value) {
+    unlockFilters();
+  } else {
+    lockFilters();
+  }
+};
+
+const lockFilters = () => {
+  // Check if at least one filter is set
+  if (!searchTerm.value && !filterDate.value && !statusFilter.value && !procedureFilter.value) {
+    $q.notify({
+      type: 'warning',
+      message: 'Please set at least one filter before locking',
+      timeout: 3000,
+    });
+    return;
+  }
+  
+  saveLockedFilters();
+  
+  $q.notify({
+    type: 'positive',
+    message: 'Filters locked. Auto-refresh disabled when completing services.',
+    timeout: 3000,
+  });
+};
+
+const unlockFilters = () => {
+  $q.dialog({
+    title: 'Unlock Filters',
+    message: 'Are you sure you want to unlock filters? Auto-refresh will be enabled again.',
+    cancel: true,
+    persistent: true,
+  }).onOk(() => {
+    clearLockedFilters();
+    $q.notify({
+      type: 'info',
+      message: 'Filters unlocked',
+      timeout: 2000,
+    });
+  });
+};
+
+// Helper to format date for locked filter display
+const formatLockedDate = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+// Watch for filter changes and prevent clearing if locked
+watch([searchTerm, filterDate, statusFilter, procedureFilter], ([newSearch, newDate, newStatus, newProcedure], [oldSearch, oldDate, oldStatus, oldProcedure]) => {
+  if (filtersLocked.value) {
+    // If filters are locked and user tries to clear them, restore locked values
+    if (lockedSearchTerm.value && !newSearch && oldSearch) {
+      nextTick(() => {
+        searchTerm.value = lockedSearchTerm.value;
+      });
+    }
+    if (lockedFilterDate.value && !newDate && oldDate) {
+      nextTick(() => {
+        filterDate.value = lockedFilterDate.value;
+      });
+    }
+    if (lockedStatusFilter.value !== null && !newStatus && oldStatus) {
+      nextTick(() => {
+        statusFilter.value = lockedStatusFilter.value;
+      });
+    }
+    if (lockedProcedureFilter.value !== null && !newProcedure && oldProcedure) {
+      nextTick(() => {
+        procedureFilter.value = lockedProcedureFilter.value;
+      });
+    }
+  }
+});
+
 onMounted(() => {
-  initializeDate();
+  // Load locked filters first (before initializing date)
+  const hadLockedFilters = loadLockedFilters();
+  
+  // Only initialize date if no locked filters were loaded
+  if (!hadLockedFilters) {
+    initializeDate();
+  }
+  
   loadRequests();
 });
 </script>

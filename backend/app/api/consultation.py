@@ -1797,10 +1797,64 @@ def bulk_confirm_investigations(
                             unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
                             print(f"DEBUG bulk_confirm: Looked up price for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
                             
-                            # If lookup returns 0.0, it means price wasn't found
-                            if unit_price == 0.0:
-                                print(f"WARNING bulk_confirm: Price lookup returned 0.0 for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'")
-                                # Only use stored price if it exists and lookup returned 0
+                            # If lookup returns 0.0, it could mean:
+                            # 1. Price not found in pricelist (should use stored price as fallback for cash patients)
+                            # 2. Insured patient with co-payment = 0 (should keep 0.0, don't use stored price)
+                            # For insured patients: if price lookup returns 0.0, it means co-payment is 0 (insurance covered, free)
+                            # We should NEVER use stored price (base_rate) for insured patients when price lookup returns 0.0
+                            if unit_price == 0.0 and is_insured_encounter:
+                                # For insured patients, 0.0 from price lookup means co-payment is 0 (insurance covered)
+                                # Check if procedure exists in pricelist with same filters to confirm it was found
+                                from app.models.procedure_price import ProcedurePrice
+                                from app.models.surgery_price import SurgeryPrice
+                                from app.models.unmapped_drg_price import UnmappedDRGPrice
+                                from sqlalchemy import func
+                                
+                                # Check all procedure-related tables with same filters as price lookup
+                                procedure_query = db.query(ProcedurePrice).filter(
+                                        ProcedurePrice.g_drg_code == investigation.gdrg_code,
+                                        ProcedurePrice.is_active == True
+                                )
+                                if service_type:
+                                    procedure_query = procedure_query.filter(ProcedurePrice.service_type == service_type)
+                                if investigation.procedure_name:
+                                    procedure_query = procedure_query.filter(func.lower(func.trim(ProcedurePrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                                
+                                surgery_query = db.query(SurgeryPrice).filter(
+                                        SurgeryPrice.g_drg_code == investigation.gdrg_code,
+                                        SurgeryPrice.is_active == True
+                                )
+                                if service_type:
+                                    surgery_query = surgery_query.filter(SurgeryPrice.service_type == service_type)
+                                if investigation.procedure_name:
+                                    surgery_query = surgery_query.filter(func.lower(func.trim(SurgeryPrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                                
+                                unmapped_query = db.query(UnmappedDRGPrice).filter(
+                                        UnmappedDRGPrice.g_drg_code == investigation.gdrg_code,
+                                        UnmappedDRGPrice.is_active == True
+                                )
+                                if service_type:
+                                    unmapped_query = unmapped_query.filter(UnmappedDRGPrice.service_type == service_type)
+                                if investigation.procedure_name:
+                                    unmapped_query = unmapped_query.filter(func.lower(func.trim(UnmappedDRGPrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                                
+                                procedure_exists = (
+                                    procedure_query.first() or
+                                    surgery_query.first() or
+                                    unmapped_query.first()
+                                )
+                                
+                                if procedure_exists:
+                                    # Procedure exists in pricelist and patient is insured - 0.0 is intentional (co-payment = 0, insurance covered)
+                                    print(f"DEBUG bulk_confirm: Price lookup returned 0.0 for insured patient, procedure exists in pricelist. Keeping 0.0 (insurance covered, co-payment = 0) for investigation {investigation.id}.")
+                                    # Keep unit_price as 0.0 - do NOT use stored price
+                                else:
+                                    # Procedure not found in pricelist with matching filters - this shouldn't happen if get_price_from_all_tables worked correctly
+                                    # But if it does, still keep 0.0 for insured patients (don't charge base_rate)
+                                    print(f"WARNING bulk_confirm: Price lookup returned 0.0 for insured patient but procedure not found with matching filters for investigation {investigation.id}. Keeping 0.0 (insured patients should not be charged base_rate).")
+                            elif unit_price == 0.0 and not is_insured_encounter:
+                                # For cash patients, 0.0 means price not found - use stored price as fallback
+                                print(f"WARNING bulk_confirm: Price lookup returned 0.0 for cash patient, investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
                                 if investigation.price:
                                     try:
                                         stored_price = float(investigation.price)
@@ -1812,24 +1866,43 @@ def bulk_confirm_investigations(
                         except Exception as e:
                             print(f"ERROR bulk_confirm: Failed to get price for investigation {investigation.id}: {e}")
                             # Fallback to stored price only if exception occurred
-                            if investigation.price:
+                            # BUT: For insured patients, don't use stored price (base_rate) - keep 0.0
+                            if is_insured_encounter:
+                                # For insured patients, if price lookup fails, keep 0.0 (don't charge base_rate)
+                                print(f"WARNING bulk_confirm: Price lookup exception for insured patient, investigation {investigation.id}. Keeping 0.0 (insured patients should not be charged base_rate on exception).")
+                                unit_price = 0.0
+                            elif investigation.price:
+                                # For cash patients, use stored price as fallback
                                 try:
                                     unit_price = float(investigation.price)
                                     print(f"WARNING bulk_confirm: Using stored price '{unit_price}' as fallback after exception for investigation {investigation.id}")
                                 except (ValueError, TypeError):
                                     unit_price = 0.0
+                            else:
+                                unit_price = 0.0
                     else:
                         # No gdrg_code, try stored price
-                        if investigation.price:
+                        # BUT: For insured patients, don't use stored price (base_rate) - keep 0.0
+                        if is_insured_encounter:
+                            # For insured patients, if no gdrg_code, keep 0.0 (don't charge base_rate)
+                            print(f"WARNING bulk_confirm: No gdrg_code for insured patient, investigation {investigation.id}. Keeping 0.0 (insured patients should not be charged base_rate).")
+                            unit_price = 0.0
+                        elif investigation.price:
+                            # For cash patients, use stored price
                             try:
                                 unit_price = float(investigation.price)
                             except (ValueError, TypeError):
                                 unit_price = 0.0
+                        else:
+                            unit_price = 0.0
                     
                     total_price = unit_price
                     
-                    # Create/add to bill if price > 0
-                    if total_price > 0:
+                    # Create/add to bill item if we have a gdrg_code (service was found in price list)
+                    # This includes cases where co-payment = 0 for insured patients (they should still see the service in the bill with amount 0)
+                    # Only skip if no gdrg_code (service not found in price list at all)
+                    if investigation.gdrg_code:
+                        print(f"DEBUG bulk_confirm: investigation {investigation.id} has gdrg_code, creating bill item (even if price is 0.0)")
                         existing_bill = db.query(Bill).filter(
                             Bill.encounter_id == encounter.id,
                             Bill.is_paid == False
@@ -1854,19 +1927,21 @@ def bulk_confirm_investigations(
                                     total_price=total_price
                                 )
                                 db.add(bill_item)
+                                db.flush()  # Flush to ensure bill_item gets an ID
                                 existing_bill.total_amount += total_price
+                                print(f"DEBUG bulk_confirm: Added bill item (id={bill_item.id}) for investigation {investigation.id}. unit_price={unit_price}, total_price={total_price}")
                         else:
-                            # Create new bill
+                            # Create new bill (even if total_amount is 0.0 - we want to track services)
                             bill_number = f"BILL-{random.randint(100000, 999999)}"
                             bill = Bill(
                                 encounter_id=encounter.id,
                                 bill_number=bill_number,
                                 is_insured=is_insured_encounter,
-                                total_amount=total_price,
+                                total_amount=total_price,  # Can be 0.0 for insured patients with co-payment = 0
                                 created_by=current_user.id
                             )
                             db.add(bill)
-                            db.flush()
+                            db.flush()  # Flush to get bill ID
                             
                             bill_item = BillItem(
                                 bill_id=bill.id,
@@ -1878,6 +1953,14 @@ def bulk_confirm_investigations(
                                 total_price=total_price
                             )
                             db.add(bill_item)
+                            db.flush()  # Flush to ensure bill_item gets an ID
+                            print(f"DEBUG bulk_confirm: Created bill item (id={bill_item.id}) for investigation {investigation.id}. unit_price={unit_price}, total_price={total_price}")
+                    else:
+                        print(f"WARNING bulk_confirm: investigation {investigation.id} has no gdrg_code, skipping bill item creation")
+            
+            # Update investigation.price with the calculated unit_price so it reflects the actual charged price
+            investigation.price = str(unit_price) if unit_price is not None else None
+            print(f"DEBUG bulk_confirm: Updated investigation {investigation.id}.price to '{investigation.price}' (calculated unit_price={unit_price})")
             
             confirmed_count += 1
             
@@ -2228,6 +2311,7 @@ def get_investigations_by_type(
     status: Optional[str] = None,  # requested, confirmed, completed, cancelled
     search: Optional[str] = None,  # Search by card number or patient name
     date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today
+    procedure: Optional[str] = None,  # Filter by procedure name
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -2287,6 +2371,11 @@ def get_investigations_by_type(
                 Patient.surname.ilike(search_term)
             )
         )
+    
+    # Filter by procedure name
+    if procedure:
+        procedure_term = f"%{procedure.strip()}%"
+        query = query.filter(Investigation.procedure_name.ilike(procedure_term))
     
     # Order by created_at descending (newest first)
     query = query.order_by(Investigation.created_at.desc())
@@ -2727,10 +2816,65 @@ def confirm_investigation(
             unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
             print(f"DEBUG confirm_investigation: Looked up price for gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
             
-            # If lookup returns 0.0, it means price wasn't found - don't use stored price, log warning
-            if unit_price == 0.0:
-                print(f"WARNING confirm_investigation: Price lookup returned 0.0 for gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
-                # Only use stored price if it exists and lookup returned 0 (price not in pricelist)
+            # If lookup returns 0.0, it could mean:
+            # 1. Price not found in pricelist (should use stored price as fallback)
+            # 2. Insured patient with co-payment = 0 (should keep 0.0, don't use stored price)
+            # We need to distinguish between these cases
+            # For insured patients: if price lookup returns 0.0, it means co-payment is 0 (insurance covered, free)
+            # We should NEVER use stored price (base_rate) for insured patients when price lookup returns 0.0
+            if unit_price == 0.0 and is_insured_encounter:
+                # For insured patients, 0.0 from price lookup means co-payment is 0 (insurance covered)
+                # Check if procedure exists in pricelist with same filters to confirm it was found
+                from app.models.procedure_price import ProcedurePrice
+                from app.models.surgery_price import SurgeryPrice
+                from app.models.unmapped_drg_price import UnmappedDRGPrice
+                from sqlalchemy import func
+                
+                # Check all procedure-related tables with same filters as price lookup
+                procedure_query = db.query(ProcedurePrice).filter(
+                        ProcedurePrice.g_drg_code == investigation.gdrg_code,
+                        ProcedurePrice.is_active == True
+                )
+                if service_type:
+                    procedure_query = procedure_query.filter(ProcedurePrice.service_type == service_type)
+                if investigation.procedure_name:
+                    procedure_query = procedure_query.filter(func.lower(func.trim(ProcedurePrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                
+                surgery_query = db.query(SurgeryPrice).filter(
+                        SurgeryPrice.g_drg_code == investigation.gdrg_code,
+                        SurgeryPrice.is_active == True
+                )
+                if service_type:
+                    surgery_query = surgery_query.filter(SurgeryPrice.service_type == service_type)
+                if investigation.procedure_name:
+                    surgery_query = surgery_query.filter(func.lower(func.trim(SurgeryPrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                
+                unmapped_query = db.query(UnmappedDRGPrice).filter(
+                        UnmappedDRGPrice.g_drg_code == investigation.gdrg_code,
+                        UnmappedDRGPrice.is_active == True
+                )
+                if service_type:
+                    unmapped_query = unmapped_query.filter(UnmappedDRGPrice.service_type == service_type)
+                if investigation.procedure_name:
+                    unmapped_query = unmapped_query.filter(func.lower(func.trim(UnmappedDRGPrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                
+                procedure_exists = (
+                    procedure_query.first() or
+                    surgery_query.first() or
+                    unmapped_query.first()
+                )
+                
+                if procedure_exists:
+                    # Procedure exists in pricelist and patient is insured - 0.0 is intentional (co-payment = 0, insurance covered)
+                    print(f"DEBUG confirm_investigation: Price lookup returned 0.0 for insured patient, procedure exists in pricelist. Keeping 0.0 (insurance covered, co-payment = 0).")
+                    # Keep unit_price as 0.0 - do NOT use stored price
+                else:
+                    # Procedure not found in pricelist with matching filters - this shouldn't happen if get_price_from_all_tables worked correctly
+                    # But if it does, still keep 0.0 for insured patients (don't charge base_rate)
+                    print(f"WARNING confirm_investigation: Price lookup returned 0.0 for insured patient but procedure not found with matching filters. Keeping 0.0 (insured patients should not be charged base_rate).")
+            elif unit_price == 0.0 and not is_insured_encounter:
+                # For cash patients, 0.0 means price not found - use stored price as fallback
+                print(f"WARNING confirm_investigation: Price lookup returned 0.0 for cash patient, gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
                 if investigation.price:
                     try:
                         stored_price = float(investigation.price)
@@ -2742,31 +2886,46 @@ def confirm_investigation(
         except Exception as e:
             print(f"ERROR confirm_investigation: Failed to get price from price list: {e}")
             # If lookup throws exception, try using stored price as fallback
-            if investigation.price:
+            # BUT: For insured patients, don't use stored price (base_rate) - keep 0.0
+            if is_insured_encounter:
+                # For insured patients, if price lookup fails, keep 0.0 (don't charge base_rate)
+                print(f"WARNING confirm_investigation: Price lookup exception for insured patient. Keeping 0.0 (insured patients should not be charged base_rate on exception).")
+                unit_price = 0.0
+            elif investigation.price:
+                # For cash patients, use stored price as fallback
                 try:
                     unit_price = float(investigation.price)
                     print(f"DEBUG confirm_investigation: Using stored price as fallback after exception: {unit_price}")
                 except (ValueError, TypeError):
                     unit_price = 0.0
+            else:
+                    unit_price = 0.0
     else:
         # No gdrg_code, try using stored price
-        if investigation.price:
+        # BUT: For insured patients, don't use stored price (base_rate) - keep 0.0
+        if is_insured_encounter:
+            # For insured patients, if no gdrg_code, keep 0.0 (don't charge base_rate)
+            print(f"WARNING confirm_investigation: No gdrg_code for insured patient. Keeping 0.0 (insured patients should not be charged base_rate).")
+            unit_price = 0.0
+        elif investigation.price:
+            # For cash patients, use stored price
             try:
                 unit_price = float(investigation.price)
                 print(f"DEBUG confirm_investigation: Using stored price (no gdrg_code): {unit_price}")
             except (ValueError, TypeError):
                 unit_price = 0.0
-    
-    # If still no price, log warning but continue (bill won't be created)
-    if unit_price == 0.0:
-        print(f"WARNING confirm_investigation: No price found for investigation {investigation.id}, gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}'")
+            else:
+                unit_price = 0.0
     
     total_price = unit_price  # Investigations are typically quantity 1
     
-    print(f"DEBUG confirm_investigation: unit_price={unit_price}, total_price={total_price}, encounter_id={encounter.id if encounter else None}")
+    print(f"DEBUG confirm_investigation: unit_price={unit_price}, total_price={total_price}, encounter_id={encounter.id if encounter else None}, gdrg_code='{investigation.gdrg_code}'")
     
-    # Always create/add to bill if total_price > 0
-    if total_price > 0:
+    # Create/add to bill item if we have a gdrg_code (service was found in price list)
+    # This includes cases where co-payment = 0 for insured patients (they should still see the service in the bill with amount 0)
+    # Only skip if no gdrg_code (service not found in price list at all)
+    if investigation.gdrg_code:
+        print(f"DEBUG confirm_investigation: gdrg_code exists, creating bill item (even if price is 0.0)")
         try:
             # Find or create a bill for this encounter
             existing_bill = db.query(Bill).filter(
@@ -2787,7 +2946,7 @@ def confirm_investigation(
                 print(f"DEBUG confirm_investigation: existing_item={existing_item.id if existing_item else None}")
                 
                 if not existing_item:
-                    # Add bill item to existing bill
+                    # Add bill item to existing bill (even if price is 0.0 - we want to track the service)
                     bill_item = BillItem(
                         bill_id=existing_bill.id,
                         item_code=investigation.gdrg_code or "MISC",
@@ -2798,25 +2957,26 @@ def confirm_investigation(
                         total_price=total_price
                     )
                     db.add(bill_item)
+                    db.flush()  # Flush to ensure bill_item gets an ID
                     existing_bill.total_amount += total_price
-                    print(f"DEBUG confirm_investigation: Added bill item to existing bill. New total_amount={existing_bill.total_amount}")
+                    print(f"DEBUG confirm_investigation: Added bill item (id={bill_item.id}) to existing bill. unit_price={unit_price}, total_price={total_price}, New total_amount={existing_bill.total_amount}")
                 else:
-                    print(f"DEBUG confirm_investigation: Bill item already exists, skipping")
+                    print(f"DEBUG confirm_investigation: Bill item already exists (id={existing_item.id}), skipping")
             else:
-                # Create new bill
+                # Create new bill (even if total_amount is 0.0 - we want to track services)
                 bill_number = f"BILL-{random.randint(100000, 999999)}"
                 bill = Bill(
                     encounter_id=encounter.id,
                     bill_number=bill_number,
                     is_insured=is_insured_encounter,
-                    total_amount=total_price,
+                    total_amount=total_price,  # Can be 0.0 for insured patients with co-payment = 0
                     created_by=current_user.id
                 )
                 db.add(bill)
-                db.flush()
-                print(f"DEBUG confirm_investigation: Created new bill {bill.id} with bill_number={bill_number}")
+                db.flush()  # Flush to get bill ID
+                print(f"DEBUG confirm_investigation: Created new bill {bill.id} with bill_number={bill_number}, total_amount={total_price}")
                 
-                # Create bill item
+                # Create bill item (even if price is 0.0 - we want to track the service)
                 bill_item = BillItem(
                     bill_id=bill.id,
                     item_code=investigation.gdrg_code or "MISC",
@@ -2827,14 +2987,20 @@ def confirm_investigation(
                     total_price=total_price
                 )
                 db.add(bill_item)
-                print(f"DEBUG confirm_investigation: Created bill item with unit_price={unit_price}, total_price={total_price}")
+                db.flush()  # Flush to ensure bill_item gets an ID
+                print(f"DEBUG confirm_investigation: Created bill item (id={bill_item.id}) with unit_price={unit_price}, total_price={total_price}")
         except Exception as e:
             print(f"ERROR confirm_investigation: Exception during bill creation: {str(e)}")
             import traceback
             traceback.print_exc()
             # Don't fail the confirmation if bill creation fails, but log it
     else:
-        print(f"WARNING confirm_investigation: Not creating bill because total_price={total_price} (must be > 0)")
+        print(f"WARNING confirm_investigation: Not creating bill item because no gdrg_code (service not found in price list)")
+    
+    # Update investigation.price with the calculated unit_price so it reflects the actual charged price
+    # This ensures the displayed price matches what was actually charged (co-payment for insured, base_rate for cash)
+    investigation.price = str(unit_price) if unit_price is not None else None
+    print(f"DEBUG confirm_investigation: Updated investigation.price to '{investigation.price}' (calculated unit_price={unit_price})")
     
     db.commit()
     db.refresh(investigation)
@@ -9054,6 +9220,7 @@ def get_inpatient_investigations_by_type(
     status: Optional[str] = None,  # requested, confirmed, completed, cancelled
     search: Optional[str] = None,  # Search by card number or patient name
     date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today
+    procedure: Optional[str] = None,  # Filter by procedure name
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
 ):
@@ -9131,6 +9298,11 @@ def get_inpatient_investigations_by_type(
                 Patient.surname.ilike(search_term)
             )
         )
+    
+    # Filter by procedure name
+    if procedure:
+        procedure_term = f"%{procedure.strip()}%"
+        query = query.filter(InpatientInvestigation.procedure_name.ilike(procedure_term))
     
     # Order by created_at descending (newest first)
     query = query.order_by(InpatientInvestigation.created_at.desc())
@@ -9692,10 +9864,64 @@ def confirm_inpatient_investigation(
             unit_price = get_price_from_all_tables(db, investigation.gdrg_code, is_insured_encounter, service_type, investigation.procedure_name)
             print(f"DEBUG confirm_inpatient_investigation: Looked up price for gdrg_code='{investigation.gdrg_code}', procedure_name='{investigation.procedure_name}', is_insured={is_insured_encounter}, service_type='{service_type}', price={unit_price}")
             
-            # If lookup returns 0.0, it means price wasn't found
-            if unit_price == 0.0:
-                print(f"WARNING confirm_inpatient_investigation: Price lookup returned 0.0 for gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
-                # Only use stored price if it exists and lookup returned 0
+            # If lookup returns 0.0, it could mean:
+            # 1. Price not found in pricelist (should use stored price as fallback for cash patients)
+            # 2. Insured patient with co-payment = 0 (should keep 0.0, don't use stored price)
+            # For insured patients: if price lookup returns 0.0, it means co-payment is 0 (insurance covered, free)
+            # We should NEVER use stored price (base_rate) for insured patients when price lookup returns 0.0
+            if unit_price == 0.0 and is_insured_encounter:
+                # For insured patients, 0.0 from price lookup means co-payment is 0 (insurance covered)
+                # Check if procedure exists in pricelist with same filters to confirm it was found
+                from app.models.procedure_price import ProcedurePrice
+                from app.models.surgery_price import SurgeryPrice
+                from app.models.unmapped_drg_price import UnmappedDRGPrice
+                from sqlalchemy import func
+                
+                # Check all procedure-related tables with same filters as price lookup
+                procedure_query = db.query(ProcedurePrice).filter(
+                        ProcedurePrice.g_drg_code == investigation.gdrg_code,
+                        ProcedurePrice.is_active == True
+                )
+                if service_type:
+                    procedure_query = procedure_query.filter(ProcedurePrice.service_type == service_type)
+                if investigation.procedure_name:
+                    procedure_query = procedure_query.filter(func.lower(func.trim(ProcedurePrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                
+                surgery_query = db.query(SurgeryPrice).filter(
+                        SurgeryPrice.g_drg_code == investigation.gdrg_code,
+                        SurgeryPrice.is_active == True
+                )
+                if service_type:
+                    surgery_query = surgery_query.filter(SurgeryPrice.service_type == service_type)
+                if investigation.procedure_name:
+                    surgery_query = surgery_query.filter(func.lower(func.trim(SurgeryPrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                
+                unmapped_query = db.query(UnmappedDRGPrice).filter(
+                        UnmappedDRGPrice.g_drg_code == investigation.gdrg_code,
+                        UnmappedDRGPrice.is_active == True
+                )
+                if service_type:
+                    unmapped_query = unmapped_query.filter(UnmappedDRGPrice.service_type == service_type)
+                if investigation.procedure_name:
+                    unmapped_query = unmapped_query.filter(func.lower(func.trim(UnmappedDRGPrice.service_name)) == func.lower(func.trim(investigation.procedure_name)))
+                
+                procedure_exists = (
+                    procedure_query.first() or
+                    surgery_query.first() or
+                    unmapped_query.first()
+                )
+                
+                if procedure_exists:
+                    # Procedure exists in pricelist and patient is insured - 0.0 is intentional (co-payment = 0, insurance covered)
+                    print(f"DEBUG confirm_inpatient_investigation: Price lookup returned 0.0 for insured patient, procedure exists in pricelist. Keeping 0.0 (insurance covered, co-payment = 0).")
+                    # Keep unit_price as 0.0 - do NOT use stored price
+                else:
+                    # Procedure not found in pricelist with matching filters - this shouldn't happen if get_price_from_all_tables worked correctly
+                    # But if it does, still keep 0.0 for insured patients (don't charge base_rate)
+                    print(f"WARNING confirm_inpatient_investigation: Price lookup returned 0.0 for insured patient but procedure not found with matching filters. Keeping 0.0 (insured patients should not be charged base_rate).")
+            elif unit_price == 0.0 and not is_insured_encounter:
+                # For cash patients, 0.0 means price not found - use stored price as fallback
+                print(f"WARNING confirm_inpatient_investigation: Price lookup returned 0.0 for cash patient, gdrg_code='{investigation.gdrg_code}', service_type='{service_type}'. Price not found in pricelist.")
                 if investigation.price:
                     try:
                         stored_price = float(investigation.price)
@@ -9707,18 +9933,29 @@ def confirm_inpatient_investigation(
         except Exception as e:
             print(f"WARNING confirm_inpatient_investigation: Error getting price: {str(e)}")
             # If lookup throws exception, try using stored price as fallback
-            if investigation.price:
+            # BUT: For insured patients, don't use stored price (base_rate) - keep 0.0
+            if is_insured_encounter:
+                # For insured patients, if price lookup fails, keep 0.0 (don't charge base_rate)
+                print(f"WARNING confirm_inpatient_investigation: Price lookup exception for insured patient. Keeping 0.0 (insured patients should not be charged base_rate on exception).")
+                unit_price = 0.0
+            elif investigation.price:
+                # For cash patients, use stored price as fallback
                 try:
                     unit_price = float(investigation.price)
                     print(f"DEBUG confirm_inpatient_investigation: Using stored price '{unit_price}' as fallback after exception")
                 except (ValueError, TypeError):
-                    pass
+                    unit_price = 0.0
+            else:
+                unit_price = 0.0
     
     total_price = unit_price
     
-    # Add to IPD bill if requested and price > 0
+    # Add to IPD bill if requested and we have a gdrg_code (service was found in price list)
+    # This includes cases where co-payment = 0 for insured patients (they should still see the service in the bill with amount 0)
+    # Only skip if no gdrg_code (service not found in price list at all)
     add_to_bill = confirm_data.add_to_ipd_bill if confirm_data.add_to_ipd_bill is not None else True
-    if total_price > 0 and add_to_bill:
+    if investigation.gdrg_code and add_to_bill:
+        print(f"DEBUG confirm_inpatient_investigation: gdrg_code exists, creating bill item (even if price is 0.0)")
         # Find or create a bill for this encounter
         existing_bill = db.query(Bill).filter(
             Bill.encounter_id == encounter.id,
@@ -9734,7 +9971,7 @@ def confirm_inpatient_investigation(
             ).first()
             
             if not existing_item:
-                # Add bill item to existing bill
+                # Add bill item to existing bill (even if price is 0.0 - we want to track the service)
                 bill_item = BillItem(
                     bill_id=existing_bill.id,
                     item_code=investigation.gdrg_code or "MISC",
@@ -9745,7 +9982,9 @@ def confirm_inpatient_investigation(
                     total_price=total_price
                 )
                 db.add(bill_item)
+                db.flush()  # Flush to ensure bill_item gets an ID
                 existing_bill.total_amount += total_price
+                print(f"DEBUG confirm_inpatient_investigation: Added bill item (id={bill_item.id}) to existing bill. unit_price={unit_price}, total_price={total_price}")
         else:
             # Create new bill
             bill_number = f"BILL-{random.randint(100000, 999999)}"
@@ -9759,7 +9998,7 @@ def confirm_inpatient_investigation(
             db.add(bill)
             db.flush()
             
-            # Create bill item
+            # Create bill item (even if price is 0.0 - we want to track the service)
             bill_item = BillItem(
                 bill_id=bill.id,
                 item_code=investigation.gdrg_code or "MISC",
@@ -9770,6 +10009,13 @@ def confirm_inpatient_investigation(
                 total_price=total_price
             )
             db.add(bill_item)
+            db.flush()  # Flush to ensure bill_item gets an ID
+            print(f"DEBUG confirm_inpatient_investigation: Created bill item (id={bill_item.id}) with unit_price={unit_price}, total_price={total_price}")
+    
+    # Update investigation.price with the calculated unit_price so it reflects the actual charged price
+    # This ensures the displayed price matches what was actually charged (co-payment for insured, base_rate for cash)
+    investigation.price = str(unit_price) if unit_price is not None else None
+    print(f"DEBUG confirm_inpatient_investigation: Updated investigation.price to '{investigation.price}' (calculated unit_price={unit_price})")
     
     db.commit()
     db.refresh(investigation)

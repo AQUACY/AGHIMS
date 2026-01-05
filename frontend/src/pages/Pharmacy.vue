@@ -171,11 +171,11 @@
             </div>
             
             <!-- Clinical Reviews Selection (shown after IPD admission is selected) -->
-            <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviews.length > 0" class="q-mt-md">
+            <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviewsWithPrescriptions.length > 0" class="q-mt-md">
               <div class="text-weight-medium q-mb-sm">Select Clinical Review:</div>
               <div class="q-gutter-sm">
                 <q-card
-                  v-for="review in clinicalReviews"
+                  v-for="review in clinicalReviewsWithPrescriptions"
                   :key="review.id"
                   flat
                   bordered
@@ -188,7 +188,7 @@
                     <div class="row items-center">
                       <div class="col">
                         <div class="text-weight-medium">
-                          Clinical Review #{{ clinicalReviews.indexOf(review) + 1 }}
+                          Clinical Review #{{ clinicalReviewsWithPrescriptions.indexOf(review) + 1 }}
                         </div>
                         <div class="text-caption text-grey-7 q-mt-xs">
                           Reviewed by: {{ review.reviewed_by_name || 'N/A' }} | 
@@ -199,7 +199,6 @@
                         </div>
                       </div>
                       <q-badge 
-                        v-if="getPrescriptionCountForReview(review.id) > 0"
                         color="primary" 
                         :label="`${getPrescriptionCountForReview(review.id)} medication(s)`" 
                       />
@@ -208,9 +207,9 @@
                   </q-card-section>
                 </q-card>
               </div>
-              <div v-if="clinicalReviews.length > 0 && clinicalReviews.every(r => getPrescriptionCountForReview(r.id) === 0)" class="text-caption text-warning q-mt-sm">
-                No clinical reviews with prescriptions found. Prescriptions will appear here once they are added to a clinical review.
-              </div>
+            </div>
+            <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviews.length > 0 && clinicalReviewsWithPrescriptions.length === 0" class="text-caption text-warning q-mt-md">
+              No clinical reviews with medications found. Medications will appear here once they are added to a clinical review.
             </div>
           </div>
 
@@ -482,6 +481,15 @@
             label="Print External Prescriptions"
             @click="printExternalPrescriptions"
             :disable="!selectedEncounterId || !patient"
+            class="q-ml-sm"
+          />
+          <q-btn
+            v-if="serviceType === 'ipd' && externalPrescriptions.length > 0"
+            color="accent"
+            icon="print"
+            label="Print External Prescriptions"
+            @click="printExternalPrescriptions"
+            :disable="!selectedWardAdmissionId || !patient"
             class="q-ml-sm"
           />
         </div>
@@ -3111,9 +3119,11 @@ const onDirectMedicationSelected = (medicationCode) => {
 
 // Old function removed - replaced with batch functions above
 
-// Computed property to get external prescriptions
+// Computed property to get external prescriptions (both OPD and IPD)
 const externalPrescriptions = computed(() => {
-  return prescriptions.value.filter(p => p.is_external === true);
+  const opdExternal = prescriptions.value.filter(p => p.is_external === true);
+  const ipdExternal = inpatientPrescriptions.value.filter(p => p.is_external === true || p.is_external === 1);
+  return [...opdExternal, ...ipdExternal];
 });
 
 const columns = [
@@ -4537,6 +4547,14 @@ const filteredInpatientPrescriptions = computed(() => {
   return inpatientPrescriptions.value;
 });
 
+// Filter clinical reviews to only show those with medications
+const clinicalReviewsWithPrescriptions = computed(() => {
+  return clinicalReviews.value.filter(review => {
+    const count = getPrescriptionCountForReview(review.id);
+    return count > 0;
+  });
+});
+
 // Group IPD prescriptions by clinical review (only show reviews with prescriptions)
 // Filter prescriptions by selected clinical review
 const filteredInpatientPrescriptionsByReview = computed(() => {
@@ -5456,8 +5474,13 @@ const buildExternalPrescriptionHtml = async () => {
   
   const now = new Date();
   
-  // Get external prescriptions for this encounter
-  const externalPrescs = externalPrescriptions.value;
+  // Get external prescriptions for current service type
+  let externalPrescs = [];
+  if (serviceType.value === 'ipd') {
+    externalPrescs = inpatientPrescriptions.value.filter(p => p.is_external === true || p.is_external === 1);
+  } else {
+    externalPrescs = prescriptions.value.filter(p => p.is_external === true);
+  }
   
   if (externalPrescs.length === 0) {
     $q.notify({ type: 'warning', message: 'No external prescriptions found' });
@@ -5493,6 +5516,25 @@ const buildExternalPrescriptionHtml = async () => {
   const formatReceiptLine = (label, value) => {
     return `<div class="lbl">${label}:</div><div class="val">${value || ''}</div><div class="clearfix"></div>`;
   };
+  
+  // Get encounter/admission info based on service type
+  let encounterId = '';
+  let cccNumber = '';
+  let wardInfo = '';
+  
+  if (serviceType.value === 'ipd') {
+    // Find the selected ward admission
+    const selectedAdmission = wardAdmissions.value.find(wa => wa.id === selectedWardAdmissionId.value);
+    if (selectedAdmission) {
+      encounterId = selectedAdmission.encounter_id || '';
+      // Get CCC from patient if available
+      cccNumber = patient.value?.ccc_number || '';
+      wardInfo = `${selectedAdmission.ward || ''}${selectedAdmission.bed_number ? ` / Bed ${selectedAdmission.bed_number}` : ''}`;
+    }
+  } else {
+    encounterId = selectedEncounterId.value || '';
+    cccNumber = currentEncounter.value?.ccc_number || '';
+  }
   
   return `<!doctype html>
   <html>
@@ -5540,12 +5582,13 @@ const buildExternalPrescriptionHtml = async () => {
         <div>${now.toLocaleString()}</div>
       </div>
       <div class="sec">
-        ${formatReceiptLine('Encounter ID', selectedEncounterId.value)}
+        ${serviceType.value === 'ipd' ? formatReceiptLine('Admission ID', selectedWardAdmissionId.value || '') : formatReceiptLine('Encounter ID', encounterId)}
         ${formatReceiptLine('Patient', `${patient.value?.name || ''} ${patient.value?.surname || ''}`.trim())}
         ${formatReceiptLine('Card', patient.value?.card_number || '')}
         ${patient.value?.age ? formatReceiptLine('Age', patient.value.age) : ''}
+        ${wardInfo ? formatReceiptLine('Ward/Bed', wardInfo) : ''}
         ${formatReceiptLine('Insurance', patient.value?.insurance_id || 'N/A')}
-        ${formatReceiptLine('CCC', currentEncounter.value?.ccc_number || '')}
+        ${cccNumber ? formatReceiptLine('CCC', cccNumber) : ''}
         <div class="clearfix"></div>
       </div>
       <div class="sec">
@@ -5568,13 +5611,28 @@ const buildExternalPrescriptionHtml = async () => {
 };
 
 const printExternalPrescriptions = async () => {
-  if (!selectedEncounterId.value || !patient.value) {
-    $q.notify({ type: 'warning', message: 'Select encounter first' });
-    return;
+  if (serviceType.value === 'ipd') {
+    if (!selectedWardAdmissionId.value || !patient.value) {
+      $q.notify({ type: 'warning', message: 'Select IPD admission first' });
+      return;
+    }
+  } else {
+    if (!selectedEncounterId.value || !patient.value) {
+      $q.notify({ type: 'warning', message: 'Select encounter first' });
+      return;
+    }
   }
   
-  if (externalPrescriptions.value.length === 0) {
-    $q.notify({ type: 'warning', message: 'No external prescriptions found for this encounter' });
+  // Get external prescriptions for current service type
+  let externalPrescs = [];
+  if (serviceType.value === 'ipd') {
+    externalPrescs = inpatientPrescriptions.value.filter(p => p.is_external === true || p.is_external === 1);
+  } else {
+    externalPrescs = prescriptions.value.filter(p => p.is_external === true);
+  }
+  
+  if (externalPrescs.length === 0) {
+    $q.notify({ type: 'warning', message: `No external prescriptions found for this ${serviceType.value === 'ipd' ? 'admission' : 'encounter'}` });
     return;
   }
   
