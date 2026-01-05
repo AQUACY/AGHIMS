@@ -316,6 +316,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
+        path: '/ipd/operation-theatre-calendar',
+        name: 'OperationTheatreCalendar',
+        component: () => import('../pages/OperationTheatreCalendar.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
         path: '/ipd/nurse-mid-documentation/:id',
         name: 'NurseMidDocumentation',
         component: () => import('../pages/NurseMidDocumentation.vue'),

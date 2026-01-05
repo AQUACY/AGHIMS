@@ -477,6 +477,12 @@ export const consultationAPI = {
     getInpatientSurgery: (wardAdmissionId, surgeryId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`),
     updateInpatientSurgery: (wardAdmissionId, surgeryId, surgeryData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`, surgeryData),
     deleteInpatientSurgery: (wardAdmissionId, surgeryId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`),
+    getSurgeriesCalendar: (date = null) => {
+      const params = {};
+      if (date) params.date = date;
+      return api.get('/consultation/surgeries/calendar', { params });
+    },
+    updateSurgeryAnaesthetistInfo: (surgeryId, anaesthetistData) => api.put(`/consultation/surgeries/${surgeryId}/anaesthetist-info`, anaesthetistData),
     // Additional Services (Admin-defined)
     createAdditionalService: (serviceData) => api.post('/consultation/additional-services', serviceData),
     getAdditionalServices: (activeOnly = false) => api.get(`/consultation/additional-services?active_only=${activeOnly}`),

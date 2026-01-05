@@ -2310,7 +2310,9 @@ def get_investigations_by_type(
     investigation_type: str,  # lab, scan, xray
     status: Optional[str] = None,  # requested, confirmed, completed, cancelled
     search: Optional[str] = None,  # Search by card number or patient name
-    date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today
+    date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today (for backward compatibility)
+    start_date: Optional[str] = None,  # Filter by start date (YYYY-MM-DD) for date range
+    end_date: Optional[str] = None,  # Filter by end date (YYYY-MM-DD) for date range
     procedure: Optional[str] = None,  # Filter by procedure name
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -2344,19 +2346,34 @@ def get_investigations_by_type(
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
         query = query.filter(Investigation.status == status.lower())
     
-    # Filter by date (default to today)
-    if date:
+    # Filter by date range or single date
+    if start_date or end_date:
+        # Date range filtering
+        if start_date:
+            try:
+                start_filter_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+                start_of_range = datetime.combine(start_filter_date, datetime.min.time())
+                query = query.filter(Encounter.created_at >= start_of_range)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid start_date format. Use YYYY-MM-DD. Error: {str(e)}")
+        
+        if end_date:
+            try:
+                end_filter_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+                end_of_range = datetime.combine(end_filter_date, datetime.max.time())
+                query = query.filter(Encounter.created_at <= end_of_range)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid end_date format. Use YYYY-MM-DD. Error: {str(e)}")
+    elif date:
+        # Single date filtering (for backward compatibility)
         try:
             filter_date = datetime.strptime(date, "%Y-%m-%d").date()
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}")
-    else:
-        filter_date = date_class.today()
-    
-    # Filter by date (using encounter created_at date)
-    start_of_day = datetime.combine(filter_date, datetime.min.time())
-    end_of_day = datetime.combine(filter_date, datetime.max.time())
-    query = query.filter(Encounter.created_at >= start_of_day, Encounter.created_at <= end_of_day)
+        start_of_day = datetime.combine(filter_date, datetime.min.time())
+        end_of_day = datetime.combine(filter_date, datetime.max.time())
+        query = query.filter(Encounter.created_at >= start_of_day, Encounter.created_at <= end_of_day)
+    # If no date filter provided, show all (don't default to today)
     
     # Search by card number or patient name
     if search:
@@ -9219,7 +9236,9 @@ def get_inpatient_investigations_by_type(
     investigation_type: str,  # lab, scan, xray
     status: Optional[str] = None,  # requested, confirmed, completed, cancelled
     search: Optional[str] = None,  # Search by card number or patient name
-    date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today
+    date: Optional[str] = None,  # Filter by date (YYYY-MM-DD), defaults to today (for backward compatibility)
+    start_date: Optional[str] = None,  # Filter by start date (YYYY-MM-DD) for date range
+    end_date: Optional[str] = None,  # Filter by end date (YYYY-MM-DD) for date range
     procedure: Optional[str] = None,  # Filter by procedure name
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
@@ -9270,21 +9289,35 @@ def get_inpatient_investigations_by_type(
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
         query = query.filter(InpatientInvestigation.status == status.lower())
     
-    # Filter by date (optional - if not provided, show all)
-    if date:
+    # Filter by date range or single date
+    if start_date or end_date:
+        # Date range filtering
+        if start_date:
+            try:
+                start_filter_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+                start_of_range = datetime.combine(start_filter_date, datetime.min.time())
+                query = query.filter(InpatientInvestigation.created_at >= start_of_range)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid start_date format. Use YYYY-MM-DD. Error: {str(e)}")
+        
+        if end_date:
+            try:
+                end_filter_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+                end_of_range = datetime.combine(end_filter_date, datetime.max.time())
+                query = query.filter(InpatientInvestigation.created_at <= end_of_range)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid end_date format. Use YYYY-MM-DD. Error: {str(e)}")
+    elif date:
+        # Single date filtering (for backward compatibility)
         try:
             filter_date = datetime.strptime(date, "%Y-%m-%d").date()
             # Filter by date (using investigation created_at date)
             # Use date-only comparison to avoid timezone/time precision issues
-            # For SQLite, use func.date() to extract date from datetime
             from sqlalchemy import func
-            print(f"DEBUG: Filtering by date {date}, filter_date={filter_date}")
             # Compare only the date part, ignoring time
             query = query.filter(func.date(InpatientInvestigation.created_at) == filter_date)
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}")
-    else:
-        print(f"DEBUG: No date filter provided - showing all investigations")
     # If no date provided, don't filter by date (show all investigations)
     
     # Search by card number or patient name
@@ -10202,6 +10235,21 @@ class InpatientSurgeryUpdate(BaseModel):
     post_operative_notes: Optional[str] = None
     complications: Optional[str] = None
     is_completed: Optional[bool] = None
+    # Anaesthetist information (can be added even after operation is completed)
+    anaesthetist_consultation: Optional[str] = None
+    intra_operation_care: Optional[str] = None
+    post_operation_care: Optional[str] = None
+    drugs_given: Optional[str] = None
+    anaesthesia_used: Optional[str] = None
+
+
+class AnaesthetistInfoUpdate(BaseModel):
+    """Request model for updating anaesthetist information (can be done even after operation is completed)"""
+    anaesthetist_consultation: Optional[str] = None
+    intra_operation_care: Optional[str] = None
+    post_operation_care: Optional[str] = None
+    drugs_given: Optional[str] = None
+    anaesthesia_used: Optional[str] = None
 
 
 class InpatientSurgeryResponse(BaseModel):
@@ -10223,9 +10271,19 @@ class InpatientSurgeryResponse(BaseModel):
     is_completed: bool
     completed_at: Optional[datetime]
     completed_by: Optional[int]
+    # Anaesthetist information
+    anaesthetist_consultation: Optional[str] = None
+    intra_operation_care: Optional[str] = None
+    post_operation_care: Optional[str] = None
+    drugs_given: Optional[str] = None
+    anaesthesia_used: Optional[str] = None
     created_by: int
     created_at: datetime
     updated_at: datetime
+    # Additional fields for calendar view
+    patient_name: Optional[str] = None
+    patient_card_number: Optional[str] = None
+    ward: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -10285,6 +10343,196 @@ def get_inpatient_surgeries(
     ).order_by(InpatientSurgery.created_at.desc()).all()
     
     return surgeries
+
+
+@router.get("/surgeries/calendar/debug")
+def get_surgeries_calendar_debug(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Debug endpoint to see all surgeries - helps diagnose date filtering issues"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from datetime import datetime
+    
+    all_surgeries = db.query(InpatientSurgery).all()
+    result = []
+    for surgery in all_surgeries:
+        surgery_date_str = None
+        created_at_str = None
+        if surgery.surgery_date:
+            if isinstance(surgery.surgery_date, datetime):
+                surgery_date_str = surgery.surgery_date.isoformat()
+            else:
+                surgery_date_str = str(surgery.surgery_date)
+        if surgery.created_at:
+            if isinstance(surgery.created_at, datetime):
+                created_at_str = surgery.created_at.isoformat()
+            else:
+                created_at_str = str(surgery.created_at)
+        
+        result.append({
+            "id": surgery.id,
+            "surgery_name": surgery.surgery_name,
+            "surgery_date": surgery_date_str,
+            "created_at": created_at_str,
+            "surgery_date_type": type(surgery.surgery_date).__name__ if surgery.surgery_date else None,
+            "created_at_type": type(surgery.created_at).__name__ if surgery.created_at else None,
+        })
+    return {"total": len(all_surgeries), "surgeries": result}
+
+
+@router.get("/surgeries/calendar", response_model=List[InpatientSurgeryResponse])
+def get_surgeries_calendar(
+    date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD). If not provided, shows today's surgeries"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+):
+    """Get all surgeries for calendar view, optionally filtered by date"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    from datetime import datetime, date as date_type
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Parse date filter
+    filter_date = None
+    if date:
+        try:
+            filter_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        # Default to today
+        filter_date = datetime.utcnow().date()
+    
+    logger.info(f"Filtering surgeries for date: {filter_date} (string: {filter_date.strftime('%Y-%m-%d')})")
+    
+    # Query all surgeries
+    all_surgeries = db.query(InpatientSurgery).all()
+    logger.info(f"Total surgeries in database: {len(all_surgeries)}")
+    
+    # Filter surgeries by date - check both surgery_date AND created_at
+    # Show surgery if EITHER date matches the filter date
+    filtered_surgeries = []
+    filter_date_str = filter_date.strftime("%Y-%m-%d")  # Convert to string for comparison
+    
+    for surgery in all_surgeries:
+        surgery_date_str = None
+        created_at_str = None
+        matches = False
+        
+        # Extract surgery_date as string
+        if surgery.surgery_date:
+            if isinstance(surgery.surgery_date, datetime):
+                surgery_date_str = surgery.surgery_date.date().strftime("%Y-%m-%d")
+            elif hasattr(surgery.surgery_date, 'date'):
+                surgery_date_str = surgery.surgery_date.date().strftime("%Y-%m-%d")
+            elif isinstance(surgery.surgery_date, date_type):
+                surgery_date_str = surgery.surgery_date.strftime("%Y-%m-%d")
+            else:
+                # Try to extract date from string
+                surgery_date_str = str(surgery.surgery_date)[:10]  # Take first 10 chars (YYYY-MM-DD)
+        
+        # Extract created_at as string
+        if surgery.created_at:
+            if isinstance(surgery.created_at, datetime):
+                created_at_str = surgery.created_at.date().strftime("%Y-%m-%d")
+            elif hasattr(surgery.created_at, 'date'):
+                created_at_str = surgery.created_at.date().strftime("%Y-%m-%d")
+            elif isinstance(surgery.created_at, date_type):
+                created_at_str = surgery.created_at.strftime("%Y-%m-%d")
+            else:
+                created_at_str = str(surgery.created_at)[:10]  # Take first 10 chars (YYYY-MM-DD)
+        
+        # Match if EITHER surgery_date OR created_at matches the filter date
+        if surgery_date_str and surgery_date_str == filter_date_str:
+            matches = True
+            logger.info(f"Surgery {surgery.id} ({surgery.surgery_name}) matches via surgery_date: {surgery_date_str}")
+        elif created_at_str and created_at_str == filter_date_str:
+            matches = True
+            logger.info(f"Surgery {surgery.id} ({surgery.surgery_name}) matches via created_at: {created_at_str}")
+        
+        if matches:
+            filtered_surgeries.append(surgery)
+        else:
+            logger.debug(f"Surgery {surgery.id}: surgery_date={surgery_date_str}, created_at={created_at_str}, filter={filter_date_str} - NO MATCH")
+    
+    logger.info(f"Filtered surgeries count: {len(filtered_surgeries)}")
+    
+    # If no surgeries match, return empty list (don't return all surgeries)
+    # This helps debug why filtering isn't working
+    if len(filtered_surgeries) == 0 and len(all_surgeries) > 0:
+        # Log details about first few surgeries for debugging
+        logger.warning(f"No surgeries matched filter date {filter_date_str}. Sample surgeries:")
+        for surgery in all_surgeries[:3]:  # Show first 3
+            if surgery.surgery_date:
+                sd = surgery.surgery_date.date().strftime("%Y-%m-%d") if isinstance(surgery.surgery_date, datetime) else str(surgery.surgery_date)[:10]
+            else:
+                sd = surgery.created_at.date().strftime("%Y-%m-%d") if isinstance(surgery.created_at, datetime) else str(surgery.created_at)[:10]
+            logger.warning(f"  Surgery {surgery.id}: {surgery.surgery_name}, date: {sd}")
+    
+    # Sort surgeries: by surgery_date (NULLs last), then by created_at
+    def sort_key(surgery):
+        surgery_date = surgery.surgery_date if surgery.surgery_date else None
+        created_at = surgery.created_at if surgery.created_at else datetime.min
+        # Return tuple: (has_surgery_date: 0 or 1, surgery_date or created_at)
+        # This puts surgeries with surgery_date first, then sorts by date
+        if surgery_date:
+            if isinstance(surgery_date, datetime):
+                return (0, surgery_date, created_at)
+            else:
+                # If it's a date object, convert to datetime for comparison
+                return (0, datetime.combine(surgery_date, datetime.min.time()), created_at)
+        else:
+            return (1, created_at, created_at)
+    
+    surgeries = sorted(filtered_surgeries, key=sort_key)
+    
+    # Load relationships and build response
+    result = []
+    for surgery in surgeries:
+        ward_admission = db.query(WardAdmission).filter(WardAdmission.id == surgery.ward_admission_id).first()
+        encounter = db.query(Encounter).filter(Encounter.id == surgery.encounter_id).first()
+        patient = None
+        if encounter:
+            patient = db.query(Patient).filter(Patient.id == encounter.patient_id).first()
+        
+        surgery_dict = {
+            "id": surgery.id,
+            "ward_admission_id": surgery.ward_admission_id,
+            "encounter_id": surgery.encounter_id,
+            "g_drg_code": surgery.g_drg_code,
+            "surgery_name": surgery.surgery_name,
+            "surgery_type": surgery.surgery_type,
+            "surgeon_name": surgery.surgeon_name,
+            "assistant_surgeon": surgery.assistant_surgeon,
+            "anesthesia_type": surgery.anesthesia_type,
+            "surgery_date": surgery.surgery_date,
+            "surgery_notes": surgery.surgery_notes,
+            "operative_notes": surgery.operative_notes,
+            "post_operative_notes": surgery.post_operative_notes,
+            "complications": surgery.complications,
+            "is_completed": surgery.is_completed,
+            "completed_at": surgery.completed_at,
+            "completed_by": surgery.completed_by,
+            "anaesthetist_consultation": getattr(surgery, 'anaesthetist_consultation', None),
+            "intra_operation_care": getattr(surgery, 'intra_operation_care', None),
+            "post_operation_care": getattr(surgery, 'post_operation_care', None),
+            "drugs_given": getattr(surgery, 'drugs_given', None),
+            "anaesthesia_used": getattr(surgery, 'anaesthesia_used', None),
+            "created_by": surgery.created_by,
+            "created_at": surgery.created_at,
+            "updated_at": surgery.updated_at,
+            "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else None,
+            "patient_card_number": patient.card_number if patient else None,
+            "ward": ward_admission.ward if ward_admission else None,
+        }
+        result.append(surgery_dict)
+    
+    return result
 
 
 @router.get("/ward-admissions/{ward_admission_id}/surgeries/{surgery_id}", response_model=InpatientSurgeryResponse)
@@ -10431,6 +10679,71 @@ def update_inpatient_surgery(
     db.refresh(surgery)
     
     return surgery
+
+
+@router.put("/surgeries/{surgery_id}/anaesthetist-info", response_model=InpatientSurgeryResponse)
+def update_surgery_anaesthetist_info(
+    surgery_id: int,
+    anaesthetist_data: AnaesthetistInfoUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+):
+    """Update anaesthetist information for a surgery - Can be done even after operation is completed"""
+    from app.models.inpatient_surgery import InpatientSurgery
+    from app.models.ward_admission import WardAdmission
+    from app.models.encounter import Encounter
+    from app.models.patient import Patient
+    
+    surgery = db.query(InpatientSurgery).filter(InpatientSurgery.id == surgery_id).first()
+    if not surgery:
+        raise HTTPException(status_code=404, detail="Surgery not found")
+    
+    # Update anaesthetist fields
+    update_data = anaesthetist_data.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(surgery, field, value)
+    
+    surgery.updated_at = utcnow()
+    db.commit()
+    db.refresh(surgery)
+    
+    # Load relationships for response
+    ward_admission = db.query(WardAdmission).filter(WardAdmission.id == surgery.ward_admission_id).first()
+    encounter = db.query(Encounter).filter(Encounter.id == surgery.encounter_id).first()
+    patient = None
+    if encounter:
+        patient = db.query(Patient).filter(Patient.id == encounter.patient_id).first()
+    
+    return {
+        "id": surgery.id,
+        "ward_admission_id": surgery.ward_admission_id,
+        "encounter_id": surgery.encounter_id,
+        "g_drg_code": surgery.g_drg_code,
+        "surgery_name": surgery.surgery_name,
+        "surgery_type": surgery.surgery_type,
+        "surgeon_name": surgery.surgeon_name,
+        "assistant_surgeon": surgery.assistant_surgeon,
+        "anesthesia_type": surgery.anesthesia_type,
+        "surgery_date": surgery.surgery_date,
+        "surgery_notes": surgery.surgery_notes,
+        "operative_notes": surgery.operative_notes,
+        "post_operative_notes": surgery.post_operative_notes,
+        "complications": surgery.complications,
+        "is_completed": surgery.is_completed,
+        "completed_at": surgery.completed_at,
+        "completed_by": surgery.completed_by,
+        "anaesthetist_consultation": getattr(surgery, 'anaesthetist_consultation', None),
+        "intra_operation_care": getattr(surgery, 'intra_operation_care', None),
+        "post_operation_care": getattr(surgery, 'post_operation_care', None),
+        "drugs_given": getattr(surgery, 'drugs_given', None),
+        "anaesthesia_used": getattr(surgery, 'anaesthesia_used', None),
+        "created_by": surgery.created_by,
+        "created_at": surgery.created_at,
+        "updated_at": surgery.updated_at,
+        "patient_name": f"{patient.name} {patient.surname or ''}".strip() if patient else None,
+        "patient_card_number": patient.card_number if patient else None,
+        "ward": ward_admission.ward if ward_admission else None,
+    }
 
 
 @router.delete("/ward-admissions/{ward_admission_id}/surgeries/{surgery_id}", status_code=status.HTTP_204_NO_CONTENT)

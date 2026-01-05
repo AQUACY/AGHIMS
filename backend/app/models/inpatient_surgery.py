@@ -29,6 +29,12 @@ class InpatientSurgery(Base):
     is_completed = Column(Boolean, default=False)  # Whether surgery is completed
     completed_at = Column(DateTime, nullable=True)  # When surgery was completed
     completed_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor who completed
+    # Anaesthetist information (can be added even after operation is completed)
+    anaesthetist_consultation = Column(Text, nullable=True)  # Anaesthetist's consultation notes
+    intra_operation_care = Column(Text, nullable=True)  # Intra-operative care notes
+    post_operation_care = Column(Text, nullable=True)  # Post-operative care notes
+    drugs_given = Column(Text, nullable=True)  # Drugs given during operation
+    anaesthesia_used = Column(Text, nullable=True)  # Detailed anaesthesia information
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=utcnow_callable)
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)

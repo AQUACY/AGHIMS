@@ -25,17 +25,33 @@
             </template>
           </q-input>
 
-          <!-- Date Filter -->
+          <!-- Date Range Filters -->
           <q-input
-            v-model="filterDate"
+            v-model="startDate"
             filled
-            label="Date (optional)"
+            label="Start Date"
             type="date"
             class="col-12 col-md-3"
             @update:model-value="loadRequests"
             :clearable="!filtersLocked"
             :disable="filtersLocked"
-            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show all dates'"
+            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show from beginning'"
+          >
+            <template v-slot:prepend>
+              <q-icon name="event" />
+            </template>
+          </q-input>
+          
+          <q-input
+            v-model="endDate"
+            filled
+            label="End Date"
+            type="date"
+            class="col-12 col-md-3"
+            @update:model-value="loadRequests"
+            :clearable="!filtersLocked"
+            :disable="filtersLocked"
+            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show until today'"
           >
             <template v-slot:prepend>
               <q-icon name="event" />
@@ -91,8 +107,10 @@
             <div class="text-weight-bold">Filters Locked</div>
             <div class="text-caption">
               <span v-if="lockedSearchTerm">Client: {{ lockedSearchTerm }}</span>
-              <span v-if="lockedSearchTerm && lockedFilterDate"> • </span>
-              <span v-if="lockedFilterDate">Date: {{ formatLockedDate(lockedFilterDate) }}</span>
+              <span v-if="lockedSearchTerm && (lockedStartDate || lockedEndDate)"> • </span>
+              <span v-if="lockedStartDate || lockedEndDate">
+                Date Range: {{ formatLockedDate(lockedStartDate) || 'Beginning' }} - {{ formatLockedDate(lockedEndDate) || 'Today' }}
+              </span>
             </div>
             <template v-slot:action>
               <q-btn flat label="Unlock" @click="unlockFilters" />
@@ -474,13 +492,15 @@ const authStore = useAuthStore();
 const requests = ref([]);
 const loadingRequests = ref(false);
 const searchTerm = ref('');
-const filterDate = ref('');
+const startDate = ref('');
+const endDate = ref('');
 const statusFilter = ref(null);
 
 // Filter lock functionality
 const filtersLocked = ref(false);
 const lockedSearchTerm = ref('');
-const lockedFilterDate = ref('');
+const lockedStartDate = ref('');
+const lockedEndDate = ref('');
 const FILTER_LOCK_KEY = 'lab_page_locked_filters';
 const statusOptions = [
   { label: 'Requested', value: 'requested' },
@@ -947,8 +967,11 @@ const loadRequests = async () => {
     if (lockedSearchTerm.value && searchTerm.value !== lockedSearchTerm.value) {
       searchTerm.value = lockedSearchTerm.value;
     }
-    if (lockedFilterDate.value && filterDate.value !== lockedFilterDate.value) {
-      filterDate.value = lockedFilterDate.value;
+    if (lockedStartDate.value && startDate.value !== lockedStartDate.value) {
+      startDate.value = lockedStartDate.value;
+    }
+    if (lockedEndDate.value && endDate.value !== lockedEndDate.value) {
+      endDate.value = lockedEndDate.value;
     }
   }
   
@@ -966,8 +989,12 @@ const loadRequests = async () => {
       filters.search = searchTerm.value.trim();
     }
     
-    if (filterDate.value) {
-      filters.date = filterDate.value;
+    // Use date range if provided
+    if (startDate.value) {
+      filters.start_date = startDate.value;
+    }
+    if (endDate.value) {
+      filters.end_date = endDate.value;
     }
     
     // Load both OPD and IPD investigations
@@ -1015,14 +1042,18 @@ const loadRequests = async () => {
   }
 };
 
-// Initialize date to today (optional - user can clear to see all)
-const initializeDate = () => {
+// Initialize date range to today (optional - user can clear to see all)
+const initializeDateRange = () => {
   const today = new Date();
   const year = today.getFullYear();
   const month = String(today.getMonth() + 1).padStart(2, '0');
   const day = String(today.getDate()).padStart(2, '0');
-  filterDate.value = `${year}-${month}-${day}`;
-  // Note: User can clear the date filter to see all investigations
+  const todayStr = `${year}-${month}-${day}`;
+  
+  // Default to today's date range (start and end both today)
+  startDate.value = todayStr;
+  endDate.value = todayStr;
+  // Note: User can clear the date filters to see all investigations
 };
 
 // Filter lock functions
@@ -1033,14 +1064,23 @@ const loadLockedFilters = () => {
       const filterData = JSON.parse(locked);
       filtersLocked.value = true;
       lockedSearchTerm.value = filterData.searchTerm || '';
-      lockedFilterDate.value = filterData.filterDate || '';
+      // Support both old format (filterDate) and new format (startDate/endDate)
+      lockedStartDate.value = filterData.startDate || filterData.filterDate || '';
+      lockedEndDate.value = filterData.endDate || filterData.filterDate || '';
       
       // Apply locked filters
       if (filterData.searchTerm) {
         searchTerm.value = filterData.searchTerm;
       }
-      if (filterData.filterDate) {
-        filterDate.value = filterData.filterDate;
+      if (filterData.startDate) {
+        startDate.value = filterData.startDate;
+      } else if (filterData.filterDate) {
+        // Migrate old single date to date range
+        startDate.value = filterData.filterDate;
+        endDate.value = filterData.filterDate;
+      }
+      if (filterData.endDate) {
+        endDate.value = filterData.endDate;
       }
       
       return true;
@@ -1055,12 +1095,14 @@ const saveLockedFilters = () => {
   try {
     const filterData = {
       searchTerm: searchTerm.value || '',
-      filterDate: filterDate.value || '',
+      startDate: startDate.value || '',
+      endDate: endDate.value || '',
       lockedAt: Date.now(),
     };
     localStorage.setItem(FILTER_LOCK_KEY, JSON.stringify(filterData));
     lockedSearchTerm.value = filterData.searchTerm;
-    lockedFilterDate.value = filterData.filterDate;
+    lockedStartDate.value = filterData.startDate;
+    lockedEndDate.value = filterData.endDate;
     filtersLocked.value = true;
   } catch (error) {
     console.error('Failed to save locked filters:', error);
@@ -1072,7 +1114,8 @@ const clearLockedFilters = () => {
     localStorage.removeItem(FILTER_LOCK_KEY);
     filtersLocked.value = false;
     lockedSearchTerm.value = '';
-    lockedFilterDate.value = '';
+    lockedStartDate.value = '';
+    lockedEndDate.value = '';
   } catch (error) {
     console.error('Failed to clear locked filters:', error);
   }
@@ -1087,10 +1130,10 @@ const toggleFilterLock = () => {
 };
 
 const lockFilters = () => {
-  if (!searchTerm.value && !filterDate.value) {
+  if (!searchTerm.value && !startDate.value && !endDate.value) {
     $q.notify({
       type: 'warning',
-      message: 'Please set at least a client search or date filter before locking',
+      message: 'Please set at least a client search or date range filter before locking',
     });
     return;
   }
@@ -1113,7 +1156,8 @@ const unlockFilters = () => {
     clearLockedFilters();
     // Optionally clear the current filters too
     // searchTerm.value = '';
-    // filterDate.value = '';
+    // startDate.value = '';
+    // endDate.value = '';
     $q.notify({
       type: 'info',
       message: 'Filters unlocked',
@@ -1129,7 +1173,7 @@ const formatLockedDate = (dateString) => {
 };
 
 // Watch for filter changes and prevent clearing if locked
-watch([searchTerm, filterDate], ([newSearch, newDate], [oldSearch, oldDate]) => {
+watch([searchTerm, startDate, endDate], ([newSearch, newStartDate, newEndDate], [oldSearch, oldStartDate, oldEndDate]) => {
   if (filtersLocked.value) {
     // If filters are locked and user tries to clear them, restore locked values
     if (lockedSearchTerm.value && !newSearch && oldSearch) {
@@ -1138,10 +1182,16 @@ watch([searchTerm, filterDate], ([newSearch, newDate], [oldSearch, oldDate]) => 
         searchTerm.value = lockedSearchTerm.value;
       });
     }
-    if (lockedFilterDate.value && !newDate && oldDate) {
-      // User cleared date, restore it
+    if (lockedStartDate.value && !newStartDate && oldStartDate) {
+      // User cleared start date, restore it
       nextTick(() => {
-        filterDate.value = lockedFilterDate.value;
+        startDate.value = lockedStartDate.value;
+      });
+    }
+    if (lockedEndDate.value && !newEndDate && oldEndDate) {
+      // User cleared end date, restore it
+      nextTick(() => {
+        endDate.value = lockedEndDate.value;
       });
     }
   }
@@ -1756,9 +1806,9 @@ onMounted(() => {
   // Load locked filters first (before initializing date)
   const hadLockedFilters = loadLockedFilters();
   
-  // Only initialize date if no locked filters were loaded
+  // Only initialize date range if no locked filters were loaded
   if (!hadLockedFilters) {
-    initializeDate();
+    initializeDateRange();
   }
   
   loadRequests();

@@ -186,6 +186,28 @@
                </q-card>
               </div>
 
+             <!-- Operation Theatre Calendar Module -->
+             <div v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])" class="col-12 col-md-6 col-lg-3">
+               <q-card 
+                 class="glass-card module-card cursor-pointer" 
+                 flat 
+                 bordered
+                 @click="navigateToModule('/ipd/operation-theatre-calendar')"
+               >
+                 <q-card-section class="q-pa-lg">
+                   <div class="column items-center text-center">
+                     <q-icon name="event" size="64px" color="red" class="q-mb-md" />
+                     <div class="text-h6 text-weight-bold glass-text q-mb-xs">
+                       Operation Theatre Calendar
+                </div>
+                <div class="text-caption text-secondary">
+                       View and manage all IPD operations
+                </div>
+              </div>
+                 </q-card-section>
+               </q-card>
+              </div>
+
       <!-- Future modules can be added here -->
       <!-- Example:
       <div class="col-12 col-md-6 col-lg-4">
