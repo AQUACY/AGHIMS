@@ -263,12 +263,12 @@ def create_claim(
                 InpatientDiagnosis.clinical_review_id.in_(clinical_review_ids)
             ).order_by(InpatientDiagnosis.created_at).all()
         
-        # Get IPD investigations
+        # Get IPD investigations (include all statuses except cancelled)
         ipd_investigations = []
         if clinical_review_ids:
             ipd_investigations = db.query(InpatientInvestigation).filter(
                 InpatientInvestigation.clinical_review_id.in_(clinical_review_ids),
-                InpatientInvestigation.status == "completed"
+                InpatientInvestigation.status != "cancelled"
             ).order_by(InpatientInvestigation.created_at).all()
         
         # Get IPD prescriptions (dispensed only)
@@ -363,21 +363,10 @@ def create_claim(
         # Populate investigations: OPD first, then IPD (no limit for IPD claims - include all services)
         investigation_order = 0
         
-        # Add OPD investigations first
+        # Add OPD investigations first (include all statuses except cancelled)
         if opd_encounter:
-            incomplete_opd_inv = [
-                inv for inv in opd_encounter.investigations
-                if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
-            ]
-            if incomplete_opd_inv:
-                incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_opd_inv[:10]])
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot create claim. The following OPD investigations are not completed: {incomplete_list}"
-                )
-            
             for inv in opd_encounter.investigations:
-                if inv.status == "completed" and inv.gdrg_code:
+                if inv.status != "cancelled" and inv.gdrg_code:
                     claim_inv = ClaimInvestigation(
                         claim_id=claim.id,
                         investigation_id=inv.id,
@@ -577,25 +566,12 @@ def create_claim(
             db.add(claim_diag)
             diagnosis_order += 1
         
-        # Check for incomplete investigations
-        incomplete_investigations = [
-            inv for inv in encounter.investigations
-            if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
-        ]
-        
-        if incomplete_investigations:
-            incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot create claim. The following investigations are not completed: {incomplete_list}"
-            )
-        
-        # Populate investigations (up to 5, only completed)
+        # Populate investigations (up to 5, include all except cancelled)
         investigation_order = 0
         for inv in encounter.investigations:
             if investigation_order >= 5:
                 break
-            if inv.status == "completed" and inv.gdrg_code:
+            if inv.status != "cancelled" and inv.gdrg_code:
                 claim_inv = ClaimInvestigation(
                     claim_id=claim.id,
                     investigation_id=inv.id,
@@ -805,12 +781,12 @@ def regenerate_claim(
                 InpatientDiagnosis.clinical_review_id.in_(clinical_review_ids)
             ).order_by(InpatientDiagnosis.created_at).all()
         
-        # Get IPD investigations
+        # Get IPD investigations (include all statuses except cancelled)
         ipd_investigations = []
         if clinical_review_ids:
             ipd_investigations = db.query(InpatientInvestigation).filter(
                 InpatientInvestigation.clinical_review_id.in_(clinical_review_ids),
-                InpatientInvestigation.status == "completed"
+                InpatientInvestigation.status != "cancelled"
             ).order_by(InpatientInvestigation.created_at).all()
         
         # Get IPD prescriptions (dispensed only)
@@ -869,20 +845,8 @@ def regenerate_claim(
                 detail="Can only regenerate claims from finalized encounters"
             )
         
-        # Check for incomplete investigations
-        incomplete_investigations = [
-            inv for inv in encounter.investigations
-            if inv.status not in ["completed", "cancelled"] and inv.gdrg_code
-        ]
-        
-        if incomplete_investigations:
-            incomplete_list = ", ".join([inv.procedure_name or inv.gdrg_code for inv in incomplete_investigations[:5]])
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot regenerate claim. The following investigations are not completed: {incomplete_list}"
-            )
-        
         patient = encounter.patient
+        # Note: Incomplete investigations are automatically excluded during regeneration - only completed investigations are included
         
         # Check if pharmacy items exist
         has_pharmacy = len(encounter.prescriptions) > 0
@@ -959,10 +923,10 @@ def regenerate_claim(
         # Populate investigations: OPD first, then IPD (no limit)
         investigation_order = 0
         
-        # Add OPD investigations first
+        # Add OPD investigations first (include all statuses except cancelled)
         if opd_encounter:
             for inv in opd_encounter.investigations:
-                if inv.status == "completed" and inv.gdrg_code:
+                if inv.status != "cancelled" and inv.gdrg_code:
                     claim_amount = get_claim_amount_from_price_list(db, inv.gdrg_code, is_insured=True)
                     claim_inv = ClaimInvestigation(
                         claim_id=claim.id,
@@ -1315,13 +1279,145 @@ def get_eligible_encounters_for_claims(
         except ValueError:
             pass  # Invalid date format, ignore filter
     
-    # For "All" claim type, we need to get all results first, then filter and paginate
-    # For other types, we can paginate at the database level
+    # Optimize: Use LEFT JOINs to filter at database level instead of loading all records
+    from app.models.consultation_notes import ConsultationNotes
+    from sqlalchemy import func, case, or_, and_
+    
+    # Add LEFT JOIN for consultation notes (to filter by outcome/type)
+    query = query.outerjoin(ConsultationNotes, ConsultationNotes.encounter_id == Encounter.id)
+    
+    # Add LEFT JOIN for claims (to filter by claim status)
+    query = query.outerjoin(Claim, Claim.encounter_id == Encounter.id)
+    
+    # Apply claim_type filter at database level using consultation notes outcome
+    if claim_type == 'opd':
+        # OPD: outcome should NOT be 'discharged' or 'recommended_for_admission'
+        query = query.filter(
+            or_(
+                ConsultationNotes.outcome.is_(None),
+                func.lower(ConsultationNotes.outcome) != 'discharged',
+                func.lower(ConsultationNotes.outcome) != 'recommended_for_admission'
+            )
+        )
+    elif claim_type == 'other':
+        # Other: outcome should NOT be 'discharged' or 'recommended_for_admission'
+        query = query.filter(
+            or_(
+                ConsultationNotes.outcome.is_(None),
+                and_(
+                    func.lower(ConsultationNotes.outcome) != 'discharged',
+                    func.lower(ConsultationNotes.outcome) != 'recommended_for_admission'
+                )
+            )
+        )
+    # If claim_type is None, include all (no additional filter)
+    
+    # Apply claim_status filter at database level
+    if claim_status:
+        if claim_status == 'no_claim':
+            # No claim: claim should not exist
+            query = query.filter(Claim.id.is_(None))
+        else:
+            # Specific status: claim must exist and have matching status
+            query = query.filter(Claim.status == claim_status)
+    
+    # Get total count efficiently using COUNT query
+    total_count = query.count()
+    
+    # If claim_type is None, we need to combine OPD and IPD, so load enough records from both
+    # For specific claim types, we can paginate at database level
     if claim_type is None:
-        # Get all OPD encounters (no pagination yet)
-        all_encounters = query.order_by(Encounter.finalized_at.desc()).all()
+        # Import WardAdmission for IPD count query
+        from app.models.ward_admission import WardAdmission
         
-        # Get all IPD ward admissions
+        # Get IPD total count first (without loading all records)
+        ipd_count_query = db.query(WardAdmission)\
+            .join(Encounter)\
+            .outerjoin(Claim, Claim.encounter_id == WardAdmission.encounter_id)\
+            .filter(
+                WardAdmission.discharged_at.isnot(None),
+                or_(
+                    and_(WardAdmission.ccc_number.isnot(None), WardAdmission.ccc_number != ""),
+                    and_(Encounter.ccc_number.isnot(None), Encounter.ccc_number != "")
+                )
+            )
+        
+        # Apply same filters to IPD count query
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                ipd_count_query = ipd_count_query.filter(WardAdmission.discharged_at >= start_dt)
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                end_dt = end_dt + timedelta(days=1)
+                ipd_count_query = ipd_count_query.filter(WardAdmission.discharged_at < end_dt)
+            except ValueError:
+                pass
+        if claim_status:
+            if claim_status == 'no_claim':
+                ipd_count_query = ipd_count_query.filter(Claim.id.is_(None))
+            else:
+                ipd_count_query = ipd_count_query.filter(Claim.status == claim_status)
+        if card_number:
+            card_number_clean = card_number.strip()
+            if card_number_clean:
+                from app.models.patient import Patient
+                patient_ids_subquery = db.query(Patient.id).filter(
+                    Patient.card_number.like(f'%{card_number_clean}%')
+                )
+                ipd_count_query = ipd_count_query.filter(Encounter.patient_id.in_(patient_ids_subquery))
+        if claim_id:
+            claim_id_clean = claim_id.strip()
+            if claim_id_clean:
+                ipd_count_query = ipd_count_query.filter(Claim.claim_id == claim_id_clean)
+        
+        ipd_total = ipd_count_query.count()
+        
+        # For "All" type: Load enough OPD and IPD records to cover the requested page range
+        # We need to load more than the page size because after combining and sorting,
+        # the distribution might be different
+        # Load enough to ensure we have records for the requested page
+        buffer_size = 200  # Load extra records to account for sorting distribution
+        opd_load_limit = min(skip + limit + buffer_size, total_count)
+        ipd_load_limit = min(skip + limit + buffer_size, ipd_total)
+        
+        # Load OPD records (without pagination, but limited to what we need)
+        opd_encounters = query.order_by(Encounter.finalized_at.desc()).limit(opd_load_limit).all()
+        
+        # Process OPD results
+        result = []
+        for encounter in opd_encounters:
+            # Get claim - query directly since LEFT JOIN doesn't populate relationship
+            claim = db.query(Claim).filter(Claim.encounter_id == encounter.id).first()
+            
+            # Get finalized_by username
+            finalized_by_username = None
+            if encounter.finalized_by:
+                finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
+                if finalized_user:
+                    finalized_by_username = finalized_user.username
+            
+            encounter_data = {
+                "id": encounter.id,
+                "patient_id": encounter.patient_id,
+                "patient_name": f"{encounter.patient.name or ''} {encounter.patient.surname or ''} {encounter.patient.other_names or ''}".strip() or "Unknown",
+                "patient_card_number": encounter.patient.card_number or "",
+                "ccc_number": encounter.ccc_number or "",
+                "status": encounter.status or "finalized",
+                "department": encounter.department or "",
+                "finalized_at": encounter.finalized_at,
+                "finalized_by_username": finalized_by_username,
+                "created_at": encounter.created_at,
+                "claim_id": claim.id if claim else None,
+                "claim_status": claim.status if claim else None,
+                "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
+            }
+            result.append(encounter_data)
+        
+        # Get IPD results (load enough to cover the page range)
         ipd_response = get_eligible_ipd_ward_admissions_for_claims(
             start_date=start_date,
             end_date=end_date,
@@ -1329,87 +1425,30 @@ def get_eligible_encounters_for_claims(
             card_number=card_number,
             claim_id=claim_id,
             skip=0,
-            limit=100000,  # Get all IPD results
+            limit=ipd_load_limit,
             db=db,
             current_user=current_user
         )
         ipd_results = ipd_response["items"]
         
-        # Process all OPD encounters
-        result = []
-        from app.models.consultation_notes import ConsultationNotes
-        for encounter in all_encounters:
-            # Determine outcome from consultation notes
-            notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter.id).first()
-            outcome = (notes.outcome if notes and notes.outcome else "").lower()
-            # Check if claim already exists
-            claim = db.query(Claim).filter(Claim.encounter_id == encounter.id).first()
-            
-            # Apply claim status filter
-            if claim_status:
-                if claim_status == 'no_claim' and claim:
-                    continue  # Skip if filter is 'no_claim' but claim exists
-                elif claim_status != 'no_claim' and (not claim or claim.status != claim_status):
-                    continue  # Skip if status doesn't match
-            
-            # Get finalized_by username
-            finalized_by_username = None
-            if encounter.finalized_by:
-                finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
-                if finalized_user:
-                    finalized_by_username = finalized_user.username
-            
-            encounter_data = {
-                "id": encounter.id,
-                "patient_id": encounter.patient_id,
-                "patient_name": f"{encounter.patient.name or ''} {encounter.patient.surname or ''} {encounter.patient.other_names or ''}".strip() or "Unknown",
-                "patient_card_number": encounter.patient.card_number or "",
-                "ccc_number": encounter.ccc_number or "",
-                "status": encounter.status or "finalized",
-                "department": encounter.department or "",
-                "finalized_at": encounter.finalized_at,
-                "finalized_by_username": finalized_by_username,
-                "created_at": encounter.created_at,
-                "claim_id": claim.id if claim else None,
-                "claim_status": claim.status if claim else None,
-                "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
-            }
-            result.append(encounter_data)
-        
-        # Combine OPD and IPD results
+        # Combine and sort by finalized_at (most recent first)
         result.extend(ipd_results)
-        # Sort combined results by finalized_at/discharged_at (most recent first)
         result.sort(key=lambda x: x.get("finalized_at") or datetime.min, reverse=True)
-        # Get total count
-        total_count = len(result)
+        
+        # Update total count to include IPD (use actual counts, not loaded items)
+        total_count = total_count + ipd_total
+        
         # Apply pagination to combined results
         result = result[skip:skip + limit]
     else:
         # For specific claim types (OPD, Other), paginate at database level
-        # Get total count before pagination (but we'll need to filter after)
-        # For now, get all and filter, then paginate
-        all_encounters = query.order_by(Encounter.finalized_at.desc()).all()
+        encounters = query.order_by(Encounter.finalized_at.desc()).offset(skip).limit(limit).all()
         
+        # Process results
         result = []
-        from app.models.consultation_notes import ConsultationNotes
-        for encounter in all_encounters:
-            # Determine outcome from consultation notes
-            notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter.id).first()
-            outcome = (notes.outcome if notes and notes.outcome else "").lower()
-            # Apply type filter if provided
-            if claim_type == 'opd' and outcome != 'discharged':
-                continue
-            if claim_type == 'other' and outcome in ('discharged', 'recommended_for_admission'):
-                continue
-            # Check if claim already exists
+        for encounter in encounters:
+            # Get claim - query directly since LEFT JOIN doesn't populate relationship
             claim = db.query(Claim).filter(Claim.encounter_id == encounter.id).first()
-            
-            # Apply claim status filter
-            if claim_status:
-                if claim_status == 'no_claim' and claim:
-                    continue  # Skip if filter is 'no_claim' but claim exists
-                elif claim_status != 'no_claim' and (not claim or claim.status != claim_status):
-                    continue  # Skip if status doesn't match
             
             # Get finalized_by username
             finalized_by_username = None
@@ -1434,11 +1473,6 @@ def get_eligible_encounters_for_claims(
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
             }
             result.append(encounter_data)
-    
-        # Get total count after filtering
-        total_count = len(result)
-        # Apply pagination
-        result = result[skip:skip + limit]
     
     return {
         "items": result,
@@ -1526,20 +1560,28 @@ def get_eligible_ipd_ward_admissions_for_claims(
         except ValueError:
             pass
     
-    # Get all ward admissions first (no pagination yet) to apply claim_status filter
-    all_ward_admissions = query.order_by(WardAdmission.discharged_at.desc()).all()
+    # Optimize: Apply claim_status filter at database level using LEFT JOIN
+    query = query.outerjoin(Claim, Claim.encounter_id == WardAdmission.encounter_id)
+    
+    # Apply claim_status filter at database level
+    if claim_status:
+        if claim_status == 'no_claim':
+            # No claim: claim should not exist
+            query = query.filter(Claim.id.is_(None))
+        else:
+            # Specific status: claim must exist and have matching status
+            query = query.filter(Claim.status == claim_status)
+    
+    # Get total count efficiently using COUNT query
+    total_count = query.count()
+    
+    # Apply pagination at database level using LIMIT and OFFSET
+    ward_admissions = query.order_by(WardAdmission.discharged_at.desc()).offset(skip).limit(limit).all()
     
     result = []
-    for ward_admission in all_ward_admissions:
-        # Check if claim already exists (by encounter_id)
+    for ward_admission in ward_admissions:
+        # Get claim - query directly since LEFT JOIN doesn't populate relationship
         claim = db.query(Claim).filter(Claim.encounter_id == ward_admission.encounter_id).first()
-        
-        # Apply claim status filter
-        if claim_status:
-            if claim_status == 'no_claim' and claim:
-                continue
-            elif claim_status != 'no_claim' and (not claim or claim.status != claim_status):
-                continue
         
         # Get patient info
         patient = ward_admission.encounter.patient
@@ -1572,14 +1614,8 @@ def get_eligible_ipd_ward_admissions_for_claims(
         }
         result.append(ward_admission_data)
     
-    # Get total count after all filters are applied
-    total_count = len(result)
-    
-    # Apply pagination to filtered results
-    paginated_result = result[skip:skip + limit]
-    
     return {
-        "items": paginated_result,
+        "items": result,
         "total": total_count,
         "skip": skip,
         "limit": limit
@@ -1921,7 +1957,7 @@ def get_claim_edit_details(
                 investigations_loaded = list(opd_encounter.investigations) if hasattr(opd_encounter, 'investigations') else []
                 if investigations_loaded:
                     for inv in investigations_loaded:
-                        if inv.status == "completed" and inv.gdrg_code:
+                        if inv.status != "cancelled" and inv.gdrg_code:
                             opd_investigations_to_add.append({
                                 "id": inv.id,
                                 "description": inv.procedure_name or "",
@@ -1946,7 +1982,7 @@ def get_claim_edit_details(
                     # Convert to list to force evaluation of the relationship
                     opd_investigations = list(opd_encounter.investigations) if hasattr(opd_encounter, 'investigations') else []
                     for inv in opd_investigations:
-                        if inv.status == "completed" and inv.gdrg_code:
+                        if inv.status != "cancelled" and inv.gdrg_code:
                             investigations_list.append({
                                 "id": inv.id,
                                 "description": inv.procedure_name or "",
@@ -1971,7 +2007,7 @@ def get_claim_edit_details(
                 if clinical_review_ids:
                     ipd_investigations = db.query(InpatientInvestigation).filter(
                         InpatientInvestigation.clinical_review_id.in_(clinical_review_ids),
-                        InpatientInvestigation.status == "completed"
+                        InpatientInvestigation.status != "cancelled"
                     ).order_by(InpatientInvestigation.created_at).all()
                     
                     for inv in ipd_investigations:
@@ -1987,9 +2023,9 @@ def get_claim_edit_details(
                                 "investigation_type": inv.investigation_type or "",
                             })
         else:
-            # OPD claim - use encounter investigations
+            # OPD claim - use encounter investigations (include all except cancelled)
             for inv in encounter.investigations:
-                if inv.status == "completed":
+                if inv.status != "cancelled" and inv.gdrg_code:
                     investigations_list.append({
                         "id": inv.id,
                         "description": inv.procedure_name or "",

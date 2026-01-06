@@ -237,12 +237,21 @@ const exportStartDate = ref('');
 const exportEndDate = ref('');
 const exporting = ref(false);
 
+// Helper function to get today's date in YYYY-MM-DD format
+const getTodayDate = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const searchEncounterId = ref('');
 const finalizedEncounters = ref([]);
 const claimType = ref(null); // 'opd' | 'ipd' | null
 const loading = ref(false);
-const filterStartDate = ref('');
-const filterEndDate = ref('');
+const filterStartDate = ref(getTodayDate()); // Default to today
+const filterEndDate = ref(getTodayDate()); // Default to today
 const filterClaimStatus = ref(null);
 const filterCardNumber = ref('');
 const filterClaimId = ref('');
@@ -346,8 +355,9 @@ const searchEncounter = async () => {
 };
 
 const clearFilters = () => {
-  filterStartDate.value = '';
-  filterEndDate.value = '';
+  // Reset to today's date instead of clearing dates
+  filterStartDate.value = getTodayDate();
+  filterEndDate.value = getTodayDate();
   filterClaimStatus.value = null;
   filterCardNumber.value = '';
   filterClaimId.value = '';
@@ -407,31 +417,45 @@ const loadFiltersFromStorage = () => {
       claimType.value = filters.claimType ?? null;
       filterCardNumber.value = filters.filterCardNumber || '';
       filterClaimId.value = filters.filterClaimId || '';
-      filterStartDate.value = filters.filterStartDate || '';
-      filterEndDate.value = filters.filterEndDate || '';
+      // Only load saved dates if they exist, otherwise default to today
+      filterStartDate.value = filters.filterStartDate || getTodayDate();
+      filterEndDate.value = filters.filterEndDate || getTodayDate();
       filterClaimStatus.value = filters.filterClaimStatus ?? null;
       searchEncounterId.value = filters.searchEncounterId || '';
     } catch (error) {
       console.error('Failed to load saved filters:', error);
+      // If loading fails, ensure dates default to today
+      filterStartDate.value = getTodayDate();
+      filterEndDate.value = getTodayDate();
     }
+  } else {
+    // If no saved filters, ensure dates default to today
+    filterStartDate.value = getTodayDate();
+    filterEndDate.value = getTodayDate();
   }
 };
 
 const generateClaim = (encounter) => {
-  // Navigate to generate claim page
+  // Open generate claim page in new tab
   // For IPD claims, include ward_admission_id if available
+  let route;
   if (encounter.ward_admission_id) {
-    $router.push(`/claims/generate/${encounter.id}?ward_admission_id=${encounter.ward_admission_id}&type=ipd`);
+    route = $router.resolve({
+      path: `/claims/generate/${encounter.id}`,
+      query: { ward_admission_id: encounter.ward_admission_id, type: 'ipd' }
+    });
   } else {
-    $router.push(`/claims/generate/${encounter.id}`);
+    route = $router.resolve(`/claims/generate/${encounter.id}`);
   }
+  window.open(route.href, '_blank');
 };
 
 const editClaim = async (encounter) => {
   if (!encounter.claim_id) return;
   
-  // Navigate to edit page
-  $router.push(`/claims/edit/${encounter.claim_id}`);
+  // Open edit page in new tab
+  const route = $router.resolve(`/claims/edit/${encounter.claim_id}`);
+  window.open(route.href, '_blank');
 };
 
 
@@ -474,18 +498,35 @@ const exportSingleClaim = async (claimId) => {
 };
 
 const regenerateClaim = (encounter) => {
-  // Navigate to generate claim page (will update existing claim)
+  // Open generate claim page in new tab (will update existing claim)
   // For IPD claims, include ward_admission_id if available
+  let route;
   if (encounter.ward_admission_id) {
-    $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}&ward_admission_id=${encounter.ward_admission_id}&type=ipd`);
+    route = $router.resolve({
+      path: `/claims/generate/${encounter.id}`,
+      query: { 
+        regenerate: 'true', 
+        claimId: encounter.claim_id, 
+        ward_admission_id: encounter.ward_admission_id, 
+        type: 'ipd' 
+      }
+    });
   } else {
-    $router.push(`/claims/generate/${encounter.id}?regenerate=true&claimId=${encounter.claim_id}`);
+    route = $router.resolve({
+      path: `/claims/generate/${encounter.id}`,
+      query: { regenerate: 'true', claimId: encounter.claim_id }
+    });
   }
+  window.open(route.href, '_blank');
 };
 
 const viewClaim = (claimId) => {
-  // Navigate to edit page in view mode
-  $router.push(`/claims/edit/${claimId}?view=true`);
+  // Open edit page in new tab in view mode
+  const route = $router.resolve({
+    path: `/claims/edit/${claimId}`,
+    query: { view: 'true' }
+  });
+  window.open(route.href, '_blank');
 };
 
 const loadFinalizedEncounters = async (page = 1) => {
@@ -591,9 +632,13 @@ onMounted(() => {
   const isLocked = localStorage.getItem(FILTERS_LOCK_KEY) === 'true';
   filtersLocked.value = isLocked;
   
-  // Load saved filters if locked
+  // Load saved filters if locked, otherwise use defaults (today's date)
   if (isLocked) {
     loadFiltersFromStorage();
+  } else {
+    // Ensure dates are set to today if not locked
+    filterStartDate.value = getTodayDate();
+    filterEndDate.value = getTodayDate();
   }
   
   loadFinalizedEncounters(1);

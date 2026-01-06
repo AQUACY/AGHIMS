@@ -2,29 +2,31 @@
 NHIA ClaimIT XML export service
 """
 from xml.etree.ElementTree import Element, SubElement, tostring
-from xml.dom import minidom
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, case
 from app.models.encounter import Encounter
 from app.models.claim import Claim
 from typing import List
 
 
 def format_date(date_obj) -> str:
-    """Format date to YYYY-MM-DD"""
-    if isinstance(date_obj, str):
-        return date_obj
+    """Format date to YYYY-MM-DD - optimized"""
     if date_obj is None:
         return ""
+    if isinstance(date_obj, str):
+        return date_obj
+    # Use faster formatting
     return date_obj.strftime("%Y-%m-%d")
 
 
 def format_datetime(dt_obj) -> str:
-    """Format datetime to YYYY-MM-DD"""
-    if isinstance(dt_obj, str):
-        return dt_obj
+    """Format datetime to YYYY-MM-DD - optimized"""
     if dt_obj is None:
         return ""
+    if isinstance(dt_obj, str):
+        return dt_obj
+    # Use faster formatting
     return dt_obj.strftime("%Y-%m-%d")
 
 
@@ -49,26 +51,38 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
     """
     Generate NHIA ClaimIT compatible XML from claims
     Uses claim detail tables if available, otherwise falls back to encounter services
+    
+    Note: Claims should already have relationships eager-loaded when passed to this function
+    If not, this function will reload them with eager loading (for backward compatibility)
     """
-    from sqlalchemy.orm import joinedload
-    
-    # Get claim IDs for eager loading
-    claim_ids = [c.id for c in claims]
-    
-    # Eager load claim detail relationships
-    claims = db.query(Claim)\
-        .options(
-            joinedload(Claim.encounter).joinedload(Encounter.patient),
-            joinedload(Claim.claim_diagnoses),
-            joinedload(Claim.claim_investigations),
-            joinedload(Claim.claim_prescriptions),
-            joinedload(Claim.claim_procedures),
-            joinedload(Claim.encounter).joinedload(Encounter.diagnoses),
-            joinedload(Claim.encounter).joinedload(Encounter.investigations),
-            joinedload(Claim.encounter).joinedload(Encounter.prescriptions)
-        )\
-        .filter(Claim.id.in_(claim_ids))\
-        .all()
+    # Eager load relationships if not already loaded
+    # Check if relationships are loaded by inspecting the first claim
+    if claims:
+        from sqlalchemy import inspect
+        from sqlalchemy.orm import joinedload
+        
+        # Check if encounter relationship is already loaded
+        first_claim = claims[0]
+        inspector = inspect(first_claim)
+        # unloaded contains relationships that are NOT loaded
+        encounter_not_loaded = 'encounter' in inspector.unloaded
+        
+        # Only reload if relationships aren't loaded
+        if encounter_not_loaded:
+            claim_ids = [c.id for c in claims]
+            claims = db.query(Claim)\
+                .options(
+                    joinedload(Claim.encounter).joinedload(Encounter.patient),
+                    joinedload(Claim.claim_diagnoses),
+                    joinedload(Claim.claim_investigations),
+                    joinedload(Claim.claim_prescriptions),
+                    joinedload(Claim.claim_procedures),
+                    joinedload(Claim.encounter).joinedload(Encounter.diagnoses),
+                    joinedload(Claim.encounter).joinedload(Encounter.investigations),
+                    joinedload(Claim.encounter).joinedload(Encounter.prescriptions)
+                )\
+                .filter(Claim.id.in_(claim_ids))\
+                .all()
     
     # Create root element
     root = Element("claims")
@@ -90,39 +104,48 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         SubElement(claim_elem, "memberNo").text = patient.insurance_id or ""
         SubElement(claim_elem, "cardSerialNo").text = ""  # Leave empty as requested
         
+        # Optimize name parsing - compute once and reuse
+        patient_name = patient.name or ""
+        patient_surname = patient.surname or ""
+        patient_other_names = (patient.other_names or "").strip()
+        
         # Handle surname: use patient.surname if available, otherwise extract from name
-        if patient.surname:
-            surname_text = patient.surname
-        elif patient.name:
+        if patient_surname:
+            surname_text = patient_surname
+        elif patient_name:
             # If no surname, use first word of name as surname
-            name_parts = patient.name.split()
-            surname_text = name_parts[0] if name_parts else ""
+            first_space = patient_name.find(' ')
+            surname_text = patient_name[:first_space] if first_space > 0 else patient_name
         else:
             surname_text = ""
         SubElement(claim_elem, "surname").text = surname_text
         
         # Handle otherNames: prioritize patient.other_names, then construct from name
-        other_names_text = ""
-        if patient.other_names and patient.other_names.strip():
-            # Use other_names field if available
-            other_names_text = patient.other_names.strip()
-        elif patient.name:
+        if patient_other_names:
+            other_names_text = patient_other_names
+        elif patient_name:
             # Construct from patient.name
-            name_parts = patient.name.split()
-            if patient.surname:
-                # If surname exists separately, use everything from name after first word
-                # Or use the full name if surname is not in name
-                name_without_surname = patient.name.replace(patient.surname, "").strip()
+            if patient_surname:
+                # If surname exists separately, remove it from name
+                name_without_surname = patient_name.replace(patient_surname, "", 1).strip()
                 if name_without_surname:
                     other_names_text = name_without_surname
                 else:
                     # If surname removal left nothing, use everything except first word
-                    if len(name_parts) > 1:
-                        other_names_text = " ".join(name_parts[1:])
+                    first_space = patient_name.find(' ')
+                    if first_space > 0:
+                        other_names_text = patient_name[first_space+1:].strip()
+                    else:
+                        other_names_text = ""
             else:
                 # No separate surname, use everything after first word
-                if len(name_parts) > 1:
-                    other_names_text = " ".join(name_parts[1:])
+                first_space = patient_name.find(' ')
+                if first_space > 0:
+                    other_names_text = patient_name[first_space+1:].strip()
+                else:
+                    other_names_text = ""
+        else:
+            other_names_text = ""
         
         SubElement(claim_elem, "otherNames").text = other_names_text
         SubElement(claim_elem, "dateOfBirth").text = format_date(patient.date_of_birth)
@@ -160,14 +183,23 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         # Never fallback to encounter services as those are the original, unedited data
         from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
         
-        # Check if claim has been edited (any claim detail table entry exists)
-        claim_has_been_edited = len(claim.claim_diagnoses) > 0 or \
-                                 len(claim.claim_investigations) > 0 or \
-                                 len(claim.claim_prescriptions) > 0 or \
-                                 len(claim.claim_procedures) > 0
+        # Pre-compute: Check if claim has been edited (any claim detail table entry exists)
+        claim_has_been_edited = bool(claim.claim_diagnoses or claim.claim_investigations or 
+                                     claim.claim_prescriptions or claim.claim_procedures)
+        
+        # Pre-sort and cache lists to avoid repeated sorting
+        claim_investigations = sorted(claim.claim_investigations, key=lambda x: x.display_order) if claim.claim_investigations else []
+        claim_diagnoses = sorted(claim.claim_diagnoses, key=lambda x: x.display_order) if claim.claim_diagnoses else []
+        claim_prescriptions = sorted(claim.claim_prescriptions, key=lambda x: x.display_order) if claim.claim_prescriptions else []
+        claim_procedures = sorted(claim.claim_procedures, key=lambda x: x.display_order) if claim.claim_procedures else []
+        
+        # Pre-compute investigation GDRG codes set (used for procedures)
+        investigation_gdrg_codes = {inv.gdrg_code for inv in claim_investigations if inv.gdrg_code}
+        
+        # Pre-compute chief diagnosis (used for procedures)
+        chief_diag = next((d for d in claim_diagnoses if d.is_chief), claim_diagnoses[0] if claim_diagnoses else None)
         
         # Investigations - ALWAYS use claim detail table (never fallback)
-        claim_investigations = sorted(claim.claim_investigations, key=lambda x: x.display_order) if claim.claim_investigations else []
         for claim_inv in claim_investigations:
             if claim_inv.gdrg_code:
                 inv_elem = SubElement(claim_elem, "investigation")
@@ -175,7 +207,7 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                 SubElement(inv_elem, "gdrgCode").text = claim_inv.gdrg_code
         
         # If claim hasn't been edited yet, fallback to encounter investigations for backward compatibility
-        if not claim_has_been_edited:
+        if not claim_has_been_edited and encounter.investigations:
             for investigation in encounter.investigations:
                 if investigation.status == "completed" and investigation.gdrg_code:
                     inv_elem = SubElement(claim_elem, "investigation")
@@ -183,7 +215,6 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                     SubElement(inv_elem, "gdrgCode").text = investigation.gdrg_code
         
         # Diagnoses - ALWAYS use claim detail table (never fallback after edits)
-        claim_diagnoses = sorted(claim.claim_diagnoses, key=lambda x: x.display_order) if claim.claim_diagnoses else []
         for claim_diag in claim_diagnoses:
             diag_elem = SubElement(claim_elem, "diagnosis")
             SubElement(diag_elem, "gdrgCode").text = claim_diag.gdrg_code or ""
@@ -191,7 +222,7 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
             SubElement(diag_elem, "diagnosis").text = claim_diag.description
         
         # If claim hasn't been edited yet, fallback to encounter diagnoses for backward compatibility
-        if not claim_has_been_edited:
+        if not claim_has_been_edited and encounter.diagnoses:
             for diagnosis in encounter.diagnoses:
                 diag_elem = SubElement(claim_elem, "diagnosis")
                 SubElement(diag_elem, "gdrgCode").text = diagnosis.gdrg_code or ""
@@ -199,7 +230,6 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                 SubElement(diag_elem, "diagnosis").text = diagnosis.diagnosis
         
         # Medicines (Prescriptions) - ALWAYS use claim detail table (never fallback after edits)
-        claim_prescriptions = sorted(claim.claim_prescriptions, key=lambda x: x.display_order) if claim.claim_prescriptions else []
         for claim_presc in claim_prescriptions:
             med_elem = SubElement(claim_elem, "medicine")
             SubElement(med_elem, "medicineCode").text = claim_presc.code
@@ -213,7 +243,7 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
             SubElement(presc_elem, "unparsed").text = claim_presc.unparsed or ""
         
         # If claim hasn't been edited yet, fallback to encounter prescriptions for backward compatibility
-        if not claim_has_been_edited:
+        if not claim_has_been_edited and encounter.prescriptions:
             for prescription in encounter.prescriptions:
                 if prescription.dispensed_by:
                     med_elem = SubElement(claim_elem, "medicine")
@@ -228,12 +258,6 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                     SubElement(presc_elem, "unparsed").text = prescription.unparsed or ""
         
         # Procedures - ALWAYS use claim detail table (exclude investigations, never fallback after edits)
-        investigation_gdrg_codes = set()
-        for claim_inv in claim_investigations:
-            if claim_inv.gdrg_code:
-                investigation_gdrg_codes.add(claim_inv.gdrg_code)
-        
-        claim_procedures = sorted(claim.claim_procedures, key=lambda x: x.display_order) if claim.claim_procedures else []
         for claim_proc in claim_procedures:
             if claim_proc.gdrg_code and claim_proc.gdrg_code not in investigation_gdrg_codes:
                 proc_elem = SubElement(claim_elem, "procedure")
@@ -241,10 +265,7 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                 SubElement(proc_elem, "gdrgCode").text = claim_proc.gdrg_code
                 if claim_proc.description:
                     SubElement(proc_elem, "description").text = claim_proc.description
-                # Get diagnosis for procedure from claim diagnoses
-                chief_diag = None
-                if claim_diagnoses:
-                    chief_diag = next((d for d in claim_diagnoses if d.is_chief), claim_diagnoses[0] if claim_diagnoses else None)
+                # Use pre-computed chief diagnosis
                 if chief_diag:
                     SubElement(proc_elem, "icd10").text = chief_diag.icd10
                     SubElement(proc_elem, "diagnosis").text = chief_diag.description
@@ -258,10 +279,11 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                 if encounter.procedure_name:
                     SubElement(proc_elem, "description").text = encounter.procedure_name
                 # Get diagnosis for procedure if available
-                chief_diag = next((d for d in encounter.diagnoses if d.is_chief), None)
-                if chief_diag:
-                    SubElement(proc_elem, "icd10").text = chief_diag.icd10
-                    SubElement(proc_elem, "diagnosis").text = chief_diag.diagnosis
+                if encounter.diagnoses:
+                    chief_diag_enc = next((d for d in encounter.diagnoses if d.is_chief), None)
+                    if chief_diag_enc:
+                        SubElement(proc_elem, "icd10").text = chief_diag_enc.icd10
+                        SubElement(proc_elem, "diagnosis").text = chief_diag_enc.diagnosis
         
         # Principal GDRG
         SubElement(claim_elem, "principalGDRG").text = claim.principal_gdrg or ""
@@ -272,10 +294,15 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         SubElement(ref_elem, "facilityID").text = ""
         SubElement(ref_elem, "facilityName").text = ""
     
-    # Convert to pretty XML string
-    rough_string = tostring(root, encoding='unicode')
-    reparsed = minidom.parseString(rough_string)
-    return reparsed.toprettyxml(indent="  ")
+    # Convert to XML string - skip minidom.toprettyxml() for performance
+    # It's very slow for large XML files. Use tostring() directly
+    xml_string = tostring(root, encoding='unicode')
+    
+    # Add XML declaration if not present
+    if not xml_string.startswith('<?xml'):
+        xml_string = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_string
+    
+    return xml_string
 
 
 def export_claims_xml(claim_ids: List[int], db: Session) -> str:
@@ -289,14 +316,60 @@ def export_claims_xml(claim_ids: List[int], db: Session) -> str:
 def export_claims_by_date_range(start_date: datetime, end_date: datetime, db: Session) -> str:
     """
     Export claims within a date range as XML
+    Optimized to use eager loading from the start and filter by finalized_at
     """
+    from sqlalchemy.orm import joinedload
+    
+    # Optimize: Use eager loading from the start and filter by finalized_at (more accurate)
+    # Filter by claim finalized_at or encounter finalized_at for better performance
     claims = (
         db.query(Claim)
+        .options(
+            joinedload(Claim.encounter).joinedload(Encounter.patient),
+            joinedload(Claim.claim_diagnoses),
+            joinedload(Claim.claim_investigations),
+            joinedload(Claim.claim_prescriptions),
+            joinedload(Claim.claim_procedures),
+            joinedload(Claim.encounter).joinedload(Encounter.diagnoses),
+            joinedload(Claim.encounter).joinedload(Encounter.investigations),
+            joinedload(Claim.encounter).joinedload(Encounter.prescriptions)
+        )
         .join(Encounter)
-        .filter(Encounter.created_at >= start_date)
-        .filter(Encounter.created_at <= end_date)
         .filter(Claim.status == "finalized")
+        .filter(
+            # Include all finalized claims where the encounter date is within range
+            # Check multiple date fields to be inclusive
+            or_(
+                # Claim finalized within range
+                and_(
+                    Claim.finalized_at.isnot(None),
+                    Claim.finalized_at >= start_date,
+                    Claim.finalized_at <= end_date
+                ),
+                # Encounter finalized within range
+                and_(
+                    Encounter.finalized_at.isnot(None),
+                    Encounter.finalized_at >= start_date,
+                    Encounter.finalized_at <= end_date
+                ),
+                # Encounter created within range (fallback for cases where finalized_at is not set)
+                and_(
+                    Encounter.created_at.isnot(None),
+                    Encounter.created_at >= start_date,
+                    Encounter.created_at <= end_date
+                )
+            )
+        )
+        .order_by(
+            # Order by claim finalized_at if available, otherwise encounter finalized_at, otherwise created_at
+            case(
+                (Claim.finalized_at.isnot(None), Claim.finalized_at),
+                (Encounter.finalized_at.isnot(None), Encounter.finalized_at),
+                else_=Encounter.created_at
+            ).desc()
+        )
         .all()
     )
     return generate_claim_xml(claims, db)
+
 

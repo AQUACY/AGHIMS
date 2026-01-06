@@ -82,9 +82,9 @@
       <template v-slot:avatar>
         <q-icon name="warning" color="dark" />
       </template>
-      <strong>Incomplete Investigations Detected</strong>
+      <strong>Some Services Have Not Been Finalized</strong>
       <div class="text-caption q-mt-xs">
-        The following investigations are not completed. Claims cannot be generated until all investigations are completed:
+        The following investigations are not yet completed. They will be included in the claim, but you may want to finalize them first:
       </div>
       <q-list dense class="q-mt-sm">
         <q-item
@@ -144,6 +144,18 @@
               <q-badge
                 :color="getInvestigationStatusColor(props.value)"
                 :label="props.value"
+              />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-actions="props">
+            <q-td :props="props">
+              <q-btn
+                v-if="canFinalizeInvestigation(props.row)"
+                size="sm"
+                color="primary"
+                label="Finalize"
+                @click="openResultEntry(props.row)"
+                class="q-mr-xs"
               />
             </q-td>
           </template>
@@ -283,7 +295,6 @@
               color="primary"
               :label="isRegenerating ? 'Regenerate Claim' : 'Generate Claim'"
               :loading="generating"
-              :disable="incompleteInvestigations.length > 0"
               class="col-12 col-md-4"
             />
             <q-btn
@@ -304,10 +315,12 @@ import { ref, reactive, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { encountersAPI, consultationAPI, claimsAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 
 const route = useRoute();
 const router = useRouter();
 const $q = useQuasar();
+const authStore = useAuthStore();
 
 const loading = ref(false);
 const loadingMedicines = ref(false);
@@ -362,6 +375,7 @@ const investigationColumns = [
   { name: 'investigation_type', label: 'Type', field: 'investigation_type', align: 'left' },
   { name: 'status', label: 'Status', field: 'status', align: 'center' },
   { name: 'service_date', label: 'Service Date', field: 'service_date', align: 'left', format: (val) => val ? new Date(val).toLocaleString() : '-' },
+  { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
 const diagnosisColumns = [
@@ -404,6 +418,66 @@ const getInvestigationStatusColor = (status) => {
     'cancelled': 'red',
   };
   return colors[status] || 'grey';
+};
+
+const canFinalizeInvestigation = (investigation) => {
+  // Only show button for investigations that are not completed or cancelled
+  if (investigation.status === 'completed' || investigation.status === 'cancelled') {
+    return false;
+  }
+  
+  // Check if user has permission based on investigation type
+  const userRoles = authStore.allUserRoles || [];
+  const investigationType = investigation.investigation_type?.toLowerCase();
+  
+  // Admin can finalize all investigations
+  if (userRoles.includes('Admin')) {
+    return true;
+  }
+  
+  // Check role-specific permissions
+  if (investigationType === 'lab') {
+    return userRoles.includes('Lab Head');
+  } else if (investigationType === 'scan') {
+    return userRoles.includes('Scan Head');
+  } else if (investigationType === 'xray') {
+    return userRoles.includes('Xray Head');
+  }
+  
+  return false;
+};
+
+const openResultEntry = (investigation) => {
+  const investigationType = investigation.investigation_type?.toLowerCase();
+  const investigationId = investigation.id;
+  
+  if (!investigationId) {
+    $q.notify({
+      type: 'negative',
+      message: 'Invalid investigation ID',
+    });
+    return;
+  }
+  
+  // Determine the route based on investigation type
+  let routePath = '';
+  if (investigationType === 'lab') {
+    routePath = `/lab/result/${investigationId}`;
+  } else if (investigationType === 'scan') {
+    routePath = `/scan/result/${investigationId}`;
+  } else if (investigationType === 'xray') {
+    routePath = `/xray/result/${investigationId}`;
+  } else {
+    $q.notify({
+      type: 'negative',
+      message: 'Unknown investigation type',
+    });
+    return;
+  }
+  
+  // Open in new tab
+  const route = router.resolve(routePath);
+  window.open(route.href, '_blank');
 };
 
 const loadEncounter = async () => {
@@ -573,8 +647,26 @@ const loadMedicines = async (encounterId) => {
 const loadInvestigations = async (encounterId) => {
   loadingInvestigations.value = true;
   try {
+    // Load OPD investigations
     const response = await consultationAPI.getInvestigations(encounterId);
-    investigations.value = response.data || [];
+    const opdInvestigations = response.data || [];
+    
+    // For IPD claims, also load IPD investigations
+    if (isIPD.value && wardAdmissionId.value) {
+      try {
+        const ipdResponse = await consultationAPI.getAllInpatientInvestigations(wardAdmissionId.value);
+        const ipdInvestigations = ipdResponse.data || [];
+        // Merge OPD and IPD investigations
+        investigations.value = [...opdInvestigations, ...ipdInvestigations];
+      } catch (ipdErr) {
+        console.error('Failed to load IPD investigations:', ipdErr);
+        // If IPD investigations fail to load, just use OPD investigations
+        investigations.value = opdInvestigations;
+      }
+    } else {
+      // For OPD claims, just use OPD investigations
+      investigations.value = opdInvestigations;
+    }
   } catch (err) {
     console.error('Failed to load investigations:', err);
     investigations.value = [];
@@ -584,13 +676,28 @@ const loadInvestigations = async (encounterId) => {
 };
 
 const generateClaim = async () => {
+  // If there are incomplete investigations, show a confirmation dialog
   if (incompleteInvestigations.value.length > 0) {
-    $q.notify({
-      type: 'negative',
-      message: 'Cannot generate claim. Please complete all investigations first.',
-      timeout: 5000,
+    const incompleteList = incompleteInvestigations.value
+      .slice(0, 5)
+      .map(inv => inv.procedure_name || inv.gdrg_code)
+      .join(', ');
+    const moreCount = incompleteInvestigations.value.length > 5 
+      ? ` and ${incompleteInvestigations.value.length - 5} more` 
+      : '';
+    
+    const confirmed = await new Promise((resolve) => {
+      $q.dialog({
+        title: 'Unfinalized Services Detected',
+        message: `Some investigations (${incompleteInvestigations.value.length}) have not been finalized yet: ${incompleteList}${moreCount}.\n\nThese services will be included in the claim. Do you want to proceed with ${isRegenerating.value ? 'regenerating' : 'generating'} the claim?`,
+        cancel: true,
+        persistent: true,
+      }).onOk(() => resolve(true)).onCancel(() => resolve(false));
     });
-    return;
+    
+    if (!confirmed) {
+      return;
+    }
   }
 
   generating.value = true;
