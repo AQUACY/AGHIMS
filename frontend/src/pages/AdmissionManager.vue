@@ -26,13 +26,20 @@
             </div>
             <div v-if="patientBillInfo.totalAmount !== null" class="text-body1 q-mt-xs" :class="patientBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
               <q-icon name="receipt" size="16px" class="q-mr-xs" />
-              Total Bills: GHC {{ patientBillInfo.totalAmount.toFixed(2) }} 
-              <span v-if="patientBillInfo.remainingBalance > 0" class="text-negative">
-                | Outstanding: GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}
+              <span 
+                @click="openBillItemsDialog" 
+                style="cursor: pointer; text-decoration: underline;"
+                class="text-primary"
+              >
+                Total Bills: GHC {{ patientBillInfo.totalAmount.toFixed(2) }} 
+                <span v-if="patientBillInfo.remainingBalance > 0" class="text-negative">
+                  | Outstanding: GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}
+                </span>
+                <span v-else>
+                  | Outstanding: GHC 0.00
+                </span>
               </span>
-              <span v-else>
-                | Outstanding: GHC 0.00
-              </span>
+              <q-tooltip>Click to view all bill items</q-tooltip>
             </div>
             <div class="row q-col-gutter-md q-mt-sm">
               <div class="col-12 col-md-6">
@@ -1880,6 +1887,55 @@
 
           <!-- Additional sections can be added here for inpatient activities -->
           <!-- Examples: Daily notes, medication schedule, test results, etc. -->
+
+          <!-- Bill Items Dialog -->
+          <q-dialog v-model="showBillItemsDialog" maximized>
+            <q-card>
+              <q-card-section class="row items-center q-pb-none">
+                <div class="text-h6">Bill Items - {{ patientInfo?.patient_name }} {{ patientInfo?.patient_surname || '' }}</div>
+                <q-space />
+                <q-btn icon="close" flat round dense v-close-popup />
+              </q-card-section>
+              <q-card-section>
+                <div v-if="loadingBillItems" class="text-center q-pa-md">
+                  <q-spinner color="primary" size="3em" />
+                  <div class="q-mt-md">Loading bill items...</div>
+                </div>
+                <div v-else-if="allBillItems.length === 0" class="text-center q-pa-md text-grey-7">
+                  No bill items found for this patient.
+                </div>
+                <q-table
+                  v-else
+                  :rows="allBillItems"
+                  :columns="billItemsColumns"
+                  row-key="id"
+                  :pagination="{ rowsPerPage: 50 }"
+                  class="bill-items-table"
+                  flat
+                  bordered
+                >
+                  <template v-slot:body-cell-encounter_id="props">
+                    <q-td :props="props">
+                      <q-badge color="primary" :label="`Encounter #${props.value}`" />
+                    </q-td>
+                  </template>
+                  <template v-slot:body-cell-remaining_balance="props">
+                    <q-td :props="props" :class="props.value > 0.01 ? 'text-negative text-weight-bold' : 'text-positive'">
+                      GHC {{ props.value.toFixed(2) }}
+                    </q-td>
+                  </template>
+                  <template v-slot:body-cell-is_paid="props">
+                    <q-td :props="props">
+                      <q-badge :color="props.value ? 'positive' : 'negative'" :label="props.value ? 'Paid' : 'Unpaid'" />
+                    </q-td>
+                  </template>
+                </q-table>
+              </q-card-section>
+              <q-card-actions align="right">
+                <q-btn flat label="Close" color="primary" v-close-popup />
+              </q-card-actions>
+            </q-card>
+          </q-dialog>
         </q-page>
       </template>
 
@@ -1887,7 +1943,7 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, priceListAPI, billingAPI, labTemplatesAPI } from '../services/api';
+import { consultationAPI, priceListAPI, billingAPI, labTemplatesAPI, encountersAPI } from '../services/api';
 import LabResultViewer from '../components/LabResultViewer.vue';
 import { useAuthStore } from '../stores/auth';
 
@@ -1935,6 +1991,20 @@ const patientBillInfo = ref({
   paidAmount: null,
   remainingBalance: null,
 });
+const showBillItemsDialog = ref(false);
+const loadingBillItems = ref(false);
+const allBillItems = ref([]);
+const billItemsColumns = [
+  { name: 'encounter_id', label: 'Encounter', field: 'encounter_id', align: 'center', sortable: true },
+  { name: 'item_name', label: 'Service/Item', field: 'item_name', align: 'left', sortable: true },
+  { name: 'category', label: 'Category', field: 'category', align: 'center', sortable: true },
+  { name: 'quantity', label: 'Qty', field: 'quantity', align: 'center', sortable: true },
+  { name: 'unit_price', label: 'Unit Price', field: 'unit_price', align: 'right', sortable: true, format: (val) => `GHC ${(val || 0).toFixed(2)}` },
+  { name: 'total_price', label: 'Total Price', field: 'total_price', align: 'right', sortable: true, format: (val) => `GHC ${(val || 0).toFixed(2)}` },
+  { name: 'amount_paid', label: 'Amount Paid', field: 'amount_paid', align: 'right', sortable: true, format: (val) => `GHC ${(val || 0).toFixed(2)}` },
+  { name: 'remaining_balance', label: 'Outstanding', field: 'remaining_balance', align: 'right', sortable: true },
+  { name: 'is_paid', label: 'Status', field: 'is_paid', align: 'center', sortable: true },
+];
 const cancelling = ref(false);
 const showAdmissionNotesDialog = ref(false);
 const admissionNotes = ref('');
@@ -2435,6 +2505,81 @@ const loadPatientInfo = async () => {
     });
   } finally {
     loading.value = false;
+  }
+};
+
+const openBillItemsDialog = async () => {
+  if (!patientInfo.value || !patientInfo.value.encounter_id) {
+    $q.notify({ type: 'warning', message: 'No patient information available', position: 'top' });
+    return;
+  }
+  
+  showBillItemsDialog.value = true;
+  loadingBillItems.value = true;
+  allBillItems.value = [];
+  
+  try {
+    // For IPD, show only bill items for the specific ward admission encounter
+    // The amount shown (e.g., GHC 120.00) is calculated from this specific encounter's bills
+    const wardAdmissionEncounterId = patientInfo.value.encounter_id;
+    
+    // Load bills and bill items only for this specific encounter
+    const billItemsList = [];
+    
+    try {
+      const billsResponse = await billingAPI.getEncounterBills(wardAdmissionEncounterId);
+      const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+      
+      for (const bill of bills) {
+        try {
+          const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
+          const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data || {};
+          const billItems = billDetails.bill_items || [];
+          
+          for (const item of billItems) {
+            const amountPaid = (item.amount_paid !== undefined && item.amount_paid !== null) ? item.amount_paid : 0;
+            const totalPrice = (item.total_price !== undefined && item.total_price !== null) ? item.total_price : 0;
+            const remainingBalance = (item.remaining_balance !== undefined && item.remaining_balance !== null)
+              ? item.remaining_balance 
+              : (totalPrice - amountPaid);
+            const isPaid = remainingBalance <= 0.01;
+            
+            billItemsList.push({
+              id: item.id,
+              encounter_id: wardAdmissionEncounterId,
+              item_name: item.item_name || 'N/A',
+              category: item.category || 'N/A',
+              quantity: item.quantity || 0,
+              unit_price: item.unit_price || 0,
+              total_price: totalPrice,
+              amount_paid: amountPaid,
+              remaining_balance: remainingBalance,
+              is_paid: isPaid,
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to load bill details for bill ${bill.id}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to load bills for encounter ${wardAdmissionEncounterId}:`, error);
+    }
+    
+    // Sort by item name
+    billItemsList.sort((a, b) => {
+      return (a.item_name || '').localeCompare(b.item_name || '');
+    });
+    
+    allBillItems.value = billItemsList;
+  } catch (error) {
+    console.error('Error loading bill items:', error);
+    $q.notify({ 
+      type: 'negative', 
+      message: 'Failed to load bill items', 
+      position: 'top' 
+    });
+  } finally {
+    loadingBillItems.value = false;
   }
 };
 

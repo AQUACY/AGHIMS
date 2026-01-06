@@ -124,13 +124,20 @@
             <div class="col-12">
               <div class="text-body2" :class="encounterBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
                 <q-icon name="receipt" size="14px" class="q-mr-xs" />
-                <strong>Total Bills:</strong> GHC {{ encounterBillInfo.totalAmount.toFixed(2) }} 
-                <span v-if="encounterBillInfo.remainingBalance > 0" class="text-negative">
-                  | Outstanding: GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}
+                <span 
+                  @click="openBillItemsDialog" 
+                  style="cursor: pointer; text-decoration: underline;"
+                  class="text-primary"
+                >
+                  <strong>Total Bills:</strong> GHC {{ encounterBillInfo.totalAmount.toFixed(2) }} 
+                  <span v-if="encounterBillInfo.remainingBalance > 0" class="text-negative">
+                    | Outstanding: GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}
+                  </span>
+                  <span v-else>
+                    | Outstanding: GHC 0.00
+                  </span>
                 </span>
-                <span v-else>
-                  | Outstanding: GHC 0.00
-                </span>
+                <q-tooltip>Click to view all bill items</q-tooltip>
               </div>
             </div>
           </div>
@@ -417,6 +424,55 @@
       </q-card-section>
     </q-card>
     </q-dialog>
+
+    <!-- Bill Items Dialog -->
+    <q-dialog v-model="showBillItemsDialog" maximized>
+      <q-card>
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Bill Items - {{ selectedEncounter?.patient_name || 'Patient' }}</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <div v-if="loadingBillItems" class="text-center q-pa-md">
+            <q-spinner color="primary" size="3em" />
+            <div class="q-mt-md">Loading bill items...</div>
+          </div>
+          <div v-else-if="allBillItems.length === 0" class="text-center q-pa-md text-grey-7">
+            No bill items found.
+          </div>
+          <q-table
+            v-else
+            :rows="allBillItems"
+            :columns="billItemsColumns"
+            row-key="id"
+            :pagination="{ rowsPerPage: 50 }"
+            class="bill-items-table"
+            flat
+            bordered
+          >
+            <template v-slot:body-cell-encounter_id="props">
+              <q-td :props="props">
+                <q-badge color="primary" :label="`Encounter #${props.value}`" />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-remaining_balance="props">
+              <q-td :props="props" :class="props.value > 0.01 ? 'text-negative text-weight-bold' : 'text-positive'">
+                GHC {{ props.value.toFixed(2) }}
+              </q-td>
+            </template>
+            <template v-slot:body-cell-is_paid="props">
+              <q-td :props="props">
+                <q-badge :color="props.value ? 'positive' : 'negative'" :label="props.value ? 'Paid' : 'Unpaid'" />
+              </q-td>
+            </template>
+          </q-table>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="primary" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -442,6 +498,20 @@ const encounterBillInfo = ref({
   paidAmount: null,
   remainingBalance: null,
 });
+const showBillItemsDialog = ref(false);
+const loadingBillItems = ref(false);
+const allBillItems = ref([]);
+const billItemsColumns = [
+  { name: 'encounter_id', label: 'Encounter', field: 'encounter_id', align: 'center', sortable: true },
+  { name: 'item_name', label: 'Service/Item', field: 'item_name', align: 'left', sortable: true },
+  { name: 'category', label: 'Category', field: 'category', align: 'center', sortable: true },
+  { name: 'quantity', label: 'Qty', field: 'quantity', align: 'center', sortable: true },
+  { name: 'unit_price', label: 'Unit Price', field: 'unit_price', align: 'right', sortable: true, format: (val) => `GHC ${(val || 0).toFixed(2)}` },
+  { name: 'total_price', label: 'Total Price', field: 'total_price', align: 'right', sortable: true, format: (val) => `GHC ${(val || 0).toFixed(2)}` },
+  { name: 'amount_paid', label: 'Amount Paid', field: 'amount_paid', align: 'right', sortable: true, format: (val) => `GHC ${(val || 0).toFixed(2)}` },
+  { name: 'remaining_balance', label: 'Outstanding', field: 'remaining_balance', align: 'right', sortable: true },
+  { name: 'is_paid', label: 'Status', field: 'is_paid', align: 'center', sortable: true },
+];
 
 const inventoryDebits = ref([]);
 const loadingDebits = ref(false);
@@ -1165,6 +1235,80 @@ watch(() => route.query.encounterId, (newEncounterId) => {
     autoLoadFromRoute();
   }
 });
+
+const openBillItemsDialog = async () => {
+  if (!selectedEncounter.value || !selectedEncounter.value.id) {
+    $q.notify({ type: 'warning', message: 'No encounter selected', position: 'top' });
+    return;
+  }
+  
+  showBillItemsDialog.value = true;
+  loadingBillItems.value = true;
+  allBillItems.value = [];
+  
+  try {
+    // Show only bill items for the selected encounter (the amount shown is for this encounter)
+    const selectedEncounterId = selectedEncounter.value.id;
+    
+    // Load bills and bill items for this specific encounter only
+    const billItemsList = [];
+    
+    try {
+      const billsResponse = await billingAPI.getEncounterBills(selectedEncounterId);
+      const bills = Array.isArray(billsResponse.data) ? billsResponse.data : [];
+      
+      for (const bill of bills) {
+        try {
+          const billDetailsResponse = await billingAPI.getBillDetails(bill.id);
+          const billDetails = billDetailsResponse.data?.data || billDetailsResponse.data || {};
+          const billItems = billDetails.bill_items || [];
+          
+          for (const item of billItems) {
+            const amountPaid = (item.amount_paid !== undefined && item.amount_paid !== null) ? item.amount_paid : 0;
+            const totalPrice = (item.total_price !== undefined && item.total_price !== null) ? item.total_price : 0;
+            const remainingBalance = (item.remaining_balance !== undefined && item.remaining_balance !== null)
+              ? item.remaining_balance 
+              : (totalPrice - amountPaid);
+            const isPaid = remainingBalance <= 0.01;
+            
+            billItemsList.push({
+              id: item.id,
+              encounter_id: selectedEncounterId,
+              item_name: item.item_name || 'N/A',
+              category: item.category || 'N/A',
+              quantity: item.quantity || 0,
+              unit_price: item.unit_price || 0,
+              total_price: totalPrice,
+              amount_paid: amountPaid,
+              remaining_balance: remainingBalance,
+              is_paid: isPaid,
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to load bill details for bill ${bill.id}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to load bills for encounter ${selectedEncounterId}:`, error);
+    }
+    
+    // Sort by item name
+    billItemsList.sort((a, b) => {
+      return (a.item_name || '').localeCompare(b.item_name || '');
+    });
+    
+    allBillItems.value = billItemsList;
+  } catch (error) {
+    console.error('Error loading bill items:', error);
+    $q.notify({ 
+      type: 'negative', 
+      message: 'Failed to load bill items', 
+      position: 'top' 
+    });
+  } finally {
+    loadingBillItems.value = false;
+  }
+};
 
 // Load departments to check their type
 const loadDepartments = async () => {
