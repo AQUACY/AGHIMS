@@ -1086,13 +1086,6 @@ def export_opd_morbidity(
         )
 
 
-import pandas as pd
-from io import BytesIO
-from fastapi.responses import StreamingResponse
-
-router = APIRouter(prefix="/mis-reports", tags=["mis-reports"])
-
-
 @router.get("/inhouse-lab-parameters")
 def get_inhouse_lab_parameters(
     start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
