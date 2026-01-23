@@ -365,11 +365,16 @@ def create_claim(
         
         # Add OPD investigations first (include all statuses except cancelled)
         if opd_encounter:
+            from app.models.investigation import Investigation
             for inv in opd_encounter.investigations:
                 if inv.status != "cancelled" and inv.gdrg_code:
+                    # Verify investigation still exists in database (it might have been deleted)
+                    investigation_exists = db.query(Investigation).filter(Investigation.id == inv.id).first() is not None
+                    investigation_id = inv.id if investigation_exists else None
+                    
                     claim_inv = ClaimInvestigation(
                         claim_id=claim.id,
-                        investigation_id=inv.id,
+                        investigation_id=investigation_id,  # Set to None if investigation was deleted
                         description=inv.procedure_name or "",
                         gdrg_code=inv.gdrg_code,
                         service_date=inv.service_date or opd_encounter.created_at,
@@ -568,13 +573,18 @@ def create_claim(
         
         # Populate investigations (up to 5, include all except cancelled)
         investigation_order = 0
+        from app.models.investigation import Investigation
         for inv in encounter.investigations:
             if investigation_order >= 5:
                 break
             if inv.status != "cancelled" and inv.gdrg_code:
+                # Verify investigation still exists in database (it might have been deleted)
+                investigation_exists = db.query(Investigation).filter(Investigation.id == inv.id).first() is not None
+                investigation_id = inv.id if investigation_exists else None
+                
                 claim_inv = ClaimInvestigation(
                     claim_id=claim.id,
-                    investigation_id=inv.id,
+                    investigation_id=investigation_id,  # Set to None if investigation was deleted
                     description=inv.procedure_name or "",
                     gdrg_code=inv.gdrg_code,
                     service_date=inv.service_date or encounter.created_at,
@@ -652,14 +662,21 @@ def finalize_claim(
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
+    
     # For IPD admissions, require discharge before finalization
-    encounter = db.query(Encounter).filter(Encounter.id == claim.encounter_id).first()
-    if encounter:
-        from app.models.consultation_notes import ConsultationNotes
-        notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter.id).first()
-        outcome = (notes.outcome if notes and notes.outcome else "").lower()
-        if outcome == 'recommended_for_admission':
-            raise HTTPException(status_code=400, detail="Cannot finalize IPD claim before patient is discharged.")
+    if claim.type_of_service == "IPD":
+        from app.models.ward_admission import WardAdmission
+        ward_admission = db.query(WardAdmission).filter(
+            WardAdmission.encounter_id == claim.encounter_id
+        ).first()
+        
+        if ward_admission:
+            # Check if patient has been discharged
+            if ward_admission.discharged_at is None:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Cannot finalize IPD claim before patient is discharged. Please discharge the patient from the ward first."
+                )
     
     claim.status = ClaimStatus.FINALIZED.value
     claim.finalized_at = datetime.utcnow()
@@ -925,12 +942,17 @@ def regenerate_claim(
         
         # Add OPD investigations first (include all statuses except cancelled)
         if opd_encounter:
+            from app.models.investigation import Investigation
             for inv in opd_encounter.investigations:
                 if inv.status != "cancelled" and inv.gdrg_code:
+                    # Verify investigation still exists in database (it might have been deleted)
+                    investigation_exists = db.query(Investigation).filter(Investigation.id == inv.id).first() is not None
+                    investigation_id = inv.id if investigation_exists else None
+                    
                     claim_amount = get_claim_amount_from_price_list(db, inv.gdrg_code, is_insured=True)
                     claim_inv = ClaimInvestigation(
                         claim_id=claim.id,
-                        investigation_id=inv.id,
+                        investigation_id=investigation_id,  # Set to None if investigation was deleted
                         description=inv.procedure_name or "",
                         gdrg_code=inv.gdrg_code,
                         service_date=inv.service_date or opd_encounter.created_at,
@@ -1056,13 +1078,18 @@ def regenerate_claim(
         
         # Populate investigations (up to 5, only completed)
         investigation_order = 0
+        from app.models.investigation import Investigation
         for inv in encounter.investigations:
             if investigation_order >= 5:
                 break
             if inv.status == "completed" and inv.gdrg_code:
+                # Verify investigation still exists in database (it might have been deleted)
+                investigation_exists = db.query(Investigation).filter(Investigation.id == inv.id).first() is not None
+                investigation_id = inv.id if investigation_exists else None
+                
                 claim_inv = ClaimInvestigation(
                     claim_id=claim.id,
-                    investigation_id=inv.id,
+                    investigation_id=investigation_id,  # Set to None if investigation was deleted
                     description=inv.procedure_name or "",
                     gdrg_code=inv.gdrg_code,
                     service_date=inv.service_date or encounter.created_at,
@@ -2515,6 +2542,7 @@ def update_claim_detailed(
             db.add(claim_diag)
     
     # Recreate investigations from updated data
+    from app.models.investigation import Investigation
     for idx, inv_update in enumerate(claim_data.investigations):
         if inv_update.description and inv_update.description.strip() and inv_update.gdrg:
             service_date = encounter.created_at
@@ -2525,9 +2553,15 @@ def update_claim_detailed(
                 except:
                     pass
             
+            # Verify investigation still exists in database before referencing it
+            investigation_id = None
+            if inv_update.id:
+                investigation_exists = db.query(Investigation).filter(Investigation.id == inv_update.id).first() is not None
+                investigation_id = inv_update.id if investigation_exists else None
+            
             claim_inv = ClaimInvestigation(
                 claim_id=claim.id,
-                investigation_id=inv_update.id if inv_update.id else None,
+                investigation_id=investigation_id,  # Set to None if investigation was deleted
                 description=inv_update.description,
                 gdrg_code=inv_update.gdrg,
                 service_date=service_date,

@@ -48,7 +48,7 @@ def migrate():
             column_names = [col['name'] for col in columns]
 
         if 'insurance_covered' not in column_names:
-            with engine.connect() as connection:
+            with engine.begin() as connection:  # Use begin() for automatic transaction management
                 # Add the column with default value 'yes'
                 if "sqlite" in settings.DATABASE_URL:
                     connection.execute(
@@ -59,13 +59,11 @@ def migrate():
                     connection.execute(
                         text("ALTER TABLE procedure_prices ADD COLUMN insurance_covered VARCHAR(10) DEFAULT 'yes'")
                     )
-                connection.commit()
                 
                 # Update existing records to have 'yes' as default (all procedures are covered by default)
                 connection.execute(
                     text("UPDATE procedure_prices SET insurance_covered = 'yes' WHERE insurance_covered IS NULL")
                 )
-                connection.commit()
                 
             print("✓ 'insurance_covered' column added to 'procedure_prices' table.")
         else:

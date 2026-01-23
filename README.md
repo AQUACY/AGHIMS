@@ -798,6 +798,57 @@ node --version  # Should be 18.0.0 or higher
   cygpath -u "C:\Users\Aquacy\Documents\last"
   ```
 
+### Frontend Blank Screen / 404 Errors in Production
+
+**Problem**: Frontend shows blank screen or errors like `GET http://localhost:9000/.quasar/client-entry.js 404`
+
+**Cause**: You're serving development files instead of production build files.
+
+**Solution**:
+
+1. **Make sure you've built the frontend for production**:
+   ```bash
+   cd /c/Users/Aquacy/Documents/last/frontend
+   npm run build
+   ```
+   
+   This creates production files in `frontend/dist/spa/`
+
+2. **Verify the build output exists**:
+   ```bash
+   ls -la /c/Users/Aquacy/Documents/last/frontend/dist/spa/
+   ```
+   
+   You should see:
+   - `index.html`
+   - `assets/` folder with JS/CSS files
+   - Other static files
+   
+   **You should NOT see `.quasar` folder** - that's dev-only!
+
+3. **Check your Task Scheduler configuration**:
+   - If you're using Python HTTP server, make sure:
+     - Program: `C:\Python3x\python.exe`
+     - Arguments: `-m http.server 9000 --bind 0.0.0.0 --directory "C:\Users\Aquacy\Documents\last\frontend\dist\spa"`
+     - Start in: `C:\Users\Aquacy\Documents\last\frontend\dist\spa`
+   
+   - **DO NOT** use `npm run dev` in production - that's for development only!
+   
+   - If your Task Scheduler is running `npm run dev`, change it to serve the built files instead (see Option 1 in Frontend Production Deployment section)
+
+4. **If using IIS or Nginx**, make sure you copied files from `dist/spa/` to the web server directory, not from the frontend root.
+
+5. **Rebuild and restart**:
+   ```bash
+   # Rebuild
+   cd /c/Users/Aquacy/Documents/last/frontend
+   npm run build
+   
+   # Then restart your web server/service
+   ```
+
+**Important**: The `.quasar` folder is created during development (`npm run dev`) and should NOT be served in production. Production should only serve files from `dist/spa/`.
+
 ### Frontend Service Not Starting
 
 **Problem**: Frontend dev server task in Task Scheduler doesn't start or fails
