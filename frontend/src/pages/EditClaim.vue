@@ -21,7 +21,7 @@
       </template>
       <strong>View Mode</strong>
       <div class="text-caption q-mt-xs">
-        You can edit this finalized claim and save changes or save and finalize again.
+        Use <strong>Save Changes</strong> to apply edits and finalize (you will be asked to confirm). If you made no edits, use <strong>Save & Finalize</strong> to finalize without changes.
       </div>
     </q-banner>
 
@@ -639,10 +639,10 @@
             class="col-12 col-md-3"
           />
           <q-btn
-            type="submit"
             color="secondary"
             label="Save Changes"
             :loading="saving"
+            @click.prevent="onSaveChangesInViewMode"
             class="col-12 col-md-3"
           />
         </template>
@@ -720,6 +720,8 @@ const claimId = ref(null);
 const claimStatus = ref('draft');
 const isViewMode = ref(false);
 const route = useRoute();
+/** Snapshot of last saved claim payload (JSON) for change detection in view mode */
+const lastSavedClaimPayload = ref(null);
 
 // Prescription Dialog
 const showPrescriptionDialog = ref(false);
@@ -1277,83 +1279,116 @@ const loadClaimData = async () => {
   }
 };
 
+/** Build the claim payload from current form state (for save and change detection) */
+function buildClaimPayload() {
+  const diagnosesToSave = diagnosesList.value
+    .filter(d => d.description && d.description.trim() !== '');
+  const investigationsToSave = investigationsList.value
+    .filter(i => i.description && i.description.trim() !== '');
+  const prescriptionsToSave = prescriptionsList.value
+    .filter(p => p.description && p.description.trim() !== '');
+  const proceduresToSave = proceduresList.value
+    .filter(p => p.description && p.description.trim() !== '');
+  return {
+    physician_id: procedures.physician_id || services.specialty_code || '',
+    physician_name: procedures.physician_name || '',
+    type_of_service: services.type_of_service,
+    type_of_attendance: services.type_of_attendance,
+    specialty_attended: services.specialty_code || '',
+    service_outcome: services.outcome,
+    is_unbundled: !services.all_inclusive,
+    principal_gdrg: services.principal_gdrg || '',
+    first_visit: services.first_visit || null,
+    second_visit: services.second_visit || null,
+    third_visit: services.third_visit || null,
+    fourth_visit: services.fourth_visit || null,
+    duration_of_spell: services.duration_of_spell || null,
+    diagnoses: diagnosesToSave.map(d => ({
+      id: d.id,
+      description: d.description,
+      icd10: d.icd10,
+      gdrg: d.gdrg,
+      is_chief: d.is_chief,
+    })),
+    investigations: investigationsToSave.map(i => ({
+      id: i.id,
+      description: i.description,
+      date: i.date,
+      gdrg: i.gdrg,
+    })),
+    prescriptions: prescriptionsToSave.map(p => ({
+      id: p.id,
+      description: p.description,
+      code: p.code,
+      price: p.price,
+      quantity: p.quantity,
+      total_cost: p.total_cost,
+      date: p.date,
+      dose: p.dose || '',
+      frequency: p.frequency || '',
+      duration: p.duration || '',
+      unparsed: p.unparsed || '',
+    })),
+    procedures: proceduresToSave.map(p => ({
+      description: p.description,
+      date: p.date,
+      gdrg: p.gdrg,
+    })),
+  };
+}
+
+/** View mode: Save Changes = save edits and finalize (with confirm). If no edits, prompt to use Save & Finalize. */
+const onSaveChangesInViewMode = async () => {
+  const currentPayload = JSON.stringify(buildClaimPayload());
+  if (lastSavedClaimPayload.value !== null && currentPayload === lastSavedClaimPayload.value) {
+    $q.dialog({
+      title: 'No Changes Made',
+      message: 'No changes were made to the claim. To finalize without editing, please use the "Save & Finalize" button.',
+      ok: 'OK',
+    });
+    return;
+  }
+  $q.dialog({
+    title: 'Save Changes and Finalize',
+    message: 'The claim will be updated with your changes and set as finalized. Do you want to continue?',
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    saving.value = true;
+    try {
+      await saveClaim(null);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await claimsAPI.finalize(claimId.value);
+      $q.notify({
+        type: 'positive',
+        message: 'Claim updated and finalized successfully',
+      });
+      $router.push('/claims');
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to save and finalize claim',
+      });
+    } finally {
+      saving.value = false;
+    }
+  });
+};
+
 const saveClaim = async (e) => {
   if (e) {
     e.preventDefault();
   }
   saving.value = true;
   try {
-    // Don't navigate away - just save
-    // Filter out empty entries
-    const diagnosesToSave = diagnosesList.value
-      .filter(d => d.description && d.description.trim() !== '');
-    
-    const investigationsToSave = investigationsList.value
-      .filter(i => i.description && i.description.trim() !== '');
-    
-    const prescriptionsToSave = prescriptionsList.value
-      .filter(p => p.description && p.description.trim() !== '');
-    
-    // Filter out empty procedures
-    const proceduresToSave = proceduresList.value
-      .filter(p => p.description && p.description.trim() !== '');
-    
-    const claimData = {
-      physician_id: procedures.physician_id || services.specialty_code || '',
-      physician_name: procedures.physician_name || '',
-      type_of_service: services.type_of_service,
-      type_of_attendance: services.type_of_attendance,
-      specialty_attended: services.specialty_code || '',
-      service_outcome: services.outcome,
-      is_unbundled: !services.all_inclusive,
-      principal_gdrg: services.principal_gdrg || '',
-      first_visit: services.first_visit || null,
-      second_visit: services.second_visit || null,
-      third_visit: services.third_visit || null,
-      fourth_visit: services.fourth_visit || null,
-      duration_of_spell: services.duration_of_spell || null,
-      diagnoses: diagnosesToSave.map(d => ({
-        id: d.id,
-        description: d.description,
-        icd10: d.icd10,
-        gdrg: d.gdrg,
-        is_chief: d.is_chief,
-      })),
-      investigations: investigationsToSave.map(i => ({
-        id: i.id,
-        description: i.description,
-        date: i.date,
-        gdrg: i.gdrg,
-      })),
-      prescriptions: prescriptionsToSave.map(p => ({
-        id: p.id,
-        description: p.description,
-        code: p.code,
-        price: p.price,
-        quantity: p.quantity,
-        total_cost: p.total_cost,
-        date: p.date,
-        dose: p.dose || '',
-        frequency: p.frequency || '',
-        duration: p.duration || '',
-        unparsed: p.unparsed || '',
-      })),
-      procedures: proceduresToSave.map(p => ({
-        description: p.description,
-        date: p.date,
-        gdrg: p.gdrg,
-      })),
-    };
-    
+    const claimData = buildClaimPayload();
     await claimsAPI.updateDetailed(claimId.value, claimData);
-    
     $q.notify({
       type: 'positive',
       message: 'Claim updated successfully',
     });
-    
-    // Reload the data to show updated values
     await loadClaimData();
+    lastSavedClaimPayload.value = JSON.stringify(buildClaimPayload());
   } catch (error) {
     $q.notify({
       type: 'negative',
@@ -1394,7 +1429,8 @@ onMounted(async () => {
     }
   }
   
-  loadClaimData();
+  await loadClaimData();
+  lastSavedClaimPayload.value = JSON.stringify(buildClaimPayload());
 });
 </script>
 

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.store_stock import StoreStock, StockStatus
@@ -125,7 +125,8 @@ def check_user_is_department_head(db: Session, user_id: int, store_id: int) -> b
 def add_stock(
     stock_data: StoreStockCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "create"))
 ):
     """
     Add new stock to a store.
@@ -251,6 +252,7 @@ def add_stock(
 
 @router.get("", response_model=List[StoreStockResponse])
 def get_stock(
+    _module_check: User = Depends(require_module_permission("inventory", "read")),
     store_id: Optional[int] = Query(None, description="Filter by store ID"),
     product_code: Optional[str] = Query(None, description="Filter by product code"),
     status: Optional[str] = Query(None, description="Filter by status (pending, approved, rejected, expired)"),
@@ -419,6 +421,7 @@ def approve_stock(
 
 @router.get("/summary/by-product", response_model=List[StoreStockSummaryResponse])
 def get_stock_summary_by_product(
+    _module_check: User = Depends(require_module_permission("inventory", "read")),
     store_id: Optional[int] = Query(None, description="Filter by store ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"]))
@@ -485,7 +488,8 @@ def get_stock_summary_by_product(
 def get_stock_item(
     stock_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "read"))
 ):
     """Get a specific stock entry by ID"""
     stock = db.query(StoreStock).filter(StoreStock.id == stock_id).first()
@@ -526,7 +530,8 @@ def update_stock(
     stock_id: int,
     stock_data: StoreStockUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "update"))
 ):
     """
     Update a stock entry.
@@ -640,7 +645,8 @@ def update_stock(
 def delete_stock(
     stock_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "delete"))
 ):
     """
     Delete a stock entry completely.

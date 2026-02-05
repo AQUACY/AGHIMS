@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.models.audit_log import AuditLog
 from app.models.user import User
 
@@ -55,7 +55,8 @@ def get_audit_logs(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=500, description="Items per page"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get audit logs with filtering options
@@ -133,9 +134,10 @@ def get_audit_logs(
 
 
 @router.get("/roles", response_model=List[str])
-def get_available_roles(
+def get_audit_log_roles(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get list of unique roles from audit logs
@@ -147,7 +149,8 @@ def get_available_roles(
 @router.get("/actions", response_model=List[str])
 def get_available_actions(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get list of unique actions from audit logs
@@ -157,9 +160,10 @@ def get_available_actions(
 
 
 @router.get("/resource-types", response_model=List[str])
-def get_available_resource_types(
+def get_audit_log_resource_types(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get list of unique resource types from audit logs
@@ -169,9 +173,10 @@ def get_available_resource_types(
 
 
 @router.get("/endpoint-paths", response_model=List[str])
-def get_available_endpoint_paths(
+def get_audit_log_endpoint_paths(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get list of unique endpoint paths from audit logs
@@ -181,9 +186,10 @@ def get_available_endpoint_paths(
 
 
 @router.get("/http-methods", response_model=List[str])
-def get_available_http_methods(
+def get_audit_log_http_methods(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get list of unique HTTP methods from audit logs
@@ -196,7 +202,8 @@ def get_available_http_methods(
 def get_audit_log(
     log_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Auditor"]))
+    current_user: User = Depends(require_role(["Admin", "Auditor"])),
+    _module_check: User = Depends(require_module_permission("audit_logs", "read"))
 ):
     """
     Get a specific audit log by ID

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.models.user import User
 from app.models.vendor import Vendor
 
@@ -56,7 +56,8 @@ def get_vendors(
     search: Optional[str] = Query(None, description="Search by name, contact person, phone, or email"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "read"))
 ):
     """Get all vendors with optional search and filter"""
     query = db.query(Vendor)
@@ -125,7 +126,8 @@ def get_vendor(
 def create_vendor(
     vendor_data: VendorCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "create"))
 ):
     """Create a new vendor"""
     # Check if vendor with same name already exists
@@ -159,7 +161,8 @@ def update_vendor(
     vendor_id: int,
     vendor_data: VendorUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "update"))
 ):
     """Update a vendor"""
     vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()
@@ -203,7 +206,8 @@ def update_vendor(
 def delete_vendor(
     vendor_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("inventory", "delete"))
 ):
     """Delete a vendor (Admin only)"""
     vendor = db.query(Vendor).filter(Vendor.id == vendor_id).first()

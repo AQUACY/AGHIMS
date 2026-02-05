@@ -10,7 +10,7 @@ from datetime import date, datetime
 import csv
 import io
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.core.datetime_utils import today
 from app.models.user import User
 from app.models.patient import Patient
@@ -80,7 +80,8 @@ def create_patient(
     request: Request,
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("patients", "create"))
 ):
     """Register a new patient"""
     # Generate card number
@@ -113,7 +114,8 @@ def create_patient(
 async def import_patients_from_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("patients", "create"))
 ):
     """
     Import patients from CSV file
@@ -304,7 +306,8 @@ async def import_patients_from_csv(
 def get_patient_by_card(
     card_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("patients", "read"))
 ):
     """Search patients by card number (case-insensitive, partial match) - returns list of matches"""
     if not card_number or not card_number.strip():
@@ -353,7 +356,8 @@ def get_patient_by_card(
 def search_patient_by_ccc(
     ccc_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("patients", "read"))
 ):
     """Search patients by CCC number, Ghana card number, or insurance ID - returns list of matches"""
     if not ccc_number or not ccc_number.strip():
@@ -395,7 +399,8 @@ def search_patient_by_ccc(
 def search_patient_by_name(
     name: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("patients", "read"))
 ):
     """Search patients by name (case-insensitive, matches first name, surname, or other names)"""
     if not name or not name.strip():
@@ -459,7 +464,8 @@ def search_patient_by_name(
 def search_patient_by_contact(
     contact_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("patients", "read"))
 ):
     """Search patients by contact number (case-insensitive, partial match) - returns list of matches"""
     if not contact_number or not contact_number.strip():
@@ -496,7 +502,8 @@ def search_patient_by_contact(
 def get_patient(
     patient_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("patients", "read"))
 ):
     """Get patient by ID"""
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
@@ -511,7 +518,8 @@ def update_patient(
     patient_id: int,
     patient_data: PatientCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("patients", "update"))
 ):
     """Update patient information"""
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
@@ -549,7 +557,8 @@ def create_encounter(
     procedure_g_drg_code: Optional[str] = None,  # G-DRG code of selected procedure
     procedure_name: Optional[str] = None,  # Service Name of selected procedure
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"]))
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("encounters", "create"))
 ):
     """Create a new encounter for a patient with Service Type (Department) and Procedure"""
     patient = db.query(Patient).filter(Patient.id == patient_id).first()

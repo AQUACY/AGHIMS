@@ -65,6 +65,21 @@
             size="sm"
           />
         </div>
+
+        <div class="row q-gutter-md q-mb-sm">
+          <q-select
+            v-model="filterSpecialty"
+            filled
+            :options="specialtyOptions"
+            label="Specialty"
+            class="col-12 col-md-3"
+            clearable
+            emit-value
+            map-options
+            :hint="specialtyHint"
+            dense
+          />
+        </div>
         
         <div class="row q-gutter-md q-mb-md">
           <q-input
@@ -222,7 +237,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue';
+import { ref, reactive, onMounted, watch, computed } from 'vue';
 import { useClaimsStore } from '../stores/claims';
 import { encountersAPI, claimsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
@@ -255,6 +270,8 @@ const filterEndDate = ref(getTodayDate()); // Default to today
 const filterClaimStatus = ref(null);
 const filterCardNumber = ref('');
 const filterClaimId = ref('');
+const filterSpecialty = ref(null);
+const specialtyOptions = ref([]);
 const filtersLocked = ref(false);
 
 // Pagination
@@ -275,6 +292,12 @@ const claimStatusOptions = [
   { label: 'Finalized', value: 'finalized' },
   { label: 'Reopened', value: 'reopened' },
 ];
+
+const specialtyHint = computed(() => {
+  if (claimType.value === 'ipd') return 'Filter by ward (IPD includes all wards)';
+  if (claimType.value === 'opd' || claimType.value === 'other') return 'Filter by department/clinic';
+  return 'Filter by specialty (department or ward)';
+});
 
 
 const columns = [
@@ -354,6 +377,16 @@ const searchEncounter = async () => {
   }
 };
 
+const loadSpecialties = async () => {
+  try {
+    const res = await claimsAPI.getSpecialties(claimType.value);
+    const list = res.data?.specialties || [];
+    specialtyOptions.value = list.map((s) => ({ label: s, value: s }));
+  } catch (e) {
+    specialtyOptions.value = [];
+  }
+};
+
 const clearFilters = () => {
   // Reset to today's date instead of clearing dates
   filterStartDate.value = getTodayDate();
@@ -361,6 +394,7 @@ const clearFilters = () => {
   filterClaimStatus.value = null;
   filterCardNumber.value = '';
   filterClaimId.value = '';
+  filterSpecialty.value = null;
   searchEncounterId.value = '';
   pagination.value.page = 1; // Reset to first page
   
@@ -404,6 +438,7 @@ const saveFiltersToStorage = () => {
     filterStartDate: filterStartDate.value,
     filterEndDate: filterEndDate.value,
     filterClaimStatus: filterClaimStatus.value,
+    filterSpecialty: filterSpecialty.value,
     searchEncounterId: searchEncounterId.value,
   };
   localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
@@ -417,6 +452,7 @@ const loadFiltersFromStorage = () => {
       claimType.value = filters.claimType ?? null;
       filterCardNumber.value = filters.filterCardNumber || '';
       filterClaimId.value = filters.filterClaimId || '';
+      filterSpecialty.value = filters.filterSpecialty ?? null;
       // Only load saved dates if they exist, otherwise default to today
       filterStartDate.value = filters.filterStartDate || getTodayDate();
       filterEndDate.value = filters.filterEndDate || getTodayDate();
@@ -540,6 +576,7 @@ const loadFinalizedEncounters = async (page = 1) => {
       filterClaimStatus.value || null,
       filterCardNumber.value || null,
       filterClaimId.value || null,
+      filterSpecialty.value || null,
       skip,
       pagination.value.rowsPerPage
     );
@@ -614,7 +651,11 @@ const onRequest = (props) => {
   loadFinalizedEncounters(page);
 };
 
-watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, claimType], () => {
+watch(claimType, () => {
+  loadSpecialties(); // Refresh specialty options (OPD = departments, IPD = wards)
+});
+
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterSpecialty, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
     pagination.value.page = 1; // Reset to first page when filters change
@@ -627,7 +668,7 @@ watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filt
   }
 });
 
-onMounted(() => {
+onMounted(async () => {
   // Check if filters are locked
   const isLocked = localStorage.getItem(FILTERS_LOCK_KEY) === 'true';
   filtersLocked.value = isLocked;
@@ -641,6 +682,7 @@ onMounted(() => {
     filterEndDate.value = getTodayDate();
   }
   
+  await loadSpecialties();
   loadFinalizedEncounters(1);
 });
 </script>

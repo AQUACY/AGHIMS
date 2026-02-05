@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { useModuleSettingsStore } from '../stores/moduleSettings';
 import { Notify } from 'quasar';
 
 const routes = [
@@ -226,6 +227,12 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/module-management',
+        name: 'ModuleManagement',
+        component: () => import('../pages/ModuleManagement.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin' },
+      },
+      {
         path: '/ipd/inventory-debit/:id',
         name: 'InpatientInventoryDebit',
         component: () => import('../pages/InpatientInventoryDebit.vue'),
@@ -357,10 +364,69 @@ const router = createRouter({
   routes,
 });
 
+// Module key mapping for routes
+const routeModuleMap = {
+  'PatientRegistration': 'patients',
+  'PatientProfile': 'patients',
+  'PatientSearchResults': 'patients',
+  'EncountersCalendar': 'encounters',
+  'Vitals': 'vitals',
+  'Consultation': 'consultation',
+  'Billing': 'billing',
+  'Pharmacy': 'pharmacy',
+  'InventoryDebitManagement': 'pharmacy',
+  'PharmacyRequisitions': 'pharmacy',
+  'CreateRequisition': 'pharmacy',
+  'WardStock': 'pharmacy',
+  'Lab': 'lab',
+  'LabResult': 'lab',
+  'LabTemplates': 'lab',
+  'FormattedLabResult': 'lab',
+  'Scan': 'scan',
+  'ScanResult': 'scan',
+  'Xray': 'xray',
+  'XrayResult': 'xray',
+  'Claims': 'claims',
+  'EditClaim': 'claims',
+  'GenerateClaim': 'claims',
+  'IPD': 'ipd',
+  'WardManagement': 'ipd',
+  'StoreManagement': 'ipd',
+  'AdmissionRecommendations': 'ipd',
+  'AdmitPatient': 'ipd',
+  'TransferPatient': 'ipd',
+  'DoctorNursingStation': 'ipd',
+  'AdmissionManager': 'ipd',
+  'BedManagement': 'ipd',
+  'Registers': 'ipd',
+  'DailyWardState': 'ipd',
+  'TransferAcceptance': 'ipd',
+  'OperationTheatreCalendar': 'ipd',
+  'NurseMidDocumentation': 'ipd',
+  'ClinicalReview': 'ipd',
+  'TreatmentSheet': 'ipd',
+  'InpatientInventoryDebit': 'ipd',
+  'BloodTransfusionRequest': 'ipd',
+  'BloodTransfusionLabManagement': 'ipd',
+  'PriceListManagement': 'price_list',
+  'InventoryManagement': 'inventory',
+  'StoreStockManagement': 'inventory',
+  'Icd10DrgMapping': 'icd10_mapping',
+  'StaffManagement': 'staff',
+  'AuditLogs': 'audit_logs',
+  'PatientUpload': 'patients',
+  'AdditionalServicesManagement': 'additional_services',
+  'BloodTransfusionTypesManagement': 'blood_transfusion',
+  'DatabaseManagement': 'database',
+  'MISReport': 'mis_reports',
+  'ModuleManagement': 'staff', // Admin only, use staff module check
+};
+
 // Navigation guard
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   try {
     const authStore = useAuthStore();
+    const moduleSettingsStore = useModuleSettingsStore();
 
     // Initialize auth if needed
     if (!authStore.isAuthenticated && localStorage.getItem('auth_token')) {
@@ -400,6 +466,26 @@ router.beforeEach((to, from, next) => {
         next();
       }
     } else {
+      // Check module status if route has a module mapping
+      const moduleKey = routeModuleMap[to.name];
+      if (moduleKey) {
+        // Fetch module status if not already loaded
+        if (!moduleSettingsStore.modules[moduleKey]) {
+          await moduleSettingsStore.fetchModuleStatus([moduleKey]);
+        }
+        
+        const moduleStatus = moduleSettingsStore.getModuleStatus(moduleKey);
+        if (!moduleStatus.is_active) {
+          Notify.create({
+            type: 'warning',
+            message: 'This module is currently inactive',
+            position: 'top',
+          });
+          next('/'); // Redirect to dashboard
+          return;
+        }
+      }
+      
       next();
     }
   } catch (error) {

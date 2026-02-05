@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.store import Store
@@ -45,7 +45,8 @@ class StoreResponse(BaseModel):
 def get_stores(
     active_only: bool = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("stores", "read"))
 ):
     """Get all stores (or only active ones)"""
     query = db.query(Store)
@@ -61,7 +62,8 @@ def get_stores(
 def get_store(
     store_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("stores", "read"))
 ):
     """Get a specific store by ID"""
     store = db.query(Store).filter(Store.id == store_id).first()
@@ -79,7 +81,8 @@ def get_store(
 def create_store(
     store_data: StoreCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("stores", "create"))
 ):
     """Create a new store (Admin only)"""
     # Check if store name already exists
@@ -115,7 +118,8 @@ def update_store(
     store_id: int,
     store_data: StoreUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("stores", "update"))
 ):
     """Update a store (Admin only)"""
     store = db.query(Store).filter(Store.id == store_id).first()
@@ -160,7 +164,8 @@ def update_store(
 def delete_store(
     store_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("stores", "delete"))
 ):
     """Delete a store (Admin only) - Soft delete by setting is_active to False"""
     store = db.query(Store).filter(Store.id == store_id).first()

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.ward import Ward
@@ -50,7 +50,8 @@ def get_assignments(
     user_id: Optional[int] = None,
     active_only: bool = True,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("staff", "read"))
 ):
     """Get department staff assignments"""
     query = db.query(DepartmentStaffAssignment)
@@ -91,7 +92,8 @@ def get_assignments(
 def create_assignment(
     assignment_data: DepartmentStaffAssignmentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "create"))
 ):
     """Create a department staff assignment (Admin only)"""
     # Verify department exists
@@ -161,7 +163,8 @@ def update_assignment(
     assignment_id: int,
     assignment_data: DepartmentStaffAssignmentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "update"))
 ):
     """Update a department staff assignment (Admin only)"""
     assignment = db.query(DepartmentStaffAssignment).filter(
@@ -213,7 +216,8 @@ def update_assignment(
 def delete_assignment(
     assignment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "delete"))
 ):
     """Delete a department staff assignment (Admin only) - Soft delete"""
     assignment = db.query(DepartmentStaffAssignment).filter(

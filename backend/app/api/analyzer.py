@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.core.config import settings
 from app.models.user import User
 from app.services.astm_parser import ASTMParser
@@ -34,7 +34,8 @@ class AnalyzerStatusResponse(BaseModel):
 
 @router.get("/status", response_model=AnalyzerStatusResponse)
 def get_analyzer_status(
-    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("lab", "read"))
 ):
     """Get analyzer server status"""
     server = get_analyzer_server()
@@ -66,7 +67,8 @@ def get_analyzer_status(
 @router.post("/test-parse")
 def test_parse_astm(
     request: TestASTMRequest,
-    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("lab", "read"))
 ):
     """
     Test ASTM message parsing (for development/testing)
@@ -193,7 +195,8 @@ def test_map_results(
 
 @router.post("/restart")
 def restart_analyzer_server(
-    current_user: User = Depends(require_role(["Lab Head", "Admin"]))
+    current_user: User = Depends(require_role(["Lab Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("lab", "update"))
 ):
     """Restart the analyzer server"""
     server = get_analyzer_server()

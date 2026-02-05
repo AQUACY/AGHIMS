@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_module_permission
 from app.models.user import User
 from app.models.encounter import Encounter
 from app.models.claim import Claim, ClaimStatus
@@ -176,7 +176,8 @@ class ClaimResponse(BaseModel):
 def create_claim(
     claim_data: ClaimCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create"))
 ):
     """Create a new claim from an encounter (OPD) or ward admission (IPD)"""
     from app.models.ward_admission import WardAdmission
@@ -656,7 +657,8 @@ def create_claim(
 def finalize_claim(
     claim_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update"))
 ):
     """Finalize a claim"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
@@ -689,7 +691,8 @@ def finalize_claim(
 def reopen_claim(
     claim_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update"))
 ):
     """Reopen a finalized claim for corrections"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
@@ -707,7 +710,8 @@ def regenerate_claim(
     claim_id: int,
     claim_data: ClaimCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update"))
 ):
     """Regenerate a claim by deleting existing details and recreating from encounter (OPD) or ward admission (IPD)"""
     from app.models.ward_admission import WardAdmission
@@ -1163,7 +1167,8 @@ def export_claims_by_date(
     start_date: date,
     end_date: date,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
     """Export claims within a date range as XML"""
     start_dt = datetime.combine(start_date, datetime.min.time())
@@ -1184,7 +1189,8 @@ def export_claims_by_date(
 def export_claim_xml(
     claim_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
     """Export a single claim as XML"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
@@ -1216,6 +1222,64 @@ class EligibleEncountersResponse(BaseModel):
     limit: int
 
 
+class SpecialtiesResponse(BaseModel):
+    """List of specialty names for filtering (OPD = departments, IPD = wards)"""
+    specialties: List[str]
+
+
+@router.get("/specialties", response_model=SpecialtiesResponse)
+def get_claims_specialties(
+    claim_type: Optional[str] = None,  # 'opd', 'ipd', or None for both (combined)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
+):
+    """
+    Get distinct specialties for filtering finalized encounters.
+    - OPD: distinct encounter.department (clinics/departments)
+    - IPD: distinct ward names (all wards; vetters can filter by ward/specialty)
+    - All: combined list from both
+    """
+    from sqlalchemy import distinct, func
+    from app.models.ward_admission import WardAdmission
+    from app.models.consultation_notes import ConsultationNotes
+    from sqlalchemy import or_, and_
+
+    specialties = []
+    if claim_type in (None, "opd", "other"):
+        # OPD/Other: distinct departments from finalized encounters with CCC
+        opd_query = db.query(Encounter.department).filter(
+            Encounter.status == "finalized",
+            Encounter.ccc_number.isnot(None),
+            Encounter.ccc_number != "",
+            Encounter.archived == False,
+            Encounter.department.isnot(None),
+            Encounter.department != ""
+        ).distinct().order_by(Encounter.department)
+        opd_rows = opd_query.all()
+        for row in opd_rows:
+            if row[0] and row[0].strip() and row[0].strip() not in specialties:
+                specialties.append(row[0].strip())
+    if claim_type in (None, "ipd"):
+        # IPD: distinct wards from discharged ward admissions with CCC
+        ipd_query = db.query(WardAdmission.ward).join(Encounter).filter(
+            WardAdmission.discharged_at.isnot(None),
+            WardAdmission.ward.isnot(None),
+            WardAdmission.ward != "",
+            or_(
+                and_(WardAdmission.ccc_number.isnot(None), WardAdmission.ccc_number != ""),
+                and_(Encounter.ccc_number.isnot(None), Encounter.ccc_number != "")
+            )
+        ).distinct().order_by(WardAdmission.ward)
+        ipd_rows = ipd_query.all()
+        for row in ipd_rows:
+            if row[0] and row[0].strip() and row[0].strip() not in specialties:
+                specialties.append(row[0].strip())
+    # Sort for consistent display when combined
+    specialties.sort(key=lambda s: (s or "").lower())
+    return SpecialtiesResponse(specialties=specialties)
+
+
 @router.get("/eligible-encounters", response_model=EligibleEncountersResponse)
 def get_eligible_encounters_for_claims(
     claim_type: Optional[str] = None,  # 'opd' or 'ipd'
@@ -1224,16 +1288,18 @@ def get_eligible_encounters_for_claims(
     claim_status: Optional[str] = None,  # Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
     card_number: Optional[str] = None,  # Filter by patient card number
     claim_id: Optional[str] = None,  # Filter by claim ID (e.g., "CLA-XXXXX")
+    specialty: Optional[str] = None,  # Filter by specialty: OPD = encounter.department, IPD = ward (all wards if not set)
     skip: int = 0,  # Pagination offset
     limit: int = 50,  # Pagination limit
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
     """
     Get finalized encounters with CCC numbers that are eligible for claim generation.
     Only encounters with active insurance (CCC number) and finalized status are returned.
     
-    For IPD claims, returns discharged ward admissions instead of encounters.
+    For IPD claims, returns discharged ward admissions (all wards); use specialty to filter by ward.
     
     Filters:
     - claim_type: 'opd', 'ipd', 'other', or None for all
@@ -1242,11 +1308,12 @@ def get_eligible_encounters_for_claims(
     - claim_status: Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
     - card_number: Filter by patient card number (partial match supported)
     - claim_id: Filter by claim ID (e.g., "CLA-XXXXX")
+    - specialty: Filter by specialty (OPD = department/clinic, IPD = ward name)
     """
     from sqlalchemy.orm import joinedload
     from datetime import datetime
     
-    # Handle IPD claims separately - return discharged ward admissions
+    # Handle IPD claims separately - return discharged ward admissions (all wards; specialty filters by ward)
     if claim_type == 'ipd':
         return get_eligible_ipd_ward_admissions_for_claims(
             start_date=start_date,
@@ -1254,6 +1321,7 @@ def get_eligible_encounters_for_claims(
             claim_status=claim_status,
             card_number=card_number,
             claim_id=claim_id,
+            specialty=specialty,
             skip=skip,
             limit=limit,
             db=db,
@@ -1315,6 +1383,10 @@ def get_eligible_encounters_for_claims(
     
     # Add LEFT JOIN for claims (to filter by claim status)
     query = query.outerjoin(Claim, Claim.encounter_id == Encounter.id)
+    
+    # Apply specialty filter (OPD: by encounter.department)
+    if specialty and specialty.strip():
+        query = query.filter(Encounter.department == specialty.strip())
     
     # Apply claim_type filter at database level using consultation notes outcome
     if claim_type == 'opd':
@@ -1400,6 +1472,8 @@ def get_eligible_encounters_for_claims(
             claim_id_clean = claim_id.strip()
             if claim_id_clean:
                 ipd_count_query = ipd_count_query.filter(Claim.claim_id == claim_id_clean)
+        if specialty and specialty.strip():
+            ipd_count_query = ipd_count_query.filter(WardAdmission.ward == specialty.strip())
         
         ipd_total = ipd_count_query.count()
         
@@ -1444,13 +1518,14 @@ def get_eligible_encounters_for_claims(
             }
             result.append(encounter_data)
         
-        # Get IPD results (load enough to cover the page range)
+        # Get IPD results (load enough to cover the page range); IPD includes all wards, specialty filters by ward
         ipd_response = get_eligible_ipd_ward_admissions_for_claims(
             start_date=start_date,
             end_date=end_date,
             claim_status=claim_status,
             card_number=card_number,
             claim_id=claim_id,
+            specialty=specialty,
             skip=0,
             limit=ipd_load_limit,
             db=db,
@@ -1515,12 +1590,13 @@ def get_eligible_ipd_ward_admissions_for_claims(
     claim_status: Optional[str] = None,
     card_number: Optional[str] = None,
     claim_id: Optional[str] = None,
+    specialty: Optional[str] = None,  # Filter by ward (IPD covers all wards; this narrows by ward/specialty)
     skip: int = 0,
     limit: int = 50,
     db: Session = None,
     current_user: User = None
 ):
-    """Get discharged ward admissions eligible for IPD claim generation"""
+    """Get discharged ward admissions eligible for IPD claim generation. IPD includes all wards; optional specialty filters by ward."""
     from app.models.ward_admission import WardAdmission
     from app.models.admission import AdmissionRecommendation
     from app.models.patient import Patient
@@ -1599,6 +1675,10 @@ def get_eligible_ipd_ward_admissions_for_claims(
             # Specific status: claim must exist and have matching status
             query = query.filter(Claim.status == claim_status)
     
+    # Apply specialty filter (IPD: by ward name; when not set, all wards are included)
+    if specialty and specialty.strip():
+        query = query.filter(WardAdmission.ward == specialty.strip())
+    
     # Get total count efficiently using COUNT query
     total_count = query.count()
     
@@ -1652,7 +1732,8 @@ def get_eligible_ipd_ward_admissions_for_claims(
 @router.get("/", response_model=List[ClaimResponse])
 def get_all_claims(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
     """Get all claims"""
     claims = db.query(Claim).order_by(Claim.created_at.desc()).all()
@@ -1663,7 +1744,8 @@ def get_all_claims(
 def get_claim(
     claim_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
     """Get a single claim by ID"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
@@ -1676,7 +1758,8 @@ def get_claim(
 def get_claim_edit_details(
     claim_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
     """Get full encounter details for claim editing"""
     from sqlalchemy.orm import joinedload
@@ -2433,7 +2516,8 @@ def update_claim(
     claim_id: int,
     claim_data: ClaimCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update"))
 ):
     """Update a draft or reopened claim (simple update)"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
@@ -2464,7 +2548,8 @@ def update_claim_detailed(
     claim_id: int,
     claim_data: ClaimDetailedUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update"))
 ):
     """Update a draft, reopened, or finalized claim with detailed information"""
     claim = db.query(Claim).filter(Claim.id == claim_id).first()

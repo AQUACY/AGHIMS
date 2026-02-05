@@ -286,18 +286,20 @@
 
         <q-item
           v-if="canAccess(['Billing', 'Admin'])"
-          clickable
+          :clickable="isModuleActive('billing')"
           v-ripple
-          :to="{ name: 'Billing' }"
-          class="glass-nav-item"
+          :to="isModuleActive('billing') ? { name: 'Billing' } : null"
+          :class="['glass-nav-item', { 'module-inactive': !isModuleActive('billing') }]"
           active-class="glass-nav-active"
+          @click="!isModuleActive('billing') && $q.notify({ type: 'warning', message: 'Billing module is not active', position: 'top' })"
         >
           <q-item-section avatar>
-            <q-icon name="receipt" />
+            <q-icon name="receipt" :class="{ 'text-grey-6': !isModuleActive('billing') }" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Billing</q-item-label>
+            <q-item-label :class="{ 'text-grey-6': !isModuleActive('billing') }">Billing</q-item-label>
           </q-item-section>
+          <q-tooltip v-if="!isModuleActive('billing')">Module not active</q-tooltip>
         </q-item>
 
         <q-item
@@ -397,18 +399,20 @@
 
         <q-item
           v-if="canAccess(['Claims', 'Admin', 'Doctor', 'PA'])"
-          clickable
+          :clickable="isModuleActive('claims')"
           v-ripple
-          :to="{ name: 'Claims' }"
-          class="glass-nav-item"
+          :to="isModuleActive('claims') ? { name: 'Claims' } : null"
+          :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
           active-class="glass-nav-active"
+          @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
         >
           <q-item-section avatar>
-            <q-icon name="description" />
+            <q-icon name="description" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Claims</q-item-label>
+            <q-item-label :class="{ 'text-grey-6': !isModuleActive('claims') }">Claims</q-item-label>
           </q-item-section>
+          <q-tooltip v-if="!isModuleActive('claims')">Module not active</q-tooltip>
         </q-item>
 
         <q-item
@@ -565,6 +569,21 @@
           </q-item-section>
         </q-item>
         <q-item
+          v-if="canAccess(['Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'ModuleManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="settings_applications" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Module Management</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
           v-if="canAccess(['Admin', 'Auditor'])"
           clickable
           v-ripple
@@ -616,6 +635,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
+import { useModuleSettingsStore } from '../stores/moduleSettings';
 import { useQuasar } from 'quasar';
 import { patientsAPI, notificationsAPI } from '../services/api';
 import NotificationsPanel from '../components/NotificationsPanel.vue';
@@ -624,6 +644,7 @@ const $q = useQuasar();
 const router = useRouter();
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
+const moduleSettingsStore = useModuleSettingsStore();
 const drawerOpen = ref(true);
 
 // Session timer
@@ -1087,6 +1108,16 @@ const searchByContact = async () => {
 
 const canAccess = (roles) => authStore.canAccess(roles);
 
+// Helper function to check if a module is active
+const isModuleActive = (moduleKey) => {
+  return moduleSettingsStore.isModuleActive(moduleKey);
+};
+
+// Helper function to get module status for navigation
+const getModuleStatus = (moduleKey) => {
+  return moduleSettingsStore.getModuleStatus(moduleKey);
+};
+
 const goToProfile = () => {
   router.push('/profile');
 };
@@ -1139,7 +1170,25 @@ const stopNotificationPolling = () => {
 };
 
 // Start timer when component mounts
+// Fetch module statuses on mount
+const loadModuleStatuses = async () => {
+  // Load status for all main modules
+  const mainModules = [
+    'patients', 'encounters', 'vitals', 'consultation', 'billing',
+    'pharmacy', 'lab', 'scan', 'xray', 'claims', 'ipd',
+    'price_list', 'inventory', 'staff', 'audit_logs',
+    'database', 'mis_reports', 'icd10_mapping', 'wards', 'stores',
+    'blood_transfusion', 'additional_services'
+  ];
+  try {
+    await moduleSettingsStore.fetchModuleStatus(mainModules);
+  } catch (error) {
+    console.error('Error loading module statuses:', error);
+  }
+};
+
 onMounted(() => {
+  loadModuleStatuses();
   // Only set up timer if authenticated
   // This prevents errors on login page where MainLayout might be loaded but not displayed
   if (authStore.isAuthenticated && authStore.token) {
@@ -1225,6 +1274,16 @@ watch(() => authStore.token, (token) => {
   background: rgba(46, 139, 87, 0.25) !important;
   border: 1px solid rgba(255, 215, 0, 0.4);
   box-shadow: 0 4px 16px rgba(46, 139, 87, 0.4);
+}
+
+.module-inactive {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+.module-inactive:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  transform: none !important;
 }
 
 .q-drawer {

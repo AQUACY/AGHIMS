@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_, func
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.ward_stock import WardStock
@@ -209,7 +209,8 @@ def check_user_is_department_ic_or_deputy(db: Session, user_id: int, department_
 def create_requisition(
     requisition_data: RequisitionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("pharmacy", "create"))
 ):
     """
     Create a new pharmacy requisition from a department.
@@ -378,6 +379,7 @@ def create_requisition(
 
 @router.get("", response_model=List[PharmacyRequisitionResponse])
 def get_requisitions(
+    _module_check: User = Depends(require_module_permission("pharmacy", "read")),
     ward: Optional[str] = Query(None, description="Filter by ward (legacy)"),
     department_id: Optional[int] = Query(None, description="Filter by department ID"),
     store_id: Optional[int] = Query(None, description="Filter by store ID"),
@@ -564,7 +566,8 @@ def get_requisitions(
 def get_requisition(
     requisition_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("pharmacy", "read"))
 ):
     """Get a specific requisition by ID"""
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
@@ -779,7 +782,8 @@ def reject_requisition(
     requisition_id: int,
     rejection_data: RequisitionRejectRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("pharmacy", "update"))
 ):
     """Reject a requisition (Pharmacy Head only)"""
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
@@ -836,7 +840,8 @@ def reject_requisition(
 def cancel_requisition(
     requisition_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("pharmacy", "update"))
 ):
     """Cancel a pending requisition (requester or Admin only)"""
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
@@ -901,7 +906,8 @@ def update_requisition(
     requisition_id: int,
     requisition_data: RequisitionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("pharmacy", "update"))
 ):
     """Update a requisition (only by creator if pending, or Admin can update any)"""
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
@@ -972,7 +978,8 @@ def update_requisition(
 def revert_approval(
     requisition_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("pharmacy", "update"))
 ):
     """
     Revert an approved requisition back to pending (Pharmacy Head only).
@@ -1115,7 +1122,8 @@ def fulfill_requisition(
     requisition_id: int,
     fulfill_data: RequisitionFulfillRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Pharmacy Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("pharmacy", "update"))
 ):
     """Fulfill a requisition (Store Manager, Pharmacy Head, or Admin). Supports partial fulfillment."""
     requisition = db.query(PharmacyRequisition).filter(PharmacyRequisition.id == requisition_id).first()
@@ -1343,7 +1351,8 @@ def fulfill_requisition(
 def revert_fulfillment(
     requisition_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(require_role(["Store Manager", "Pharmacy Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("pharmacy", "update"))
 ):
     """
     Revert fulfillment of a requisition.
@@ -1568,7 +1577,8 @@ def get_ward_stock(
     product_code: Optional[str] = Query(None, description="Filter by product code"),
     store_id: Optional[int] = Query(None, description="Filter by store ID"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("pharmacy", "read"))
 ):
     """Get ward stock for a specific ward/department"""
     from app.models.store_staff_assignment import StoreStaffAssignment
@@ -1625,7 +1635,8 @@ def get_ward_stock_item(
     ward: str,
     product_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("pharmacy", "read"))
 ):
     """Get specific ward stock item"""
     stock = db.query(WardStock).filter(

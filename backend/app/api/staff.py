@@ -11,7 +11,7 @@ from io import BytesIO
 
 from app.core.database import get_db
 from app.core.security import get_password_hash
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.models.user import User
 from app.models.user_role import UserRole
 from sqlalchemy.orm import joinedload
@@ -72,7 +72,8 @@ class UserRoleResponse(BaseModel):
 @router.get("/", response_model=List[StaffResponse])
 def get_all_staff(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "read"))
 ):
     """Get all staff members - Admin only"""
     staff = db.query(User).options(joinedload(User.additional_roles)).all()
@@ -95,7 +96,8 @@ def get_all_staff(
 def create_staff(
     staff_data: StaffCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "create"))
 ):
     """Create a new staff member - Admin only"""
     # Check if username already exists
@@ -220,7 +222,8 @@ def update_staff(
 def delete_staff(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "delete"))
 ):
     """Delete/deactivate a staff member - Admin only"""
     user = db.query(User).filter(User.id == user_id).first()
@@ -377,7 +380,8 @@ def import_staff_from_excel(
 def get_user_roles(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("staff", "read"))
 ):
     """Get all additional roles for a user - Admin only"""
     user = db.query(User).filter(User.id == user_id).first()
@@ -465,6 +469,7 @@ def remove_user_role(
     user_id: int,
     role_id: int,
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("staff", "update")),
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Remove an additional role from a user - Admin only"""
@@ -496,6 +501,7 @@ def remove_user_role_by_name(
     user_id: int,
     role_name: str,
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("staff", "update")),
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Remove an additional role from a user by role name - Admin only"""

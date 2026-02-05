@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, require_role
+from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.ward import Ward, DepartmentType
@@ -46,7 +46,8 @@ def get_wards(
     active_only: bool = False,
     department_type: Optional[DepartmentType] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("wards", "read"))
 ):
     """Get all departments/wards (or only active ones, optionally filtered by type)"""
     query = db.query(Ward)
@@ -65,7 +66,8 @@ def get_wards(
 def get_ward(
     ward_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("wards", "read"))
 ):
     """Get a specific ward by ID"""
     ward = db.query(Ward).filter(Ward.id == ward_id).first()
@@ -83,7 +85,8 @@ def get_ward(
 def create_ward(
     ward_data: WardCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("wards", "create"))
 ):
     """Create a new ward (Admin only)"""
     # Check if ward name already exists
@@ -119,7 +122,8 @@ def update_ward(
     ward_id: int,
     ward_data: WardUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("wards", "update"))
 ):
     """Update a ward (Admin only)"""
     ward = db.query(Ward).filter(Ward.id == ward_id).first()
@@ -164,7 +168,8 @@ def update_ward(
 def delete_ward(
     ward_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("wards", "delete"))
 ):
     """Delete a ward (Admin only) - Soft delete by setting is_active to False"""
     ward = db.query(Ward).filter(Ward.id == ward_id).first()

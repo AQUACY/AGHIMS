@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.models.user import User
 from app.models.lab_result_template import LabResultTemplate
 
@@ -19,7 +19,8 @@ def generate_sample_id(
     source: Optional[str] = None,  # 'opd' or 'inpatient' - if not provided, checks both
     investigation_id: Optional[int] = None,  # Optional: if provided, determines source automatically
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"]))
+    current_user: User = Depends(require_role(["Lab", "Lab Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("lab", "read"))
 ):
     """
     Generate next sequential sample ID in format: YYMMNNNNN
@@ -277,7 +278,8 @@ class LabResultTemplateResponse(BaseModel):
 def create_template(
     template_data: LabResultTemplateCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Lab Head"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head"])),
+    _module_check: User = Depends(require_module_permission("lab", "create"))
 ):
     """Create a new lab result template"""
     # Check if template already exists for this procedure name
@@ -336,7 +338,8 @@ def get_templates(
     g_drg_code: Optional[str] = None,
     is_active: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Lab Head", "Lab"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head", "Lab"])),
+    _module_check: User = Depends(require_module_permission("lab", "read"))
 ):
     """Get all lab result templates, optionally filtered by procedure name, G-DRG code, or active status"""
     query = db.query(LabResultTemplate)
@@ -384,7 +387,8 @@ def get_templates(
 def get_template_by_procedure(
     procedure_name: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("lab", "read"))
 ):
     """Get active template for a specific procedure name"""
     template = db.query(LabResultTemplate).filter(
@@ -480,7 +484,8 @@ def get_available_lab_procedures(
 def get_template(
     template_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Lab Head", "Lab"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head", "Lab"])),
+    _module_check: User = Depends(require_module_permission("lab", "read"))
 ):
     """Get a specific template by ID"""
     template = db.query(LabResultTemplate).filter(LabResultTemplate.id == template_id).first()
@@ -582,7 +587,8 @@ def update_template(
 def delete_template(
     template_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Lab Head"]))
+    current_user: User = Depends(require_role(["Admin", "Lab Head"])),
+    _module_check: User = Depends(require_module_permission("lab", "delete"))
 ):
     """Delete (deactivate) a lab result template"""
     template = db.query(LabResultTemplate).filter(LabResultTemplate.id == template_id).first()

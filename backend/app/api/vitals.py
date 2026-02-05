@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.models.user import User
 from app.models.vital import Vital
 from app.models.encounter import Encounter
@@ -64,7 +64,8 @@ class VitalResponse(BaseModel):
 def get_vitals(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records", "Pharmacy", "Pharmacy Head", "Store Manager"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records", "Pharmacy", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("vitals", "read"))
 ):
     """Get vitals for an encounter"""
     vital = db.query(Vital).filter(Vital.encounter_id == encounter_id).first()
@@ -107,7 +108,8 @@ def get_encounters_with_vitals_by_date(
     date: str,
     card_number: Optional[str] = Query(None, description="Filter by patient card number"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("vitals", "read"))
 ):
     """Get all encounters for a specific date with their vitals, filterable by card number"""
     try:
@@ -174,7 +176,8 @@ def get_encounters_with_vitals_by_date(
 def get_today_encounters_with_vitals(
     card_number: Optional[str] = Query(None, description="Filter by patient card number"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("vitals", "read"))
 ):
     """Get today's encounters with their vitals, filterable by card number"""
     today = datetime.now().date()
@@ -186,7 +189,8 @@ def get_today_encounters_with_vitals(
 def create_vitals(
     vital_data: VitalCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Records"])),
+    _module_check: User = Depends(require_module_permission("vitals", "create"))
 ):
     """Record patient vitals"""
     # Check encounter exists and is in draft status

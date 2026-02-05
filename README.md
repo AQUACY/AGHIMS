@@ -992,6 +992,74 @@ For issues or questions:
 2. Review backend and frontend specific documentation
 3. Check application logs for error messages
 
+## Module Management System
+
+The system includes a comprehensive module management feature that allows administrators to enable/disable specific modules and control user permissions.
+
+### Features
+
+- **Module Activation**: Enable or disable entire modules (e.g., Claims, Billing, Pharmacy)
+- **Granular Permissions**: Control read, create, update, and delete permissions separately
+- **Visual Indicators**: Disabled modules appear faint in the navigation menu
+- **Access Control**: Users are blocked from accessing inactive modules
+- **Data Preservation**: Users can still view data they created even when modules are inactive
+
+### Accessing Module Management
+
+1. Log in as an **Admin** user
+2. Navigate to **Module Management** in the admin section of the sidebar
+3. You'll see a list of all system modules with their current status
+
+### Managing Modules
+
+1. **Toggle Module Active/Inactive**:
+   - Use the toggle switch in the "Active" column to quickly enable/disable a module
+   - When inactive, the module appears faint in navigation and is inaccessible
+
+2. **Edit Permissions**:
+   - Click the edit icon (pencil) in the Actions column
+   - Configure:
+     - **Allow Read**: Users can view data (even when module is inactive)
+     - **Allow Create**: Users can create new records
+     - **Allow Update**: Users can edit existing records
+     - **Allow Delete**: Users can delete records
+   - Click "Save" to apply changes
+
+### Module Categories
+
+Modules are organized by category:
+- **Core**: Essential modules (Patients, Encounters)
+- **Clinical**: Clinical modules (Vitals, Consultation, Lab, etc.)
+- **Administrative**: Administrative modules (Billing, Staff, etc.)
+- **Reports**: Reporting modules (MIS Reports)
+
+### Initializing Module Settings
+
+On first use, run the initialization script to create default module settings:
+
+```bash
+cd /c/Users/Aquacy/Documents/last/backend
+source venv/Scripts/activate
+python init_module_settings.py
+```
+
+This creates default settings for all modules with all permissions enabled.
+
+### How It Works
+
+1. **Navigation**: Disabled modules appear faint with reduced opacity
+2. **Tooltips**: Hovering over disabled modules shows "Module not active"
+3. **Access Control**: Router guards prevent navigation to inactive modules
+4. **API Protection**: Backend endpoints can check module status before allowing operations
+5. **Data Access**: Users can still view their own data even when modules are inactive (if `allow_read` is enabled)
+
+### Example Use Cases
+
+- **Maintenance Mode**: Disable a module during maintenance while preserving data
+- **Gradual Rollout**: Enable modules gradually as staff are trained
+- **Read-Only Mode**: Set `is_active=false` but keep `allow_read=true` to allow viewing but prevent changes
+- **Selective Access**: Disable create/update/delete while keeping read access
+
 ---
 
 **Last Updated**: 2024

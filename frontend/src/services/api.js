@@ -670,7 +670,7 @@ export const priceListAPI = {
 // Claims endpoints
 export const claimsAPI = {
   create: (data) => api.post('/claims/', data),
-  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, skip = 0, limit = 50) => {
+  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, specialty = null, skip = 0, limit = 50) => {
     const params = { skip, limit };
     if (type) params.claim_type = type;
     if (startDate) params.start_date = startDate;
@@ -678,7 +678,13 @@ export const claimsAPI = {
     if (claimStatus) params.claim_status = claimStatus;
     if (cardNumber) params.card_number = cardNumber;
     if (claimId) params.claim_id = claimId;
+    if (specialty) params.specialty = specialty;
     return api.get('/claims/eligible-encounters', { params });
+  },
+  getSpecialties: (claimType = null) => {
+    const params = {};
+    if (claimType) params.claim_type = claimType;
+    return api.get('/claims/specialties', { params });
   },
   get: (claimId) => api.get(`/claims/${claimId}`),
   getAll: () => api.get('/claims/'),
@@ -979,6 +985,24 @@ export const storesAPI = {
   create: (data) => api.post('/stores', data),
   update: (storeId, data) => api.put(`/stores/${storeId}`, data),
   delete: (storeId) => api.delete(`/stores/${storeId}`),
+};
+
+// Module Settings endpoints
+export const moduleSettingsAPI = {
+  getAll: (category = null) => {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    return api.get(`/module-settings?${params.toString()}`);
+  },
+  get: (moduleKey) => api.get(`/module-settings/${moduleKey}`),
+  getStatus: (moduleKey) => api.get(`/module-settings/status/${moduleKey}`),
+  getStatusBatch: (moduleKeys) => {
+    const keys = Array.isArray(moduleKeys) ? moduleKeys.join(',') : moduleKeys;
+    return api.get(`/module-settings/status/batch?module_keys=${keys}`);
+  },
+  update: (moduleKey, data) => api.put(`/module-settings/${moduleKey}`, data),
+  toggle: (moduleKey) => api.put(`/module-settings/${moduleKey}/toggle`),
+  setPermissions: (moduleKey, permissions) => api.put(`/module-settings/${moduleKey}/set-permissions`, permissions),
 };
 
 export const departmentStaffAssignmentsAPI = {

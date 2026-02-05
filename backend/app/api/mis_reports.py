@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date, timedelta
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_module_permission
 from app.models.user import User
 from app.models.encounter import Encounter, EncounterStatus
 from app.models.patient import Patient
@@ -103,7 +103,8 @@ def get_consulting_room_register(
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     department: Optional[str] = Query(None, description="Filter by department(s) - comma-separated for multiple"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Get Consulting Room Register data for DHIMS export
@@ -295,7 +296,8 @@ def export_consulting_room_register(
     department: Optional[str] = Query(None, description="Filter by department(s) - comma-separated for multiple"),
     clinic_name: str = Query("Asesewa Government Hospital", description="Clinic name for header"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Export Consulting Room Register as Excel file matching DHIMS template format
@@ -470,7 +472,8 @@ def get_statement_of_outpatient(
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     departments: Optional[str] = Query(None, description="Comma-separated list of departments"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records"]))
+    current_user: User = Depends(require_role(["Admin", "Records"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Get Statement of Outpatient data for DHIMS export
@@ -656,7 +659,8 @@ def export_statement_of_outpatient(
     clinic_region: str = Query("N/A", description="Clinic region for header"),
     clinic_district: str = Query("N/A", description="Clinic district for header"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records"]))
+    current_user: User = Depends(require_role(["Admin", "Records"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Export Statement of Outpatient as Excel file matching DHIMS template format
@@ -799,7 +803,8 @@ def get_opd_morbidity(
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     departments: Optional[str] = Query(None, description="Comma-separated list of departments"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records"]))
+    current_user: User = Depends(require_role(["Admin", "Records"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Get OPD Morbidity Report data for DHIMS export
@@ -949,7 +954,8 @@ def export_opd_morbidity(
     clinic_region: str = Query("N/A", description="Clinic region for header"),
     clinic_district: str = Query("N/A", description="Clinic district for header"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records"]))
+    current_user: User = Depends(require_role(["Admin", "Records"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Export OPD Morbidity Report as Excel file matching DHIMS template format
@@ -1092,7 +1098,8 @@ def get_inhouse_lab_parameters(
     end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
     departments: Optional[str] = Query(None, description="Comma-separated department names"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Get inhouse lab parameters report - Malaria RDT tests and results
@@ -1182,7 +1189,8 @@ def export_inhouse_lab_parameters(
     end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
     departments: Optional[str] = Query(None, description="Comma-separated department names"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read"))
 ):
     """
     Export inhouse lab parameters report to Excel

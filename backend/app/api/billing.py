@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Union
 from datetime import datetime
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.encounter import Encounter
@@ -186,7 +186,8 @@ class ManualReceiptCreate(BaseModel):
 def create_bill(
     bill_data: BillCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "create"))
 ):
     """Create a bill for an encounter"""
     encounter = db.query(Encounter).filter(Encounter.id == bill_data.encounter_id).first()
@@ -292,7 +293,8 @@ def create_bill(
 def create_receipt(
     receipt_data: ReceiptCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "create"))
 ):
     """Create a receipt for a paid bill with optional itemized payments"""
     bill = db.query(Bill).filter(Bill.id == receipt_data.bill_id).first()
@@ -512,6 +514,7 @@ def update_bill(
     bill_id: int,
     bill_data: BillUpdate,
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("billing", "update")),
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Update a bill - Admin only"""
@@ -591,6 +594,7 @@ def update_bill_item(
     bill_item_id: int,
     item_data: BillItemUpdate,
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("billing", "update")),
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Update a specific bill item - Admin only"""
@@ -644,7 +648,8 @@ def update_bill_item(
 def delete_bill(
     bill_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "delete"))
 ):
     """Delete a bill - Admin only"""
     bill = db.query(Bill).filter(Bill.id == bill_id).first()
@@ -673,7 +678,8 @@ def delete_bill(
 def get_encounter_bills(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users to view bills
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
 ):
     """Get all bills for an encounter - visible to all users so they can see what patient owes"""
     # Query bills and explicitly refresh to ensure we get the latest data
@@ -717,7 +723,8 @@ class BillDetailResponseWithReceipt(BillDetailResponse):
 def get_bill_details(
     bill_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
 ):
     """Get detailed bill information with all bill items and receipt"""
     # Eager load all relationships
@@ -843,7 +850,8 @@ def add_manual_receipt_to_bill_item(
     bill_item_id: int,
     receipt_data: ManualReceiptCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "create"))
 ):
     """Manually add a receipt number for a specific bill item (for auditing)"""
     bill_item = db.query(BillItem).filter(BillItem.id == bill_item_id).first()
@@ -950,7 +958,8 @@ def add_manual_receipt_to_bill_item(
 def delete_receipt_item(
     receipt_item_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "delete"))
 ):
     """Delete a receipt item (manually entered receipt)"""
     receipt_item = db.query(ReceiptItem).filter(ReceiptItem.id == receipt_item_id).first()
@@ -1005,7 +1014,8 @@ def delete_receipt_item(
 def refund_receipt(
     receipt_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "update"))
 ):
     """Refund a receipt (Admin only)"""
     receipt = db.query(Receipt).filter(Receipt.id == receipt_id).first()
@@ -1072,7 +1082,8 @@ class AutoCalculateResponse(BaseModel):
 def auto_calculate_bill_items(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
 ):
     """Auto-calculate bill items. NOTE: Diagnoses are excluded for OPD consultations since the initial service request already covers the diagnosis billing."""
     from app.models.diagnosis import Diagnosis
@@ -1146,7 +1157,8 @@ class RecalculateBillingResponse(BaseModel):
 def get_opd_ccc_for_encounter(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing"]))
+    current_user: User = Depends(require_role(["Admin", "Billing"])),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
 ):
     """Get CCC number from OPD consultation that led to this IPD admission (for auto-detection)"""
     from sqlalchemy import func
@@ -1228,7 +1240,8 @@ def recalculate_billing_with_insurance(
     encounter_id: int,
     request: RecalculateBillingRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "update"))
 ):
     """Recalculate all bill items for an encounter using insurance co-payment rates instead of cash rates.
     Works for both paid and unpaid bills. Returns excess payment information if bills were overpaid.

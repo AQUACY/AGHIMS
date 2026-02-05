@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, require_module_permission
 from app.models.user import User
 from app.services.database_backup import DatabaseBackupService
 from app.services.database_sync import DatabaseSyncService
@@ -39,7 +39,8 @@ class SyncConfigRequest(BaseModel):
 
 @router.get("/backup/export")
 def export_backup(
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "read"))
 ):
     """Export database backup immediately"""
     from pathlib import Path
@@ -104,7 +105,8 @@ def export_backup(
 @router.post("/backup/import")
 def import_backup(
     backup_file: UploadFile = File(...),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "create"))
 ):
     """Import database backup"""
     try:
@@ -156,7 +158,8 @@ def list_backups(
 @router.delete("/backup/{filename}")
 def delete_backup(
     filename: str,
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "delete"))
 ):
     """Delete a backup file"""
     try:
@@ -178,7 +181,8 @@ def delete_backup(
 
 @router.get("/backup/status")
 def get_backup_status(
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "read"))
 ):
     """Get backup configuration and status"""
     try:
@@ -202,7 +206,8 @@ def get_backup_status(
 @router.post("/backup/schedule")
 def configure_backup_schedule(
     schedule: BackupScheduleRequest,
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "update"))
 ):
     """Configure backup schedule (supports multiple times, comma-separated)"""
     try:
@@ -251,7 +256,8 @@ def configure_backup_schedule(
 
 @router.get("/sync/status")
 def get_sync_status(
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "read"))
 ):
     """Get database sync status"""
     try:
@@ -274,7 +280,8 @@ def get_sync_status(
 
 @router.post("/sync/test")
 def test_sync_connection(
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "read"))
 ):
     """Test connection to remote sync database"""
     try:
@@ -293,7 +300,8 @@ def test_sync_connection(
 
 @router.post("/sync/run")
 def run_sync(
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "update"))
 ):
     """Manually trigger database sync"""
     try:
@@ -314,7 +322,8 @@ def run_sync(
 
 @router.get("/info")
 def get_database_info(
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("database", "read"))
 ):
     """Get database information"""
     try:

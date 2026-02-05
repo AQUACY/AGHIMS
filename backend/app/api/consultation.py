@@ -10,8 +10,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from app.core.database import get_db
 from app.core.datetime_utils import utcnow, today
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.models.user import User
+from app.models.module_settings import ModuleSettings
 from app.models.encounter import Encounter, EncounterStatus
 from app.models.diagnosis import Diagnosis
 from app.models.prescription import Prescription
@@ -28,6 +29,20 @@ from app.models.doctor_note_entry import DoctorNoteEntry
 from app.models.consultation_template import ConsultationTemplate
 
 router = APIRouter(prefix="/consultation", tags=["consultation"])
+
+
+def get_investigation_module_key(investigation_type: str) -> str:
+    """Get the module key based on investigation type"""
+    investigation_type_lower = investigation_type.lower() if investigation_type else ""
+    if "lab" in investigation_type_lower:
+        return "lab"
+    elif "scan" in investigation_type_lower:
+        return "scan"
+    elif "xray" in investigation_type_lower or "x-ray" in investigation_type_lower:
+        return "xray"
+    else:
+        # Default to lab if unknown
+        return "lab"
 
 
 def check_active_prescription_alert(
@@ -578,7 +593,8 @@ class InvestigationResponse(BaseModel):
 def create_diagnosis(
     diagnosis_data: DiagnosisCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records"])),
+    _module_check: User = Depends(require_module_permission("consultation", "create"))
 ):
     """Add a diagnosis to an encounter"""
     from app.models.icd10_drg_mapping import ICD10DRGMapping
@@ -649,7 +665,8 @@ def create_diagnosis(
 def get_diagnoses(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("consultation", "read"))
 ):
     """Get all diagnoses for an encounter"""
     diagnoses = db.query(Diagnosis).filter(Diagnosis.encounter_id == encounter_id).all()
@@ -661,7 +678,8 @@ def update_diagnosis(
     diagnosis_id: int,
     diagnosis_data: DiagnosisCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"])),
+    _module_check: User = Depends(require_module_permission("consultation", "update"))
 ):
     """Update a diagnosis"""
     diagnosis = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
@@ -701,7 +719,8 @@ def update_diagnosis(
 def delete_diagnosis(
     diagnosis_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"])),
+    _module_check: User = Depends(require_module_permission("consultation", "delete"))
 ):
     """Delete a diagnosis"""
     diagnosis = db.query(Diagnosis).filter(Diagnosis.id == diagnosis_id).first()
@@ -717,7 +736,8 @@ def delete_diagnosis(
 def create_prescription(
     prescription_data: PrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "PA"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "PA"])),
+    _module_check: User = Depends(require_module_permission("consultation", "create"))
 ):
     """Add a prescription to an encounter"""
     try:
@@ -860,7 +880,8 @@ class DirectPrescriptionCreate(BaseModel):
 def create_direct_prescription(
     prescription_data: DirectPrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("consultation", "create"))
 ):
     """Create a direct prescription (walk-in, no consultation). Always uses base_rate pricing (no co-payment)."""
     from app.models.patient import Patient
@@ -1161,7 +1182,8 @@ def add_prescriber_info_to_response(prescription, db: Session, active_prescripti
 def get_prescriptions(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("consultation", "read"))
 ):
     """Get all prescriptions for an encounter (works even if encounter is archived)"""
     # Verify encounter exists (but don't require it to be non-archived - prescriptions should still be accessible)
@@ -1187,6 +1209,7 @@ def get_prescriptions_by_patient_card(
     card_number: str,
     encounter_id: int,
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("consultation", "read")),
     current_user: User = Depends(get_current_user)
 ):
     """Get prescriptions for a patient (by card number) for a specific encounter"""
@@ -1232,6 +1255,7 @@ def dispense_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(None),
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("consultation", "update")),
     current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Mark a prescription as dispensed - only allowed if bill is paid or bill amount is 0 (except for inpatients)"""
@@ -1308,6 +1332,7 @@ def confirm_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(default=None),
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("consultation", "update")),
     current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
     """Confirm a prescription (allows pharmacy to update details) and automatically generate a bill item"""
@@ -1471,7 +1496,8 @@ def confirm_prescription(
 def unconfirm_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("consultation", "update"))
 ):
     """Revert a confirmed prescription back to pending status (undo confirmation)"""
     from app.models.bill import Bill, BillItem
@@ -1557,7 +1583,8 @@ def unconfirm_prescription(
 def return_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("consultation", "update"))
 ):
     """Return a dispensed prescription (undo dispense - patient couldn't pay)"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
@@ -1579,7 +1606,8 @@ def return_prescription(
 def get_dispensed_prescriptions(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("consultation", "read"))
 ):
     """Get only dispensed prescriptions for an encounter (for billing)"""
     prescriptions = db.query(Prescription).filter(
@@ -1594,7 +1622,8 @@ def update_prescription(
     prescription_id: int,
     prescription_data: PrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"])),
+    _module_check: User = Depends(require_module_permission("consultation", "update"))
 ):
     """Update a prescription"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
@@ -1690,7 +1719,8 @@ def update_prescription(
 def delete_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Records"])),
+    _module_check: User = Depends(require_module_permission("consultation", "delete"))
 ):
     """Delete a prescription"""
     prescription = db.query(Prescription).filter(Prescription.id == prescription_id).first()
@@ -1735,6 +1765,22 @@ def bulk_confirm_investigations(
     
     if len(investigations) != len(bulk_data.investigation_ids):
         raise HTTPException(status_code=404, detail="Some investigations not found")
+    
+    # Check module permissions for each investigation
+    for investigation in investigations:
+        module_key = get_investigation_module_key(investigation.investigation_type)
+        module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+        if module:
+            if not module.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+                )
+            if not module.allow_update:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"You do not have permission to update investigations in the {module.module_name} module"
+                )
     
     confirmed_count = 0
     errors = []
@@ -1983,6 +2029,20 @@ def create_investigation(
     current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Records", "Scan", "Scan Head", "Xray", "Xray Head", "Lab", "Lab Head"]))
 ):
     """Request an investigation (lab, scan, x-ray). Can be from consultation (with encounter_id) or direct walk-in (without encounter_id)"""
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation_data.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot create investigations in this module."
+            )
+        if not module.allow_create:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to create investigations in the {module.module_name} module"
+            )
     from app.services.price_list_service_v2 import get_price_from_all_tables
     from app.models.patient import Patient
     
@@ -2164,7 +2224,20 @@ def get_investigations(
 ):
     """Get all investigations for an encounter"""
     investigations = db.query(Investigation).filter(Investigation.encounter_id == encounter_id).all()
-    return investigations
+    
+    # Filter investigations based on module permissions
+    filtered_investigations = []
+    for inv in investigations:
+        module_key = get_investigation_module_key(inv.investigation_type)
+        module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+        if module:
+            if (module.is_active and module.allow_read) or (not module.is_active and module.allow_read):
+                filtered_investigations.append(inv)
+        else:
+            # If module doesn't exist, allow access (backward compatibility)
+            filtered_investigations.append(inv)
+    
+    return filtered_investigations
 
 
 class InvestigationCancel(BaseModel):
@@ -2183,6 +2256,21 @@ def cancel_investigation(
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+            )
+        if not module.allow_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to update investigations in the {module.module_name} module"
+            )
     
     # Don't allow cancelling already cancelled or completed investigations
     if investigation.status == InvestigationStatus.CANCELLED.value:
@@ -2212,6 +2300,21 @@ def update_investigation(
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+            )
+        if not module.allow_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to update investigations in the {module.module_name} module"
+            )
     
     # Prevent editing if investigation is confirmed by staff
     # Only Admin can override this restriction
@@ -2249,6 +2352,21 @@ def delete_investigation(
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot delete investigations in this module."
+            )
+        if not module.allow_delete:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to delete investigations in the {module.module_name} module"
+            )
     
     # Prevent deleting if investigation is confirmed by staff
     # Only Admin can override this restriction
@@ -2302,7 +2420,20 @@ def get_investigations_by_patient_card(
         query = query.filter(Investigation.investigation_type == investigation_type)
     
     investigations = query.all()
-    return investigations
+    
+    # Filter investigations based on module permissions
+    filtered_investigations = []
+    for inv in investigations:
+        module_key = get_investigation_module_key(inv.investigation_type)
+        module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+        if module:
+            if (module.is_active and module.allow_read) or (not module.is_active and module.allow_read):
+                filtered_investigations.append(inv)
+        else:
+            # If module doesn't exist, allow access (backward compatibility)
+            filtered_investigations.append(inv)
+    
+    return filtered_investigations
 
 
 @router.get("/investigation/list/{investigation_type}", response_model=List[InvestigationResponse])
@@ -2469,6 +2600,21 @@ def update_investigation_details(
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
     
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+            )
+        if not module.allow_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to update investigations in the {module.module_name} module"
+            )
+    
     # Check permissions - only staff matching investigation type or Admin/Head can update
     if current_user.role not in ["Admin", "Lab Head", "Scan Head", "Xray Head", "Scan"]:
         if investigation.investigation_type == "lab" and current_user.role != "Lab":
@@ -2632,6 +2778,21 @@ def revert_investigation_status(
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
     
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+            )
+        if not module.allow_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to update investigations in the {module.module_name} module"
+            )
+    
     # Only allow reverting from completed to confirmed
     if investigation.status != InvestigationStatus.COMPLETED.value:
         raise HTTPException(
@@ -2685,6 +2846,21 @@ def revert_investigation_to_requested(
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+            )
+        if not module.allow_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to update investigations in the {module.module_name} module"
+            )
     
     # Only allow reverting from confirmed to requested
     if investigation.status != InvestigationStatus.CONFIRMED.value:
@@ -2764,6 +2940,21 @@ def confirm_investigation(
     investigation = db.query(Investigation).filter(Investigation.id == investigation_id).first()
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    
+    # Check module permission based on investigation type
+    module_key = get_investigation_module_key(investigation.investigation_type)
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if module:
+        if not module.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"The {module.module_name} module is currently inactive. You cannot update investigations in this module."
+            )
+        if not module.allow_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You do not have permission to update investigations in the {module.module_name} module"
+            )
     
     # Don't allow confirming cancelled investigations
     if investigation.status == InvestigationStatus.CANCELLED.value:
@@ -5567,7 +5758,8 @@ class AdmissionRecommendationResponse(BaseModel):
 @router.get("/admissions", response_model=List[AdmissionRecommendationResponse])
 def get_admission_recommendations(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all admission recommendations with patient and encounter details"""
     from app.models.patient import Patient
@@ -5891,7 +6083,8 @@ def confirm_admission(
     admission_id: int,
     form_data: ConfirmAdmissionRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Confirm an admission recommendation with complete form data"""
     from datetime import datetime
@@ -6088,7 +6281,8 @@ def confirm_admission(
 def revert_admission_confirmation(
     admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Revert admission confirmation - removes from ward and returns to recommendation state"""
     from datetime import datetime
@@ -6193,7 +6387,8 @@ def get_ward_admissions(
     ward: Optional[str] = None,
     include_discharged: Optional[bool] = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get ward admissions - by default only shows active (non-discharged) patients"""
     from app.models.ward_admission import WardAdmission
@@ -6348,7 +6543,8 @@ class TransferPatientRequest(BaseModel):
 def transfer_patient(
     form_data: TransferPatientRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Transfer a patient between wards or beds"""
     from datetime import datetime
@@ -6475,7 +6671,8 @@ def transfer_patient(
 def get_pending_transfers(
     ward: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get pending transfer requests for a ward"""
     from app.models.ward_transfer import WardTransfer
@@ -6526,7 +6723,8 @@ def get_pending_transfers(
 def get_ward_admission(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get a single ward admission by ID"""
     from app.models.ward_admission import WardAdmission
@@ -6657,7 +6855,8 @@ def partial_discharge_patient(
     ward_admission_id: int,
     request: PartialDischargeRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Initiate partial discharge - allows doctor to give final orders before final discharge"""
     from datetime import datetime
@@ -6710,7 +6909,8 @@ def partial_discharge_patient(
 def revert_partial_discharge(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Revert partial discharge - allows staff to undo partial discharge if services were missed"""
     from app.models.ward_admission import WardAdmission
@@ -6749,7 +6949,8 @@ def final_discharge_patient(
     ward_admission_id: int,
     request: FinalDischargeRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Final discharge - checks bills are paid before completing discharge"""
     from datetime import datetime
@@ -6842,7 +7043,8 @@ def update_admission_notes(
     ward_admission_id: int,
     request: UpdateAdmissionNotesRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update admission notes"""
     from datetime import datetime
@@ -6878,7 +7080,8 @@ def create_nurse_note(
     ward_admission_id: int,
     request: CreateNurseNoteRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Create a new nurse note"""
     from app.models.ward_admission import WardAdmission
@@ -6915,7 +7118,8 @@ def create_nurse_note(
 def get_nurse_notes(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all nurse notes for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -6967,7 +7171,8 @@ def create_nurse_mid_documentation(
     ward_admission_id: int,
     request: CreateNurseMidDocumentationRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Create a new nurse mid documentation"""
     from app.models.ward_admission import WardAdmission
@@ -7016,7 +7221,8 @@ def create_nurse_mid_documentation(
 def get_nurse_mid_documentations(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all nurse mid documentations for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -7056,7 +7262,8 @@ def update_nurse_mid_documentation(
     documentation_id: int,
     request: CreateNurseMidDocumentationRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update a nurse mid documentation"""
     from app.models.ward_admission import WardAdmission
@@ -7130,7 +7337,8 @@ def create_inpatient_vital(
     ward_admission_id: int,
     request: CreateInpatientVitalRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Create a new vital record for an inpatient"""
     from app.models.ward_admission import WardAdmission
@@ -7190,7 +7398,8 @@ def create_inpatient_vital(
 def get_inpatient_vitals(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all vital records for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -7233,7 +7442,8 @@ def update_inpatient_vital(
     vital_id: int,
     request: CreateInpatientVitalRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update a vital record for an inpatient"""
     from app.models.ward_admission import WardAdmission
@@ -7308,7 +7518,8 @@ def toggle_nurse_note_strikethrough(
     ward_admission_id: int,
     note_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Toggle strikethrough status of a nurse note"""
     from datetime import datetime
@@ -7365,7 +7576,8 @@ def create_inpatient_clinical_review(
     ward_admission_id: int,
     request: CreateInpatientClinicalReviewRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Create a new clinical review for an inpatient"""
     from app.models.ward_admission import WardAdmission
@@ -7405,7 +7617,8 @@ def create_inpatient_clinical_review(
 def get_inpatient_clinical_reviews(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all clinical reviews for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -7468,7 +7681,8 @@ def update_inpatient_clinical_review(
     clinical_review_id: int,
     request: CreateInpatientClinicalReviewRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update a clinical review for an inpatient"""
     from app.models.ward_admission import WardAdmission
@@ -7520,7 +7734,8 @@ def delete_inpatient_clinical_review(
     ward_admission_id: int,
     clinical_review_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "delete"))
 ):
     """Delete a clinical review (Admin only)"""
     from app.models.ward_admission import WardAdmission
@@ -7570,7 +7785,8 @@ def create_inpatient_diagnosis(
     clinical_review_id: int,
     diagnosis_data: InpatientDiagnosisCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Add a diagnosis to a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -7653,7 +7869,8 @@ def get_inpatient_diagnoses(
     ward_admission_id: int,
     clinical_review_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all diagnoses for a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -7698,7 +7915,8 @@ def delete_inpatient_diagnosis(
     clinical_review_id: int,
     diagnosis_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "delete"))
 ):
     """Delete a diagnosis from a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -7763,7 +7981,8 @@ def create_inpatient_prescription(
     clinical_review_id: int,
     prescription_data: InpatientPrescriptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Add a prescription to a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -7833,7 +8052,8 @@ def get_inpatient_prescriptions(
     ward_admission_id: int,
     clinical_review_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all prescriptions for a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -7882,7 +8102,8 @@ def get_inpatient_prescriptions(
 def get_all_ward_admission_prescriptions(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all DISPENSED prescriptions for a ward admission (for treatment sheet)"""
     from app.models.ward_admission import WardAdmission
@@ -7960,10 +8181,11 @@ def get_all_ward_admission_prescriptions(
 
 
 @router.get("/ward-admissions/{ward_admission_id}/diagnoses/all")
-def get_all_inpatient_diagnoses_for_ward_admission(
+def get_all_ward_diagnoses(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin", "Nurse", "Doctor", "PA"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all diagnoses for a ward admission (across all clinical reviews and from OPD encounter)"""
     from app.models.ward_admission import WardAdmission
@@ -8132,7 +8354,8 @@ def create_treatment_administration(
     ward_admission_id: int,
     administration_data: TreatmentSheetAdministrationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Record medication administration on treatment sheet"""
     from app.models.ward_admission import WardAdmission
@@ -8225,7 +8448,8 @@ def get_treatment_administrations(
     ward_admission_id: int,
     prescription_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all medication administrations for a ward admission"""
     from app.models.ward_admission import WardAdmission
@@ -8272,7 +8496,8 @@ def delete_treatment_administration(
     ward_admission_id: int,
     administration_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "delete"))
 ):
     """Delete a medication administration record (only by creator or Admin)"""
     from app.models.ward_admission import WardAdmission
@@ -8304,12 +8529,14 @@ def delete_treatment_administration(
 
 
 @router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions/{prescription_id}")
+@router.delete("/ward-admissions/{ward_admission_id}/clinical-reviews/{clinical_review_id}/prescriptions/{prescription_id}")
 def delete_inpatient_prescription(
     ward_admission_id: int,
     clinical_review_id: int,
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "delete"))
 ):
     """Delete a prescription from a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -8344,7 +8571,8 @@ def confirm_inpatient_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Confirm an inpatient prescription and add to IPD bill (no payment required)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8519,7 +8747,8 @@ def dispense_inpatient_prescription(
     prescription_id: int,
     dispense_data: Optional[PrescriptionDispense] = Body(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Mark an inpatient prescription as dispensed (no payment check - medications accumulate in IPD bills)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8567,7 +8796,8 @@ def dispense_inpatient_prescription(
 def return_inpatient_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Return a dispensed inpatient prescription (undo dispense)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8602,7 +8832,8 @@ def update_inpatient_prescription(
     prescription_id: int,
     prescription_data: InpatientPrescriptionUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Pharmacy", "Pharmacy Head", "Store Manager"]))
+    current_user: User = Depends(require_role(["Doctor", "Admin", "PA", "Pharmacy", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update an inpatient prescription"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8713,7 +8944,8 @@ def update_inpatient_prescription(
 def unconfirm_inpatient_prescription(
     prescription_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Revert a confirmed inpatient prescription back to pending status (undo confirmation)"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8800,11 +9032,12 @@ def unconfirm_inpatient_prescription(
 
 
 @router.get("/ward-admissions/patient/{card_number}")
-def get_ward_admissions_by_patient_card(
+def get_ward_admissions_by_patient(
     card_number: str,
     include_discharged: Optional[bool] = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Billing", "Admin", "Nurse", "Doctor", "PA", "Records"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Billing", "Admin", "Nurse", "Doctor", "PA", "Records"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get ward admissions for a patient by card number. Set include_discharged=True to include discharged admissions."""
     from app.models.ward_admission import WardAdmission
@@ -8862,10 +9095,11 @@ def get_ward_admissions_by_patient_card(
 
 
 @router.get("/inpatient-prescription/patient/{card_number}")
-def get_inpatient_prescriptions_by_patient_card(
+def get_inpatient_prescriptions_by_patient(
     card_number: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all inpatient prescriptions for a patient by card number"""
     from app.models.inpatient_prescription import InpatientPrescription
@@ -8990,7 +9224,8 @@ def create_inpatient_investigation(
     clinical_review_id: int,
     investigation_data: InpatientInvestigationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Add an investigation to a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -9043,7 +9278,8 @@ def get_inpatient_investigations(
     ward_admission_id: int,
     clinical_review_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all investigations for a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -9087,7 +9323,8 @@ def get_inpatient_investigations(
 def get_all_inpatient_investigations_for_ward_admission(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all investigations for a ward admission (across all clinical reviews)"""
     from app.models.ward_admission import WardAdmission
@@ -9201,7 +9438,8 @@ def delete_inpatient_investigation(
     clinical_review_id: int,
     investigation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "delete"))
 ):
     """Delete an investigation from a clinical review"""
     from app.models.ward_admission import WardAdmission
@@ -9241,7 +9479,8 @@ def get_inpatient_investigations_by_type(
     end_date: Optional[str] = None,  # Filter by end date (YYYY-MM-DD) for date range
     procedure: Optional[str] = None,  # Filter by procedure name
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """
     Get IPD investigations by type with filters
@@ -9466,7 +9705,8 @@ def get_inpatient_investigations_by_type(
 def get_inpatient_investigation(
     investigation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head", "Doctor", "PA", "Nurse"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head", "Doctor", "PA", "Nurse"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get a single IPD investigation by ID"""
     from app.models.inpatient_investigation import InpatientInvestigation
@@ -9585,7 +9825,8 @@ def update_inpatient_investigation_details(
     investigation_id: int,
     update_data: InpatientInvestigationUpdateDetails,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update inpatient investigation details (gdrg_code, procedure_name, investigation_type) - allows staff to change service"""
     from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
@@ -9837,7 +10078,8 @@ def confirm_inpatient_investigation(
     investigation_id: int,
     confirm_data: InpatientInvestigationConfirm = Body(default=InpatientInvestigationConfirm()),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Confirm an IPD investigation and optionally add to IPD bill"""
     from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
@@ -10064,7 +10306,8 @@ def confirm_inpatient_investigation(
 def revert_inpatient_investigation_status(
     investigation_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab Head", "Scan Head", "Xray Head", "Admin"]))
+    current_user: User = Depends(require_role(["Lab Head", "Scan Head", "Xray Head", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Revert IPD investigation status from completed to confirmed (to allow editing results) - Admin and Head roles only"""
     from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
@@ -10118,7 +10361,8 @@ def revert_inpatient_investigation_to_requested(
     investigation_id: int,
     revert_data: InpatientInvestigationRevertToRequested,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Revert IPD investigation status from confirmed to requested - Admin only"""
     from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus
@@ -10294,7 +10538,8 @@ def create_inpatient_surgery(
     ward_admission_id: int,
     surgery_data: InpatientSurgeryCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Create a new surgery record for an inpatient"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10328,7 +10573,8 @@ def create_inpatient_surgery(
 def get_inpatient_surgeries(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all surgeries for a ward admission"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10540,7 +10786,8 @@ def get_inpatient_surgery(
     ward_admission_id: int,
     surgery_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get a single surgery by ID"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10567,7 +10814,8 @@ def update_inpatient_surgery(
     surgery_id: int,
     surgery_data: InpatientSurgeryUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Update a surgery record (including completion)"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -10751,7 +10999,8 @@ def delete_inpatient_surgery(
     ward_admission_id: int,
     surgery_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "delete"))
 ):
     """Delete a surgery record and its corresponding bill item if billed - Admin only"""
     from app.models.inpatient_surgery import InpatientSurgery
@@ -12045,11 +12294,12 @@ class InpatientAdditionalServiceResponse(BaseModel):
 
 
 @router.post("/ward-admissions/{ward_admission_id}/additional-services", response_model=InpatientAdditionalServiceResponse, status_code=status.HTTP_201_CREATED)
-def start_additional_service(
+def create_inpatient_additional_service(
     ward_admission_id: int,
     service_data: InpatientAdditionalServiceCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "create"))
 ):
     """Start an additional service for a patient"""
     from app.models.inpatient_additional_service import InpatientAdditionalService
@@ -12114,7 +12364,8 @@ def get_inpatient_additional_services(
     ward_admission_id: int,
     active_only: Optional[bool] = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Billing"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Billing"])),
+    _module_check: User = Depends(require_module_permission("ipd", "read"))
 ):
     """Get all additional services for a ward admission"""
     from app.models.inpatient_additional_service import InpatientAdditionalService
@@ -12167,12 +12418,13 @@ def get_inpatient_additional_services(
 
 
 @router.put("/ward-admissions/{ward_admission_id}/additional-services/{service_usage_id}/stop", response_model=InpatientAdditionalServiceResponse)
-def stop_additional_service(
+def stop_inpatient_additional_service(
     ward_admission_id: int,
     service_usage_id: int,
     stop_data: InpatientAdditionalServiceStop,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Stop an additional service and automatically bill the patient"""
     from app.models.inpatient_additional_service import InpatientAdditionalService
@@ -13142,7 +13394,8 @@ def delete_encounter_inventory_debit(
 def bulk_confirm_inpatient_investigations(
     bulk_data: BulkConfirmInpatientInvestigations,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"]))
+    current_user: User = Depends(require_role(["Lab", "Scan", "Xray", "Admin", "Lab Head", "Scan Head", "Xray Head"])),
+    _module_check: User = Depends(require_module_permission("ipd", "update"))
 ):
     """Bulk confirm multiple IPD investigation requests"""
     from app.models.inpatient_investigation import InpatientInvestigation, InpatientInvestigationStatus

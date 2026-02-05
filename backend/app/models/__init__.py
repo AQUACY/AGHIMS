@@ -58,6 +58,7 @@ from app.models.department_staff_assignment import DepartmentStaffAssignment, De
 from app.models.store_staff_assignment import StoreStaffAssignment, StoreRole
 from app.models.vendor import Vendor
 from app.models.store_stock import StoreStock, StockStatus
+from app.models.module_settings import ModuleSettings
 
 __all__ = [
     "User",
@@ -135,5 +136,6 @@ __all__ = [
     "Vendor",
     "StoreStock",
     "StockStatus",
+    "ModuleSettings",
 ]
 

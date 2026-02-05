@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.encounter import Encounter, EncounterStatus
@@ -52,7 +52,8 @@ class EncounterUpdate(BaseModel):
 def get_encounter(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
 ):
     """Get encounter by ID"""
     encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
@@ -113,7 +114,8 @@ def get_encounter(
 def get_encounter_bill_total(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
 ):
     """Get total bill amount for an encounter"""
     from app.models.bill import Bill
@@ -133,7 +135,8 @@ def update_encounter_status(
     encounter_id: int,
     new_status: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Records", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "PA", "Records", "Admin"])),
+    _module_check: User = Depends(require_module_permission("encounters", "update"))
 ):
     """Update encounter status"""
     from app.models.bill import Bill
@@ -218,7 +221,8 @@ def update_encounter_status(
 def get_patient_encounters(
     patient_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
 ):
     """Get all encounters for a patient (excluding archived)"""
     encounters = db.query(Encounter).filter(
@@ -233,7 +237,8 @@ def update_encounter(
     encounter_id: int,
     encounter_data: EncounterUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Doctor", "PA", "Admin"]))
+    current_user: User = Depends(require_role(["Records", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("encounters", "update"))
 ):
     """Update encounter details"""
     encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
@@ -372,7 +377,8 @@ def update_encounter(
 def archive_encounter(
     encounter_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("encounters", "delete"))
 ):
     """Archive (soft delete) an encounter - Admin only"""
     encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
@@ -394,7 +400,8 @@ def archive_encounter(
 def get_encounters_by_date(
     date: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
 ):
     """Get all encounters for a specific date (excluding archived)"""
     try:

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import csv
 import io
 from app.core.database import get_db
-from app.core.dependencies import require_role, get_current_user
+from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.models.user import User
 from app.models.icd10_drg_mapping import ICD10DRGMapping
 from app.models.procedure_price import ProcedurePrice
@@ -82,7 +82,8 @@ def create_price_item(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     item_data: PriceItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"]))
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("price_list", "create"))
 ):
     """Create a new price list item by type (Admin and Pharmacy Head only)"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
@@ -203,7 +204,8 @@ def update_price_item(
     item_id: int,
     update: PriceItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"]))
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("price_list", "update"))
 ):
     """Update a single price list item by type and id (Admin and Pharmacy Head only)"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
@@ -356,7 +358,8 @@ def update_price_item(
 async def upload_icd10_drg_mapping(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "create"))
 ):
     """
     Upload ICD-10 to DRG code mapping from CSV or Excel file
@@ -558,6 +561,7 @@ async def upload_price_list_file(
     file_type: str,  # procedure, surgery, product, unmapped_drg
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("price_list", "create")),
     current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head", "Store Manager"]))
 ):
     """Upload Excel price list file by file type"""
@@ -609,7 +613,8 @@ def search_price_items_endpoint(
     service_type: Optional[str] = None,  # Service Type (department/clinic) filter
     file_type: Optional[str] = None,  # Filter by file type: procedure, surgery, product, unmapped_drg
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Nurse", "PA"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Nurse", "PA"])),
+    _module_check: User = Depends(require_module_permission("price_list", "read"))
 ):
     """Search price list items across all tables"""
     results = search_price_items_all_tables(db, search_term, service_type, file_type)
@@ -694,7 +699,8 @@ def search_price_items_endpoint(
 def get_procedures_by_service_type(
     service_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"])),
+    _module_check: User = Depends(require_module_permission("price_list", "read"))
 ):
     """Get procedures grouped by service type. If service_type is provided, returns array. Otherwise returns grouped object."""
     from sqlalchemy import func
@@ -745,7 +751,8 @@ def get_procedures_by_service_type(
 @router.get("/service-types")
 def get_service_types(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # Allow all authenticated users
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("price_list", "read"))
 ):
     """Get all unique service types from procedure prices"""
     from sqlalchemy import distinct
@@ -763,7 +770,8 @@ def search_icd10_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "read"))
 ):
     """Search ICD-10 codes"""
     from sqlalchemy import or_
@@ -806,7 +814,8 @@ def search_icd10_codes(
 def get_drg_codes_from_icd10(
     icd10_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"]))
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "read"))
 ):
     """Get all DRG codes mapped to a specific ICD-10 code"""
     from app.models.icd10_drg_mapping import ICD10DRGMapping
@@ -836,7 +845,8 @@ def search_drg_codes(
     search_term: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"])),
+    _module_check: User = Depends(require_module_permission("price_list", "read"))
 ):
     """Search DRG codes across all sources (procedures, surgeries, unmapped DRG, and existing mappings)"""
     from sqlalchemy import or_
@@ -954,6 +964,7 @@ class ICD10DRGMappingUpdate(BaseModel):
 
 @router.get("/icd10-mappings")
 def list_icd10_drg_mappings(
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "read")),
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
@@ -1021,7 +1032,8 @@ def list_icd10_drg_mappings(
 def create_icd10_drg_mapping(
     mapping_data: ICD10DRGMappingCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "create"))
 ):
     """Create a new ICD-10 DRG mapping"""
     # Allow empty DRG code for unmapped ICD-10 codes
@@ -1101,7 +1113,8 @@ def update_icd10_drg_mapping(
     mapping_id: int,
     mapping_data: ICD10DRGMappingUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "update"))
 ):
     """Update an existing ICD-10 DRG mapping"""
     mapping = db.query(ICD10DRGMapping).filter(ICD10DRGMapping.id == mapping_id).first()
@@ -1161,7 +1174,8 @@ def update_icd10_drg_mapping(
 def delete_icd10_drg_mapping(
     mapping_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin"]))
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "delete"))
 ):
     """Delete an ICD-10 DRG mapping (soft delete by setting is_active to False)"""
     mapping = db.query(ICD10DRGMapping).filter(ICD10DRGMapping.id == mapping_id).first()
@@ -1180,7 +1194,8 @@ def delete_icd10_drg_mapping(
 def export_icd10_drg_mapping_csv(
     is_active: Optional[bool] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor"]))
+    current_user: User = Depends(require_role(["Admin", "Billing", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "read"))
 ):
     """Export ICD-10 DRG mappings as CSV file"""
     query = db.query(ICD10DRGMapping)
