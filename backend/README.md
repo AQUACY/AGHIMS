@@ -199,13 +199,24 @@ When deploying updates to production that include schema changes, you need to ru
 
 #### Running Migrations
 
+Use the **centralized migration runner** (recommended). It runs all pending migrations in order and records them.
+
 1. **Backup your database** (critical step!)
-2. Run the migration script:
+2. Use the **same Python environment** that runs the app (so `sqlalchemy` and `pymysql` are available):
    ```bash
-   python migrate_add_prescription_confirmation.py
+   cd backend
+   # Activate venv so migrations see project dependencies (required on production)
+   # Windows:
+   .\venv\Scripts\activate
+   # Linux/Mac:
+   # source venv/bin/activate
+   pip install -r requirements.txt   # if not already installed
+   python run_migrations.py
    ```
-3. Verify the migration completed successfully
+3. Verify the migration summary shows success for pending migrations
 4. Restart your application
+
+If you see `No module named 'sqlalchemy'` or `No module named 'pymysql'`, the script is not using the environment where dependencies are installed. Activate the project's virtual environment and run `pip install -r requirements.txt` before running `python run_migrations.py` again.
 
 For new installations, migrations are not needed as `init_db.py` creates all tables with the latest schema.
 

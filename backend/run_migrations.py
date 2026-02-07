@@ -2,16 +2,22 @@
 Centralized Migration Runner
 Automatically detects and runs all new migrations in the correct order.
 
-Usage:
+Usage (use the SAME Python/venv that runs the app):
+    cd backend
+    python run_migrations.py
+
+On production (Windows), ensure the virtual environment is activated first:
+    .\venv\Scripts\activate
     python run_migrations.py
 
 This script will:
-1. Load database credentials from .env file
-2. Check if migration_tracker table exists (create if not)
-3. Scan for all migration files (migrate_*.py)
-4. Filter out already executed migrations
-5. Run new migrations in order
-6. Record successful executions
+1. Verify required packages (sqlalchemy, pymysql) are installed
+2. Load database credentials from .env file
+3. Check if migration_tracker table exists (create if not)
+4. Scan for all migration files (migrate_*.py)
+5. Filter out already executed migrations
+6. Run new migrations in order
+7. Record successful executions
 """
 
 import importlib.util
@@ -22,7 +28,42 @@ from typing import List, Dict, Tuple, Union
 import os
 
 # Add app directory to path to import config
-sys.path.insert(0, str(Path(__file__).parent))
+_script_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(_script_dir))
+
+
+def check_migration_dependencies():
+    """Ensure packages required by migrations are installed in this Python environment."""
+    missing = []
+    try:
+        import sqlalchemy  # noqa: F401
+    except ImportError:
+        missing.append("sqlalchemy")
+    try:
+        import pymysql  # noqa: F401
+    except ImportError:
+        missing.append("pymysql")
+    if missing:
+        print("=" * 60)
+        print("MIGRATION DEPENDENCIES MISSING")
+        print("=" * 60)
+        print(f"The following packages are not installed in this Python environment: {', '.join(missing)}")
+        print()
+        print("Migrations are run in the same process as this script, so they use")
+        print("this Python's packages. Install the project dependencies, then run again:")
+        print()
+        print("  pip install -r requirements.txt")
+        print()
+        print("On production (Windows), activate the project's venv first:")
+        print("  cd backend")
+        print("  .\\venv\\Scripts\\activate")
+        print("  pip install -r requirements.txt")
+        print("  python run_migrations.py")
+        print("=" * 60)
+        sys.exit(1)
+
+
+check_migration_dependencies()
 
 try:
     from app.core.config import settings
