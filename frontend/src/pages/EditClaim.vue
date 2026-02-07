@@ -1092,17 +1092,15 @@ const saveAndFinalize = async (e) => {
   }
   saving.value = true;
   try {
-    // First save the claim
-    await saveClaim(e);
-    // Wait a bit to ensure save completed
-    await new Promise(resolve => setTimeout(resolve, 500));
-    // Then finalize
+    // Save claim data directly (do not reload after save to avoid overwriting with stale data)
+    const claimData = buildClaimPayload();
+    await claimsAPI.updateDetailed(claimId.value, claimData);
+    await new Promise(resolve => setTimeout(resolve, 300));
     await claimsAPI.finalize(claimId.value);
     $q.notify({
       type: 'positive',
       message: 'Claim saved and finalized successfully',
     });
-    // Navigate back to claims page
     $router.push('/claims');
   } catch (error) {
     $q.notify({
@@ -1305,34 +1303,34 @@ function buildClaimPayload() {
     duration_of_spell: services.duration_of_spell || null,
     diagnoses: diagnosesToSave.map(d => ({
       id: d.id,
-      description: d.description,
-      icd10: d.icd10,
-      gdrg: d.gdrg,
-      is_chief: d.is_chief,
+      description: d.description || '',
+      icd10: d.icd10 || '',
+      gdrg: d.gdrg || '',
+      is_chief: !!d.is_chief,
     })),
     investigations: investigationsToSave.map(i => ({
       id: i.id,
-      description: i.description,
-      date: i.date,
-      gdrg: i.gdrg,
+      description: i.description || '',
+      date: i.date || '',
+      gdrg: i.gdrg || '',
     })),
     prescriptions: prescriptionsToSave.map(p => ({
       id: p.id,
       description: p.description,
-      code: p.code,
-      price: p.price,
-      quantity: p.quantity,
-      total_cost: p.total_cost,
-      date: p.date,
+      code: p.code || '',
+      price: Number(p.price) || 0,
+      quantity: Number(p.quantity) || 0,
+      total_cost: Number(p.total_cost) || 0,
+      date: p.date || '',
       dose: p.dose || '',
       frequency: p.frequency || '',
       duration: p.duration || '',
       unparsed: p.unparsed || '',
     })),
     procedures: proceduresToSave.map(p => ({
-      description: p.description,
-      date: p.date,
-      gdrg: p.gdrg,
+      description: p.description || '',
+      date: p.date || '',
+      gdrg: p.gdrg || '',
     })),
   };
 }
@@ -1356,8 +1354,9 @@ const onSaveChangesInViewMode = async () => {
   }).onOk(async () => {
     saving.value = true;
     try {
-      await saveClaim(null);
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const claimData = buildClaimPayload();
+      await claimsAPI.updateDetailed(claimId.value, claimData);
+      await new Promise(resolve => setTimeout(resolve, 300));
       await claimsAPI.finalize(claimId.value);
       $q.notify({
         type: 'positive',

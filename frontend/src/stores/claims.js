@@ -69,6 +69,11 @@ export const useClaimsStore = defineStore('claims', {
     async exportClaim(claimId) {
       try {
         const response = await claimsAPI.exportSingle(claimId);
+        if (response.status < 200 || response.status >= 300) {
+          const msg = await this._blobErrorDetail(response.data);
+          Notify.create({ type: 'negative', message: msg || 'Export failed', position: 'top' });
+          return;
+        }
         const blob = new Blob([response.data], { type: 'application/xml' });
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -78,25 +83,40 @@ export const useClaimsStore = defineStore('claims', {
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
-        
-        Notify.create({
-          type: 'positive',
-          message: 'Claim exported successfully',
-          position: 'top',
-        });
+        Notify.create({ type: 'positive', message: 'Claim exported successfully', position: 'top' });
       } catch (error) {
+        const msg = await this._blobErrorDetail(error.response?.data);
         Notify.create({
           type: 'negative',
-          message: error.response?.data?.detail || 'Failed to export claim',
+          message: msg || error.response?.data?.detail || error.message || 'Failed to export claim',
           position: 'top',
         });
         throw error;
       }
     },
 
+    async _blobErrorDetail(blob) {
+      if (!blob || typeof blob.text !== 'function') return null;
+      try {
+        const text = await blob.text();
+        const j = JSON.parse(text);
+        const d = j.detail;
+        if (typeof d === 'string') return d;
+        if (Array.isArray(d)) return d.map((x) => x.msg || JSON.stringify(x)).join('; ');
+        return d ? String(d) : text.slice(0, 200);
+      } catch {
+        return null;
+      }
+    },
+
     async exportByDateRange(startDate, endDate) {
       try {
         const response = await claimsAPI.exportByDateRange(startDate, endDate);
+        if (response.status < 200 || response.status >= 300) {
+          const msg = await this._blobErrorDetail(response.data);
+          Notify.create({ type: 'negative', message: msg || 'Export failed', position: 'top' });
+          return;
+        }
         const blob = new Blob([response.data], { type: 'application/xml' });
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -107,16 +127,12 @@ export const useClaimsStore = defineStore('claims', {
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
-        
-        Notify.create({
-          type: 'positive',
-          message: 'Claims exported successfully',
-          position: 'top',
-        });
+        Notify.create({ type: 'positive', message: 'Claims exported successfully', position: 'top' });
       } catch (error) {
+        const msg = await this._blobErrorDetail(error.response?.data);
         Notify.create({
           type: 'negative',
-          message: error.response?.data?.detail || 'Failed to export claims',
+          message: msg || error.response?.data?.detail || error.message || 'Failed to export claims',
           position: 'top',
         });
         throw error;

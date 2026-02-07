@@ -1933,45 +1933,17 @@ def get_claim_edit_details(
     
     diagnoses_list = []
     if claim_has_been_edited:
-        # Use claim detail table data (respects deletions)
-        # This should include both OPD and IPD diagnoses from when the claim was created
-        # OPD diagnoses should have diagnosis_id set (pointing to OPD encounter diagnosis)
-        # IPD diagnoses should have diagnosis_id as None
+        # Use only claim detail table data so the user sees exactly what they saved
+        # (e.g. dose "80 MG", duration "7 DAYS"). Do not prepend encounter data or
+        # the wrong rows would appear first and overwrite the saved edits in the UI.
         for claim_diag in claim_diagnoses:
             diagnoses_list.append({
-                "id": claim_diag.diagnosis_id if claim_diag.diagnosis_id else claim_diag.id,  # Use diagnosis_id for OPD, claim_diag.id for IPD
+                "id": claim_diag.diagnosis_id if claim_diag.diagnosis_id else claim_diag.id,
                 "description": claim_diag.description,
                 "icd10": claim_diag.icd10,
                 "gdrg": claim_diag.gdrg_code or "",
                 "is_chief": claim_diag.is_chief,
             })
-        
-        # For IPD claims, always include OPD encounter data if it exists (for review and finalization)
-        # This ensures OPD data is visible even if it wasn't saved in claim detail tables
-        # We ALWAYS prepend OPD data to ensure it's visible, even if it might create duplicates
-        # (The frontend can handle duplicates, but missing data is worse)
-        if is_ipd and opd_encounter:
-            # Always add all OPD diagnoses at the beginning
-            opd_diagnoses_to_add = []
-            # Access the relationship to ensure it's loaded - convert to list to force evaluation
-            try:
-                diagnoses_loaded = list(opd_encounter.diagnoses) if hasattr(opd_encounter, 'diagnoses') else []
-                if diagnoses_loaded:
-                    for diag in diagnoses_loaded:
-                        opd_diagnoses_to_add.append({
-                            "id": diag.id,
-                            "description": diag.diagnosis,
-                            "icd10": diag.icd10,
-                            "gdrg": diag.gdrg_code or "",
-                            "is_chief": diag.is_chief,
-                        })
-            except Exception as e:
-                # If there's an error accessing diagnoses, log it but continue
-                pass
-            
-            # Insert OPD diagnoses at the beginning to maintain OPD-first order
-            if opd_diagnoses_to_add:
-                diagnoses_list = opd_diagnoses_to_add + diagnoses_list
     else:
         # First time loading - fallback to encounter diagnoses
         # For IPD claims, include OPD diagnoses first, then IPD
@@ -2046,8 +2018,7 @@ def get_claim_edit_details(
     
     investigations_list = []
     if claim_has_been_edited:
-        # Use claim detail table data (respects deletions)
-        # This should include both OPD and IPD investigations from when the claim was created
+        # Use only claim detail table data so saved edits (e.g. descriptions) are shown
         for claim_inv in claim_investigations:
             investigations_list.append({
                 "id": claim_inv.id,
@@ -2056,32 +2027,6 @@ def get_claim_edit_details(
                 "gdrg": claim_inv.gdrg_code or "",
                 "investigation_type": claim_inv.investigation_type or "",
             })
-        
-        # For IPD claims, always include OPD encounter data if it exists (for review and finalization)
-        # This ensures OPD data is visible even if it wasn't saved in claim detail tables
-        if is_ipd and opd_encounter:
-            # Always add all OPD investigations at the beginning
-            opd_investigations_to_add = []
-            # Access the relationship to ensure it's loaded - convert to list to force evaluation
-            try:
-                investigations_loaded = list(opd_encounter.investigations) if hasattr(opd_encounter, 'investigations') else []
-                if investigations_loaded:
-                    for inv in investigations_loaded:
-                        if inv.status != "cancelled" and inv.gdrg_code:
-                            opd_investigations_to_add.append({
-                                "id": inv.id,
-                                "description": inv.procedure_name or "",
-                                "date": inv.service_date.isoformat() if inv.service_date else opd_encounter.created_at.isoformat(),
-                                "gdrg": inv.gdrg_code or "",
-                                "investigation_type": inv.investigation_type or "",
-                            })
-            except Exception as e:
-                # If there's an error accessing investigations, log it but continue
-                pass
-            
-            # Insert OPD investigations at the beginning to maintain OPD-first order
-            if opd_investigations_to_add:
-                investigations_list = opd_investigations_to_add + investigations_list
     else:
         # First time loading - fallback to encounter investigations
         # For IPD claims, include OPD investigations first, then IPD
@@ -2163,8 +2108,8 @@ def get_claim_edit_details(
     
     prescriptions_list = []
     if claim_has_been_edited:
-        # Use claim detail table data (respects deletions)
-        # This should include both OPD and IPD prescriptions from when the claim was created
+        # Use only claim detail table data so saved edits (dose "80 MG", duration "7 DAYS", etc.) are shown.
+        # Do not prepend OPD encounter data or the form would show original encounter values instead.
         for claim_presc in claim_prescriptions:
             prescriptions_list.append({
                 "id": claim_presc.id,
@@ -2179,40 +2124,6 @@ def get_claim_edit_details(
                 "duration": claim_presc.duration or "",
                 "unparsed": claim_presc.unparsed or "",
             })
-        
-        # For IPD claims, always include OPD encounter data if it exists (for review and finalization)
-        # This ensures OPD data is visible even if it wasn't saved in claim detail tables
-        if is_ipd and opd_encounter:
-            # Always add all OPD prescriptions at the beginning
-            opd_prescriptions_to_add = []
-            # Access the relationship to ensure it's loaded - convert to list to force evaluation
-            try:
-                prescriptions_loaded = list(opd_encounter.prescriptions) if hasattr(opd_encounter, 'prescriptions') else []
-                if prescriptions_loaded:
-                    for presc in prescriptions_loaded:
-                        if presc.dispensed_by and presc.medicine_code:
-                            claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
-                            presc_date = presc.service_date or opd_encounter.created_at
-                            opd_prescriptions_to_add.append({
-                                "id": presc.id,
-                                "description": presc.medicine_name,
-                                "code": presc.medicine_code,
-                                "price": float(claim_amount) if claim_amount else 0.0,
-                                "quantity": presc.quantity,
-                                "total_cost": float(claim_amount * presc.quantity) if claim_amount else 0.0,
-                                "date": presc_date.isoformat(),
-                                "dose": presc.dose or "",
-                                "frequency": presc.frequency or "",
-                                "duration": presc.duration or "",
-                                "unparsed": presc.unparsed or "",
-                            })
-            except Exception as e:
-                # If there's an error accessing prescriptions, log it but continue
-                pass
-            
-            # Insert OPD prescriptions at the beginning to maintain OPD-first order
-            if opd_prescriptions_to_add:
-                prescriptions_list = opd_prescriptions_to_add + prescriptions_list
     else:
         # First time loading - fallback to encounter prescriptions
         # For IPD claims, include OPD prescriptions first, then IPD

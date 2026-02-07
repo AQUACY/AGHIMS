@@ -694,12 +694,13 @@ export const claimsAPI = {
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),
   reopen: (claimId) => api.put(`/claims/${claimId}/reopen`),
   regenerate: (claimId, data) => api.put(`/claims/${claimId}/regenerate`, data),
-  exportSingle: (claimId) => 
-    api.get(`/claims/export/${claimId}`, { responseType: 'blob' }),
-  exportByDateRange: (startDate, endDate) => 
-    api.get('/claims/export/date-range', { 
+  exportSingle: (claimId) =>
+    api.get(`/claims/export/${claimId}`, { responseType: 'blob', timeout: 60000 }),
+  exportByDateRange: (startDate, endDate) =>
+    api.get('/claims/export/date-range', {
       params: { start_date: startDate, end_date: endDate },
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 300000,
     }),
 };
 
