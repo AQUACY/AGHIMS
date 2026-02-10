@@ -149,8 +149,22 @@
           />
         </div>
 
+        <div class="row q-gutter-sm q-mb-sm items-center">
+          <span class="text-caption text-weight-medium">Sort:</span>
+          <q-select
+            v-model="sortBy"
+            :options="sortByOptions"
+            emit-value
+            map-options
+            dense
+            outlined
+            class="col-12 col-sm-4 col-md-3"
+            @update:model-value="onSortChange"
+          />
+        </div>
+
         <q-table
-          :rows="finalizedEncounters"
+          :rows="sortedEncounters"
           :columns="columns"
           row-key="id"
           flat
@@ -161,6 +175,11 @@
           server-side
           :rows-per-page-options="[50]"
         >
+          <template v-slot:body-cell-row_num="props">
+            <q-td :props="props">
+              {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
+            </q-td>
+          </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
               <q-badge
@@ -299,8 +318,38 @@ const specialtyHint = computed(() => {
   return 'Filter by specialty (department or ward)';
 });
 
+// Sort: default (server order), alphabetical by patient, or by encounter ID
+const sortBy = ref('default');
+const sortByOptions = [
+  { label: 'Default (newest first)', value: 'default' },
+  { label: 'Patient (A–Z)', value: 'patient_asc' },
+  { label: 'Patient (Z–A)', value: 'patient_desc' },
+  { label: 'Encounter ID (low → high)', value: 'id_asc' },
+  { label: 'Encounter ID (high → low)', value: 'id_desc' },
+];
+
+const sortedEncounters = computed(() => {
+  const list = finalizedEncounters.value || [];
+  if (sortBy.value === 'default' || list.length === 0) return list;
+  const copy = [...list];
+  if (sortBy.value === 'patient_asc') {
+    copy.sort((a, b) => (a.patient_name || '').localeCompare(b.patient_name || '', undefined, { sensitivity: 'base' }));
+  } else if (sortBy.value === 'patient_desc') {
+    copy.sort((a, b) => (b.patient_name || '').localeCompare(a.patient_name || '', undefined, { sensitivity: 'base' }));
+  } else if (sortBy.value === 'id_asc') {
+    copy.sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  } else if (sortBy.value === 'id_desc') {
+    copy.sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+  }
+  return copy;
+});
+
+const onSortChange = () => {
+  // No need to reload; sortedEncounters computed will update the table
+};
 
 const columns = [
+  { name: 'row_num', label: '#', align: 'left', sortable: false, style: 'width: 60px' },
   { name: 'id', label: 'Encounter ID', field: 'id', align: 'left' },
   { name: 'patient_name', label: 'Patient', field: 'patient_name', align: 'left' },
   { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left' },

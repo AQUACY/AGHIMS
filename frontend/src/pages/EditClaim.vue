@@ -303,13 +303,28 @@
       <!-- Diagnoses -->
       <q-card>
         <q-card-section>
-          <div class="text-h6 q-mb-md">Diagnosis(es)</div>
+          <div class="row items-center q-mb-md">
+            <div class="text-h6">Diagnosis(es)</div>
+            <q-space />
+            <q-btn
+              v-if="claimStatus !== 'finalized' || isViewMode"
+              size="sm"
+              color="primary"
+              icon="add"
+              label="Add Diagnosis"
+              @click="openAddDiagnosisDialog"
+              class="glass-button"
+            />
+          </div>
           <q-table
             :rows="diagnosesList"
             :columns="diagnosisColumns"
             row-key="index"
             flat
             dense
+            v-model:pagination="diagnosisPagination"
+            :rows-per-page-options="[5, 10, 15, 20]"
+            rows-per-page-label="Records per page"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -393,12 +408,27 @@
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
-                <q-input
-                  v-model="investigationsList[props.row.index].description"
+                <q-select
+                  :model-value="investigationsList[props.row.index].description"
+                  :options="investigationSearchOptions"
+                  option-label="service_name"
+                  use-input
+                  input-debounce="250"
+                  fill-input
+                  hide-selected
+                  clearable
                   dense
                   filled
                   :disable="claimStatus === 'finalized' && !isViewMode"
-                />
+                  @filter="filterInvestigationProcedures"
+                  @update:model-value="(val) => onInvestigationSelect(props.row.index, val)"
+                >
+                  <template v-slot:no-option>
+                    <q-item>
+                      <q-item-section class="text-grey">Type to search procedures (lab/scan/x-ray)</q-item-section>
+                    </q-item>
+                  </template>
+                </q-select>
               </q-td>
             </template>
             <template v-slot:body-cell-date="props">
@@ -466,12 +496,27 @@
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
-                <q-input
-                  v-model="prescriptionsList[props.row.index].description"
+                <q-select
+                  :model-value="prescriptionsList[props.row.index].description"
+                  :options="productSearchOptions"
+                  option-label="product_name"
+                  use-input
+                  input-debounce="250"
+                  fill-input
+                  hide-selected
+                  clearable
                   dense
                   filled
                   :disable="claimStatus === 'finalized' && !isViewMode"
-                />
+                  @filter="filterProductSearch"
+                  @update:model-value="(val) => onPrescriptionProductSelect(props.row.index, val)"
+                >
+                  <template v-slot:no-option>
+                    <q-item>
+                      <q-item-section class="text-grey">Type to search medicines</q-item-section>
+                    </q-item>
+                  </template>
+                </q-select>
               </q-td>
             </template>
             <template v-slot:body-cell-price="props">
@@ -648,6 +693,73 @@
         </template>
       </div>
     </q-form>
+
+    <!-- Add Diagnosis Dialog (same format as Consultation form) -->
+    <q-dialog v-model="showDiagnosisDialog">
+      <q-card style="min-width: 420px">
+        <q-card-section>
+          <div class="text-h6">Add Diagnosis</div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="addDiagnosisFromDialog" class="q-gutter-md">
+            <q-select
+              v-model="selectedIcd10"
+              filled
+              :options="icd10Options"
+              label="Search by ICD-10 Code"
+              option-label="display"
+              option-value="icd10_code"
+              use-input
+              input-debounce="300"
+              @filter="filterIcd10Codes"
+              @update:model-value="onIcd10Selected"
+              hint="Search by ICD-10 code or description – diagnosis and G-DRG will be auto-filled"
+              clearable
+            />
+            <q-select
+              v-model="selectedDrgDiagnosis"
+              filled
+              :options="drgDiagnosisOptions"
+              label="OR Search Diagnosis (from Unmapped DRG)"
+              option-label="item_name"
+              option-value="item_code"
+              use-input
+              input-debounce="300"
+              @filter="filterDrgDiagnoses"
+              @update:model-value="onDrgDiagnosisSelected"
+              hint="Search by diagnosis name – G-DRG and description will be auto-filled"
+              clearable
+            />
+            <q-input
+              v-model="claimDiagnosisForm.icd10"
+              filled
+              label="ICD-10 Code *"
+            />
+            <q-input
+              v-model="claimDiagnosisForm.description"
+              filled
+              label="Diagnosis (Description) *"
+              lazy-rules
+              :rules="[(val) => !!val || 'Required']"
+            />
+            <q-input
+              v-model="claimDiagnosisForm.gdrg"
+              filled
+              label="G-DRG Code"
+              hint="Auto-filled from selection or enter manually"
+            />
+            <q-checkbox
+              v-model="claimDiagnosisForm.is_chief"
+              label="Chief Diagnosis"
+            />
+            <q-card-actions align="right">
+              <q-btn label="Cancel" flat v-close-popup @click="resetClaimDiagnosisForm" />
+              <q-btn label="Add" type="submit" color="primary" />
+            </q-card-actions>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
 
     <!-- Prescription Details Dialog -->
     <q-dialog v-model="showPrescriptionDialog">
@@ -831,6 +943,23 @@ const diagnosisColumns = [
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
+const diagnosisPagination = ref({ rowsPerPage: 5, sortBy: 'index', descending: false });
+
+// Add Diagnosis dialog (same format as Consultation form)
+const showDiagnosisDialog = ref(false);
+const selectedIcd10 = ref(null);
+const selectedDrgDiagnosis = ref(null);
+const icd10Options = ref([]);
+const drgDiagnosisOptions = ref([]);
+const allIcd10Codes = ref([]);
+const allDrgDiagnoses = ref([]);
+const claimDiagnosisForm = reactive({
+  description: '',
+  icd10: '',
+  gdrg: '',
+  is_chief: false,
+});
+
 // Investigations
 const investigationsList = ref([
   { index: 0, id: null, description: '', date: '', gdrg: '' },
@@ -847,6 +976,9 @@ const investigationColumns = [
   { name: 'gdrg', label: 'G-DRG', field: 'gdrg', align: 'left' },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
+
+const investigationSearchOptions = ref([]);
+const productSearchOptions = ref([]);
 
 // Prescriptions
 const prescriptionsList = ref([
@@ -943,7 +1075,7 @@ const addInvestigation = () => {
       message: 'Please fill in the empty investigation row',
       timeout: 2000,
     });
-  } else if (investigationsList.value.length < 10) {
+  } else if (investigationsList.value.length < 300) {
     // Add new row if we haven't reached the limit
     investigationsList.value.push({
       index: investigationsList.value.length,
@@ -964,6 +1096,73 @@ const addInvestigation = () => {
       timeout: 2000,
     });
   }
+};
+
+const filterInvestigationProcedures = (val, update) => {
+  update(async () => {
+    if (!val || val.length < 1) {
+      investigationSearchOptions.value = [];
+      return;
+    }
+    try {
+      const res = await priceListAPI.search(val, undefined, 'procedure');
+      investigationSearchOptions.value = res.data || [];
+    } catch (_) {
+      investigationSearchOptions.value = [];
+    }
+  });
+};
+
+const onInvestigationSelect = (index, val) => {
+  const row = investigationsList.value[index];
+  if (val == null || val === '') {
+    row.description = '';
+    row.gdrg = '';
+    return;
+  }
+  if (typeof val === 'object' && val !== null && (val.service_name != null || val.item_name != null)) {
+    row.description = val.service_name || val.item_name || '';
+    row.gdrg = val.g_drg_code || val.item_code || '';
+    return;
+  }
+  row.description = typeof val === 'string' ? val : '';
+};
+
+const filterProductSearch = (val, update) => {
+  update(async () => {
+    if (!val || val.length < 1) {
+      productSearchOptions.value = [];
+      return;
+    }
+    try {
+      const res = await priceListAPI.search(val, undefined, 'product');
+      productSearchOptions.value = res.data || [];
+    } catch (_) {
+      productSearchOptions.value = [];
+    }
+  });
+};
+
+const onPrescriptionProductSelect = (index, val) => {
+  const row = prescriptionsList.value[index];
+  if (val == null || val === '') {
+    row.description = '';
+    row.code = '';
+    row.price = 0;
+    updatePrescriptionTotal(index);
+    return;
+  }
+  if (typeof val === 'object' && val !== null && (val.product_name != null || val.service_name != null || val.medication_code != null)) {
+    row.description = val.product_name || val.service_name || val.item_name || '';
+    row.code = val.medication_code || val.item_code || '';
+    const price = val.claim_amount ?? val.nhia_app ?? val.base_rate ?? val.insured_price ?? 0;
+    row.price = Number(price) || 0;
+    if (row.quantity == null || row.quantity === '') row.quantity = 0;
+    row.total_cost = row.price * row.quantity;
+    updatePrescriptionTotal(index);
+    return;
+  }
+  row.description = typeof val === 'string' ? val : '';
 };
 
 const deleteInvestigation = (index) => {
@@ -994,7 +1193,7 @@ const addPrescription = () => {
       message: 'Please fill in the empty medicine row',
       timeout: 2000,
     });
-  } else if (prescriptionsList.value.length < 10) {
+  } else if (prescriptionsList.value.length < 300) {
     // Add new row if we haven't reached the limit
     prescriptionsList.value.push({
       index: prescriptionsList.value.length,
@@ -1048,17 +1247,150 @@ const deleteDiagnosis = (index) => {
     cancel: true,
     persistent: true
   }).onOk(() => {
-    diagnosesList.value[index].description = '';
-    diagnosesList.value[index].icd10 = '';
-    diagnosesList.value[index].gdrg = '';
-    diagnosesList.value[index].is_chief = false;
-    diagnosesList.value[index].id = null;
+    diagnosesList.value.splice(index, 1);
+    diagnosesList.value.forEach((row, i) => { row.index = i; });
     $q.notify({
       type: 'positive',
       message: 'Diagnosis deleted',
     });
   });
 };
+
+function openAddDiagnosisDialog() {
+  resetClaimDiagnosisForm();
+  loadIcd10AndDrgOptions();
+  showDiagnosisDialog.value = true;
+}
+
+function resetClaimDiagnosisForm() {
+  selectedIcd10.value = null;
+  selectedDrgDiagnosis.value = null;
+  Object.assign(claimDiagnosisForm, {
+    description: '',
+    icd10: '',
+    gdrg: '',
+    is_chief: false,
+  });
+}
+
+async function loadIcd10AndDrgOptions() {
+  try {
+    const [icdRes, drgRes] = await Promise.all([
+      priceListAPI.searchIcd10('', 100),
+      priceListAPI.search('', undefined, 'unmapped_drg'),
+    ]);
+    const results = icdRes.data || [];
+    allIcd10Codes.value = results;
+    icd10Options.value = results.map((item) => ({
+      ...item,
+      display: `${item.icd10_code} - ${item.icd10_description || ''}`,
+    }));
+    allDrgDiagnoses.value = drgRes.data || [];
+    drgDiagnosisOptions.value = allDrgDiagnoses.value;
+  } catch (e) {
+    icd10Options.value = [];
+    drgDiagnosisOptions.value = [];
+  }
+}
+
+const filterIcd10Codes = (val, update, abort) => {
+  if (!val || val.length < 2) {
+    update(() => {
+      icd10Options.value = allIcd10Codes.value.map((item) => ({
+        ...item,
+        display: `${item.icd10_code} - ${item.icd10_description || ''}`,
+      }));
+    });
+    return;
+  }
+  update(async () => {
+    try {
+      const res = await priceListAPI.searchIcd10(val, 50);
+      const results = res.data || [];
+      icd10Options.value = results.map((item) => ({
+        ...item,
+        display: `${item.icd10_code} - ${item.icd10_description || ''}`,
+      }));
+    } catch (_) {
+      icd10Options.value = [];
+    }
+  });
+};
+
+const filterDrgDiagnoses = (val, update, abort) => {
+  update(() => {
+    if (!val) {
+      drgDiagnosisOptions.value = allDrgDiagnoses.value;
+      return;
+    }
+    const term = val.toLowerCase();
+    drgDiagnosisOptions.value = allDrgDiagnoses.value.filter(
+      (d) => (d.item_name || '').toLowerCase().includes(term) || (d.item_code || '').toLowerCase().includes(term)
+    );
+    if (drgDiagnosisOptions.value.length === 0) {
+      priceListAPI.search(val, undefined, 'unmapped_drg').then((res) => {
+        drgDiagnosisOptions.value = res.data || [];
+      }).catch(() => { drgDiagnosisOptions.value = []; });
+    }
+  });
+};
+
+async function onIcd10Selected(icd10Item) {
+  if (!icd10Item) {
+    claimDiagnosisForm.icd10 = '';
+    claimDiagnosisForm.gdrg = '';
+    claimDiagnosisForm.description = '';
+    selectedDrgDiagnosis.value = null;
+    return;
+  }
+  claimDiagnosisForm.icd10 = icd10Item.icd10_code || '';
+  if (icd10Item.icd10_description && !claimDiagnosisForm.description) {
+    claimDiagnosisForm.description = icd10Item.icd10_description;
+  }
+  selectedDrgDiagnosis.value = null;
+  try {
+    const res = await priceListAPI.getDrgCodesFromIcd10(icd10Item.icd10_code);
+    const drgCodes = res.data || [];
+    if (drgCodes.length > 0) {
+      claimDiagnosisForm.gdrg = drgCodes[0].drg_code || '';
+    }
+  } catch (_) {}
+}
+
+function onDrgDiagnosisSelected(drgItem) {
+  if (!drgItem) {
+    claimDiagnosisForm.gdrg = '';
+    claimDiagnosisForm.description = '';
+    selectedIcd10.value = null;
+    return;
+  }
+  claimDiagnosisForm.gdrg = drgItem.item_code || drgItem.g_drg_code || '';
+  claimDiagnosisForm.description = drgItem.item_name || '';
+  if (drgItem.icd10_code && !claimDiagnosisForm.icd10) {
+    claimDiagnosisForm.icd10 = drgItem.icd10_code;
+  }
+  selectedIcd10.value = null;
+}
+
+function addDiagnosisFromDialog() {
+  const d = claimDiagnosisForm;
+  if (!d.description || !d.description.trim()) {
+    $q.notify({ type: 'warning', message: 'Please enter a diagnosis description.' });
+    return;
+  }
+  const nextIndex = diagnosesList.value.length;
+  diagnosesList.value.push({
+    index: nextIndex,
+    id: null,
+    description: (d.description || '').trim(),
+    icd10: (d.icd10 || '').trim(),
+    gdrg: (d.gdrg || '').trim(),
+    is_chief: !!d.is_chief,
+  });
+  resetClaimDiagnosisForm();
+  showDiagnosisDialog.value = false;
+  $q.notify({ type: 'positive', message: 'Diagnosis added', timeout: 2000 });
+}
 
 const deletePrescription = (index) => {
   $q.dialog({
