@@ -34,6 +34,9 @@ def migrate():
     print(f"Connecting to MySQL ({db_host}, database={db_name}) ...")
     sys.stdout.flush()
 
+    # Use long timeouts for ALTER TABLE (can take minutes on busy/large DB)
+    MIGRATION_QUERY_TIMEOUT = 600  # 10 minutes
+
     conn = None
     try:
         conn = pymysql.connect(
@@ -43,8 +46,8 @@ def migrate():
             database=db_name,
             charset='utf8mb4',
             connect_timeout=15,
-            read_timeout=30,
-            write_timeout=30
+            read_timeout=MIGRATION_QUERY_TIMEOUT,
+            write_timeout=MIGRATION_QUERY_TIMEOUT
         )
         cursor = conn.cursor()
 
@@ -55,7 +58,7 @@ def migrate():
         if cursor.fetchone()[0] > 0:
             print("Column claim_procedures.icd10 already exists. Skipping.")
         else:
-            print("Adding icd10 column ...")
+            print("Adding icd10 column (ALTER TABLE may take 1–2 minutes on a busy server) ...")
             sys.stdout.flush()
             cursor.execute("ALTER TABLE claim_procedures ADD COLUMN icd10 VARCHAR(50) NULL AFTER gdrg_code")
             conn.commit()
@@ -63,12 +66,18 @@ def migrate():
         print("Done.")
     except Exception as e:
         if conn:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass  # Connection may already be dead after timeout
         print(f"Migration error: {e}")
         sys.exit(1)
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 if __name__ == '__main__':
     migrate()
