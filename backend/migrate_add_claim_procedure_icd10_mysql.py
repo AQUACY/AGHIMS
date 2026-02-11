@@ -4,15 +4,22 @@ Migration: Add icd10 column to claim_procedures table (MySQL)
 import os
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
 
-env_path = Path(__file__).parent / '.env'
-if env_path.exists():
-    load_dotenv(env_path)
-else:
+# Load .env from script dir (backend) or parent (project root)
+def _load_env():
+    from dotenv import load_dotenv
+    for base in [Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent]:
+        env_path = base / '.env'
+        if env_path.exists():
+            load_dotenv(env_path)
+            return
     load_dotenv()
 
+_load_env()
+
 def migrate():
+    print("Migration: claim_procedures.icd10 ...")
+    sys.stdout.flush()
     try:
         import pymysql
     except ImportError:
@@ -24,6 +31,9 @@ def migrate():
     db_name = os.getenv('DB_NAME') or os.getenv('MYSQL_DATABASE', 'hms')
     db_password = os.getenv('DB_PASSWORD') or os.getenv('MYSQL_PASSWORD', '')
 
+    print(f"Connecting to MySQL ({db_host}, database={db_name}) ...")
+    sys.stdout.flush()
+
     conn = None
     try:
         conn = pymysql.connect(
@@ -31,7 +41,10 @@ def migrate():
             user=db_user,
             password=db_password,
             database=db_name,
-            charset='utf8mb4'
+            charset='utf8mb4',
+            connect_timeout=15,
+            read_timeout=30,
+            write_timeout=30
         )
         cursor = conn.cursor()
 
@@ -42,9 +55,12 @@ def migrate():
         if cursor.fetchone()[0] > 0:
             print("Column claim_procedures.icd10 already exists. Skipping.")
         else:
+            print("Adding icd10 column ...")
+            sys.stdout.flush()
             cursor.execute("ALTER TABLE claim_procedures ADD COLUMN icd10 VARCHAR(50) NULL AFTER gdrg_code")
             conn.commit()
             print("Added icd10 column to claim_procedures.")
+        print("Done.")
     except Exception as e:
         if conn:
             conn.rollback()
