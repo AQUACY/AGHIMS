@@ -58,7 +58,7 @@ def migrate():
         if cursor.fetchone()[0] > 0:
             print("Column claim_procedures.icd10 already exists. Skipping.")
         else:
-            print("Adding icd10 column (ALTER TABLE may take 1–2 minutes on a busy server) ...")
+            print("Adding icd10 column (ALTER TABLE may take 1–2 min; if it hangs, run migrate_add_claim_procedure_icd10_mysql.sql in MySQL instead) ...")
             sys.stdout.flush()
             cursor.execute("ALTER TABLE claim_procedures ADD COLUMN icd10 VARCHAR(50) NULL AFTER gdrg_code")
             conn.commit()
