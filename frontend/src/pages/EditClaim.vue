@@ -224,7 +224,19 @@
       <!-- Procedures (Surgeries) -->
       <q-card>
         <q-card-section>
-          <div class="text-h6 q-mb-md">Surgery(ies)</div>
+          <div class="row items-center q-mb-md">
+            <div class="text-h6">Surgery(ies)</div>
+            <q-space />
+            <q-btn
+              v-if="claimStatus !== 'finalized' || isViewMode"
+              size="sm"
+              color="primary"
+              icon="add"
+              label="Add Surgery"
+              @click="addProcedure"
+              class="glass-button"
+            />
+          </div>
           <div class="row q-gutter-md">
             <div class="col-12">
               <q-input
@@ -251,12 +263,27 @@
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
-                <q-input
-                  v-model="proceduresList[props.row.index].description"
+                <q-select
+                  :model-value="proceduresList[props.row.index].description"
+                  :options="surgerySearchOptions"
+                  option-label="optionLabel"
+                  use-input
+                  input-debounce="250"
+                  fill-input
+                  hide-selected
+                  clearable
                   dense
                   filled
                   :disable="claimStatus === 'finalized' && !isViewMode"
-                />
+                  @filter="filterSurgerySearch"
+                  @update:model-value="(val) => onProcedureSelect(props.row.index, val)"
+                >
+                  <template v-slot:no-option>
+                    <q-item>
+                      <q-item-section class="text-grey">Type to search surgeries / procedures</q-item-section>
+                    </q-item>
+                  </template>
+                </q-select>
               </q-td>
             </template>
             <template v-slot:body-cell-date="props">
@@ -266,6 +293,16 @@
                   dense
                   filled
                   type="date"
+                  :disable="claimStatus === 'finalized' && !isViewMode"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-icd10="props">
+              <q-td :props="props">
+                <q-input
+                  v-model="proceduresList[props.row.index].icd10"
+                  dense
+                  filled
                   :disable="claimStatus === 'finalized' && !isViewMode"
                 />
               </q-td>
@@ -312,7 +349,7 @@
               color="primary"
               icon="add"
               label="Add Diagnosis"
-              @click="openAddDiagnosisDialog"
+              @click="addDiagnosis"
               class="glass-button"
             />
           </div>
@@ -328,12 +365,27 @@
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
-                <q-input
-                  v-model="diagnosesList[props.row.index].description"
+                <q-select
+                  :model-value="diagnosesList[props.row.index].description"
+                  :options="diagnosisSearchOptions"
+                  option-label="display"
+                  use-input
+                  input-debounce="250"
+                  fill-input
+                  hide-selected
+                  clearable
                   dense
                   filled
                   :disable="claimStatus === 'finalized' && !isViewMode"
-                />
+                  @filter="filterDiagnosisSearch"
+                  @update:model-value="(val) => onDiagnosisSelect(props.row.index, val)"
+                >
+                  <template v-slot:no-option>
+                    <q-item>
+                      <q-item-section class="text-grey">Type to search ICD-10 diagnosis</q-item-section>
+                    </q-item>
+                  </template>
+                </q-select>
               </q-td>
             </template>
             <template v-slot:body-cell-icd10="props">
@@ -913,15 +965,16 @@ const procedures = reactive({
 });
 
 const proceduresList = ref([
-  { index: 0, description: '', date: '', gdrg: '' },
-  { index: 1, description: '', date: '', gdrg: '' },
-  { index: 2, description: '', date: '', gdrg: '' },
+  { index: 0, description: '', date: '', gdrg: '', icd10: '' },
+  { index: 1, description: '', date: '', gdrg: '', icd10: '' },
+  { index: 2, description: '', date: '', gdrg: '', icd10: '' },
 ]);
 
 const procedureColumns = [
   { name: 'number', label: '#', field: 'index', align: 'center' },
   { name: 'description', label: 'Description', field: 'description', align: 'left' },
   { name: 'date', label: 'Date', field: 'date', align: 'center' },
+  { name: 'icd10', label: 'ICD-10', field: 'icd10', align: 'center' },
   { name: 'gdrg', label: 'G-DRG', field: 'gdrg', align: 'left' },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
@@ -979,6 +1032,8 @@ const investigationColumns = [
 
 const investigationSearchOptions = ref([]);
 const productSearchOptions = ref([]);
+const surgerySearchOptions = ref([]);
+const diagnosisSearchOptions = ref([]);
 
 // Prescriptions
 const prescriptionsList = ref([
@@ -1128,6 +1183,129 @@ const onInvestigationSelect = (index, val) => {
   row.description = typeof val === 'string' ? val : '';
 };
 
+const filterSurgerySearch = (val, update) => {
+  update(async () => {
+    if (!val || val.length < 1) {
+      surgerySearchOptions.value = [];
+      return;
+    }
+    try {
+      const res = await priceListAPI.search(val, undefined, 'procedure');
+      const surgeryRes = await priceListAPI.search(val, undefined, 'surgery');
+      const combined = [...(res.data || []), ...(surgeryRes.data || [])];
+      surgerySearchOptions.value = combined.map((item) => ({
+        ...item,
+        optionLabel: `${item.service_name || item.item_name || ''} (${item.g_drg_code || item.item_code || ''})`,
+      }));
+    } catch (_) {
+      surgerySearchOptions.value = [];
+    }
+  });
+};
+
+const onProcedureSelect = async (index, val) => {
+  const row = proceduresList.value[index];
+  if (val == null || val === '') {
+    row.description = '';
+    row.gdrg = '';
+    row.icd10 = '';
+    return;
+  }
+  if (typeof val === 'object' && val !== null && (val.service_name != null || val.item_name != null)) {
+    row.description = val.service_name || val.item_name || '';
+    const gdrg = val.g_drg_code || val.item_code || '';
+    row.gdrg = gdrg;
+    row.icd10 = '';
+    if (gdrg) {
+      try {
+        const icdRes = await priceListAPI.getIcd10CodesFromDrg(gdrg);
+        const list = icdRes.data || [];
+        if (list.length > 0 && list[0].icd10_code) {
+          row.icd10 = list[0].icd10_code;
+        }
+      } catch (_) {}
+    }
+    return;
+  }
+  row.description = typeof val === 'string' ? val : '';
+};
+
+const filterDiagnosisSearch = (val, update) => {
+  update(async () => {
+    if (!val || val.length < 1) {
+      diagnosisSearchOptions.value = [];
+      return;
+    }
+    try {
+      const res = await priceListAPI.searchIcd10(val, 50);
+      const results = res.data || [];
+      diagnosisSearchOptions.value = results.map((item) => ({
+        ...item,
+        display: `${item.icd10_code || ''} - ${item.icd10_description || ''}`.trim(),
+      }));
+    } catch (_) {
+      diagnosisSearchOptions.value = [];
+    }
+  });
+};
+
+const onDiagnosisSelect = async (index, val) => {
+  const row = diagnosesList.value[index];
+  if (val == null || val === '') {
+    row.description = '';
+    row.icd10 = '';
+    row.gdrg = '';
+    return;
+  }
+  if (typeof val === 'object' && val !== null && (val.icd10_code != null || val.icd10_description != null)) {
+    row.description = val.icd10_description || '';
+    row.icd10 = val.icd10_code || '';
+    try {
+      const res = await priceListAPI.getDrgCodesFromIcd10(val.icd10_code);
+      const drgCodes = res.data || [];
+      if (drgCodes.length > 0) {
+        row.gdrg = drgCodes[0].drg_code || '';
+      }
+    } catch (_) {}
+    return;
+  }
+  row.description = typeof val === 'string' ? val : '';
+};
+
+const addDiagnosis = () => {
+  const emptyIndex = diagnosesList.value.findIndex(d => !d.description || d.description.trim() === '');
+  if (emptyIndex !== -1) {
+    $q.notify({
+      type: 'info',
+      message: 'Please fill in the empty diagnosis row first',
+      timeout: 2000,
+    });
+    return;
+  }
+  if (diagnosesList.value.length >= 20) {
+    $q.notify({
+      type: 'warning',
+      message: 'Maximum of 20 diagnoses allowed',
+      timeout: 2000,
+    });
+    return;
+  }
+  const nextIndex = diagnosesList.value.length;
+  diagnosesList.value.push({
+    index: nextIndex,
+    id: null,
+    description: '',
+    icd10: '',
+    gdrg: '',
+    is_chief: false,
+  });
+  $q.notify({
+    type: 'positive',
+    message: 'New diagnosis row added',
+    timeout: 2000,
+  });
+};
+
 const filterProductSearch = (val, update) => {
   update(async () => {
     if (!val || val.length < 1) {
@@ -1223,6 +1401,38 @@ const addPrescription = () => {
   }
 };
 
+const addProcedure = () => {
+  const emptyIndex = proceduresList.value.findIndex(p => !p.description || p.description.trim() === '');
+  if (emptyIndex !== -1) {
+    $q.notify({
+      type: 'info',
+      message: 'Please fill in the empty surgery row first',
+      timeout: 2000,
+    });
+    return;
+  }
+  if (proceduresList.value.length >= 10) {
+    $q.notify({
+      type: 'warning',
+      message: 'Maximum of 10 surgeries allowed',
+      timeout: 2000,
+    });
+    return;
+  }
+  proceduresList.value.push({
+    index: proceduresList.value.length,
+    description: '',
+    date: '',
+    gdrg: '',
+    icd10: '',
+  });
+  $q.notify({
+    type: 'positive',
+    message: 'New surgery row added',
+    timeout: 2000,
+  });
+};
+
 const deleteProcedure = (index) => {
   $q.dialog({
     title: 'Delete Surgery',
@@ -1233,6 +1443,7 @@ const deleteProcedure = (index) => {
     proceduresList.value[index].description = '';
     proceduresList.value[index].date = '';
     proceduresList.value[index].gdrg = '';
+    proceduresList.value[index].icd10 = '';
     $q.notify({
       type: 'positive',
       message: 'Surgery deleted',
@@ -1518,15 +1729,17 @@ const loadClaimData = async () => {
       principal_gdrg: data.claim.principal_gdrg || '',
     });
     
-    // Reset and populate procedures (always populate all 3 slots)
+    // Reset and populate procedures (min 3 slots; use actual count if more)
     procedures.physician_id = data.claim.physician_id || '';
-    proceduresList.value = Array.from({ length: 3 }, (_, idx) => {
+    const proceduresLength = Math.max(3, data.procedures?.length || 3);
+    proceduresList.value = Array.from({ length: proceduresLength }, (_, idx) => {
       const proc = data.procedures && data.procedures[idx] ? data.procedures[idx] : null;
       return {
         index: idx,
         description: proc?.description || '',
         date: proc?.date ? proc.date.split('T')[0] : '',
         gdrg: proc?.gdrg || '',
+        icd10: proc?.icd10 || '',
       };
     });
     
@@ -1535,9 +1748,7 @@ const loadClaimData = async () => {
     
     // For IPD claims, use actual data length (OPD + IPD can have more items)
     // For OPD claims, pad to minimum required slots
-    const diagnosesLength = isIPD 
-      ? Math.max(4, data.diagnoses ? data.diagnoses.length : 4)
-      : 4;
+    const diagnosesLength = Math.max(4, data.diagnoses ? data.diagnoses.length : 4);
     const investigationsLength = isIPD
       ? Math.max(5, data.investigations ? data.investigations.length : 5)
       : 5;
@@ -1662,6 +1873,7 @@ function buildClaimPayload() {
     procedures: proceduresToSave.map(p => ({
       description: p.description || '',
       date: p.date || '',
+      icd10: p.icd10 || '',
       gdrg: p.gdrg || '',
     })),
   };

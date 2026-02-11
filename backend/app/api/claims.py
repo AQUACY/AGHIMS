@@ -138,6 +138,7 @@ class ProcedureUpdate(BaseModel):
     description: str
     date: str
     gdrg: str
+    icd10: Optional[str] = ""
 
 
 class ClaimDetailedUpdate(BaseModel):
@@ -1178,6 +1179,41 @@ def export_claims_by_date(
     
     filename = f"NHIS_CLA{start_date.strftime('%Y%m%d')}{end_date.strftime('%Y%m%d')}.xml"
     
+    return Response(
+        content=xml_content,
+        media_type="application/xml",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+class ExportBatchRequest(BaseModel):
+    """Request body for batch export of claims"""
+    claim_ids: List[int]
+
+
+@router.post("/export/batch")
+def export_claims_batch(
+    body: ExportBatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
+):
+    """Export multiple finalized claims as a single XML file"""
+    if not body.claim_ids:
+        raise HTTPException(status_code=400, detail="No claim IDs provided")
+    claims = db.query(Claim).filter(Claim.id.in_(body.claim_ids)).all()
+    found_ids = {c.id for c in claims}
+    missing = [i for i in body.claim_ids if i not in found_ids]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Claims not found: {missing}")
+    not_finalized = [c for c in claims if c.status != "finalized"]
+    if not_finalized:
+        raise HTTPException(
+            status_code=400,
+            detail="Can only export finalized claims"
+        )
+    xml_content = export_claims_xml(body.claim_ids, db)
+    filename = f"NHIS_CLA_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
     return Response(
         content=xml_content,
         media_type="application/xml",
@@ -2251,6 +2287,7 @@ def get_claim_edit_details(
                 "description": claim_proc.description or "",
                 "date": claim_proc.service_date.isoformat() if claim_proc.service_date else encounter.created_at.isoformat(),
                 "gdrg": claim_proc.gdrg_code or "",
+                "icd10": getattr(claim_proc, "icd10", None) or "",
             })
         # Note: If claim_procedures is empty (user deleted them), procedures_list stays empty
     else:
@@ -2276,6 +2313,7 @@ def get_claim_edit_details(
                         "description": surgery.surgery_name or "",
                         "date": surgery.surgery_date.isoformat() if surgery.surgery_date else encounter.created_at.isoformat(),
                         "gdrg": surgery.g_drg_code or "",
+                        "icd10": "",
                     })
         else:
             # OPD: Check if there are surgeries linked to this encounter (e.g., catheter changing)
@@ -2290,6 +2328,7 @@ def get_claim_edit_details(
                     "description": surgery.surgery_name or "",
                     "date": surgery.surgery_date.isoformat() if surgery.surgery_date else encounter.created_at.isoformat(),
                     "gdrg": surgery.g_drg_code or "",
+                    "icd10": "",
                 })
             # If no surgeries found, procedures_list stays empty (don't use encounter procedure)
     
@@ -2299,6 +2338,7 @@ def get_claim_edit_details(
             "description": "",
             "date": "",
             "gdrg": "",
+            "icd10": "",
         })
     
     # Build response with debug info for OPD encounter
@@ -2616,6 +2656,7 @@ def update_claim_detailed(
                 claim_id=claim.id,
                 description=proc_update.description,
                 gdrg_code=proc_update.gdrg,
+                icd10=(proc_update.icd10 or "").strip() or None,
                 service_date=service_date,
                 display_order=idx
             )

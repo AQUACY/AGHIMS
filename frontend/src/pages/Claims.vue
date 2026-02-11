@@ -161,13 +161,28 @@
             class="col-12 col-sm-4 col-md-3"
             @update:model-value="onSortChange"
           />
+          <q-space />
+          <q-btn
+            color="primary"
+            label="Export selected"
+            icon="download"
+            :disable="selectedRows.length === 0"
+            :loading="exportingSelected"
+            @click="exportSelectedClaims"
+            class="glass-button"
+          />
+          <span v-if="selectedRows.length > 0" class="text-caption text-grey">
+            {{ selectedRows.length }} selected
+          </span>
         </div>
 
         <q-table
+          v-model:selected="selectedRows"
           :rows="sortedEncounters"
           :columns="columns"
           row-key="id"
           flat
+          selection="multiple"
           :loading="loading"
           v-model:pagination="pagination"
           @request="onRequest"
@@ -299,6 +314,10 @@ const pagination = ref({
   rowsPerPage: 50,
   rowsNumber: 0
 });
+
+// Multi-select for batch export
+const selectedRows = ref([]);
+const exportingSelected = ref(false);
 
 // LocalStorage key for locked filters
 const FILTERS_LOCK_KEY = 'claims_filters_locked';
@@ -579,6 +598,50 @@ const exportSingleClaim = async (claimId) => {
     await claimsStore.exportClaim(claimId);
   } catch (error) {
     // Error handled in store
+  }
+};
+
+const exportSelectedClaims = async () => {
+  const exportable = selectedRows.value.filter(
+    (row) => row.claim_id && row.claim_status === 'finalized'
+  );
+  if (exportable.length === 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'Select only finalized claims to export (rows with "Finalized" status)',
+    });
+    return;
+  }
+  const claimIds = exportable.map((row) => row.claim_id);
+  exportingSelected.value = true;
+  try {
+    const response = await claimsAPI.exportBatch(claimIds);
+    if (response.status < 200 || response.status >= 300) {
+      const msg = await claimsStore._blobErrorDetail?.(response.data) ?? 'Export failed';
+      $q.notify({ type: 'negative', message: msg });
+      return;
+    }
+    const blob = new Blob([response.data], { type: 'application/xml' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `NHIS_CLA_batch_${new Date().toISOString().slice(0, 10)}.xml`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    $q.notify({
+      type: 'positive',
+      message: `${claimIds.length} claim(s) exported successfully`,
+    });
+  } catch (error) {
+    const msg = await claimsStore._blobErrorDetail?.(error.response?.data);
+    $q.notify({
+      type: 'negative',
+      message: msg || error.response?.data?.detail || error.message || 'Failed to export selected claims',
+    });
+  } finally {
+    exportingSelected.value = false;
   }
 };
 

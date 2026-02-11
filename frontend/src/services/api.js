@@ -615,6 +615,10 @@ export const priceListAPI = {
   getDrgCodesFromIcd10: (icd10Code) => {
     return api.get(`/price-list/icd10/${icd10Code}/drg-codes`);
   },
+  getIcd10CodesFromDrg: (drgCode) => {
+    if (!drgCode || !String(drgCode).trim()) return Promise.resolve({ data: [] });
+    return api.get(`/price-list/drg-codes/${encodeURIComponent(drgCode.trim())}/icd10-codes`);
+  },
   // ICD-10 DRG Mapping Management
   getIcd10DrgMappings: (skip = 0, limit = 100, search = null, isActive = null, unmappedOnly = false) => {
     const params = { skip, limit };
@@ -702,6 +706,8 @@ export const claimsAPI = {
       responseType: 'blob',
       timeout: 300000,
     }),
+  exportBatch: (claimIds) =>
+    api.post('/claims/export/batch', { claim_ids: claimIds }, { responseType: 'blob', timeout: 300000 }),
 };
 
 // Staff endpoints

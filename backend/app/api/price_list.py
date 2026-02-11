@@ -840,6 +840,31 @@ def get_drg_codes_from_icd10(
     return results
 
 
+@router.get("/drg-codes/{drg_code}/icd10-codes")
+def get_icd10_codes_from_drg(
+    drg_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Claims", "PA"])),
+    _module_check: User = Depends(require_module_permission("icd10_mapping", "read"))
+):
+    """Get ICD-10 codes mapped to a specific DRG code (for surgery/procedure selection)"""
+    from app.models.icd10_drg_mapping import ICD10DRGMapping
+
+    if not drg_code or not str(drg_code).strip():
+        return []
+    mappings = db.query(ICD10DRGMapping).filter(
+        ICD10DRGMapping.drg_code == drg_code.strip(),
+        ICD10DRGMapping.is_active == True
+    ).distinct(ICD10DRGMapping.icd10_code).all()
+    results = []
+    for m in mappings:
+        results.append({
+            "icd10_code": m.icd10_code,
+            "icd10_description": m.icd10_description or "",
+        })
+    return results
+
+
 @router.get("/drg-codes/search")
 def search_drg_codes(
     search_term: Optional[str] = None,

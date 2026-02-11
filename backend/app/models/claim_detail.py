@@ -88,6 +88,7 @@ class ClaimProcedure(Base):
     claim_id = Column(Integer, ForeignKey("claims.id"), nullable=False)
     description = Column(Text)
     gdrg_code = Column(String(50))
+    icd10 = Column(String(50))  # ICD-10 code for the procedure/surgery
     service_date = Column(DateTime, default=utcnow_callable)
     display_order = Column(Integer, default=0)  # For ordering (1-3)
     created_at = Column(DateTime, default=utcnow_callable)
