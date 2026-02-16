@@ -1832,12 +1832,13 @@ const loadClaimData = async () => {
     const proceduresLength = Math.max(3, data.procedures?.length || 3);
     proceduresList.value = Array.from({ length: proceduresLength }, (_, idx) => {
       const proc = data.procedures && data.procedures[idx] ? data.procedures[idx] : null;
+      const icd10 = (proc && (proc.icd10 ?? proc.icd_10)) ? String(proc.icd10 ?? proc.icd_10).trim() : '';
       return {
         index: idx,
         description: proc?.description || '',
         date: proc?.date ? proc.date.split('T')[0] : '',
         gdrg: proc?.gdrg || '',
-        icd10: proc?.icd10 || '',
+        icd10,
       };
     });
     
@@ -1987,8 +1988,8 @@ function buildClaimPayload() {
     procedures: proceduresToSave.map(p => ({
       description: p.description || '',
       date: p.date || '',
-      icd10: p.icd10 || '',
       gdrg: p.gdrg || '',
+      icd10: (p.icd10 != null && p.icd10 !== undefined) ? String(p.icd10).trim() : '',
     })),
   };
 }

@@ -3,6 +3,7 @@ Claims management endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date
@@ -17,6 +18,25 @@ from app.services.xml_export import export_claims_xml, export_claims_by_date_ran
 from app.models.diagnosis import Diagnosis
 
 router = APIRouter(prefix="/claims", tags=["claims"])
+
+
+def _ensure_claim_procedures_icd10_column(db: Session) -> None:
+    """Ensure claim_procedures has icd10 column (for DBs created before it was added)."""
+    try:
+        dialect_name = db.get_bind().dialect.name if hasattr(db.get_bind(), "dialect") else ""
+        if dialect_name == "mysql":
+            db.execute(text("ALTER TABLE claim_procedures ADD COLUMN icd10 VARCHAR(50) NULL"))
+        elif dialect_name == "sqlite":
+            db.execute(text("ALTER TABLE claim_procedures ADD COLUMN icd10 VARCHAR(50)"))
+        else:
+            return
+        db.flush()
+    except Exception as e:
+        err = str(e).lower()
+        if "duplicate column" in err or "already exists" in err:
+            pass
+        else:
+            raise
 
 
 def get_claim_amount_from_price_list(db: Session, item_code: str, is_insured: bool = True) -> float:
@@ -1957,10 +1977,13 @@ def get_claim_edit_details(
     # Get diagnoses from claim detail table (or fallback to encounter diagnoses)
     from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
     
-    # Check if claim has been edited before (any claim detail table entry exists)
-    claim_has_been_edited = db.query(ClaimDiagnosis)\
-        .filter(ClaimDiagnosis.claim_id == claim.id)\
-        .first() is not None
+    # Check if claim has been edited before (any claim detail table has rows)
+    claim_has_been_edited = (
+        db.query(ClaimDiagnosis).filter(ClaimDiagnosis.claim_id == claim.id).first() is not None
+        or db.query(ClaimProcedure).filter(ClaimProcedure.claim_id == claim.id).first() is not None
+        or db.query(ClaimInvestigation).filter(ClaimInvestigation.claim_id == claim.id).first() is not None
+        or db.query(ClaimPrescription).filter(ClaimPrescription.claim_id == claim.id).first() is not None
+    )
     
     claim_diagnoses = db.query(ClaimDiagnosis)\
         .filter(ClaimDiagnosis.claim_id == claim.id)\
@@ -2262,33 +2285,50 @@ def get_claim_edit_details(
             })
     
     # Get procedures (surgeries for IPD) from claim detail table or fallback to surgeries/encounter procedure
-    # Check if claim detail tables have ever been populated for this claim
-    claim_has_been_edited = db.query(ClaimDiagnosis)\
-        .filter(ClaimDiagnosis.claim_id == claim.id)\
-        .first() is not None
-    
-    # Determine if this is an IPD claim
-    is_ipd = claim.type_of_service.upper() == "IPD"
-    
-    # Query claim_procedures
     claim_procedures = db.query(ClaimProcedure)\
         .filter(ClaimProcedure.claim_id == claim.id)\
         .order_by(ClaimProcedure.display_order)\
         .all()
+    
+    # Determine if this is an IPD claim
+    is_ipd = claim.type_of_service.upper() == "IPD"
     
     procedures_list = []
     
     # IMPORTANT: If claim has been edited (claim detail tables exist), ALWAYS use claim_procedures
     # even if it's empty - this respects user's deletion. Never fallback after edits.
     if claim_has_been_edited:
-        # Claim has been edited - use what's in claim_procedures (even if empty = user deleted them)
-        for claim_proc in claim_procedures:
-            procedures_list.append({
-                "description": claim_proc.description or "",
-                "date": claim_proc.service_date.isoformat() if claim_proc.service_date else encounter.created_at.isoformat(),
-                "gdrg": claim_proc.gdrg_code or "",
-                "icd10": getattr(claim_proc, "icd10", None) or "",
-            })
+        # Fetch procedures via raw SQL so icd10 is always read from DB (ORM sometimes omits it)
+        try:
+            raw_rows = db.execute(
+                text("""
+                    SELECT description, service_date, gdrg_code, icd10
+                    FROM claim_procedures
+                    WHERE claim_id = :claim_id
+                    ORDER BY display_order
+                """),
+                {"claim_id": claim.id},
+            ).fetchall()
+            for row in raw_rows:
+                _svc_date = row[1]
+                _icd10_val = row[3]
+                procedures_list.append({
+                    "description": (row[0] or "") if row[0] else "",
+                    "date": _svc_date.isoformat() if _svc_date else (encounter.created_at.isoformat() if encounter.created_at else ""),
+                    "gdrg": (row[2] or "") if row[2] else "",
+                    "icd10": (str(_icd10_val).strip() if _icd10_val else "") or "",
+                })
+        except Exception:
+            # Fallback to ORM if raw query fails (e.g. icd10 column missing in DB)
+            for claim_proc in claim_procedures:
+                _icd10 = getattr(claim_proc, "icd10", None) or claim_proc.__dict__.get("icd10")
+                _icd10_str = (str(_icd10).strip() if _icd10 else "") or ""
+                procedures_list.append({
+                    "description": claim_proc.description or "",
+                    "date": claim_proc.service_date.isoformat() if claim_proc.service_date else encounter.created_at.isoformat(),
+                    "gdrg": claim_proc.gdrg_code or "",
+                    "icd10": _icd10_str,
+                })
         # Note: If claim_procedures is empty (user deleted them), procedures_list stays empty
     else:
         # First time loading - for both IPD and OPD, load surgeries if they exist
@@ -2551,6 +2591,9 @@ def update_claim_detailed(
     # Update claim detail tables (this is where claim-specific edits are stored)
     from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
     
+    # Ensure claim_procedures has icd10 column (for DBs created before it was added)
+    _ensure_claim_procedures_icd10_column(db)
+    
     # Delete existing claim details
     db.query(ClaimDiagnosis).filter(ClaimDiagnosis.claim_id == claim.id).delete()
     db.query(ClaimInvestigation).filter(ClaimInvestigation.claim_id == claim.id).delete()
@@ -2652,11 +2695,12 @@ def update_claim_detailed(
                 except:
                     pass
             
+            _icd10_val = (proc_update.icd10 or "").strip() or None
             claim_proc = ClaimProcedure(
                 claim_id=claim.id,
                 description=proc_update.description,
                 gdrg_code=proc_update.gdrg,
-                icd10=(proc_update.icd10 or "").strip() or None,
+                icd10=_icd10_val,
                 service_date=service_date,
                 display_order=idx
             )
