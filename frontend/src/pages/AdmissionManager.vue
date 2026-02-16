@@ -279,8 +279,11 @@
                                 color="primary"
                                 size="sm"
                                 @click="editSurgery(surgery)"
-                                :disable="isDischarged"
-                              />
+                                :disable="isDischarged && surgery.is_completed"
+                              >
+                                <q-tooltip v-if="isDischarged && surgery.is_completed">Cannot edit completed surgery after discharge</q-tooltip>
+                                <q-tooltip v-else-if="isDischarged && !surgery.is_completed">Edit and complete surgery (patient discharged)</q-tooltip>
+                              </q-btn>
                               <q-btn
                                 v-if="authStore.userRole === 'Admin'"
                                 flat
@@ -290,8 +293,11 @@
                                 color="negative"
                                 size="sm"
                                 @click="deleteSurgery(surgery)"
-                                :disable="isDischarged"
-                              />
+                                :disable="isDischarged && surgery.is_completed"
+                              >
+                                <q-tooltip v-if="isDischarged && surgery.is_completed">Cannot delete completed surgery after discharge</q-tooltip>
+                                <q-tooltip v-else-if="isDischarged && !surgery.is_completed">Delete surgery (patient discharged)</q-tooltip>
+                              </q-btn>
                             </div>
                           </q-item-section>
                         </q-item>
@@ -4266,10 +4272,10 @@ const addOperation = async () => {
 };
 
 const editSurgery = async (surgery) => {
-  if (isDischarged.value) {
+  if (isDischarged.value && surgery.is_completed) {
     $q.notify({
       type: 'negative',
-      message: 'Cannot edit surgeries for a discharged patient',
+      message: 'Cannot edit completed surgeries for a discharged patient',
     });
     return;
   }
