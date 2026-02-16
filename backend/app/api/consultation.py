@@ -10629,11 +10629,13 @@ def get_surgeries_calendar_debug(
 
 @router.get("/surgeries/calendar", response_model=List[InpatientSurgeryResponse])
 def get_surgeries_calendar(
-    date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD). If not provided, shows today's surgeries"),
+    date: Optional[str] = Query(None, description="Filter by single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = Query(None, description="Start of date range (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End of date range (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin", "Anaesthetist"]))
 ):
-    """Get all surgeries for calendar view, optionally filtered by date"""
+    """Get all surgeries for calendar view, filtered by date or date range"""
     from app.models.inpatient_surgery import InpatientSurgery
     from app.models.ward_admission import WardAdmission
     from app.models.encounter import Encounter
@@ -10643,76 +10645,71 @@ def get_surgeries_calendar(
     
     logger = logging.getLogger(__name__)
     
-    # Parse date filter
-    filter_date = None
-    if date:
+    # Date range or single date
+    use_range = bool(start_date and end_date)
+    filter_start = None
+    filter_end = None
+    if use_range:
         try:
-            filter_date = datetime.strptime(date, "%Y-%m-%d").date()
+            filter_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            filter_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            if filter_start > filter_end:
+                filter_start, filter_end = filter_end, filter_start
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD for start_date and end_date")
+        logger.info(f"Filtering surgeries for range: {filter_start} to {filter_end}")
     else:
-        # Default to today
-        filter_date = datetime.utcnow().date()
-    
-    logger.info(f"Filtering surgeries for date: {filter_date} (string: {filter_date.strftime('%Y-%m-%d')})")
+        if date:
+            try:
+                filter_start = datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        else:
+            filter_start = datetime.utcnow().date()
+        filter_end = filter_start
+        logger.info(f"Filtering surgeries for date: {filter_start}")
     
     # Query all surgeries
     all_surgeries = db.query(InpatientSurgery).all()
     logger.info(f"Total surgeries in database: {len(all_surgeries)}")
     
-    # Filter surgeries by date - check both surgery_date AND created_at
-    # Show surgery if EITHER date matches the filter date
+    # Filter surgeries by date (or range) - match if surgery_date or created_at falls in [filter_start, filter_end]
     filtered_surgeries = []
-    filter_date_str = filter_date.strftime("%Y-%m-%d")  # Convert to string for comparison
-    
     for surgery in all_surgeries:
-        surgery_date_str = None
-        created_at_str = None
-        matches = False
-        
-        # Extract surgery_date as string
+        surgery_date_val = None
+        created_at_val = None
         if surgery.surgery_date:
             if isinstance(surgery.surgery_date, datetime):
-                surgery_date_str = surgery.surgery_date.date().strftime("%Y-%m-%d")
+                surgery_date_val = surgery.surgery_date.date()
             elif hasattr(surgery.surgery_date, 'date'):
-                surgery_date_str = surgery.surgery_date.date().strftime("%Y-%m-%d")
+                surgery_date_val = surgery.surgery_date.date()
             elif isinstance(surgery.surgery_date, date_type):
-                surgery_date_str = surgery.surgery_date.strftime("%Y-%m-%d")
+                surgery_date_val = surgery.surgery_date
             else:
-                # Try to extract date from string
-                surgery_date_str = str(surgery.surgery_date)[:10]  # Take first 10 chars (YYYY-MM-DD)
-        
-        # Extract created_at as string
+                try:
+                    surgery_date_val = datetime.strptime(str(surgery.surgery_date)[:10], "%Y-%m-%d").date()
+                except ValueError:
+                    surgery_date_val = None
         if surgery.created_at:
             if isinstance(surgery.created_at, datetime):
-                created_at_str = surgery.created_at.date().strftime("%Y-%m-%d")
+                created_at_val = surgery.created_at.date()
             elif hasattr(surgery.created_at, 'date'):
-                created_at_str = surgery.created_at.date().strftime("%Y-%m-%d")
+                created_at_val = surgery.created_at.date()
             elif isinstance(surgery.created_at, date_type):
-                created_at_str = surgery.created_at.strftime("%Y-%m-%d")
+                created_at_val = surgery.created_at
             else:
-                created_at_str = str(surgery.created_at)[:10]  # Take first 10 chars (YYYY-MM-DD)
-        
-        # Match if EITHER surgery_date OR created_at matches the filter date
-        if surgery_date_str and surgery_date_str == filter_date_str:
-            matches = True
-            logger.info(f"Surgery {surgery.id} ({surgery.surgery_name}) matches via surgery_date: {surgery_date_str}")
-        elif created_at_str and created_at_str == filter_date_str:
-            matches = True
-            logger.info(f"Surgery {surgery.id} ({surgery.surgery_name}) matches via created_at: {created_at_str}")
-        
-        if matches:
+                try:
+                    created_at_val = datetime.strptime(str(surgery.created_at)[:10], "%Y-%m-%d").date()
+                except ValueError:
+                    created_at_val = None
+        if (surgery_date_val and filter_start <= surgery_date_val <= filter_end) or (created_at_val and filter_start <= created_at_val <= filter_end):
             filtered_surgeries.append(surgery)
-        else:
-            logger.debug(f"Surgery {surgery.id}: surgery_date={surgery_date_str}, created_at={created_at_str}, filter={filter_date_str} - NO MATCH")
     
     logger.info(f"Filtered surgeries count: {len(filtered_surgeries)}")
     
-    # If no surgeries match, return empty list (don't return all surgeries)
-    # This helps debug why filtering isn't working
     if len(filtered_surgeries) == 0 and len(all_surgeries) > 0:
-        # Log details about first few surgeries for debugging
-        logger.warning(f"No surgeries matched filter date {filter_date_str}. Sample surgeries:")
+        filter_date_str = filter_start.strftime("%Y-%m-%d")
+        logger.warning(f"No surgeries matched filter {filter_date_str}. Sample surgeries:")
         for surgery in all_surgeries[:3]:  # Show first 3
             if surgery.surgery_date:
                 sd = surgery.surgery_date.date().strftime("%Y-%m-%d") if isinstance(surgery.surgery_date, datetime) else str(surgery.surgery_date)[:10]

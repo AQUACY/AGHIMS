@@ -2,17 +2,40 @@
   <q-page class="q-pa-md">
     <div class="text-h4 q-mb-md text-weight-bold glass-text">Operation Theatre Calendar</div>
 
-    <!-- Filter Section -->
+    <!-- Filter Section: Date range -->
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
-        <div class="row q-gutter-md">
+        <div class="row q-gutter-md items-center">
+          <q-btn
+            :icon="filtersLocked ? 'lock' : 'lock_open'"
+            :color="filtersLocked ? 'positive' : 'grey'"
+            flat
+            round
+            dense
+            size="sm"
+            @click="toggleFiltersLock"
+          >
+            <q-tooltip>
+              {{ filtersLocked ? 'Date range is locked – click to unlock' : 'Click to lock date range' }}
+            </q-tooltip>
+          </q-btn>
           <q-input
-            v-model="selectedDate"
+            v-model="startDate"
             filled
             type="date"
-            label="Select Date"
+            label="Date from"
             class="col-12 col-md-3"
-            @update:model-value="loadSurgeries"
+            :disable="filtersLocked"
+            @update:model-value="onDateRangeChange"
+          />
+          <q-input
+            v-model="endDate"
+            filled
+            type="date"
+            label="Date to"
+            class="col-12 col-md-3"
+            :disable="filtersLocked"
+            @update:model-value="onDateRangeChange"
           />
           <q-btn
             icon="today"
@@ -20,9 +43,20 @@
             @click="setToday"
             color="primary"
             class="col-12 col-md-2 glass-button"
+            :disable="filtersLocked"
+          />
+          <q-btn
+            icon="search"
+            label="Load"
+            @click="loadSurgeries"
+            color="primary"
+            outline
+            class="col-12 col-md-2"
           />
           <q-space />
-          <q-badge color="primary" :label="`${surgeries.length} operations`" />
+          <q-badge color="primary" :label="`Total: ${surgeries.length}`" class="q-mr-xs" />
+          <q-badge color="orange" :label="`Pending: ${pendingCount}`" class="q-mr-xs" />
+          <q-badge color="positive" :label="`Completed: ${completedCount}`" />
         </div>
       </q-card-section>
     </q-card>
@@ -31,7 +65,7 @@
     <q-card class="glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">
-          Operations for {{ formatDateDisplay(selectedDate) }}
+          Operations {{ dateRangeLabel }}
         </div>
 
         <div v-if="loading" class="text-center q-pa-lg">
@@ -363,9 +397,77 @@ import { consultationAPI, priceListAPI } from '../services/api';
 
 const $q = useQuasar();
 
-const selectedDate = ref(new Date().toISOString().split('T')[0]);
+const todayStr = () => new Date().toISOString().split('T')[0];
+const addDays = (dateStr, days) => {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
+};
+
+const startDate = ref(todayStr());
+const endDate = ref(addDays(todayStr(), 6));
 const surgeries = ref([]);
 const loading = ref(false);
+
+const FILTERS_LOCK_KEY = 'ot_calendar_filters_locked';
+const FILTERS_STORAGE_KEY = 'ot_calendar_filters';
+const filtersLocked = ref(false);
+
+function saveFiltersToStorage() {
+  localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify({
+    startDate: startDate.value,
+    endDate: endDate.value,
+  }));
+}
+
+function loadFiltersFromStorage() {
+  const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+  if (raw) {
+    try {
+      const f = JSON.parse(raw);
+      if (f.startDate) startDate.value = f.startDate;
+      if (f.endDate) endDate.value = f.endDate;
+      if (startDate.value && endDate.value && startDate.value > endDate.value) {
+        endDate.value = startDate.value;
+      }
+    } catch (_) {}
+  }
+}
+
+function toggleFiltersLock() {
+  filtersLocked.value = !filtersLocked.value;
+  if (filtersLocked.value) {
+    saveFiltersToStorage();
+    localStorage.setItem(FILTERS_LOCK_KEY, 'true');
+    $q.notify({
+      type: 'positive',
+      message: 'Date range locked – it will persist when you leave and return',
+      timeout: 2000,
+    });
+  } else {
+    localStorage.removeItem(FILTERS_LOCK_KEY);
+    localStorage.removeItem(FILTERS_STORAGE_KEY);
+    $q.notify({
+      type: 'info',
+      message: 'Date range unlocked',
+      timeout: 2000,
+    });
+  }
+}
+
+const dateRangeLabel = computed(() => {
+  if (startDate.value === endDate.value) return `for ${formatDateDisplay(startDate.value)}`;
+  return `from ${formatDateDisplay(startDate.value)} to ${formatDateDisplay(endDate.value)}`;
+});
+
+const pendingCount = computed(() => surgeries.value.filter(s => !s.is_completed).length);
+const completedCount = computed(() => surgeries.value.filter(s => s.is_completed).length);
+
+const onDateRangeChange = () => {
+  if (startDate.value && endDate.value && startDate.value > endDate.value) {
+    endDate.value = startDate.value;
+  }
+};
 
 // Surgery Dialog
 const showSurgeryDialog = ref(false);
@@ -423,14 +525,19 @@ const formatDateTime = (dateStr) => {
 };
 
 const setToday = () => {
-  selectedDate.value = new Date().toISOString().split('T')[0];
+  startDate.value = todayStr();
+  endDate.value = todayStr();
   loadSurgeries();
 };
 
 const loadSurgeries = async () => {
   loading.value = true;
   try {
-    const response = await consultationAPI.getSurgeriesCalendar(selectedDate.value);
+    const response = await consultationAPI.getSurgeriesCalendar(
+      null,
+      startDate.value,
+      endDate.value
+    );
     surgeries.value = Array.isArray(response.data) ? response.data : [];
   } catch (error) {
     console.error('Error loading surgeries:', error);
@@ -509,13 +616,35 @@ const onSurgerySelected = (surgery) => {
   }
 };
 
-const editSurgery = async (surgery) => {
-  // For now, we can only view/edit operations that are already created
-  // To add new operations, users should go to the Admission Manager
-  $q.notify({
-    type: 'info',
-    message: 'To add new operations, please use the Admission Manager. This page is for viewing and adding anaesthetist information.',
-  });
+function toDateTimeLocal(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day}T${h}:${min}`;
+}
+
+const editSurgery = (surgery) => {
+  editingSurgery.value = surgery;
+  surgeryForm.value = {
+    surgery_name: surgery.surgery_name || '',
+    g_drg_code: surgery.g_drg_code || '',
+    surgery_type: surgery.surgery_type || '',
+    surgeon_name: surgery.surgeon_name || '',
+    assistant_surgeon: surgery.assistant_surgeon || '',
+    anesthesia_type: surgery.anesthesia_type || '',
+    surgery_date: toDateTimeLocal(surgery.surgery_date),
+    surgery_notes: surgery.surgery_notes || '',
+    operative_notes: surgery.operative_notes || '',
+    post_operative_notes: surgery.post_operative_notes || '',
+    complications: surgery.complications || '',
+    is_completed: !!surgery.is_completed,
+  };
+  selectedSurgery.value = null;
+  showSurgeryDialog.value = true;
 };
 
 const editAnaesthetistInfo = (surgery) => {
@@ -571,12 +700,46 @@ const closeAnaesthetistDialog = () => {
 };
 
 const saveSurgery = async () => {
-  // This is a placeholder - actual implementation would require ward_admission_id
-  $q.notify({
-    type: 'info',
-    message: 'To add new operations, please use the Admission Manager page.',
-  });
-  closeSurgeryDialog();
+  if (editingSurgery.value) {
+    savingSurgery.value = true;
+    try {
+      const form = surgeryForm.value;
+      const surgeryDate = form.surgery_date ? new Date(form.surgery_date).toISOString() : null;
+      await consultationAPI.updateInpatientSurgery(
+        editingSurgery.value.ward_admission_id,
+        editingSurgery.value.id,
+        {
+          surgery_name: form.surgery_name || undefined,
+          surgery_type: form.surgery_type || undefined,
+          surgeon_name: form.surgeon_name || undefined,
+          assistant_surgeon: form.assistant_surgeon || undefined,
+          anesthesia_type: form.anesthesia_type || undefined,
+          surgery_date: surgeryDate,
+          surgery_notes: form.surgery_notes || undefined,
+          operative_notes: form.operative_notes || undefined,
+          post_operative_notes: form.post_operative_notes || undefined,
+          complications: form.complications || undefined,
+          is_completed: form.is_completed,
+        }
+      );
+      $q.notify({ type: 'positive', message: 'Operation updated successfully' });
+      closeSurgeryDialog();
+      await loadSurgeries();
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to update operation',
+      });
+    } finally {
+      savingSurgery.value = false;
+    }
+  } else {
+    $q.notify({
+      type: 'info',
+      message: 'To add new operations, please use the Admission Manager page.',
+    });
+    closeSurgeryDialog();
+  }
 };
 
 const closeSurgeryDialog = () => {
@@ -600,6 +763,11 @@ const closeSurgeryDialog = () => {
 };
 
 onMounted(() => {
+  const isLocked = localStorage.getItem(FILTERS_LOCK_KEY) === 'true';
+  filtersLocked.value = isLocked;
+  if (isLocked) {
+    loadFiltersFromStorage();
+  }
   loadSurgeries();
   loadSurgeriesFromPriceList();
 });

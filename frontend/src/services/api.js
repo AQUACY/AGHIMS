@@ -477,9 +477,14 @@ export const consultationAPI = {
     getInpatientSurgery: (wardAdmissionId, surgeryId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`),
     updateInpatientSurgery: (wardAdmissionId, surgeryId, surgeryData) => api.put(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`, surgeryData),
     deleteInpatientSurgery: (wardAdmissionId, surgeryId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/surgeries/${surgeryId}`),
-    getSurgeriesCalendar: (date = null) => {
+    getSurgeriesCalendar: (date = null, startDate = null, endDate = null) => {
       const params = {};
-      if (date) params.date = date;
+      if (startDate && endDate) {
+        params.start_date = startDate;
+        params.end_date = endDate;
+      } else if (date) {
+        params.date = date;
+      }
       return api.get('/consultation/surgeries/calendar', { params });
     },
     updateSurgeryAnaesthetistInfo: (surgeryId, anaesthetistData) => api.put(`/consultation/surgeries/${surgeryId}/anaesthetist-info`, anaesthetistData),
