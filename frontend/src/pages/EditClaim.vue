@@ -226,6 +226,18 @@
         <q-card-section>
           <div class="row items-center q-mb-md">
             <div class="text-h6">Surgery(ies)</div>
+            <q-icon
+              v-if="pendingClaimSurgeries.length > 0"
+              name="warning"
+              color="orange"
+              size="sm"
+              class="q-ml-sm cursor-pointer"
+              @click="showPendingSurgeriesDialog = true"
+            >
+              <q-tooltip>
+                {{ pendingClaimSurgeries.length }} pending surgery(ies) – click to mark complete and add to claim
+              </q-tooltip>
+            </q-icon>
             <q-space />
             <q-btn
               v-if="claimStatus !== 'finalized' || isViewMode"
@@ -865,6 +877,47 @@
         </q-card-section>
       </q-card>
     </q-dialog>
+
+    <!-- Pending surgeries: mark complete & add to claim -->
+    <q-dialog v-model="showPendingSurgeriesDialog" persistent>
+      <q-card style="min-width: 420px; max-width: 560px">
+        <q-card-section>
+          <div class="text-h6">Pending surgery(ies)</div>
+          <div class="text-caption text-grey-7">
+            Mark as completed and add to the claim. Changes will apply when you save or finalize (no regeneration).
+          </div>
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <q-list v-if="pendingClaimSurgeries.length > 0" bordered separator>
+            <q-item v-for="s in pendingClaimSurgeries" :key="s.id" class="q-py-sm">
+              <q-item-section>
+                <q-item-label>{{ s.surgery_name || 'Surgery' }}</q-item-label>
+                <q-item-label caption>
+                  {{ s.surgery_date ? (typeof s.surgery_date === 'string' ? s.surgery_date.split('T')[0] : s.surgery_date) : '—' }}
+                  <span v-if="s.surgeon_name"> · {{ s.surgeon_name }}</span>
+                  <span v-if="s.g_drg_code"> · {{ s.g_drg_code }}</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-btn
+                  flat
+                  dense
+                  color="primary"
+                  label="Mark complete & add to claim"
+                  :loading="completingSurgeryId === s.id"
+                  :disable="completingSurgeryId !== null"
+                  @click="markSurgeryCompleteAndAdd(s)"
+                />
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <p v-else class="text-grey-7 q-ma-none">No pending surgeries.</p>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="secondary" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -872,7 +925,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { claimsAPI, priceListAPI } from '../services/api';
+import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
 
 const $route = useRoute();
 const $router = useRouter();
@@ -886,6 +939,12 @@ const isViewMode = ref(false);
 const route = useRoute();
 /** Snapshot of last saved claim payload (JSON) for change detection in view mode */
 const lastSavedClaimPayload = ref(null);
+
+// Pending surgeries (IPD): surgeries not yet completed – mark complete & add to claim without regenerating
+const wardAdmissionId = ref(null);
+const pendingClaimSurgeries = ref([]);
+const showPendingSurgeriesDialog = ref(false);
+const completingSurgeryId = ref(null);
 
 // Prescription Dialog
 const showPrescriptionDialog = ref(false);
@@ -1433,6 +1492,45 @@ const addProcedure = () => {
   });
 };
 
+const markSurgeryCompleteAndAdd = async (surgery) => {
+  const wid = wardAdmissionId.value;
+  if (!wid) return;
+  completingSurgeryId.value = surgery.id;
+  try {
+    await consultationAPI.updateInpatientSurgery(wid, surgery.id, { is_completed: true });
+    const dateStr = surgery.surgery_date
+      ? (typeof surgery.surgery_date === 'string' ? surgery.surgery_date.split('T')[0] : surgery.surgery_date)
+      : '';
+    let icd10 = '';
+    const gdrg = surgery.g_drg_code || '';
+    if (gdrg) {
+      try {
+        const icdRes = await priceListAPI.getIcd10CodesFromDrg(gdrg);
+        const list = icdRes.data || [];
+        if (list.length > 0 && list[0].icd10_code) icd10 = list[0].icd10_code;
+      } catch (_) {}
+    }
+    proceduresList.value.push({
+      index: proceduresList.value.length,
+      description: surgery.surgery_name || '',
+      date: dateStr,
+      gdrg,
+      icd10,
+    });
+    pendingClaimSurgeries.value = pendingClaimSurgeries.value.filter(s => s.id !== surgery.id);
+    $q.notify({ type: 'positive', message: 'Surgery marked complete and added to claim', timeout: 2500 });
+    if (pendingClaimSurgeries.value.length === 0) showPendingSurgeriesDialog.value = false;
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e?.response?.data?.detail || 'Failed to mark surgery complete',
+      timeout: 3000,
+    });
+  } finally {
+    completingSurgeryId.value = null;
+  }
+};
+
 const deleteProcedure = (index) => {
   $q.dialog({
     title: 'Delete Surgery',
@@ -1745,6 +1843,22 @@ const loadClaimData = async () => {
     
     // Determine if this is an IPD claim
     const isIPD = (data.claim.type_of_service || 'OPD').toUpperCase() === 'IPD';
+    
+    // For IPD claims with ward admission, load pending (incomplete) surgeries for "mark complete & add to claim"
+    if (isIPD && data.debug?.ward_admission_id) {
+      wardAdmissionId.value = data.debug.ward_admission_id;
+      try {
+        const surRes = await consultationAPI.getInpatientSurgeries(wardAdmissionId.value);
+        const list = surRes.data || [];
+        pendingClaimSurgeries.value = list.filter(s => !s.is_completed);
+      } catch (e) {
+        console.warn('Could not load inpatient surgeries for claim', e);
+        pendingClaimSurgeries.value = [];
+      }
+    } else {
+      wardAdmissionId.value = null;
+      pendingClaimSurgeries.value = [];
+    }
     
     // For IPD claims, use actual data length (OPD + IPD can have more items)
     // For OPD claims, pad to minimum required slots
