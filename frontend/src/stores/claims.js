@@ -117,17 +117,17 @@ export const useClaimsStore = defineStore('claims', {
           Notify.create({ type: 'negative', message: msg || 'Export failed', position: 'top' });
           return;
         }
-        const blob = new Blob([response.data], { type: 'application/xml' });
+        const blob = new Blob([response.data], { type: 'application/zip' });
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        const filename = `NHIS_CLA${startDate.replace(/-/g, '')}${endDate.replace(/-/g, '')}.xml`;
+        const filename = `NHIS_CLA${startDate.replace(/-/g, '')}${endDate.replace(/-/g, '')}.zip`;
         link.setAttribute('download', filename);
         document.body.appendChild(link);
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
-        Notify.create({ type: 'positive', message: 'Claims exported successfully', position: 'top' });
+        Notify.create({ type: 'positive', message: 'Claims exported (ZIP). Extract to get the XML file.', position: 'top' });
       } catch (error) {
         const msg = await this._blobErrorDetail(error.response?.data);
         Notify.create({

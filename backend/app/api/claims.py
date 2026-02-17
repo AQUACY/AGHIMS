@@ -1,6 +1,8 @@
 """
 Claims management endpoints
 """
+import io
+import zipfile
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -14,7 +16,7 @@ from app.models.encounter import Encounter
 from app.models.claim import Claim, ClaimStatus
 from app.models.bill import Bill
 from app.utils.claim_generator import generate_claim_id, generate_claim_check_code
-from app.services.xml_export import export_claims_xml, export_claims_by_date_range
+from app.services.xml_export import export_claims_xml, export_claims_by_date_range, get_claim_ids_by_date_range, stream_claims_xml_by_ids
 from app.models.diagnosis import Diagnosis
 
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -1183,7 +1185,7 @@ def regenerate_claim(
     return claim
 
 
-@router.get("/export/date-range")
+@router.get("/export-by-date-range")
 def export_claims_by_date(
     start_date: date,
     end_date: date,
@@ -1191,18 +1193,29 @@ def export_claims_by_date(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
-    """Export claims within a date range as XML"""
+    """Export claims within a date range as a ZIP containing one XML file (max 5000 claims)."""
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="End date must be on or after start date")
     start_dt = datetime.combine(start_date, datetime.min.time())
     end_dt = datetime.combine(end_date, datetime.max.time())
-    
-    xml_content = export_claims_by_date_range(start_dt, end_dt, db)
-    
-    filename = f"NHIS_CLA{start_date.strftime('%Y%m%d')}{end_date.strftime('%Y%m%d')}.xml"
-    
+    try:
+        claim_ids = get_claim_ids_by_date_range(start_dt, end_dt, db)
+        stream = stream_claims_xml_by_ids(claim_ids)
+        xml_bytes = b"".join(stream)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+    xml_name = f"NHIS_CLA{start_date.strftime('%Y%m%d')}{end_date.strftime('%Y%m%d')}.xml"
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(xml_name, xml_bytes)
+    zip_buffer.seek(0)
+    zip_filename = f"NHIS_CLA{start_date.strftime('%Y%m%d')}{end_date.strftime('%Y%m%d')}.zip"
     return Response(
-        content=xml_content,
-        media_type="application/xml",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={zip_filename}"},
     )
 
 
@@ -1218,10 +1231,19 @@ def export_claims_batch(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
-    """Export multiple finalized claims as a single XML file"""
+    """Export multiple finalized claims as a single XML file. Uses selectinload for speed."""
+    import time
     if not body.claim_ids:
         raise HTTPException(status_code=400, detail="No claim IDs provided")
-    claims = db.query(Claim).filter(Claim.id.in_(body.claim_ids)).all()
+    from app.services.xml_export import generate_claim_xml, _claim_export_load_options
+    t0 = time.perf_counter()
+    claims = (
+        db.query(Claim)
+        .options(*_claim_export_load_options())
+        .filter(Claim.id.in_(body.claim_ids))
+        .all()
+    )
+    t1 = time.perf_counter()
     found_ids = {c.id for c in claims}
     missing = [i for i in body.claim_ids if i not in found_ids]
     if missing:
@@ -1232,12 +1254,17 @@ def export_claims_batch(
             status_code=400,
             detail="Can only export finalized claims"
         )
-    xml_content = export_claims_xml(body.claim_ids, db)
+    xml_content = generate_claim_xml(claims, db)
+    t2 = time.perf_counter()
     filename = f"NHIS_CLA_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
     return Response(
         content=xml_content,
         media_type="application/xml",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Export-Query-Sec": f"{t1 - t0:.2f}",
+            "X-Export-Xml-Sec": f"{t2 - t1:.2f}",
+        }
     )
 
 

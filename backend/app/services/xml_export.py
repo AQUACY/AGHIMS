@@ -49,41 +49,9 @@ def map_type_of_attendance(attendance_type: str) -> str:
 
 def generate_claim_xml(claims: List[Claim], db: Session) -> str:
     """
-    Generate NHIA ClaimIT compatible XML from claims
-    Uses claim detail tables if available, otherwise falls back to encounter services
-    
-    Note: Claims should already have relationships eager-loaded when passed to this function
-    If not, this function will reload them with eager loading (for backward compatibility)
+    Generate NHIA ClaimIT compatible XML from claims.
+    Caller must pass claims already eager-loaded (e.g. via export_claims_xml or stream batch).
     """
-    # Eager load relationships if not already loaded
-    # Check if relationships are loaded by inspecting the first claim
-    if claims:
-        from sqlalchemy import inspect
-        from sqlalchemy.orm import joinedload
-        
-        # Check if encounter relationship is already loaded
-        first_claim = claims[0]
-        inspector = inspect(first_claim)
-        # unloaded contains relationships that are NOT loaded
-        encounter_not_loaded = 'encounter' in inspector.unloaded
-        
-        # Only reload if relationships aren't loaded
-        if encounter_not_loaded:
-            claim_ids = [c.id for c in claims]
-            claims = db.query(Claim)\
-                .options(
-                    joinedload(Claim.encounter).joinedload(Encounter.patient),
-                    joinedload(Claim.claim_diagnoses),
-                    joinedload(Claim.claim_investigations),
-                    joinedload(Claim.claim_prescriptions),
-                    joinedload(Claim.claim_procedures),
-                    joinedload(Claim.encounter).joinedload(Encounter.diagnoses),
-                    joinedload(Claim.encounter).joinedload(Encounter.investigations),
-                    joinedload(Claim.encounter).joinedload(Encounter.prescriptions)
-                )\
-                .filter(Claim.id.in_(claim_ids))\
-                .all()
-    
     # Create root element
     root = Element("claims")
     
@@ -179,10 +147,7 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         
         SubElement(claim_elem, "specialtyAttended").text = claim.specialty_attended or "OPDC"
         
-        # ALWAYS use claim detail tables - these contain the edited claim data
-        # Never fallback to encounter services as those are the original, unedited data
-        from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
-        
+        # ALWAYS use claim detail tables (claim_diagnoses, etc.) - already eager-loaded by caller
         # Pre-compute: Check if claim has been edited (any claim detail table entry exists)
         claim_has_been_edited = bool(claim.claim_diagnoses or claim.claim_investigations or 
                                      claim.claim_prescriptions or claim.claim_procedures)
@@ -305,71 +270,172 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
     return xml_string
 
 
+def _claim_export_load_options():
+    """Eager load options for export: selectinload for collections (faster than one huge join)."""
+    from sqlalchemy.orm import joinedload, selectinload
+    return (
+        joinedload(Claim.encounter).joinedload(Encounter.patient),
+        selectinload(Claim.claim_diagnoses),
+        selectinload(Claim.claim_investigations),
+        selectinload(Claim.claim_prescriptions),
+        selectinload(Claim.claim_procedures),
+        joinedload(Claim.encounter).selectinload(Encounter.diagnoses),
+        joinedload(Claim.encounter).selectinload(Encounter.investigations),
+        joinedload(Claim.encounter).selectinload(Encounter.prescriptions),
+    )
+
+
 def export_claims_xml(claim_ids: List[int], db: Session) -> str:
     """
-    Export multiple claims as XML
+    Export multiple claims as XML. Uses selectinload for collections to avoid slow mega-joins.
     """
-    claims = db.query(Claim).filter(Claim.id.in_(claim_ids)).all()
+    if not claim_ids:
+        return '<?xml version="1.0" encoding="UTF-8"?>\n<claims></claims>'
+    claims = (
+        db.query(Claim)
+        .options(*_claim_export_load_options())
+        .filter(Claim.id.in_(claim_ids))
+        .all()
+    )
     return generate_claim_xml(claims, db)
 
 
-def export_claims_by_date_range(start_date: datetime, end_date: datetime, db: Session) -> str:
-    """
-    Export claims within a date range as XML
-    Optimized to use eager loading from the start and filter by finalized_at
-    """
-    from sqlalchemy.orm import joinedload
-    
-    # Optimize: Use eager loading from the start and filter by finalized_at (more accurate)
-    # Filter by claim finalized_at or encounter finalized_at for better performance
-    claims = (
-        db.query(Claim)
-        .options(
-            joinedload(Claim.encounter).joinedload(Encounter.patient),
-            joinedload(Claim.claim_diagnoses),
-            joinedload(Claim.claim_investigations),
-            joinedload(Claim.claim_prescriptions),
-            joinedload(Claim.claim_procedures),
-            joinedload(Claim.encounter).joinedload(Encounter.diagnoses),
-            joinedload(Claim.encounter).joinedload(Encounter.investigations),
-            joinedload(Claim.encounter).joinedload(Encounter.prescriptions)
+# Max claims for date-range export (allows full monthly exports; ~2–3k per month typical)
+EXPORT_DATE_RANGE_MAX_CLAIMS = 5000
+# Batch size for streaming (smaller = first bytes sooner; 150 keeps memory and query time reasonable)
+EXPORT_STREAM_BATCH_SIZE = 150
+
+
+def _extract_claims_inner_xml(full_xml: str) -> str:
+    """Extract the inner content between <claims> and </claims> from full XML string."""
+    if not full_xml or "<claims>" not in full_xml:
+        return ""
+    start = full_xml.index(">", full_xml.index("<claims")) + 1
+    end = full_xml.rfind("</claims>")
+    if end == -1:
+        return full_xml[start:]
+    return full_xml[start:end]
+
+
+def get_claim_ids_by_date_range(start_date: datetime, end_date: datetime, db: Session) -> List[int]:
+    """Return claim IDs in date range (lightweight query). Raises ValueError if over limit."""
+    date_filter = or_(
+        and_(
+            Claim.finalized_at.isnot(None),
+            Claim.finalized_at >= start_date,
+            Claim.finalized_at <= end_date
+        ),
+        and_(
+            Encounter.finalized_at.isnot(None),
+            Encounter.finalized_at >= start_date,
+            Encounter.finalized_at <= end_date
+        ),
+        and_(
+            Encounter.created_at.isnot(None),
+            Encounter.created_at >= start_date,
+            Encounter.created_at <= end_date
         )
+    )
+    id_rows = (
+        db.query(Claim.id)
         .join(Encounter)
         .filter(Claim.status == "finalized")
-        .filter(
-            # Include all finalized claims where the encounter date is within range
-            # Check multiple date fields to be inclusive
-            or_(
-                # Claim finalized within range
-                and_(
-                    Claim.finalized_at.isnot(None),
-                    Claim.finalized_at >= start_date,
-                    Claim.finalized_at <= end_date
-                ),
-                # Encounter finalized within range
-                and_(
-                    Encounter.finalized_at.isnot(None),
-                    Encounter.finalized_at >= start_date,
-                    Encounter.finalized_at <= end_date
-                ),
-                # Encounter created within range (fallback for cases where finalized_at is not set)
-                and_(
-                    Encounter.created_at.isnot(None),
-                    Encounter.created_at >= start_date,
-                    Encounter.created_at <= end_date
-                )
-            )
-        )
+        .filter(date_filter)
         .order_by(
-            # Order by claim finalized_at if available, otherwise encounter finalized_at, otherwise created_at
             case(
                 (Claim.finalized_at.isnot(None), Claim.finalized_at),
                 (Encounter.finalized_at.isnot(None), Encounter.finalized_at),
                 else_=Encounter.created_at
             ).desc()
         )
+        .limit(EXPORT_DATE_RANGE_MAX_CLAIMS + 1)
         .all()
     )
-    return generate_claim_xml(claims, db)
+    claim_ids = [r[0] for r in id_rows]
+    if len(claim_ids) > EXPORT_DATE_RANGE_MAX_CLAIMS:
+        raise ValueError(
+            f"Too many claims in date range (max {EXPORT_DATE_RANGE_MAX_CLAIMS}). "
+            "Narrow the date range or use 'Export selected' for specific claims."
+        )
+    return claim_ids
+
+
+def stream_claims_xml_by_ids(claim_ids: List[int]):
+    """
+    Generator that yields UTF-8 bytes. Uses its own DB session per batch so safe after request ends.
+    """
+    from app.core.database import SessionLocal
+
+    header = '<?xml version="1.0" encoding="UTF-8"?>\n<claims>\n'
+    yield header.encode("utf-8")
+    if not claim_ids:
+        yield "</claims>".encode("utf-8")
+        return
+    for i in range(0, len(claim_ids), EXPORT_STREAM_BATCH_SIZE):
+        batch_ids = claim_ids[i : i + EXPORT_STREAM_BATCH_SIZE]
+        db = SessionLocal()
+        try:
+            batch = (
+                db.query(Claim)
+                .options(*_claim_export_load_options())
+                .filter(Claim.id.in_(batch_ids))
+                .all()
+            )
+            if batch:
+                full = generate_claim_xml(batch, db)
+                inner = _extract_claims_inner_xml(full)
+                if inner:
+                    yield inner.encode("utf-8")
+        finally:
+            db.close()
+    yield "\n</claims>".encode("utf-8")
+
+
+def export_claims_by_date_range(start_date: datetime, end_date: datetime, db: Session) -> str:
+    """
+    Export claims within a date range as XML (non-streaming; used when full string needed).
+    For the HTTP endpoint, use stream_claims_xml_by_date_range + StreamingResponse instead.
+    """
+    date_filter = or_(
+        and_(
+            Claim.finalized_at.isnot(None),
+            Claim.finalized_at >= start_date,
+            Claim.finalized_at <= end_date
+        ),
+        and_(
+            Encounter.finalized_at.isnot(None),
+            Encounter.finalized_at >= start_date,
+            Encounter.finalized_at <= end_date
+        ),
+        and_(
+            Encounter.created_at.isnot(None),
+            Encounter.created_at >= start_date,
+            Encounter.created_at <= end_date
+        )
+    )
+    id_rows = (
+        db.query(Claim.id)
+        .join(Encounter)
+        .filter(Claim.status == "finalized")
+        .filter(date_filter)
+        .order_by(
+            case(
+                (Claim.finalized_at.isnot(None), Claim.finalized_at),
+                (Encounter.finalized_at.isnot(None), Encounter.finalized_at),
+                else_=Encounter.created_at
+            ).desc()
+        )
+        .limit(EXPORT_DATE_RANGE_MAX_CLAIMS + 1)
+        .all()
+    )
+    claim_ids = [r[0] for r in id_rows]
+    if len(claim_ids) > EXPORT_DATE_RANGE_MAX_CLAIMS:
+        raise ValueError(
+            f"Too many claims in date range (max {EXPORT_DATE_RANGE_MAX_CLAIMS}). "
+            "Narrow the date range or use 'Export selected' for specific claims."
+        )
+    if not claim_ids:
+        return '<?xml version="1.0" encoding="UTF-8"?>\n<claims></claims>'
+    return export_claims_xml(claim_ids, db)
 
 

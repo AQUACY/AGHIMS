@@ -706,10 +706,10 @@ export const claimsAPI = {
   exportSingle: (claimId) =>
     api.get(`/claims/export/${claimId}`, { responseType: 'blob', timeout: 60000 }),
   exportByDateRange: (startDate, endDate) =>
-    api.get('/claims/export/date-range', {
+    api.get('/claims/export-by-date-range', {
       params: { start_date: startDate, end_date: endDate },
       responseType: 'blob',
-      timeout: 300000,
+      timeout: 600000,
     }),
   exportBatch: (claimIds) =>
     api.post('/claims/export/batch', { claim_ids: claimIds }, { responseType: 'blob', timeout: 300000 }),
