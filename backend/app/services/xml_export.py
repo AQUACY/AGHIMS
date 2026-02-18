@@ -1,6 +1,7 @@
 """
 NHIA ClaimIT XML export service
 """
+import re
 from xml.etree.ElementTree import Element, SubElement, tostring
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -45,6 +46,54 @@ def map_type_of_attendance(attendance_type: str) -> str:
     
     # Return original value for other types (EAE, Referral, CFU, etc.)
     return attendance_type
+
+
+# ClaimIT accepts: 1 DAILY, 2 DAILY, 3 DAILY, 4 DAILY, 6 DAILY (times per day)
+# Map our frequency labels to times-per-day (same set as consultation/Pharmacy)
+_FREQUENCY_TIMES_PER_DAY = {
+    "Nocte": 1, "Stat": 1, "OD": 1, "daily": 1, "PRN": 1,
+    "BDS": 2, "BID": 2,
+    "TID": 3, "TDS": 3,
+    "QDS": 4, "QID": 4,
+    "5X": 5, "6 TIMES": 6,
+    "EVERY OTHER DAY": 1, "AT BED TIME": 1,
+}
+# Case-insensitive lookup (key.lower() -> times)
+_FREQUENCY_TIMES_LOWER = {k.lower(): v for k, v in _FREQUENCY_TIMES_PER_DAY.items()}
+
+
+def map_frequency_to_claimit(frequency: str) -> str:
+    """
+    Convert internal frequency (OD, BDS, TDS, etc.) to ClaimIT format:
+    1 DAILY, 2 DAILY, 3 DAILY, 4 DAILY, 6 DAILY.
+    Five and six times per day both map to 6 DAILY.
+    """
+    if not frequency or not str(frequency).strip():
+        return "1 DAILY"
+    key = str(frequency).strip()
+    times = _FREQUENCY_TIMES_PER_DAY.get(key) or _FREQUENCY_TIMES_LOWER.get(key.lower())
+    if times is None:
+        return "1 DAILY"
+    if times >= 5:
+        return "6 DAILY"
+    return f"{times} DAILY"
+
+
+def map_unparsed_to_claimit_frequency(unparsed: str) -> str:
+    """
+    Replace frequency labels in unparsed text with ClaimIT format so it stays
+    consistent with the <frequency> element. E.g. "400 mg TDS 5 days" -> "400 mg 3 DAILY 5 days".
+    """
+    if not unparsed or not str(unparsed).strip():
+        return unparsed or ""
+    text = str(unparsed)
+    # Replace each label (whole-word, case-insensitive), longest first so e.g. "EVERY OTHER DAY" before "DAY"
+    pairs = [(label, map_frequency_to_claimit(label)) for label in _FREQUENCY_TIMES_PER_DAY]
+    pairs.sort(key=lambda x: -len(x[0]))
+    for label, claimit_value in pairs:
+        pattern = r"\b" + re.escape(label) + r"\b"
+        text = re.sub(pattern, claimit_value, text, flags=re.IGNORECASE)
+    return text
 
 
 def generate_claim_xml(claims: List[Claim], db: Session) -> str:
@@ -203,9 +252,9 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
             
             presc_elem = SubElement(med_elem, "prescription")
             SubElement(presc_elem, "dose").text = claim_presc.dose or ""
-            SubElement(presc_elem, "frequency").text = claim_presc.frequency or ""
+            SubElement(presc_elem, "frequency").text = map_frequency_to_claimit(claim_presc.frequency or "")
             SubElement(presc_elem, "duration").text = claim_presc.duration or ""
-            SubElement(presc_elem, "unparsed").text = claim_presc.unparsed or ""
+            SubElement(presc_elem, "unparsed").text = map_unparsed_to_claimit_frequency(claim_presc.unparsed or "")
         
         # If claim hasn't been edited yet, fallback to encounter prescriptions for backward compatibility
         if not claim_has_been_edited and encounter.prescriptions:
@@ -218,9 +267,9 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                     
                     presc_elem = SubElement(med_elem, "prescription")
                     SubElement(presc_elem, "dose").text = prescription.dose or ""
-                    SubElement(presc_elem, "frequency").text = prescription.frequency or ""
+                    SubElement(presc_elem, "frequency").text = map_frequency_to_claimit(prescription.frequency or "")
                     SubElement(presc_elem, "duration").text = prescription.duration or ""
-                    SubElement(presc_elem, "unparsed").text = prescription.unparsed or ""
+                    SubElement(presc_elem, "unparsed").text = map_unparsed_to_claimit_frequency(prescription.unparsed or "")
         
         # Procedures - ALWAYS use claim detail table (exclude investigations, never fallback after edits)
         for claim_proc in claim_procedures:

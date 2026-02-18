@@ -168,6 +168,7 @@ class ClaimDetailedUpdate(BaseModel):
     physician_id: str
     physician_name: Optional[str] = ""
     type_of_service: str = "OPD"
+    includes_pharmacy: bool = False  # Pharmacy ticked under type of service -> export <includesPharmacy>1</includesPharmacy>
     type_of_attendance: Optional[str] = "EAE"
     specialty_attended: Optional[str] = "OPDC"
     service_outcome: Optional[str] = "DISC"
@@ -2488,6 +2489,7 @@ def get_claim_edit_details(
             "claim_id": claim.claim_id,
             "physician_id": claim.physician_id,
             "type_of_service": claim.type_of_service,
+            "includes_pharmacy": claim.includes_pharmacy,
             "type_of_attendance": claim.type_of_attendance,
             "specialty_attended": claim.specialty_attended,
             "service_outcome": claim.service_outcome,
@@ -2586,7 +2588,10 @@ def update_claim_detailed(
     claim.service_outcome = claim_data.service_outcome or "DISC"
     claim.is_unbundled = claim_data.is_unbundled
     claim.principal_gdrg = claim_data.principal_gdrg or None
-    
+    # If claim has any prescriptions (drugs), ensure includes_pharmacy is true so export records it
+    has_prescriptions = claim_data.prescriptions and len([p for p in claim_data.prescriptions if (p.code and p.code.strip()) or (p.description and p.description.strip())]) > 0
+    claim.includes_pharmacy = claim_data.includes_pharmacy or has_prescriptions
+
     # Update encounter with procedure and date information
     encounter = db.query(Encounter).filter(Encounter.id == claim.encounter_id).first()
     if encounter:

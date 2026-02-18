@@ -127,12 +127,31 @@
           
           <div class="row q-gutter-md q-mb-md">
             <div class="col-12">
-              <div class="text-subtitle2 q-mb-xs">Type of Services (select only one)</div>
-              <q-option-group
-                v-model="services.type_of_service"
-                :options="typeOfServiceOptions"
-                type="radio"
-              />
+              <div class="text-subtitle2 q-mb-xs">Type of Service (select one)</div>
+              <div class="row q-gutter-sm">
+                <q-checkbox
+                  v-model="serviceTypeOpd"
+                  :false-value="false"
+                  :true-value="true"
+                  label="Outpatients (OPD)"
+                  @update:model-value="onServiceTypeOpdChange"
+                />
+                <q-checkbox
+                  v-model="serviceTypeIpd"
+                  :false-value="false"
+                  :true-value="true"
+                  label="In-patient (IPD)"
+                  @update:model-value="onServiceTypeIpdChange"
+                />
+              </div>
+              <div class="row q-gutter-sm q-mt-sm">
+                <q-checkbox
+                  v-model="services.includes_pharmacy"
+                  :false-value="false"
+                  :true-value="true"
+                  label="Pharmacy (claim includes drugs)"
+                />
+              </div>
             </div>
           </div>
 
@@ -922,7 +941,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
@@ -989,6 +1008,7 @@ const genderOptions = [
 // Services Provided
 const services = reactive({
   type_of_service: 'OPD',
+  includes_pharmacy: false,
   first_visit: '',
   second_visit: '',
   third_visit: '',
@@ -1001,12 +1021,30 @@ const services = reactive({
   principal_gdrg: '',
 });
 
-const typeOfServiceOptions = [
-  { label: 'Outpatients', value: 'OPD' },
-  { label: 'In-patient', value: 'IPD' },
-  { label: 'Pharmacy', value: 'Pharmacy' },
-  { label: 'Diagnostic', value: 'Diagnostic' },
-];
+// OPD/IPD checkboxes: exactly one must be selected (export typeOfService = OPD | IPD)
+const serviceTypeOpd = computed({
+  get: () => services.type_of_service === 'OPD',
+  set: (v) => { services.type_of_service = v ? 'OPD' : 'IPD'; },
+});
+const serviceTypeIpd = computed({
+  get: () => services.type_of_service === 'IPD',
+  set: (v) => { services.type_of_service = v ? 'IPD' : 'OPD'; },
+});
+function onServiceTypeOpdChange(val) {
+  if (val) services.type_of_service = 'OPD';
+  else services.type_of_service = 'IPD';
+}
+function onServiceTypeIpdChange(val) {
+  if (val) services.type_of_service = 'IPD';
+  else services.type_of_service = 'OPD';
+}
+
+// Auto-tick Pharmacy when officer adds a drug so they don't miss it and export records it
+watch(
+  () => prescriptionsList.value.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim())),
+  (hasDrugs) => { if (hasDrugs) services.includes_pharmacy = true; },
+  { immediate: false }
+);
 
 const outcomeOptions = ['Discharged', 'Died', 'Transferred Out', 'Absconded/Discharged against Medical advice'];
 const attendanceOptions = [
@@ -1816,8 +1854,11 @@ const loadClaimData = async () => {
     });
     
     // Populate services
+    const hasDrugs = (data.prescriptions && data.prescriptions.length > 0) &&
+      data.prescriptions.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim()));
     Object.assign(services, {
       type_of_service: data.claim.type_of_service || 'OPD',
+      includes_pharmacy: !!data.claim.includes_pharmacy || !!hasDrugs,
       first_visit: data.encounter.created_at ? data.encounter.created_at.split('T')[0] : '',
       second_visit: data.encounter.finalized_at ? data.encounter.finalized_at.split('T')[0] : '',
       type_of_attendance: data.claim.type_of_attendance || 'EAE',
@@ -1945,10 +1986,12 @@ function buildClaimPayload() {
     .filter(p => p.description && p.description.trim() !== '');
   const proceduresToSave = proceduresList.value
     .filter(p => p.description && p.description.trim() !== '');
+  const hasDrugs = prescriptionsToSave.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim()));
   return {
     physician_id: procedures.physician_id || services.specialty_code || '',
     physician_name: procedures.physician_name || '',
     type_of_service: services.type_of_service,
+    includes_pharmacy: !!services.includes_pharmacy || !!hasDrugs,
     type_of_attendance: services.type_of_attendance,
     specialty_attended: services.specialty_code || '',
     service_outcome: services.outcome,
