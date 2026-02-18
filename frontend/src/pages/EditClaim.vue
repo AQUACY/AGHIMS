@@ -1039,13 +1039,6 @@ function onServiceTypeIpdChange(val) {
   else services.type_of_service = 'OPD';
 }
 
-// Auto-tick Pharmacy when officer adds a drug so they don't miss it and export records it
-watch(
-  () => prescriptionsList.value.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim())),
-  (hasDrugs) => { if (hasDrugs) services.includes_pharmacy = true; },
-  { immediate: false }
-);
-
 const outcomeOptions = ['Discharged', 'Died', 'Transferred Out', 'Absconded/Discharged against Medical advice'];
 const attendanceOptions = [
   { label: 'Chronic Follow-up', value: 'CFU' },
@@ -1151,6 +1144,13 @@ const prescriptionColumns = [
   { name: 'code', label: 'Code', field: 'code', align: 'left' },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
+
+// Auto-tick Pharmacy when officer adds a drug so they don't miss it and export records it
+watch(
+  () => prescriptionsList.value.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim())),
+  (hasDrugs) => { if (hasDrugs) services.includes_pharmacy = true; },
+  { immediate: false }
+);
 
 // Claim Summary
 const claimSummary = ref([
