@@ -1145,9 +1145,9 @@ const prescriptionColumns = [
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
-// Auto-tick Pharmacy when officer adds a drug so they don't miss it and export records it
+// Auto-tick Pharmacy when officer adds a real drug (code/description + quantity > 0); empty placeholder rows don't count
 watch(
-  () => prescriptionsList.value.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim())),
+  () => prescriptionsList.value.some(p => ((p.code && p.code.trim()) || (p.description && p.description.trim())) && (Number(p.quantity) || 0) > 0),
   (hasDrugs) => { if (hasDrugs) services.includes_pharmacy = true; },
   { immediate: false }
 );
@@ -1855,10 +1855,10 @@ const loadClaimData = async () => {
     
     // Populate services
     const hasDrugs = (data.prescriptions && data.prescriptions.length > 0) &&
-      data.prescriptions.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim()));
+      data.prescriptions.some(p => ((p.code && p.code.trim()) || (p.description && p.description.trim())) && (Number(p.quantity) || 0) > 0);
     Object.assign(services, {
       type_of_service: data.claim.type_of_service || 'OPD',
-      includes_pharmacy: !!data.claim.includes_pharmacy || !!hasDrugs,
+      includes_pharmacy: (data.claim.includes_pharmacy === true) || !!hasDrugs,
       first_visit: data.encounter.created_at ? data.encounter.created_at.split('T')[0] : '',
       second_visit: data.encounter.finalized_at ? data.encounter.finalized_at.split('T')[0] : '',
       type_of_attendance: data.claim.type_of_attendance || 'EAE',
@@ -1986,12 +1986,12 @@ function buildClaimPayload() {
     .filter(p => p.description && p.description.trim() !== '');
   const proceduresToSave = proceduresList.value
     .filter(p => p.description && p.description.trim() !== '');
-  const hasDrugs = prescriptionsToSave.some(p => (p.code && p.code.trim()) || (p.description && p.description.trim()));
+  const hasDrugs = prescriptionsToSave.some(p => ((p.code && p.code.trim()) || (p.description && p.description.trim())) && (Number(p.quantity) || 0) > 0);
   return {
     physician_id: procedures.physician_id || services.specialty_code || '',
     physician_name: procedures.physician_name || '',
     type_of_service: services.type_of_service,
-    includes_pharmacy: !!services.includes_pharmacy || !!hasDrugs,
+    includes_pharmacy: hasDrugs || (services.includes_pharmacy === true),
     type_of_attendance: services.type_of_attendance,
     specialty_attended: services.specialty_code || '',
     service_outcome: services.outcome,

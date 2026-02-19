@@ -2588,9 +2588,11 @@ def update_claim_detailed(
     claim.service_outcome = claim_data.service_outcome or "DISC"
     claim.is_unbundled = claim_data.is_unbundled
     claim.principal_gdrg = claim_data.principal_gdrg or None
-    # If claim has any prescriptions (drugs), ensure includes_pharmacy is true so export records it
-    has_prescriptions = claim_data.prescriptions and len([p for p in claim_data.prescriptions if (p.code and p.code.strip()) or (p.description and p.description.strip())]) > 0
-    claim.includes_pharmacy = claim_data.includes_pharmacy or has_prescriptions
+    # If claim has any prescriptions (drugs), ensure includes_pharmacy is true so export records it.
+    # Only count lines with code/description and quantity > 0 (exclude empty placeholder rows).
+    has_prescriptions = claim_data.prescriptions and len([p for p in claim_data.prescriptions if ((p.code and p.code.strip()) or (p.description and p.description.strip())) and (p.quantity or 0) > 0]) > 0
+    # Coerce to bool so we never store list/dict (e.g. frontend sending [] when unchecked)
+    claim.includes_pharmacy = has_prescriptions or bool(claim_data.includes_pharmacy)
 
     # Update encounter with procedure and date information
     encounter = db.query(Encounter).filter(Encounter.id == claim.encounter_id).first()
