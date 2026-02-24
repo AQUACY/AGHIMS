@@ -96,6 +96,43 @@ def map_unparsed_to_claimit_frequency(unparsed: str) -> str:
     return text
 
 
+def normalize_unparsed_duration(unparsed: str) -> str:
+    """
+    If unparsed ends with a number (duration in days) that is not already followed by day/days,
+    append " DAYS" so it matches <duration>. E.g. "75 mg 1 DAILY 1" -> "75 mg 1 DAILY 1 DAYS".
+    Values already like "60 DAYS" or "5 days" are unchanged (end is not a bare number).
+    """
+    if not unparsed or not str(unparsed).strip():
+        return unparsed or ""
+    text = str(unparsed).strip()
+    # Only change when the string ends with a number (optional trailing space) - that's the duration
+    text = re.sub(r"(\d+(?:\.\d+)?)\s*$", r"\1 DAYS", text)
+    return text
+
+
+def normalize_duration_for_export(duration: str) -> str:
+    """
+    Ensure duration is in "X DAYS" form for export. All durations are in days.
+    - "10" -> "10 DAYS"
+    - "10 DAYS" or "7 days" -> kept as-is (officer already corrected)
+    - "2 WEEKS" or other text -> kept as-is
+    """
+    if not duration or not str(duration).strip():
+        return ""
+    s = str(duration).strip()
+    if "day" in s.lower():
+        return s
+    try:
+        n = float(s)
+        if n >= 0:
+            return f"{int(n) if n == int(n) else n} DAYS"
+    except ValueError:
+        pass
+    if s.isdigit():
+        return f"{s} DAYS"
+    return s
+
+
 def generate_claim_xml(claims: List[Claim], db: Session) -> str:
     """
     Generate NHIA ClaimIT compatible XML from claims.
@@ -253,8 +290,8 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
             presc_elem = SubElement(med_elem, "prescription")
             SubElement(presc_elem, "dose").text = claim_presc.dose or ""
             SubElement(presc_elem, "frequency").text = map_frequency_to_claimit(claim_presc.frequency or "")
-            SubElement(presc_elem, "duration").text = claim_presc.duration or ""
-            SubElement(presc_elem, "unparsed").text = map_unparsed_to_claimit_frequency(claim_presc.unparsed or "")
+            SubElement(presc_elem, "duration").text = normalize_duration_for_export(claim_presc.duration or "")
+            SubElement(presc_elem, "unparsed").text = normalize_unparsed_duration(map_unparsed_to_claimit_frequency(claim_presc.unparsed or ""))
         
         # If claim hasn't been edited yet, fallback to encounter prescriptions for backward compatibility
         if not claim_has_been_edited and encounter.prescriptions:
@@ -268,8 +305,8 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
                     presc_elem = SubElement(med_elem, "prescription")
                     SubElement(presc_elem, "dose").text = prescription.dose or ""
                     SubElement(presc_elem, "frequency").text = map_frequency_to_claimit(prescription.frequency or "")
-                    SubElement(presc_elem, "duration").text = prescription.duration or ""
-                    SubElement(presc_elem, "unparsed").text = map_unparsed_to_claimit_frequency(prescription.unparsed or "")
+                    SubElement(presc_elem, "duration").text = normalize_duration_for_export(prescription.duration or "")
+                    SubElement(presc_elem, "unparsed").text = normalize_unparsed_duration(map_unparsed_to_claimit_frequency(prescription.unparsed or ""))
         
         # Procedures - ALWAYS use claim detail table (exclude investigations, never fallback after edits)
         for claim_proc in claim_procedures:

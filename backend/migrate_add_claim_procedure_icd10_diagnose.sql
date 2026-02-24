@@ -14,6 +14,7 @@ SELECT * FROM performance_schema.data_lock_waits;
 
 -- 4) To KILL a blocking session (use the Id from SHOW PROCESSLIST):
 --    KILL <Id>;
+
 -- Example: if processlist shows Id=7 with a long-running SELECT on claim_procedures:
 --    KILL 7;
 -- Then retry the ALTER in your original session.
