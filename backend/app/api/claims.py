@@ -16,7 +16,7 @@ from app.models.encounter import Encounter
 from app.models.claim import Claim, ClaimStatus
 from app.models.bill import Bill
 from app.utils.claim_generator import generate_claim_id, generate_claim_check_code
-from app.services.xml_export import export_claims_xml, export_claims_by_date_range, get_claim_ids_by_date_range, stream_claims_xml_by_ids
+from app.services.xml_export import export_claims_xml, export_claims_by_date_range, get_claim_ids_by_date_range, stream_claims_xml_by_ids, is_consultation_service_procedure
 from app.models.diagnosis import Diagnosis
 
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -2338,10 +2338,13 @@ def get_claim_edit_details(
                 {"claim_id": claim.id},
             ).fetchall()
             for row in raw_rows:
+                _desc = (row[0] or "") if row[0] else ""
+                if is_consultation_service_procedure(_desc):
+                    continue
                 _svc_date = row[1]
                 _icd10_val = row[3]
                 procedures_list.append({
-                    "description": (row[0] or "") if row[0] else "",
+                    "description": _desc,
                     "date": _svc_date.isoformat() if _svc_date else (encounter.created_at.isoformat() if encounter.created_at else ""),
                     "gdrg": (row[2] or "") if row[2] else "",
                     "icd10": (str(_icd10_val).strip() if _icd10_val else "") or "",
@@ -2349,6 +2352,8 @@ def get_claim_edit_details(
         except Exception:
             # Fallback to ORM if raw query fails (e.g. icd10 column missing in DB)
             for claim_proc in claim_procedures:
+                if is_consultation_service_procedure(claim_proc.description or ""):
+                    continue
                 _icd10 = getattr(claim_proc, "icd10", None) or claim_proc.__dict__.get("icd10")
                 _icd10_str = (str(_icd10).strip() if _icd10 else "") or ""
                 procedures_list.append({

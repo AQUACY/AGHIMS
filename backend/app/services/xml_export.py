@@ -48,6 +48,26 @@ def map_type_of_attendance(attendance_type: str) -> str:
     return attendance_type
 
 
+# Main service request descriptions that were wrongly copied into surgery/procedure section.
+# Exclude these from claim procedures and export so only actual surgeries appear.
+CONSULTATION_SERVICE_PROCEDURE_PHRASES = [
+    "General New Consultation Adult",
+    "General New Consultation Child",
+    "Paediatric New Consultation",
+    "General New Consultation",
+    "New Consultation Adult",
+    "New Consultation Child",
+]
+
+
+def is_consultation_service_procedure(description: str) -> bool:
+    """True if description is a main service request (e.g. consultation type), not an actual surgery."""
+    if not description or not str(description).strip():
+        return False
+    d = str(description).strip().lower()
+    return any(phrase.lower() in d for phrase in CONSULTATION_SERVICE_PROCEDURE_PHRASES)
+
+
 # ClaimIT accepts: 1 DAILY, 2 DAILY, 3 DAILY, 4 DAILY, 6 DAILY (times per day)
 # Map our frequency labels to times-per-day (same set as consultation/Pharmacy)
 _FREQUENCY_TIMES_PER_DAY = {
@@ -311,6 +331,8 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         # Procedures - ALWAYS use claim detail table (exclude investigations, never fallback after edits)
         for claim_proc in claim_procedures:
             if claim_proc.gdrg_code and claim_proc.gdrg_code not in investigation_gdrg_codes:
+                if is_consultation_service_procedure(claim_proc.description or ""):
+                    continue
                 proc_elem = SubElement(claim_elem, "procedure")
                 SubElement(proc_elem, "serviceDate").text = format_datetime(claim_proc.service_date)
                 SubElement(proc_elem, "gdrgCode").text = claim_proc.gdrg_code
@@ -324,17 +346,18 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         # If claim hasn't been edited yet, fallback to encounter procedure for backward compatibility
         if not claim_has_been_edited:
             if encounter.procedure_g_drg_code and encounter.procedure_g_drg_code not in investigation_gdrg_codes:
-                proc_elem = SubElement(claim_elem, "procedure")
-                SubElement(proc_elem, "serviceDate").text = format_datetime(encounter.created_at)
-                SubElement(proc_elem, "gdrgCode").text = encounter.procedure_g_drg_code
-                if encounter.procedure_name:
-                    SubElement(proc_elem, "description").text = encounter.procedure_name
-                # Get diagnosis for procedure if available
-                if encounter.diagnoses:
-                    chief_diag_enc = next((d for d in encounter.diagnoses if d.is_chief), None)
-                    if chief_diag_enc:
-                        SubElement(proc_elem, "icd10").text = chief_diag_enc.icd10
-                        SubElement(proc_elem, "diagnosis").text = chief_diag_enc.diagnosis
+                if not is_consultation_service_procedure(encounter.procedure_name or ""):
+                    proc_elem = SubElement(claim_elem, "procedure")
+                    SubElement(proc_elem, "serviceDate").text = format_datetime(encounter.created_at)
+                    SubElement(proc_elem, "gdrgCode").text = encounter.procedure_g_drg_code
+                    if encounter.procedure_name:
+                        SubElement(proc_elem, "description").text = encounter.procedure_name
+                    # Get diagnosis for procedure if available
+                    if encounter.diagnoses:
+                        chief_diag_enc = next((d for d in encounter.diagnoses if d.is_chief), None)
+                        if chief_diag_enc:
+                            SubElement(proc_elem, "icd10").text = chief_diag_enc.icd10
+                            SubElement(proc_elem, "diagnosis").text = chief_diag_enc.diagnosis
         
         # Principal GDRG
         SubElement(claim_elem, "principalGDRG").text = claim.principal_gdrg or ""
