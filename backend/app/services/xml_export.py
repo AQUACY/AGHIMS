@@ -118,29 +118,34 @@ def map_unparsed_to_claimit_frequency(unparsed: str) -> str:
 
 def normalize_unparsed_duration(unparsed: str) -> str:
     """
-    If unparsed ends with a number (duration in days) that is not already followed by day/days,
-    append " DAYS" so it matches <duration>. E.g. "75 mg 1 DAILY 1" -> "75 mg 1 DAILY 1 DAYS".
-    Values already like "60 DAYS" or "5 days" are unchanged (end is not a bare number).
+    Ensure trailing duration in unparsed uses "DAYS" (plural). ClaimIT flags singular "day" as error.
+    - "75 mg 1 DAILY 1" -> "75 mg 1 DAILY 1 DAYS"
+    - "75 mg 1 DAILY 1 day" or "1 DAY" -> "75 mg 1 DAILY 1 DAYS" (singular -> DAYS)
+    - "60 DAYS" or "5 days" -> normalized to "DAYS" if singular "day" present
     """
     if not unparsed or not str(unparsed).strip():
         return unparsed or ""
     text = str(unparsed).strip()
-    # Only change when the string ends with a number (optional trailing space) - that's the duration
+    # Replace "X day" or "X DAY" (singular) at end with "X DAYS"
+    text = re.sub(r"(\d+(?:\.\d+)?)\s+day\s*$", r"\1 DAYS", text, flags=re.IGNORECASE)
+    # Replace bare trailing number with "N DAYS"
     text = re.sub(r"(\d+(?:\.\d+)?)\s*$", r"\1 DAYS", text)
     return text
 
 
 def normalize_duration_for_export(duration: str) -> str:
     """
-    Ensure duration is in "X DAYS" form for export. All durations are in days.
+    Ensure duration is in "X DAYS" form for export. ClaimIT flags singular "day" as error.
     - "10" -> "10 DAYS"
-    - "10 DAYS" or "7 days" -> kept as-is (officer already corrected)
+    - "1 day" or "1 DAY" -> "1 DAYS" (singular must become plural)
+    - "10 DAYS" or "7 days" -> "10 DAYS" / "7 DAYS" (normalize to DAYS)
     - "2 WEEKS" or other text -> kept as-is
     """
     if not duration or not str(duration).strip():
         return ""
     s = str(duration).strip()
     if "day" in s.lower():
+        s = re.sub(r"\bday\b", "DAYS", s, flags=re.IGNORECASE)
         return s
     try:
         n = float(s)
