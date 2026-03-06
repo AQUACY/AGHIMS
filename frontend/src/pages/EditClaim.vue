@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-md" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
     <div class="row items-center q-mb-md">
       <div class="text-h4">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
       <q-space />
@@ -25,15 +25,60 @@
       </div>
     </q-banner>
 
+    <!-- Reopen finalized claim to allow editing (view mode or from Correct Errors) -->
+    <q-banner
+      v-if="!loading && claimStatus === 'finalized'"
+      class="bg-amber-2 q-mb-md"
+      rounded
+    >
+      <template v-slot:avatar>
+        <q-icon name="lock_open" color="amber-9" />
+      </template>
+      <strong>Claim is finalized</strong>
+      <div class="text-caption q-mt-xs">
+        <template v-if="isViewMode">
+          You are viewing this claim. To make changes, click <strong>Reopen claim</strong> below. Then edit and use <strong>Save & Finalize</strong> when done.
+        </template>
+        <template v-else>
+          To correct errors and re-export, reopen the claim first. Then make your changes and use <strong>Save & Finalize</strong> before exporting again.
+        </template>
+      </div>
+      <template v-slot:action>
+        <q-btn
+          flat
+          color="primary"
+          label="Reopen claim"
+          :loading="reopening"
+          @click="reopenClaim"
+        />
+      </template>
+    </q-banner>
+
     <q-card v-if="loading" class="q-pa-md">
       <q-inner-loading showing color="primary" />
     </q-card>
 
     <q-form v-else @submit="saveClaim" class="q-gutter-md">
+      <!-- ClaimIT errors not mapped to a section -->
+      <q-banner v-if="claimitErrors.by_section?.other?.length" class="bg-orange-1 q-mb-md" rounded dense>
+        <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+        <div class="text-subtitle2">ClaimIT reported (fix in relevant section):</div>
+        <ul class="q-mt-xs q-mb-none q-pl-md">
+          <li v-for="(msg, i) in claimitErrors.by_section.other" :key="i" class="text-body2">{{ msg }}</li>
+        </ul>
+      </q-banner>
+
       <!-- Provider Information -->
       <q-card>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider Information</div>
+          <q-banner v-if="claimitErrors.by_section?.provider?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.provider" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row q-gutter-md">
             <q-input
               v-model="providerInfo.provider_name"
@@ -63,6 +108,13 @@
       <q-card>
         <q-card-section>
           <div class="text-h6 q-mb-md">Client Information</div>
+          <q-banner v-if="claimitErrors.by_section?.client?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.client" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row q-gutter-md">
             <q-input
               v-model="patientInfo.surname"
@@ -124,7 +176,13 @@
       <q-card>
         <q-card-section>
           <div class="text-h6 q-mb-md">Services Provided</div>
-          
+          <q-banner v-if="claimitErrors.by_section?.services?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.services" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row q-gutter-md q-mb-md">
             <div class="col-12">
               <div class="text-subtitle2 q-mb-xs">Type of Service (select one)</div>
@@ -243,6 +301,13 @@
       <!-- Procedures (Surgeries) -->
       <q-card>
         <q-card-section>
+          <q-banner v-if="claimitErrors.by_section?.procedures?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.procedures" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row items-center q-mb-md">
             <div class="text-h6">Surgery(ies)</div>
             <q-icon
@@ -259,7 +324,7 @@
             </q-icon>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' || isViewMode"
+              v-if="claimStatus !== 'finalized' && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -305,7 +370,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                   @filter="filterSurgerySearch"
                   @update:model-value="(val) => onProcedureSelect(props.row.index, val)"
                 >
@@ -324,7 +389,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -334,7 +399,7 @@
                   v-model="proceduresList[props.row.index].icd10"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -344,7 +409,7 @@
                   v-model="proceduresList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -371,11 +436,18 @@
       <!-- Diagnoses -->
       <q-card>
         <q-card-section>
+          <q-banner v-if="claimitErrors.by_section?.diagnosis?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.diagnosis" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row items-center q-mb-md">
             <div class="text-h6">Diagnosis(es)</div>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' || isViewMode"
+              v-if="claimStatus !== 'finalized' && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -407,7 +479,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                   @filter="filterDiagnosisSearch"
                   @update:model-value="(val) => onDiagnosisSelect(props.row.index, val)"
                 >
@@ -425,7 +497,7 @@
                   v-model="diagnosesList[props.row.index].icd10"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -435,7 +507,7 @@
                   v-model="diagnosesList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -443,7 +515,7 @@
               <q-td :props="props">
                 <q-checkbox
                   v-model="diagnosesList[props.row.index].is_chief"
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -470,11 +542,18 @@
       <!-- Investigations -->
       <q-card>
         <q-card-section>
+          <q-banner v-if="claimitErrors.by_section?.investigations?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.investigations" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row items-center q-mb-md">
             <div class="text-h6">Investigations</div>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' || isViewMode"
+              v-if="claimStatus !== 'finalized' && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -502,7 +581,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                   @filter="filterInvestigationProcedures"
                   @update:model-value="(val) => onInvestigationSelect(props.row.index, val)"
                 >
@@ -521,7 +600,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -531,7 +610,7 @@
                   v-model="investigationsList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -558,11 +637,18 @@
       <!-- Medicines -->
       <q-card>
         <q-card-section>
+          <q-banner v-if="claimitErrors.by_section?.medicines?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.medicines" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row items-center q-mb-md">
             <div class="text-h6">Medicines</div>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' || isViewMode"
+              v-if="claimStatus !== 'finalized' && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -590,7 +676,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                   @filter="filterProductSearch"
                   @update:model-value="(val) => onPrescriptionProductSelect(props.row.index, val)"
                 >
@@ -610,7 +696,7 @@
                   filled
                   type="number"
                   step="0.01"
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                   @update:model-value="updatePrescriptionTotal(props.row.index)"
                 />
               </q-td>
@@ -622,7 +708,7 @@
                   dense
                   filled
                   type="number"
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                   @update:model-value="updatePrescriptionTotal(props.row.index)"
                 />
               </q-td>
@@ -646,7 +732,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -656,7 +742,7 @@
                   v-model="prescriptionsList[props.row.index].code"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' && !isViewMode"
+                  :disable="claimStatus === 'finalized' || isViewMode"
                 />
               </q-td>
             </template>
@@ -672,7 +758,7 @@
                     round
                     dense
                     @click="openPrescriptionDialog(props.row.index)"
-                    :disable="claimStatus === 'finalized' && !isViewMode"
+                    :disable="claimStatus === 'finalized' || isViewMode"
                   >
                     <q-tooltip>Edit Dose, Frequency & Duration</q-tooltip>
                   </q-btn>
@@ -757,13 +843,14 @@
             class="col-12 col-md-3"
           />
         </template>
-        <!-- View Mode Buttons -->
+        <!-- View Mode Buttons (disabled when finalized — use Reopen claim first to edit) -->
         <template v-else>
           <q-btn
             color="primary"
             label="Save & Finalize"
             :loading="saving"
             @click="saveAndFinalize"
+            :disable="claimStatus === 'finalized'"
             class="col-12 col-md-3"
           />
           <q-btn
@@ -771,11 +858,27 @@
             label="Save Changes"
             :loading="saving"
             @click.prevent="onSaveChangesInViewMode"
+            :disable="claimStatus === 'finalized'"
             class="col-12 col-md-3"
           />
         </template>
       </div>
     </q-form>
+
+    <!-- Fixed bottom bar: Reopen claim always visible when finalized (no need to scroll up) -->
+    <div
+      v-if="!loading && claimStatus === 'finalized'"
+      class="reopen-claim-fixed-bar row items-center justify-center q-pa-sm shadow-6"
+    >
+      <span class="q-mr-md text-weight-medium">Claim is finalized.</span>
+      <q-btn
+        color="primary"
+        label="Reopen claim"
+        :loading="reopening"
+        icon="lock_open"
+        @click="reopenClaim"
+      />
+    </div>
 
     <!-- Add Diagnosis Dialog (same format as Consultation form) -->
     <q-dialog v-model="showDiagnosisDialog">
@@ -952,12 +1055,16 @@ const $q = useQuasar();
 
 const loading = ref(true);
 const saving = ref(false);
+const reopening = ref(false);
 const claimId = ref(null);
 const claimStatus = ref('draft');
 const isViewMode = ref(false);
 const route = useRoute();
 /** Snapshot of last saved claim payload (JSON) for change detection in view mode */
 const lastSavedClaimPayload = ref(null);
+
+/** ClaimIT report errors for this claim, by section (from Correct Errors uploads) */
+const claimitErrors = ref({ messages: [], by_section: {} });
 
 // Pending surgeries (IPD): surgeries not yet completed – mark complete & add to claim without regenerating
 const wardAdmissionId = ref(null);
@@ -1840,6 +1947,9 @@ const loadClaimData = async () => {
     
     // Set claim status
     claimStatus.value = data.claim.status;
+
+    // ClaimIT errors for this claim (from Correct Errors report uploads), grouped by section
+    claimitErrors.value = data.claimit_errors || { messages: [], by_section: {} };
     
     // Populate patient info
     Object.assign(patientInfo, {
@@ -1976,6 +2086,31 @@ const loadClaimData = async () => {
   }
 };
 
+/** Reopen a finalized claim so the user can edit (from view mode or Correct Errors) and save again */
+async function reopenClaim() {
+  if (!claimId.value || claimStatus.value !== 'finalized') return;
+  reopening.value = true;
+  try {
+    await claimsAPI.reopen(claimId.value);
+    $q.notify({
+      type: 'positive',
+      message: 'Claim reopened. You can now edit and save.',
+    });
+    await loadClaimData();
+    // If they were viewing (from main claims list), switch to edit mode so they can make changes and save
+    if (isViewMode.value) {
+      isViewMode.value = false;
+    }
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to reopen claim',
+    });
+  } finally {
+    reopening.value = false;
+  }
+}
+
 /** Build the claim payload from current form state (for save and change detection) */
 function buildClaimPayload() {
   const diagnosesToSave = diagnosesList.value
@@ -2110,30 +2245,25 @@ onMounted(async () => {
     $router.push('/claims');
     return;
   }
-  // Check if in view mode (from query parameter)
+  // View mode from query (main claims list uses View → view=true; vetting can view read-only, then Reopen to edit)
   isViewMode.value = route.query.view === 'true';
-  
-  // If in view mode and claim is finalized, automatically reopen it
-  if (isViewMode.value) {
-    try {
-      const claimResponse = await claimsAPI.get(claimId.value);
-      if (claimResponse.data.status === 'finalized') {
-        await claimsAPI.reopen(claimId.value);
-        $q.notify({
-          type: 'info',
-          message: 'Claim has been reopened for editing',
-          timeout: 3000,
-        });
-      }
-    } catch (error) {
-      console.error('Error checking/reopening claim:', error);
-    }
-  }
-  
+
   await loadClaimData();
   lastSavedClaimPayload.value = JSON.stringify(buildClaimPayload());
 });
 </script>
 
 <style scoped>
+.reopen-claim-fixed-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--q-color-amber-2);
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  z-index: 2000;
+}
+.q-page.reopen-bar-visible {
+  padding-bottom: 64px;
+}
 </style>

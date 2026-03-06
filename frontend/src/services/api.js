@@ -713,6 +713,16 @@ export const claimsAPI = {
     }),
   exportBatch: (claimIds) =>
     api.post('/claims/export/batch', { claim_ids: claimIds }, { responseType: 'blob', timeout: 300000 }),
+  // ClaimIT report upload & error batches
+  uploadClaimitReport: (formData) =>
+    api.post('/claims/claimit-report/upload', formData, {
+      timeout: 120000,
+      headers: { 'Content-Type': undefined },
+    }),
+  getClaimitBatches: () => api.get('/claims/claimit-report/batches'),
+  getClaimitBatch: (batchId) => api.get(`/claims/claimit-report/batches/${batchId}`),
+  setClaimitErrorComplete: (batchId, errorId, completed) =>
+    api.patch(`/claims/claimit-report/batches/${batchId}/errors/${errorId}/complete`, { completed }),
 };
 
 // Staff endpoints

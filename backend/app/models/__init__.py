@@ -17,6 +17,7 @@ from app.models.unmapped_drg_price import UnmappedDRGPrice
 from app.models.icd10_drg_mapping import ICD10DRGMapping
 from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
+from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.models.consultation_notes import ConsultationNotes
 from app.models.doctor_note_entry import DoctorNoteEntry
 from app.models.admission import AdmissionRecommendation
@@ -88,6 +89,8 @@ __all__ = [
     "ClaimInvestigation",
     "ClaimPrescription",
     "ClaimProcedure",
+    "ClaimItReportBatch",
+    "ClaimItReportError",
     "ConsultationNotes",
     "DoctorNoteEntry",
     "AdmissionRecommendation",

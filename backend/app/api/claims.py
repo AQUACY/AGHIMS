@@ -3,7 +3,7 @@ Claims management endpoints
 """
 import io
 import zipfile
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
@@ -18,8 +18,55 @@ from app.models.bill import Bill
 from app.utils.claim_generator import generate_claim_id, generate_claim_check_code
 from app.services.xml_export import export_claims_xml, export_claims_by_date_range, get_claim_ids_by_date_range, stream_claims_xml_by_ids, is_consultation_service_procedure
 from app.models.diagnosis import Diagnosis
+from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
+from app.services.claimit_report_parser import parse_claimit_report_html
 
 router = APIRouter(prefix="/claims", tags=["claims"])
+
+# Section keys used for ClaimIT errors on Edit Claim (must match frontend)
+CLAIMIT_SECTION_ORDER = ["client", "provider", "services", "procedures", "diagnosis", "investigations", "medicines", "other"]
+
+
+def _categorize_claimit_errors(messages: list) -> dict:
+    """Map ClaimIT error message strings to form sections for Edit Claim. Returns by_section dict."""
+    by_section = {s: [] for s in CLAIMIT_SECTION_ORDER}
+    for msg in messages:
+        if not msg or not isinstance(msg, str):
+            continue
+        lower = msg.lower()
+        if any(k in lower for k in ("member", "card serial", "hospital record", "insurance id", "patient", "surname", "other name", "date of birth", "age", "gender", "nhis number")):
+            by_section["client"].append(msg)
+        elif any(k in lower for k in ("provider", "scheme code", "month of claim")):
+            by_section["provider"].append(msg)
+        elif any(k in lower for k in ("type of service", "opd", "ipd", "pharmacy", "attendance", "specialty", "outcome", "principal gdrg", "service outcome")):
+            by_section["services"].append(msg)
+        elif any(k in lower for k in ("procedure", "surgery", "surgical")) and "diagnosis" not in lower:
+            by_section["procedures"].append(msg)
+        elif any(k in lower for k in ("diagnosis", "icd-10", "icd10", "chief complaint", "gdrg")) and "procedure" not in lower and "surgery" not in lower:
+            by_section["diagnosis"].append(msg)
+        elif any(k in lower for k in ("investigation", "lab", "x-ray", "xray", "scan")):
+            by_section["investigations"].append(msg)
+        elif any(k in lower for k in ("drug", "medicine", "prescription", "frequency", "duration", "dose", "quantity", "pharmacy", "medication")):
+            by_section["medicines"].append(msg)
+        else:
+            by_section["other"].append(msg)
+    return by_section
+
+
+def _get_claimit_errors_for_claim(db: Session, claim_id_str: str) -> dict:
+    """Fetch ClaimIT report errors for this claim (by CLA-XXXXX) and return messages + by_section."""
+    errors = (
+        db.query(ClaimItReportError)
+        .filter(ClaimItReportError.claim_claim_id == claim_id_str)
+        .all()
+    )
+    messages = []
+    for e in errors:
+        if e.error_messages:
+            messages.extend([m for m in e.error_messages if m])
+    messages = list(dict.fromkeys(messages))  # dedupe order-preserving
+    by_section = _categorize_claimit_errors(messages)
+    return {"messages": messages, "by_section": by_section}
 
 
 def _ensure_claim_procedures_icd10_column(db: Session) -> None:
@@ -2532,6 +2579,7 @@ def get_claim_edit_details(
             "investigations_amount": sum([get_claim_amount_from_price_list(db, inv.gdrg_code or "", is_insured=True) for inv in encounter.investigations if inv.status == "completed" and inv.gdrg_code and inv.status != "cancelled"]),
             "pharmacy_amount": sum([get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True) * presc.quantity for presc in encounter.prescriptions if presc.dispensed_by]),
         },
+        "claimit_errors": _get_claimit_errors_for_claim(db, claim.claim_id),
         "debug": debug_info,  # Temporary debug info to diagnose OPD data issue
     }
 
@@ -2749,4 +2797,173 @@ def update_claim_detailed(
     db.refresh(claim)
     
     return claim
+
+
+# ---------- ClaimIT report upload & error batches ----------
+
+@router.post("/claimit-report/upload")
+async def upload_claimit_report(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Upload a ClaimIT import report (HTML). Creates a batch and extracts claims with errors/warnings."""
+    if not file.filename or not file.filename.lower().endswith((".html", ".htm")):
+        raise HTTPException(status_code=400, detail="Please upload an HTML file (ClaimIT import report).")
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Could not read file.")
+    # Try common encodings (ClaimIT reports may be UTF-8 or Windows CP1252)
+    html_str = None
+    for encoding in ("utf-8", "cp1252", "iso-8859-1", "latin-1"):
+        try:
+            html_str = content.decode(encoding)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    if html_str is None:
+        html_str = content.decode("latin-1", errors="replace")
+    parsed = parse_claimit_report_html(html_str)
+    errors_list = parsed.get("errors") or []
+    overview = parsed.get("overview") or {}
+    batch = ClaimItReportBatch(
+        name=None,
+        file_name=file.filename or "report.html",
+        uploaded_by_id=current_user.id,
+        summary=overview,
+        error_count=len(errors_list),
+    )
+    db.add(batch)
+    db.flush()
+    for err in errors_list:
+        db.add(ClaimItReportError(
+            batch_id=batch.id,
+            claim_claim_id=err["claim_id"],
+            outcome=err["outcome"],
+            error_messages=err["error_messages"],
+            row_index=err.get("row_index"),
+        ))
+    db.commit()
+    db.refresh(batch)
+    return {
+        "batch_id": batch.id,
+        "file_name": batch.file_name,
+        "error_count": batch.error_count,
+        "summary": batch.summary,
+        "claim_ids": [e["claim_id"] for e in errors_list],
+    }
+
+
+@router.get("/claimit-report/batches")
+def list_claimit_report_batches(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """List all ClaimIT report batches (newest first)."""
+    batches = (
+        db.query(ClaimItReportBatch)
+        .order_by(ClaimItReportBatch.uploaded_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [
+        {
+            "id": b.id,
+            "name": b.name,
+            "file_name": b.file_name,
+            "uploaded_at": b.uploaded_at.isoformat() if b.uploaded_at else None,
+            "error_count": b.error_count,
+            "summary": b.summary,
+        }
+        for b in batches
+    ]
+
+
+@router.get("/claimit-report/batches/{batch_id}")
+def get_claimit_report_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Get one batch with its error rows and matched claims (by claim_id CLA-XXXXX)."""
+    batch = db.query(ClaimItReportBatch).filter(ClaimItReportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    errors = (
+        db.query(ClaimItReportError)
+        .filter(ClaimItReportError.batch_id == batch_id)
+        .order_by(ClaimItReportError.row_index, ClaimItReportError.id)
+        .all()
+    )
+    claim_ids_from_report = [e.claim_claim_id for e in errors]
+    claims_by_claim_id = {}
+    if claim_ids_from_report:
+        claims_in_db = db.query(Claim).filter(Claim.claim_id.in_(claim_ids_from_report)).all()
+        claims_by_claim_id = {c.claim_id: c for c in claims_in_db}
+    completed_by_ids = {e.completed_by_id for e in errors if e.completed_by_id}
+    users_by_id = {}
+    if completed_by_ids:
+        users = db.query(User).filter(User.id.in_(completed_by_ids)).all()
+        users_by_id = {u.id: u for u in users}
+    error_rows = []
+    for e in errors:
+        claim_in_db = claims_by_claim_id.get(e.claim_claim_id)
+        completed_by_user = users_by_id.get(e.completed_by_id) if e.completed_by_id else None
+        error_rows.append({
+            "id": e.id,
+            "claim_claim_id": e.claim_claim_id,
+            "outcome": e.outcome,
+            "error_messages": e.error_messages or [],
+            "row_index": e.row_index,
+            "claim_id": claim_in_db.id if claim_in_db else None,
+            "claim_status": claim_in_db.status if claim_in_db else None,
+            "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+            "completed_by_id": e.completed_by_id,
+            "completed_by_name": (completed_by_user.username or completed_by_user.email or str(completed_by_user.id)) if completed_by_user else None,
+        })
+    return {
+        "id": batch.id,
+        "name": batch.name,
+        "file_name": batch.file_name,
+        "uploaded_at": batch.uploaded_at.isoformat() if batch.uploaded_at else None,
+        "error_count": batch.error_count,
+        "summary": batch.summary,
+        "errors": error_rows,
+    }
+
+
+class ClaimItErrorCompleteBody(BaseModel):
+    completed: bool = True
+
+
+@router.patch("/claimit-report/batches/{batch_id}/errors/{error_id}/complete")
+def set_claimit_error_completed(
+    batch_id: int,
+    error_id: int,
+    body: ClaimItErrorCompleteBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Mark a batch error row as completed (or uncomplete) so other officers know not to rework it."""
+    err = (
+        db.query(ClaimItReportError)
+        .filter(ClaimItReportError.id == error_id, ClaimItReportError.batch_id == batch_id)
+        .first()
+    )
+    if not err:
+        raise HTTPException(status_code=404, detail="Error row not found.")
+    if body.completed:
+        from app.core.datetime_utils import utcnow
+        err.completed_at = utcnow()
+        err.completed_by_id = current_user.id
+    else:
+        err.completed_at = None
+        err.completed_by_id = None
+    db.commit()
+    return {"id": err.id, "completed": body.completed, "completed_at": err.completed_at.isoformat() if err.completed_at else None, "completed_by_id": err.completed_by_id}
 

@@ -155,6 +155,24 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/list',
+        name: 'ClaimsList',
+        component: () => import('../pages/ClaimsList.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/correct-errors',
+        name: 'ClaimItCorrectErrors',
+        component: () => import('../pages/ClaimItCorrectErrors.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/correct-errors/batch/:batchId',
+        name: 'ClaimItCorrectErrorsBatch',
+        component: () => import('../pages/ClaimItCorrectErrors.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/edit/:claimId',
         name: 'EditClaim',
         component: () => import('../pages/EditClaim.vue'),
