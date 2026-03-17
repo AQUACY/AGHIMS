@@ -1,13 +1,14 @@
 """
 Billing endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from typing import Optional, List, Union
 from datetime import datetime
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user, require_module_permission
+from app.core.audit import get_effective_creator_id
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.encounter import Encounter
@@ -184,6 +185,7 @@ class ManualReceiptCreate(BaseModel):
 
 @router.post("/", response_model=BillResponse, status_code=status.HTTP_201_CREATED)
 def create_bill(
+    request: Request,
     bill_data: BillCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Admin"])),
@@ -218,7 +220,7 @@ def create_bill(
             bill_number=bill_number,
             is_insured=is_insured_encounter,
             miscellaneous=bill_data.miscellaneous,
-            created_by=current_user.id
+            created_by=get_effective_creator_id(db, current_user)
         )
         db.add(bill)
         db.flush()
@@ -286,11 +288,16 @@ def create_bill(
     db.commit()
     db.refresh(bill)
     
+    from app.core.audit import set_audit_summary
+    patient_name = patient.name or "patient"
+    set_audit_summary(request, f"Saved a bill of {total_amount:.2f} cedis for client {patient_name} (encounter).")
+    
     return bill
 
 
 @router.post("/receipt", status_code=status.HTTP_201_CREATED)
 def create_receipt(
+    request: Request,
     receipt_data: ReceiptCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Admin"])),
@@ -403,7 +410,7 @@ def create_receipt(
                     receipt_number=receipt_number,
                     amount_paid=receipt_data_map["total"],
                     payment_method=receipt_data.payment_method,
-                    issued_by=current_user.id
+                    issued_by=get_effective_creator_id(db, current_user)
                 )
                 db.add(receipt)
                 db.flush()
@@ -460,7 +467,7 @@ def create_receipt(
                 receipt_number=receipt_number,
                 amount_paid=total_paid,
                 payment_method=receipt_data.payment_method,
-                issued_by=current_user.id
+                issued_by=get_effective_creator_id(db, current_user)
             )
             db.add(receipt)
             db.flush()
@@ -487,6 +494,11 @@ def create_receipt(
         bill.paid_at = datetime.utcnow()
     
     db.commit()
+    
+    encounter = db.query(Encounter).filter(Encounter.id == bill.encounter_id).first()
+    patient_name = encounter.patient.name if encounter and encounter.patient else "client"
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Recorded payment of {total_paid:.2f} cedis for {patient_name} (receipt).")
     
     return {
         "receipts": receipts_created,
@@ -881,7 +893,7 @@ def add_manual_receipt_to_bill_item(
             receipt_number=receipt_data.receipt_number,
             amount_paid=receipt_data.amount_paid,
             payment_method=receipt_data.payment_method,
-            issued_by=current_user.id
+            issued_by=get_effective_creator_id(db, current_user)
         )
         db.add(receipt)
         db.flush()
@@ -1030,7 +1042,7 @@ def refund_receipt(
     # Mark receipt as refunded
     receipt.refunded = True
     receipt.refunded_at = datetime.utcnow()
-    receipt.refunded_by = current_user.id
+    receipt.refunded_by = get_effective_creator_id(db, current_user)
     
     # Update bill payment status - subtract this receipt's amount
     bill.paid_amount -= receipt.amount_paid

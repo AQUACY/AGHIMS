@@ -7,13 +7,14 @@ come from the external government system; no internal patient/encounter IDs are 
 import io
 import re
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date, datetime
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
+from app.core.audit import get_effective_creator_id
 from app.models.user import User
 from app.models.companion_visit import CompanionVisit
 from app.models.companion_visit_item import CompanionVisitItem
@@ -142,7 +143,7 @@ def create_companion_visit(
         external_visit_number=visit,
         client_name=(data.client_name or "").strip() or None,
         status="open",
-        created_by=current_user.id,
+        created_by=get_effective_creator_id(db, current_user),
     )
     db.add(visit_obj)
     db.commit()
@@ -736,6 +737,7 @@ def get_companion_visit(
 
 @router.post("/{visit_id}/close", response_model=CompanionVisitResponse)
 def close_companion_visit(
+    request: Request,
     visit_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Admin"])),
@@ -756,14 +758,17 @@ def close_companion_visit(
     now = datetime.utcnow()
     visit.status = "closed"
     visit.closed_at = now
-    visit.closed_by_id = current_user.id
+    visit.closed_by_id = get_effective_creator_id(db, current_user)
     db.commit()
     db.refresh(visit)
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Closed companion visit for card {visit.external_card_number} (visit {visit.external_visit_number}).")
     return _visit_to_response(visit, db)
 
 
 @router.post("/{visit_id}/reopen", response_model=CompanionVisitResponse)
 def reopen_companion_visit(
+    request: Request,
     visit_id: int,
     data: ReopenVisitBody,
     db: Session = Depends(get_db),
@@ -781,10 +786,12 @@ def reopen_companion_visit(
     now = datetime.utcnow()
     visit.status = "open"
     visit.reopened_at = now
-    visit.reopened_by_id = current_user.id
+    visit.reopened_by_id = get_effective_creator_id(db, current_user)
     visit.reopen_reason = reason
     db.commit()
     db.refresh(visit)
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Admin reopened companion visit for card {visit.external_card_number} (reason: {reason[:50]}).")
     return _visit_to_response(visit, db)
 
 
@@ -806,7 +813,7 @@ def request_undertaking(
     now = datetime.utcnow()
     visit.undertaking_status = "pending"
     visit.undertaking_requested_at = now
-    visit.undertaking_requested_by_id = current_user.id
+    visit.undertaking_requested_by_id = get_effective_creator_id(db, current_user)
     if data.deposit_amount is not None:
         visit.undertaking_deposit_amount = float(data.deposit_amount) if data.deposit_amount >= 0 else None
     else:
@@ -908,6 +915,7 @@ def delete_undertaking_admin(
 
 @router.post("/{visit_id}/undertaking/approve", response_model=CompanionVisitResponse)
 def approve_undertaking(
+    request: Request,
     visit_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Management", "Admin"])),
@@ -921,14 +929,17 @@ def approve_undertaking(
     now = datetime.utcnow()
     visit.undertaking_status = "approved"
     visit.undertaking_approved_at = now
-    visit.undertaking_approved_by_id = current_user.id
+    visit.undertaking_approved_by_id = get_effective_creator_id(db, current_user)
     db.commit()
     db.refresh(visit)
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"{current_user.full_name or current_user.username} ({current_user.role}) approved undertaking for companion visit (card {visit.external_card_number}).")
     return _visit_to_response(visit, db)
 
 
 @router.post("/{visit_id}/undertaking/reject", response_model=CompanionVisitResponse)
 def reject_undertaking(
+    request: Request,
     visit_id: int,
     data: UndertakingUnapproveBody,
     db: Session = Depends(get_db),
@@ -946,13 +957,15 @@ def reject_undertaking(
     now = datetime.utcnow()
     visit.undertaking_status = "rejected"
     visit.undertaking_unapproved_at = now
-    visit.undertaking_unapproved_by_id = current_user.id
+    visit.undertaking_unapproved_by_id = get_effective_creator_id(db, current_user)
     visit.undertaking_unapprove_reason = reason
     # clear any approval stamps (safety)
     visit.undertaking_approved_at = None
     visit.undertaking_approved_by_id = None
     db.commit()
     db.refresh(visit)
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"{current_user.full_name or current_user.username} ({current_user.role}) rejected undertaking for companion visit (card {visit.external_card_number}). Reason: {reason[:80]}.")
     return _visit_to_response(visit, db)
 
 
@@ -1004,7 +1017,7 @@ def unapprove_undertaking(
     now = datetime.utcnow()
     visit.undertaking_status = "pending"
     visit.undertaking_unapproved_at = now
-    visit.undertaking_unapproved_by_id = current_user.id
+    visit.undertaking_unapproved_by_id = get_effective_creator_id(db, current_user)
     visit.undertaking_unapprove_reason = reason
     # clear approval stamps
     visit.undertaking_approved_at = None
@@ -1105,7 +1118,7 @@ def update_companion_visit(
                     detail="Cannot close: not all items are paid and no approved undertaking.",
                 )
             visit.closed_at = datetime.utcnow()
-            visit.closed_by_id = current_user.id
+            visit.closed_by_id = get_effective_creator_id(db, current_user)
         visit.status = s
     db.commit()
     db.refresh(visit)
@@ -1324,6 +1337,7 @@ class MarkItemsPaidBody(BaseModel):
 
 @router.post("/{visit_id}/items/mark-paid")
 def mark_companion_visit_items_paid(
+    request: Request,
     visit_id: int,
     data: MarkItemsPaidBody,
     db: Session = Depends(get_db),
@@ -1347,10 +1361,12 @@ def mark_companion_visit_items_paid(
         if item and not item.receipt_number:
             item.receipt_number = receipt_number
             item.paid_at = now
-            item.paid_by_id = current_user.id
+            item.paid_by_id = get_effective_creator_id(db, current_user)
             item.payment_method = payment_method
             updated += 1
     db.commit()
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Marked {updated} item(s) as paid for companion visit (receipt {receipt_number}).")
     return {"updated": updated, "receipt_number": receipt_number}
 
 
@@ -1360,6 +1376,7 @@ class RefundItemsBody(BaseModel):
 
 @router.post("/{visit_id}/items/refund")
 def refund_companion_visit_items(
+    request: Request,
     visit_id: int,
     data: RefundItemsBody,
     db: Session = Depends(get_db),
@@ -1382,4 +1399,6 @@ def refund_companion_visit_items(
             item.payment_method = None
             updated += 1
     db.commit()
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Refunded {updated} item(s) for companion visit (card {visit.external_card_number}).")
     return {"updated": updated}

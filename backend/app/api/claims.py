@@ -11,6 +11,7 @@ from typing import Optional, List
 from datetime import datetime, date
 from app.core.database import get_db
 from app.core.dependencies import require_role, require_module_permission
+from app.core.audit import get_effective_creator_id
 from app.models.user import User
 from app.models.encounter import Encounter
 from app.models.claim import Claim, ClaimStatus
@@ -393,7 +394,7 @@ def create_claim(
             specialty_attended=claim_data.specialty_attended,
             principal_gdrg=principal_gdrg,
             status=ClaimStatus.DRAFT.value,
-            created_by=current_user.id
+            created_by=get_effective_creator_id(db, current_user)
         )
         
         db.add(claim)
@@ -618,7 +619,7 @@ def create_claim(
             specialty_attended=claim_data.specialty_attended,
             principal_gdrg=principal_gdrg,
             status=ClaimStatus.DRAFT.value,
-            created_by=current_user.id
+            created_by=get_effective_creator_id(db, current_user)
         )
         
         db.add(claim)
@@ -2831,7 +2832,7 @@ async def upload_claimit_report(
     batch = ClaimItReportBatch(
         name=None,
         file_name=file.filename or "report.html",
-        uploaded_by_id=current_user.id,
+        uploaded_by_id=get_effective_creator_id(db, current_user),
         summary=overview,
         error_count=len(errors_list),
     )
@@ -2960,7 +2961,7 @@ def set_claimit_error_completed(
     if body.completed:
         from app.core.datetime_utils import utcnow
         err.completed_at = utcnow()
-        err.completed_by_id = current_user.id
+        err.completed_by_id = get_effective_creator_id(db, current_user)
     else:
         err.completed_at = None
         err.completed_by_id = None

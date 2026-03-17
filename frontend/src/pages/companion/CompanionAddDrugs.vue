@@ -17,41 +17,50 @@
     <q-card v-if="addedItems.length > 0" class="glass-card q-mb-lg" flat>
       <q-card-section>
         <div class="text-h6 glass-text q-mb-md">Added to client's bill</div>
-        <q-list bordered class="rounded-borders">
-          <q-item v-for="item in addedItems" :key="item.id" class="q-pa-md">
-            <q-item-section>
-              <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
-              <q-item-label caption>{{ item.item_code }} · {{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }} = GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
-              <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
-              <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
-                <q-icon name="receipt" size="18px" class="q-mr-xs" />
-                <span class="text-weight-medium">Receipt {{ item.receipt_number }}</span>
-                <span v-if="item.paid_at" class="q-ml-sm text-caption">· Paid {{ formatDateTime(item.paid_at) }}</span>
-              </div>
-              <div v-else class="unpaid-badge q-mt-sm">
-                <q-icon name="pending" size="18px" class="q-mr-xs" />
-                <span>Not paid</span>
-                <span class="text-caption q-ml-sm">— will be marked at central billing</span>
-              </div>
-            </q-item-section>
-            <q-item-section side>
-              <q-btn
-                v-if="!visitClosed && !item.receipt_number"
-                flat
-                dense
-                round
-                icon="delete"
-                color="negative"
-                @click="removeItem(item)"
-              >
-                <q-tooltip>Remove from bill</q-tooltip>
-              </q-btn>
-              <q-tooltip v-else-if="item.receipt_number" content="Paid — cannot remove">
-                <q-icon name="check_circle" color="positive" size="24px" />
-              </q-tooltip>
-            </q-item-section>
-          </q-item>
-        </q-list>
+        <q-expansion-item
+          v-for="group in addedGroups"
+          :key="group.key"
+          expand-separator
+          :label="group.label"
+          :caption="group.items.length === 1 ? '1 item' : group.items.length + ' items'"
+          default-opened
+        >
+          <q-list bordered class="rounded-borders q-mt-sm">
+            <q-item v-for="item in group.items" :key="item.id" class="q-pa-md">
+              <q-item-section>
+                <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
+                <q-item-label caption>{{ item.item_code }} · {{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }} = GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
+                <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
+                <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
+                  <q-icon name="receipt" size="18px" class="q-mr-xs" />
+                  <span class="text-weight-medium">Receipt {{ item.receipt_number }}</span>
+                  <span v-if="item.paid_at" class="q-ml-sm text-caption">· Paid {{ formatDateTime(item.paid_at) }}</span>
+                </div>
+                <div v-else class="unpaid-badge q-mt-sm">
+                  <q-icon name="pending" size="18px" class="q-mr-xs" />
+                  <span>Not paid</span>
+                  <span class="text-caption q-ml-sm">— will be marked at central billing</span>
+                </div>
+              </q-item-section>
+              <q-item-section side>
+                <q-btn
+                  v-if="!visitClosed && !item.receipt_number"
+                  flat
+                  dense
+                  round
+                  icon="delete"
+                  color="negative"
+                  @click="removeItem(item)"
+                >
+                  <q-tooltip>Remove from bill</q-tooltip>
+                </q-btn>
+                <q-tooltip v-else-if="item.receipt_number" content="Paid — cannot remove">
+                  <q-icon name="check_circle" color="positive" size="24px" />
+                </q-tooltip>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-expansion-item>
       </q-card-section>
     </q-card>
 
@@ -103,6 +112,8 @@
           dense
           class="q-mb-md"
           :rows-per-page-options="[10, 25, 50]"
+          selection="multiple"
+          v-model:selected="selectedParsedRows"
         >
           <template v-slot:body-cell-match="props">
             <q-td :props="props">
@@ -143,13 +154,27 @@
             </q-td>
           </template>
         </q-table>
-        <q-btn
-          v-if="parsedLines.length > 0 && hasAnyMatched && !visitClosed"
-          label="Add all matched to bill"
-          color="primary"
-          :loading="addingAll"
-          @click="addAllMatched"
-        />
+        <div v-if="parsedLines.length > 0 && !visitClosed" class="row q-col-gutter-sm q-mt-sm">
+          <div class="col-12 col-sm-auto">
+            <q-btn
+              v-if="hasAnySelectedMatched"
+              label="Add selected to bill"
+              color="primary"
+              :loading="addingSelected"
+              @click="addSelectedMatched"
+            />
+          </div>
+          <div class="col-12 col-sm-auto">
+            <q-btn
+              v-if="hasAnyMatched"
+              label="Add all matched to bill"
+              color="primary"
+              flat
+              :loading="addingAll"
+              @click="addAllMatched"
+            />
+          </div>
+        </div>
       </q-card-section>
     </q-card>
 
@@ -235,7 +260,9 @@ const pdfFile = ref(null);
 const excelFile = ref(null);
 const parsingFile = ref(false);
 const parsedLines = ref([]);
+const selectedParsedRows = ref([]);
 const addingAll = ref(false);
+const addingSelected = ref(false);
 const showQuantityDialog = ref(false);
 const quantityDialogProduct = ref(null);
 const quantityDialogQty = ref(1);
@@ -262,6 +289,44 @@ const filteredProducts = computed(() => {
 });
 
 const hasAnyMatched = computed(() => parsedLines.value.some((r) => r.matched));
+const hasAnySelectedMatched = computed(() => selectedParsedRows.value.some((r) => r.matched));
+
+const addedGroups = computed(() => {
+  const items = addedItems.value || [];
+  const map = new Map();
+  for (const item of items) {
+    let key = 'no-date';
+    let dateObj = null;
+    if (item.created_at) {
+      const d = new Date(item.created_at);
+      if (!Number.isNaN(d.getTime())) {
+        key = d.toISOString().slice(0, 10);
+        dateObj = d;
+      }
+    }
+    if (!map.has(key)) {
+      map.set(key, { key, date: dateObj, items: [] });
+    }
+    map.get(key).items.push(item);
+  }
+  const groups = Array.from(map.values());
+  groups.sort((a, b) => {
+    const at = a.date ? a.date.getTime() : 0;
+    const bt = b.date ? b.date.getTime() : 0;
+    return bt - at;
+  });
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  for (const g of groups) {
+    if (g.date) {
+      const d = g.date.getDate();
+      const ord = d === 1 || d === 21 || d === 31 ? 'st' : d === 2 || d === 22 ? 'nd' : d === 3 || d === 23 ? 'rd' : 'th';
+      g.label = `${d}${ord} ${monthNames[g.date.getMonth()]}, ${g.date.getFullYear()}`;
+    } else {
+      g.label = 'No service date';
+    }
+  }
+  return groups;
+});
 
 function formatPrice(val) {
   const n = Number(val);
@@ -448,6 +513,34 @@ async function addAllMatched() {
   addingAll.value = false;
   await loadAddedItems();
   if (ok) $q.notify({ type: 'positive', message: `Added ${ok} item(s) to bill`, position: 'top' });
+  if (err) $q.notify({ type: 'warning', message: `${err} item(s) failed to add`, position: 'top' });
+}
+
+async function addSelectedMatched() {
+  if (visitClosed.value) return;
+  const toAdd = selectedParsedRows.value.filter((r) => r.matched);
+  if (toAdd.length === 0) return;
+  addingSelected.value = true;
+  let ok = 0;
+  let err = 0;
+  for (const row of toAdd) {
+    try {
+      await companionVisitsAPI.addItem(visitId.value, {
+        item_code: row.matched.medication_code || row.matched.item_code,
+        item_name: row.matched.service_name || row.matched.product_name,
+        category: 'drug',
+        unit_price: copaymentPrice(row.matched),
+        quantity: row.quantity,
+      });
+      ok++;
+    } catch {
+      err++;
+    }
+  }
+  addingSelected.value = false;
+  selectedParsedRows.value = [];
+  await loadAddedItems();
+  if (ok) $q.notify({ type: 'positive', message: `Added ${ok} selected item(s) to bill`, position: 'top' });
   if (err) $q.notify({ type: 'warning', message: `${err} item(s) failed to add`, position: 'top' });
 }
 

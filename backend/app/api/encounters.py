@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime, date
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user, require_module_permission
+from app.core.audit import get_effective_creator_id
 from app.core.datetime_utils import utcnow
 from app.models.user import User
 from app.models.encounter import Encounter, EncounterStatus
@@ -209,7 +210,7 @@ def update_encounter_status(
                 )
         
         encounter.finalized_at = utcnow()
-        encounter.finalized_by = current_user.id
+        encounter.finalized_by = get_effective_creator_id(db, current_user)
     
     encounter.status = new_status
     db.commit()
@@ -363,7 +364,7 @@ def update_encounter(
                     )
             
             encounter.finalized_at = utcnow()
-            encounter.finalized_by = current_user.id
+            encounter.finalized_by = get_effective_creator_id(db, current_user)
         
         encounter.status = encounter_data.status
     

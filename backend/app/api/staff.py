@@ -1,7 +1,7 @@
 """
 Staff management endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from io import BytesIO
 from app.core.database import get_db
 from app.core.security import get_password_hash
 from app.core.dependencies import get_current_user, require_role, require_module_permission
+from app.core.audit import get_effective_creator_id
 from app.models.user import User
 from app.models.user_role import UserRole
 from sqlalchemy.orm import joinedload
@@ -75,10 +76,13 @@ def get_all_staff(
     current_user: User = Depends(require_role(["Admin"])),
     _module_check: User = Depends(require_module_permission("staff", "read"))
 ):
-    """Get all staff members - Admin only"""
+    """Get all staff members - Admin only. Super admin (ghost) accounts are hidden except to themselves."""
     staff = db.query(User).options(joinedload(User.additional_roles)).all()
     result = []
     for user in staff:
+        # Hide super admin from list unless the current user is that super admin
+        if getattr(user, "is_super_admin", False) and (not getattr(current_user, "is_super_admin", False) or current_user.id != user.id):
+            continue
         additional_roles = [ur.role for ur in user.additional_roles]
         result.append({
             "id": user.id,
@@ -94,6 +98,7 @@ def get_all_staff(
 
 @router.post("/", response_model=StaffResponse, status_code=status.HTTP_201_CREATED)
 def create_staff(
+    request: Request,
     staff_data: StaffCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin"])),
@@ -132,6 +137,8 @@ def create_staff(
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
+        from app.core.audit import set_audit_summary
+        set_audit_summary(request, f"Created staff account for {new_user.full_name or new_user.username} with role {new_user.role}.")
         # Return with empty additional_roles list
         return {
             "id": new_user.id,
@@ -152,6 +159,7 @@ def create_staff(
 
 @router.put("/{user_id}", response_model=StaffResponse)
 def update_staff(
+    request: Request,
     user_id: int,
     staff_data: StaffUpdate,
     db: Session = Depends(get_db),
@@ -164,7 +172,13 @@ def update_staff(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Staff member with ID {user_id} not found"
         )
-    
+    # Do not allow editing another super admin (ghost account)
+    if getattr(user, "is_super_admin", False) and user.id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot edit this account"
+        )
+    old_role = user.role
     # Check username uniqueness if changing username
     if staff_data.username and staff_data.username != user.username:
         existing_user = db.query(User).filter(User.username == staff_data.username).first()
@@ -201,6 +215,12 @@ def update_staff(
         db.refresh(user)
         user_with_roles = db.query(User).options(joinedload(User.additional_roles)).filter(User.id == user_id).first()
         additional_roles = [ur.role for ur in user_with_roles.additional_roles] if user_with_roles else []
+        from app.core.audit import set_audit_summary
+        target_name = user.full_name or user.username
+        if staff_data.role and staff_data.role != old_role:
+            set_audit_summary(request, f"{current_user.full_name or current_user.username} ({current_user.role}) changed role for {target_name} from {old_role} to {staff_data.role}.")
+        else:
+            set_audit_summary(request, f"Updated staff member {target_name} (account or details).")
         return {
             "id": user.id,
             "username": user.username,
@@ -220,6 +240,7 @@ def update_staff(
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_staff(
+    request: Request,
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin"])),
@@ -232,7 +253,12 @@ def delete_staff(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Staff member with ID {user_id} not found"
         )
-    
+    # Do not allow deactivating another super admin (ghost account)
+    if getattr(user, "is_super_admin", False) and user.id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot deactivate this account"
+        )
     # Don't allow deleting yourself
     if user.id == current_user.id:
         raise HTTPException(
@@ -240,9 +266,12 @@ def delete_staff(
             detail="You cannot delete your own account"
         )
     
+    target_name = user.full_name or user.username
     # Soft delete by deactivating
     user.is_active = False
     db.commit()
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"{current_user.full_name or current_user.username} ({current_user.role}) deactivated staff member {target_name}.")
     return None
 
 
@@ -442,7 +471,7 @@ def add_user_role(
     new_user_role = UserRole(
         user_id=user_id,
         role=role_data.role,
-        created_by=current_user.id
+        created_by=get_effective_creator_id(db, current_user)
     )
     
     try:

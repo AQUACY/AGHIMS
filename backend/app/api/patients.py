@@ -11,12 +11,12 @@ import csv
 import io
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user, require_module_permission
+from app.core.audit import get_effective_creator_id
 from app.core.datetime_utils import today
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.encounter import Encounter, EncounterStatus
 from app.utils.card_number import generate_card_number, generate_ccc_number
-from app.core.audit import log_activity
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
@@ -96,16 +96,8 @@ def create_patient(
     db.commit()
     db.refresh(patient)
     
-    # Log patient creation
-    log_activity(
-        db=db,
-        user=current_user,
-        request=request,
-        action="CREATE",
-        resource_type="Patient",
-        resource_id=patient.id,
-        details={"card_number": card_number, "name": patient.name}
-    )
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Registered new patient {patient.name} with card number {card_number}.")
     
     return patient
 
@@ -535,16 +527,8 @@ def update_patient(
     db.commit()
     db.refresh(patient)
     
-    # Log patient update
-    log_activity(
-        db=db,
-        user=current_user,
-        request=request,
-        action="UPDATE",
-        resource_type="Patient",
-        resource_id=patient.id,
-        details={"card_number": patient.card_number, "name": patient.name}
-    )
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Updated patient {patient.name} (card number {patient.card_number}).")
     
     return patient
 
@@ -605,7 +589,7 @@ def create_encounter(
         department=service_type,  # Store Service Type as department
         procedure_g_drg_code=procedure_g_drg_code,
         procedure_name=procedure_name,
-        created_by=current_user.id
+        created_by=get_effective_creator_id(db, current_user)
     )
     db.add(encounter)
     db.flush()  # Use flush instead of commit to get encounter.id without committing yet
@@ -665,7 +649,7 @@ def create_encounter(
                 bill_number=bill_number,
                 is_insured=is_insured_encounter,
                 total_amount=unit_price if unit_price > 0 else 0.0,
-                created_by=current_user.id
+                created_by=get_effective_creator_id(db, current_user)
             )
             db.add(bill)
             db.flush()

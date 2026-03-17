@@ -196,8 +196,11 @@
               class="glass-button q-mr-md"
               @click="openAddInpatientFeeDialog"
             />
-            <div v-if="canMarkPaid" class="text-caption text-grey-7">
+            <div v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'" class="text-caption text-grey-7">
               Payments are grouped by category (one receipt per category by default). You can still override receipts per item.
+            </div>
+            <div v-if="selectedVisit && selectedVisit.status === 'closed' && !canAdmin" class="text-caption text-grey-7">
+              This visit is closed. Only Admin can reopen or edit.
             </div>
           </div>
           <q-linear-progress v-if="loadingItems" indeterminate class="q-mb-md" />
@@ -218,7 +221,7 @@
                   </div>
                   <q-space />
                   <q-btn
-                    v-if="canMarkPaid"
+                    v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'"
                     unelevated
                     color="primary"
                     icon="receipt"
@@ -262,7 +265,7 @@
                   </template>
                   <template v-slot:body-cell-actions="props">
                     <q-td :props="props">
-                      <template v-if="canMarkPaid && !isPaidRow(props.row)">
+                      <template v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open' && !isPaidRow(props.row)">
                         <q-btn
                           flat
                           dense
@@ -273,7 +276,7 @@
                           @click="paySingle(props.row)"
                         />
                       </template>
-                      <template v-else-if="canMarkPaid && isPaidRow(props.row) && props.row.receipt_number">
+                      <template v-else-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open' && isPaidRow(props.row) && props.row.receipt_number">
                         <q-btn
                           flat
                           dense
@@ -327,7 +330,21 @@
             <div v-if="undertakingDepositAmount != null && undertakingDepositAmount > 0" class="text-body2 text-grey-7">
               Deposit: GH¢ {{ formatPrice(undertakingDepositAmount) }}
             </div>
-            <div class="text-subtitle1 text-weight-medium">Pending balance: GH¢ {{ formatPrice(pendingBalance) }}</div>
+            <div class="row items-center q-gutter-sm no-wrap">
+              <div class="text-subtitle1 text-weight-medium">Pending balance: GH¢ {{ formatPrice(pendingBalance) }}</div>
+              <q-btn
+                v-if="showCloseVisitByBalance"
+                unelevated
+                color="primary"
+                icon="lock"
+                label="Close visit"
+                size="sm"
+                :loading="closingVisit"
+                @click="confirmCloseVisit"
+              >
+                <q-tooltip>Pending balance is zero. Close this visit for the client.</q-tooltip>
+              </q-btn>
+            </div>
           </div>
         </q-card-section>
       </q-card>
@@ -732,6 +749,7 @@ const editingItemId = ref(null);
 const deletingItemId = ref(null);
 
 const canMarkPaid = computed(() => authStore.canAccess(['Billing', 'Admin']));
+const canAdmin = computed(() => authStore.canAccess(['Admin']));
 const canEditDeleteInpatient = computed(() => authStore.canAccess(['Admin']));
 const canReopenVisitRole = computed(() => authStore.canAccess(['Admin']));
 const canApproveUndertakingRole = computed(() => authStore.canAccess(['Management', 'Admin']));
@@ -897,6 +915,12 @@ const undertakingPending = computed(() => (selectedVisit.value?.undertaking_stat
 const canCloseVisit = computed(() => {
   if (!selectedVisit.value || selectedVisit.value.status !== 'open' || !canMarkPaid.value) return false;
   return allBillItemsPaid.value || undertakingApproved.value;
+});
+
+/** Show "Close visit" beside pending balance when balance is 0 (billing officer can close). */
+const showCloseVisitByBalance = computed(() => {
+  if (!selectedVisit.value || selectedVisit.value.status !== 'open' || !canMarkPaid.value) return false;
+  return Number(pendingBalance.value) <= 0;
 });
 
 const canReopenVisit = computed(() => {

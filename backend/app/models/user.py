@@ -18,6 +18,7 @@ class User(Base):
     full_name = Column(String(255))
     role = Column(String(50), nullable=False)  # Primary role: Records, Nurse, Doctor, PA, Anaesthetist, Billing, Pharmacy, Pharmacy Head, Store Manager, Lab, Lab Head, Scan, Scan Head, Xray, Xray Head, Claims, Management, Admin, Auditor
     is_active = Column(Boolean, default=True)
+    is_super_admin = Column(Boolean, default=False)  # Ghost account: no audit trail, not in staff list (except for self), created_by/updated_by stored as system user
     
     # Relationship to additional roles
     additional_roles = relationship("UserRole", foreign_keys="UserRole.user_id", back_populates="user", cascade="all, delete-orphan")

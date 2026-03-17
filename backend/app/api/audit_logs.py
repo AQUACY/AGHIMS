@@ -28,6 +28,7 @@ class AuditLogResponse(BaseModel):
     endpoint_path: Optional[str]
     http_method: Optional[str]
     details: Optional[str]
+    summary: Optional[str] = None  # Human-readable sentence for auditors
     ip_address: Optional[str]
     timestamp: datetime
     

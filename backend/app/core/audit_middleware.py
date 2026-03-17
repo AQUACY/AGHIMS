@@ -8,7 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.core.audit import create_audit_log, get_client_ip
+from app.core.audit import create_audit_log, get_client_ip, is_super_admin
 from app.models.user import User
 
 
@@ -92,16 +92,21 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
             
             # Get query parameters
             query_params = dict(request.query_params)
-            
-            # Prepare details (we'll log after response to avoid body reading issues)
             details = {
                 "endpoint": request.url.path,
                 "method": request.method,
                 "query_params": query_params if query_params else None,
             }
             
-            # If user is authenticated, log with user info
-            if user:
+            # Process the request first so endpoints can set request.state.audit_summary
+            response = await call_next(request)
+            
+            # After request: use custom summary from endpoint or build readable generic summary
+            summary = getattr(request.state, "audit_summary", None)
+            if not summary:
+                summary = self._get_readable_summary(request.url.path, request.method, resource_type, action)
+            
+            if user and not is_super_admin(user):
                 ip_address = get_client_ip(request)
                 try:
                     create_audit_log(
@@ -111,16 +116,13 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                         resource_type=resource_type,
                         resource_id=resource_id,
                         details=details,
+                        summary=summary,
                         ip_address=ip_address,
                         endpoint_path=request.url.path,
                         http_method=request.method
                     )
                 except Exception as e:
-                    # Don't let audit logging failures break the application
                     print(f"Warning: Failed to create audit log: {e}")
-            
-            # Process the request
-            response = await call_next(request)
             
             return response
             
@@ -192,4 +194,67 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
             except ValueError:
                 continue
         return None
+
+    def _get_readable_summary(self, path: str, method: str, resource_type: Optional[str], action: str) -> str:
+        """Build a human-readable summary for auditors when endpoint does not set one."""
+        path_lower = path.lower()
+        method_upper = method.upper()
+        who = "User"  # Will be combined with action
+        resource = (resource_type or "record").replace("_", " ").lower()
+        if method_upper == "POST":
+            if "staff" in path_lower and "/" in path_lower.strip("/").split("/"):
+                return f"Created a new staff account."
+            if "patient" in path_lower:
+                return f"Registered a new patient."
+            if "billing" in path_lower or "bill" in path_lower:
+                return f"Saved or updated a bill."
+            if "receipt" in path_lower:
+                return f"Created a receipt for payment."
+            if "companion" in path_lower and "visit" in path_lower:
+                if "close" in path_lower:
+                    return f"Closed a companion visit."
+                if "reopen" in path_lower:
+                    return f"Reopened a companion visit."
+                if "items" in path_lower:
+                    return f"Added an item to a companion visit bill."
+                if "mark-paid" in path_lower or "refund" in path_lower:
+                    return f"Updated payment for a companion visit item."
+                if "undertaking" in path_lower:
+                    if "approve" in path_lower:
+                        return f"Approved an undertaking for a companion visit."
+                    if "reject" in path_lower:
+                        return f"Rejected an undertaking for a companion visit."
+                    if "revert" in path_lower:
+                        return f"Reverted a rejection of an undertaking."
+                    if "unapprove" in path_lower:
+                        return f"Unapproved an undertaking for a companion visit."
+                return f"Created or updated a companion visit."
+            if "encounter" in path_lower:
+                return f"Created an encounter for a patient."
+            if "claim" in path_lower:
+                return f"Created or updated a claim."
+            if "consultation" in path_lower or "prescription" in path_lower or "diagnosis" in path_lower:
+                return f"Added or updated a consultation record (prescription, diagnosis, or note)."
+            if "investigation" in path_lower or "lab-result" in path_lower or "scan-result" in path_lower or "xray-result" in path_lower:
+                return f"Added or updated a lab, scan, or X-ray result."
+            return f"Created a new {resource}."
+        if method_upper in ("PUT", "PATCH"):
+            if "staff" in path_lower:
+                return f"Updated a staff member's account or role."
+            if "patient" in path_lower:
+                return f"Updated patient information."
+            if "bill" in path_lower or "billing" in path_lower:
+                return f"Updated a bill or bill item."
+            if "companion" in path_lower:
+                return f"Updated a companion visit or visit item."
+            if "claim" in path_lower:
+                return f"Updated a claim."
+            return f"Updated a {resource}."
+        if method_upper == "DELETE":
+            if "staff" in path_lower:
+                return f"Deleted or deactivated a staff member."
+            if "companion" in path_lower:
+                return f"Deleted an item or a companion visit."
+            return f"Deleted a {resource}."
+        return f"{action} on {resource}."
 

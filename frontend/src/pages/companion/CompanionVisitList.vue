@@ -78,25 +78,25 @@
                 <q-tooltip>View</q-tooltip>
               </q-btn>
               <q-btn
-                v-if="canEdit(props.row)"
                 flat
                 dense
                 size="sm"
                 icon="edit"
-                @click="editVisit(props.row)"
+                :disable="!canEdit(props.row)"
+                @click="canEdit(props.row) && editVisit(props.row)"
               >
-                <q-tooltip>Edit</q-tooltip>
+                <q-tooltip>{{ editDeleteTooltip(props.row, 'edit') }}</q-tooltip>
               </q-btn>
               <q-btn
-                v-if="canDelete(props.row)"
                 flat
                 dense
                 size="sm"
                 icon="delete"
                 color="negative"
-                @click="confirmDelete(props.row)"
+                :disable="!canDelete(props.row)"
+                @click="canDelete(props.row) && confirmDelete(props.row)"
               >
-                <q-tooltip>Delete</q-tooltip>
+                <q-tooltip>{{ editDeleteTooltip(props.row, 'delete') }}</q-tooltip>
               </q-btn>
             </q-td>
           </template>
@@ -138,14 +138,24 @@ const columns = [
   { name: 'actions', label: '', align: 'right' },
 ];
 
+/** Edit: when closed only Admin; when open Records, Billing, or Admin. */
 function canEdit(row) {
   if (row.status === 'closed') return authStore.canAccess(['Admin']);
   return authStore.canAccess(['Records', 'Admin', 'Billing']);
 }
 
+/** Delete: when closed only Admin; when open Records or Admin. */
 function canDelete(row) {
   if (row.status === 'closed') return authStore.canAccess(['Admin']);
   return authStore.canAccess(['Records', 'Admin']);
+}
+
+function editDeleteTooltip(row, action) {
+  const label = action === 'edit' ? 'Edit' : 'Delete';
+  if (row.status === 'closed' && !authStore.canAccess(['Admin'])) {
+    return `Only Admin can ${action} a closed visit`;
+  }
+  return label;
 }
 
 function formatDate(iso) {

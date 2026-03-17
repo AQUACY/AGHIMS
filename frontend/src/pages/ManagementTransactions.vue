@@ -4,7 +4,7 @@
       Transactions
     </div>
     <div class="text-subtitle1 text-secondary q-mb-lg">
-      Monetary transactions from OPD and Companion (copayment) applications. Filter by date, client, service type, or user.
+      Monetary transactions from OPD and Companion (copayment) applications. Default: today. Filter by date, client, service type, or user.
     </div>
 
     <q-card class="q-mb-md glass-card" flat>
@@ -112,14 +112,22 @@
 import { ref, onMounted } from 'vue';
 import { managementAPI } from '../services/api';
 
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 const loading = ref(false);
 const transactions = ref([]);
 const totalAmount = ref(null);
 const userOptions = ref([]);
 
 const filters = ref({
-  start_date: null,
-  end_date: null,
+  start_date: todayStr(),
+  end_date: todayStr(),
   client: null,
   service_type: null,
   user_id: null,

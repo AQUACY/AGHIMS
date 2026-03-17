@@ -204,10 +204,16 @@
             </q-td>
           </template>
 
+          <template v-slot:body-cell-summary="props">
+            <q-td :props="props">
+              <span v-if="props.value" class="text-body2">{{ props.value }}</span>
+              <span v-else class="text-grey-6 text-italic">—</span>
+            </q-td>
+          </template>
           <template v-slot:body-cell-details="props">
             <q-td :props="props">
               <q-btn
-                v-if="props.value"
+                v-if="props.value || props.row.summary"
                 flat
                 dense
                 round
@@ -215,7 +221,7 @@
                 @click="showDetails(props.row)"
                 size="sm"
               >
-                <q-tooltip>View Details</q-tooltip>
+                <q-tooltip>View full details</q-tooltip>
               </q-btn>
               <span v-else class="text-grey-6">-</span>
             </q-td>
@@ -260,8 +266,9 @@
 
         <q-card-section>
           <div class="q-gutter-md">
-            <div>
-              <strong>ID:</strong> {{ selectedLog?.id }}
+            <div v-if="selectedLog?.summary" class="q-pa-md bg-primary-1 rounded-borders q-mb-md">
+              <strong>What happened:</strong>
+              <p class="q-mt-sm q-mb-none text-body1">{{ selectedLog.summary }}</p>
             </div>
             <div>
               <strong>User:</strong> {{ selectedLog?.full_name || selectedLog?.username }} ({{ selectedLog?.role }})
@@ -288,7 +295,7 @@
               <strong>IP Address:</strong> {{ selectedLog.ip_address }}
             </div>
             <div v-if="selectedLog?.details">
-              <strong>Details:</strong>
+              <strong>Technical details (raw):</strong>
               <pre class="q-mt-sm q-pa-sm bg-grey-2 rounded-borders" style="max-height: 300px; overflow: auto;">{{ formatDetails(selectedLog.details) }}</pre>
             </div>
           </div>
@@ -368,6 +375,14 @@ export default {
         sortable: true,
       },
       {
+        name: 'summary',
+        label: 'What happened',
+        field: 'summary',
+        align: 'left',
+        sortable: false,
+        style: 'max-width: 360px; white-space: normal;',
+      },
+      {
         name: 'action',
         label: 'Action',
         field: 'action',
@@ -378,13 +393,6 @@ export default {
         name: 'resource_type',
         label: 'Resource',
         field: 'resource_type',
-        align: 'left',
-        sortable: true,
-      },
-      {
-        name: 'resource_id',
-        label: 'Resource ID',
-        field: 'resource_id',
         align: 'left',
         sortable: true,
       },
@@ -411,7 +419,7 @@ export default {
       },
       {
         name: 'details',
-        label: 'Details',
+        label: 'Technical details',
         field: 'details',
         align: 'center',
         sortable: false,

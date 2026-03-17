@@ -120,7 +120,7 @@
               Required columns: <strong>username</strong>, <strong>full_name</strong>, <strong>role</strong><br/>
               Optional columns: <strong>Email</strong>, <strong>is_active</strong> (1 or 0, default: 1)<br/>
               <br/>
-              <strong>Roles:</strong> Records, Nurse, Doctor, PA, Billing, Pharmacist, Lab, Claims, Admin<br/>
+              <strong>Roles:</strong> Records, Nurse, Doctor, PA, Billing, Pharmacist, Lab, Claims, Auditor, Admin<br/>
               <br/>
               <strong>Note:</strong> All imported staff will have the same default password (changeable after login).
             </div>
@@ -407,6 +407,7 @@ export default {
       'Scan',
       'Xray',
       'Claims',
+      'Auditor',
       'Admin'
     ];
 
@@ -476,6 +477,7 @@ export default {
         Billing: 'teal',
         Management: 'blue-grey',
         Claims: 'cyan',
+        Auditor: 'brown',
         Records: 'grey',
       };
       return colors[role] || 'grey';

@@ -17,41 +17,50 @@
     <q-card v-if="addedItems.length > 0" class="glass-card q-mb-lg" flat>
       <q-card-section>
         <div class="text-h6 glass-text q-mb-md">Added to client's bill</div>
-        <q-list bordered class="rounded-borders">
-          <q-item v-for="item in addedItems" :key="item.id" class="q-pa-md">
-            <q-item-section>
-              <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
-              <q-item-label caption>{{ item.item_code }} · GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
-              <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
-              <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
-                <q-icon name="receipt" size="18px" class="q-mr-xs" />
-                <span class="text-weight-medium">Receipt {{ item.receipt_number }}</span>
-                <span v-if="item.paid_at" class="q-ml-sm text-caption">· Paid {{ formatDateTime(item.paid_at) }}</span>
-              </div>
-              <div v-else class="unpaid-badge q-mt-sm">
-                <q-icon name="pending" size="18px" class="q-mr-xs" />
-                <span>Not paid</span>
-                <span class="text-caption q-ml-sm">— will be marked at central billing</span>
-              </div>
-            </q-item-section>
-            <q-item-section side>
-              <q-btn
-                v-if="!visitClosed && !item.receipt_number"
-                flat
-                dense
-                round
-                icon="delete"
-                color="negative"
-                @click="removeItem(item)"
-              >
-                <q-tooltip>Remove from bill</q-tooltip>
-              </q-btn>
-              <q-tooltip v-else-if="item.receipt_number" content="Paid — cannot remove">
-                <q-icon name="check_circle" color="positive" size="24px" />
-              </q-tooltip>
-            </q-item-section>
-          </q-item>
-        </q-list>
+        <q-expansion-item
+          v-for="group in addedGroups"
+          :key="group.key"
+          expand-separator
+          :label="group.label"
+          :caption="group.items.length === 1 ? '1 item' : group.items.length + ' items'"
+          default-opened
+        >
+          <q-list bordered class="rounded-borders q-mt-sm">
+            <q-item v-for="item in group.items" :key="item.id" class="q-pa-md">
+              <q-item-section>
+                <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
+                <q-item-label caption>{{ item.item_code }} · GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
+                <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
+                <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
+                  <q-icon name="receipt" size="18px" class="q-mr-xs" />
+                  <span class="text-weight-medium">Receipt {{ item.receipt_number }}</span>
+                  <span v-if="item.paid_at" class="q-ml-sm text-caption">· Paid {{ formatDateTime(item.paid_at) }}</span>
+                </div>
+                <div v-else class="unpaid-badge q-mt-sm">
+                  <q-icon name="pending" size="18px" class="q-mr-xs" />
+                  <span>Not paid</span>
+                  <span class="text-caption q-ml-sm">— will be marked at central billing</span>
+                </div>
+              </q-item-section>
+              <q-item-section side>
+                <q-btn
+                  v-if="!visitClosed && !item.receipt_number"
+                  flat
+                  dense
+                  round
+                  icon="delete"
+                  color="negative"
+                  @click="removeItem(item)"
+                >
+                  <q-tooltip>Remove from bill</q-tooltip>
+                </q-btn>
+                <q-tooltip v-else-if="item.receipt_number" content="Paid — cannot remove">
+                  <q-icon name="check_circle" color="positive" size="24px" />
+                </q-tooltip>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-expansion-item>
       </q-card-section>
     </q-card>
 
@@ -228,6 +237,43 @@ const filteredSearchOptions = computed(() => {
       (p.service_name && p.service_name.toLowerCase().includes(t)) ||
       (p.g_drg_code && p.g_drg_code.toLowerCase().includes(t))
   );
+});
+
+const addedGroups = computed(() => {
+  const items = addedItems.value || [];
+  const map = new Map();
+  for (const item of items) {
+    let key = 'no-date';
+    let dateObj = null;
+    if (item.created_at) {
+      const d = new Date(item.created_at);
+      if (!Number.isNaN(d.getTime())) {
+        key = d.toISOString().slice(0, 10);
+        dateObj = d;
+      }
+    }
+    if (!map.has(key)) {
+      map.set(key, { key, date: dateObj, items: [] });
+    }
+    map.get(key).items.push(item);
+  }
+  const groups = Array.from(map.values());
+  groups.sort((a, b) => {
+    const at = a.date ? a.date.getTime() : 0;
+    const bt = b.date ? b.date.getTime() : 0;
+    return bt - at;
+  });
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  for (const g of groups) {
+    if (g.date) {
+      const d = g.date.getDate();
+      const ord = d === 1 || d === 21 || d === 31 ? 'st' : d === 2 || d === 22 ? 'nd' : d === 3 || d === 23 ? 'rd' : 'th';
+      g.label = `${d}${ord} ${monthNames[g.date.getMonth()]}, ${g.date.getFullYear()}`;
+    } else {
+      g.label = 'No service date';
+    }
+  }
+  return groups;
 });
 
 function formatPrice(val) {

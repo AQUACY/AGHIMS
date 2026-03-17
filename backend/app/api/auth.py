@@ -69,17 +69,20 @@ def login(
         expires_delta=access_token_expires
     )
     
-    # Log successful login
-    log_activity(
-        db=db,
-        user=user,
-        request=request,
-        action="LOGIN",
-        resource_type="User",
-        resource_id=user.id,
-        details={"username": user.username, "role": user.role}
-    )
-    
+    # Log successful login (skip for super admin / ghost account)
+    from app.core.audit import is_super_admin
+    if not is_super_admin(user):
+        log_activity(
+            db=db,
+            user=user,
+            request=request,
+            action="LOGIN",
+            resource_type="User",
+            resource_id=user.id,
+            details={"username": user.username, "role": user.role},
+            summary=f"User {user.full_name or user.username} ({user.role}) logged in."
+        )
+
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -139,16 +142,9 @@ def change_password(
     db.commit()
     db.refresh(current_user)
     
-    # Log password change
-    log_activity(
-        db=db,
-        user=current_user,
-        request=request,
-        action="UPDATE",
-        resource_type="User",
-        resource_id=current_user.id,
-        details={"action": "password_change"}
-    )
+    # Set audit summary for middleware to log (no separate log_activity to avoid duplicate)
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"User {current_user.full_name or current_user.username} changed their password.")
     
     return {"message": "Password changed successfully"}
 

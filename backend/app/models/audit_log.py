@@ -22,6 +22,7 @@ class AuditLog(Base):
     endpoint_path = Column(String(500), nullable=True, index=True)  # API endpoint path (e.g., "/api/patients/123")
     http_method = Column(String(10), nullable=True, index=True)  # HTTP method (e.g., "GET", "POST", "PUT", "DELETE")
     details = Column(Text, nullable=True)  # JSON string or detailed description
+    summary = Column(Text, nullable=True)  # Human-readable sentence for auditors (e.g. "Admin changed role for John Doe from Admin to Billing")
     ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6
     timestamp = Column(DateTime, default=utcnow_callable, nullable=False, index=True)
     
