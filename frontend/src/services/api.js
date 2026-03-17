@@ -225,6 +225,65 @@ export const encountersAPI = {
   getBillTotal: (encounterId) => api.get(`/encounters/${encounterId}/bill-total`),
 };
 
+// Companion (copayment) visits - external card/visit from government system
+export const companionVisitsAPI = {
+  create: (data) => api.post('/companion-visits/', data),
+  list: (params = {}) => api.get('/companion-visits/', { params }),
+  get: (visitId) => api.get(`/companion-visits/${visitId}`),
+  update: (visitId, data) => api.patch(`/companion-visits/${visitId}`, data),
+  delete: (visitId) => api.delete(`/companion-visits/${visitId}`),
+  close: (visitId) => api.post(`/companion-visits/${visitId}/close`),
+  reopen: (visitId, data) => api.post(`/companion-visits/${visitId}/reopen`, data),
+  requestUndertaking: (visitId, data = {}) => api.post(`/companion-visits/${visitId}/undertaking/request`, data),
+  updateUndertaking: (visitId, data) => api.patch(`/companion-visits/${visitId}/undertaking`, data),
+  cancelUndertaking: (visitId) => api.post(`/companion-visits/${visitId}/undertaking/cancel`),
+  approveUndertaking: (visitId) => api.post(`/companion-visits/${visitId}/undertaking/approve`),
+  rejectUndertaking: (visitId, data) => api.post(`/companion-visits/${visitId}/undertaking/reject`, data),
+  revertRejectedUndertaking: (visitId) => api.post(`/companion-visits/${visitId}/undertaking/revert-reject`),
+  unapproveUndertaking: (visitId, data) => api.post(`/companion-visits/${visitId}/undertaking/unapprove`, data),
+  deleteUndertaking: (visitId) => api.post(`/companion-visits/${visitId}/undertaking/delete`),
+  getItems: (visitId, category = null) =>
+    api.get(`/companion-visits/${visitId}/items`, { params: category ? { category } : {} }),
+  addItem: (visitId, data) => api.post(`/companion-visits/${visitId}/items`, data),
+  updateItem: (visitId, itemId, data) => api.patch(`/companion-visits/${visitId}/items/${itemId}`, data),
+  deleteItem: (visitId, itemId) => api.delete(`/companion-visits/${visitId}/items/${itemId}`),
+  markItemsPaid: (visitId, data) => api.post(`/companion-visits/${visitId}/items/mark-paid`, data),
+  refundItems: (visitId, itemIds) =>
+    api.post(`/companion-visits/${visitId}/items/refund`, { item_ids: itemIds }),
+  getActiveInvestigations: () => api.get('/companion-visits/active-investigations'),
+  addActiveInvestigation: (data) => api.post('/companion-visits/active-investigations', data),
+  removeActiveInvestigation: (gDrgCode) =>
+    api.delete(`/companion-visits/active-investigations/${encodeURIComponent(gDrgCode)}`),
+  getActiveScans: () => api.get('/companion-visits/active-scans'),
+  addActiveScan: (data) => api.post('/companion-visits/active-scans', data),
+  removeActiveScan: (gDrgCode) =>
+    api.delete(`/companion-visits/active-scans/${encodeURIComponent(gDrgCode)}`),
+  getActiveXrays: () => api.get('/companion-visits/active-xrays'),
+  addActiveXray: (data) => api.post('/companion-visits/active-xrays', data),
+  removeActiveXray: (gDrgCode) =>
+    api.delete(`/companion-visits/active-xrays/${encodeURIComponent(gDrgCode)}`),
+  parseDrugsPdf: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/companion-visits/parse-drugs-pdf', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  parseDrugsExcel: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/companion-visits/parse-drugs-excel', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+};
+
+// Management: transactions and user list for filters (Management, Admin only)
+export const managementAPI = {
+  getTransactions: (params = {}) => api.get('/management/transactions', { params }),
+  getUsers: () => api.get('/management/users'),
+};
+
 // Vitals endpoints
 export const vitalsAPI = {
   create: (data) => api.post('/vitals/', data),

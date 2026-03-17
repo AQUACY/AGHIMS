@@ -31,6 +31,15 @@
         </div>
         <q-btn
           flat
+          icon="swap_horiz"
+          label="Companion"
+          class="q-mr-sm glass-button"
+          @click="switchToCompanion"
+        >
+          <q-tooltip>Switch to Companion / Copayment mode</q-tooltip>
+        </q-btn>
+        <q-btn
+          flat
           :label="authStore.userName"
           class="q-mr-md text-weight-medium glass-button"
           @click="goToProfile"
@@ -432,6 +441,39 @@
         </q-item>
 
         <q-item
+          v-if="canAccess(['Management', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'ManagementTransactions' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="receipt_long" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Transactions</q-item-label>
+          </q-item-section>
+          <q-tooltip>Monetary transactions by date, client, service, user</q-tooltip>
+        </q-item>
+        <q-item
+          v-if="canAccess(['Management', 'Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'ManagementUndertakings' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="verified_user" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Undertakings</q-item-label>
+          </q-item-section>
+          <q-tooltip>Approve pending undertakings (Companion)</q-tooltip>
+        </q-item>
+
+        <q-item
           v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
           clickable
           v-ripple
@@ -634,6 +676,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { useAppModeStore, APP_MODES } from '../stores/appMode';
 import { useThemeStore } from '../stores/theme';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
 import { useQuasar } from 'quasar';
@@ -643,6 +686,7 @@ import NotificationsPanel from '../components/NotificationsPanel.vue';
 const $q = useQuasar();
 const router = useRouter();
 const authStore = useAuthStore();
+const appModeStore = useAppModeStore();
 const themeStore = useThemeStore();
 const moduleSettingsStore = useModuleSettingsStore();
 const drawerOpen = ref(true);
@@ -1116,6 +1160,11 @@ const isModuleActive = (moduleKey) => {
 // Helper function to get module status for navigation
 const getModuleStatus = (moduleKey) => {
   return moduleSettingsStore.getModuleStatus(moduleKey);
+};
+
+const switchToCompanion = () => {
+  appModeStore.setMode(APP_MODES.COMPANION);
+  router.push('/companion');
 };
 
 const goToProfile = () => {

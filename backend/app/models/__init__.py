@@ -60,6 +60,11 @@ from app.models.store_staff_assignment import StoreStaffAssignment, StoreRole
 from app.models.vendor import Vendor
 from app.models.store_stock import StoreStock, StockStatus
 from app.models.module_settings import ModuleSettings
+from app.models.companion_visit import CompanionVisit
+from app.models.companion_visit_item import CompanionVisitItem
+from app.models.companion_active_investigation import CompanionActiveInvestigation
+from app.models.companion_active_scan import CompanionActiveScan
+from app.models.companion_active_xray import CompanionActiveXray
 
 __all__ = [
     "User",
@@ -140,5 +145,10 @@ __all__ = [
     "StoreStock",
     "StockStatus",
     "ModuleSettings",
+    "CompanionVisit",
+    "CompanionVisitItem",
+    "CompanionActiveInvestigation",
+    "CompanionActiveScan",
+    "CompanionActiveXray",
 ]
 

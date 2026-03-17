@@ -32,7 +32,9 @@ from app.api import (
     store_staff_assignments,
     vendors,
     store_stock,
-    module_settings
+    module_settings,
+    companion_visits,
+    management,
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -205,6 +207,8 @@ app.include_router(store_staff_assignments.router, prefix="/api")
 app.include_router(vendors.router, prefix="/api")
 app.include_router(store_stock.router, prefix="/api")
 app.include_router(module_settings.router, prefix="/api")
+app.include_router(companion_visits.router, prefix="/api")
+app.include_router(management.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

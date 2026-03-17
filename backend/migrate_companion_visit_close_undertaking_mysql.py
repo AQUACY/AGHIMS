@@ -1,0 +1,77 @@
+"""
+Add close/reopen/undertaking columns to companion_visits (MySQL).
+Run from backend folder: python migrate_companion_visit_close_undertaking_mysql.py
+"""
+import pymysql
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+else:
+    load_dotenv()
+
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST") or os.getenv("MYSQL_HOST", "localhost"),
+    "user": os.getenv("DB_USER") or os.getenv("MYSQL_USER", "root"),
+    "password": os.getenv("DB_PASSWORD") or os.getenv("MYSQL_PASSWORD", ""),
+    "database": os.getenv("DB_NAME") or os.getenv("MYSQL_DATABASE", "hms"),
+    "charset": "utf8mb4",
+    "cursorclass": pymysql.cursors.DictCursor,
+}
+
+
+def migrate():
+    print("Adding close/undertaking/reopen columns to companion_visits (MySQL)...")
+    try:
+        connection = pymysql.connect(**DB_CONFIG)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = 'companion_visits'
+                """,
+                (DB_CONFIG["database"],),
+            )
+            existing = {row["column_name"] for row in cursor.fetchall()}
+
+            columns_to_add = [
+                ("closed_at", "DATETIME NULL"),
+                ("closed_by_id", "INT NULL"),
+                ("reopened_at", "DATETIME NULL"),
+                ("reopened_by_id", "INT NULL"),
+                ("reopen_reason", "TEXT NULL"),
+                ("undertaking_status", "VARCHAR(20) NULL"),
+                ("undertaking_deposit_amount", "DOUBLE NULL"),
+                ("undertaking_deposit_receipt_number", "VARCHAR(50) NULL"),
+                ("undertaking_requested_at", "DATETIME NULL"),
+                ("undertaking_requested_by_id", "INT NULL"),
+                ("undertaking_approved_at", "DATETIME NULL"),
+                ("undertaking_approved_by_id", "INT NULL"),
+                ("undertaking_unapproved_at", "DATETIME NULL"),
+                ("undertaking_unapproved_by_id", "INT NULL"),
+                ("undertaking_unapprove_reason", "TEXT NULL"),
+            ]
+
+            for col_name, col_spec in columns_to_add:
+                if col_name not in existing:
+                    cursor.execute(
+                        f"ALTER TABLE companion_visits ADD COLUMN {col_name} {col_spec}"
+                    )
+                    print(f"  + {col_name}")
+                else:
+                    print(f"  (exists) {col_name}")
+
+            connection.commit()
+        connection.close()
+        print("Done.")
+    except pymysql.Error as e:
+        print(f"Error: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    migrate()

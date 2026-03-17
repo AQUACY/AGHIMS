@@ -73,7 +73,7 @@ const onSubmit = async () => {
   loading.value = false;
   
   if (success) {
-    router.push('/');
+    router.push('/choose-mode');
   }
 };
 </script>

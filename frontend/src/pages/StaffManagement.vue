@@ -399,6 +399,7 @@ export default {
       'PA',
       'Anaesthetist',
       'Billing',
+      'Management',
       'Pharmacy',
       'Pharmacy Head',
       'Store Manager',
@@ -473,6 +474,7 @@ export default {
         'Pharmacy Head': 'purple',
         'Store Manager': 'deep-purple',
         Billing: 'teal',
+        Management: 'blue-grey',
         Claims: 'cyan',
         Records: 'grey',
       };

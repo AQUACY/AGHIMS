@@ -10,7 +10,12 @@ const routes = [
     component: () => import('../pages/Login.vue'),
     meta: { requiresAuth: false },
   },
- 
+  {
+    path: '/choose-mode',
+    name: 'ChooseMode',
+    component: () => import('../pages/ChooseMode.vue'),
+    meta: { requiresAuth: true },
+  },
   {
     path: '/',
     component: () => import('../layouts/MainLayout.vue'),
@@ -69,6 +74,18 @@ const routes = [
         name: 'Billing',
         component: () => import('../pages/Billing.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Billing', 'Admin'] },
+      },
+      {
+        path: '/management/transactions',
+        name: 'ManagementTransactions',
+        component: () => import('../pages/ManagementTransactions.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Management', 'Admin'] },
+      },
+      {
+        path: '/management/undertakings',
+        name: 'ManagementUndertakings',
+        component: () => import('../pages/ManagementUndertakings.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Management', 'Admin'] },
       },
       {
         path: '/pharmacy',
@@ -372,6 +389,73 @@ const routes = [
       },
     ],
   },
+  {
+    path: '/companion',
+    component: () => import('../layouts/CompanionLayout.vue'),
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'CompanionDashboard',
+        component: () => import('../pages/CompanionDashboard.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'profile',
+        name: 'CompanionProfile',
+        component: () => import('../pages/UserProfile.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'visits/create',
+        name: 'CompanionCreateService',
+        component: () => import('../pages/companion/CompanionCreateService.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Records', 'Admin'] },
+      },
+      {
+        path: 'visits',
+        name: 'CompanionVisitList',
+        component: () => import('../pages/companion/CompanionVisitList.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'visits/:id',
+        name: 'CompanionVisitDetail',
+        component: () => import('../pages/companion/CompanionVisitDetail.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'visits/:id/investigation',
+        name: 'CompanionAddInvestigation',
+        component: () => import('../pages/companion/CompanionAddInvestigation.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Lab', 'Lab Head', 'Admin'] },
+      },
+      {
+        path: 'visits/:id/drugs',
+        name: 'CompanionAddDrugs',
+        component: () => import('../pages/companion/CompanionAddDrugs.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Admin'] },
+      },
+      {
+        path: 'visits/:id/scan',
+        name: 'CompanionAddScan',
+        component: () => import('../pages/companion/CompanionAddScan.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Scan', 'Scan Head', 'Admin'] },
+      },
+      {
+        path: 'visits/:id/xray',
+        name: 'CompanionAddXray',
+        component: () => import('../pages/companion/CompanionAddXray.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Xray', 'Xray Head', 'Admin'] },
+      },
+      {
+        path: 'billing',
+        name: 'CompanionBilling',
+        component: () => import('../pages/companion/CompanionBilling.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Billing', 'Admin'] },
+      },
+    ],
+  },
 ];
 
 // Use /frontend/ as base path in production
@@ -454,7 +538,7 @@ router.beforeEach(async (to, from, next) => {
     if (to.meta.requiresAuth && !authStore.isAuthenticated) {
       next('/login');
     } else if (to.path === '/login' && authStore.isAuthenticated) {
-      next('/');
+      next('/choose-mode');
     } else if (to.meta.requiresRole) {
       // Check for specific role requirement (e.g., Admin only)
       // Check both primary role and additional roles
