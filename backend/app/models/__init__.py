@@ -65,6 +65,12 @@ from app.models.companion_visit_item import CompanionVisitItem
 from app.models.companion_active_investigation import CompanionActiveInvestigation
 from app.models.companion_active_scan import CompanionActiveScan
 from app.models.companion_active_xray import CompanionActiveXray
+from app.models.companion_active_day_surgery import CompanionActiveDaySurgery
+from app.models.companion_active_major_surgery import CompanionActiveMajorSurgery
+from app.models.companion_active_dressing import CompanionActiveDressing
+from app.models.companion_active_oxygen import CompanionActiveOxygen
+from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
+from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
 
 __all__ = [
     "User",
@@ -150,5 +156,11 @@ __all__ = [
     "CompanionActiveInvestigation",
     "CompanionActiveScan",
     "CompanionActiveXray",
+    "CompanionActiveDaySurgery",
+    "CompanionActiveMajorSurgery",
+    "CompanionActiveDressing",
+    "CompanionActiveOxygen",
+    "CompanionGovernmentOpdExport",
+    "CompanionGovernmentIpdExport",
 ]
 

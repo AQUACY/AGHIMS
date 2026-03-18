@@ -449,6 +449,30 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Xray', 'Xray Head', 'Admin'] },
       },
       {
+        path: 'visits/:id/day-surgery',
+        name: 'CompanionAddDaySurgery',
+        component: () => import('../pages/companion/CompanionAddDaySurgery.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: 'visits/:id/major-surgery',
+        name: 'CompanionAddMajorSurgery',
+        component: () => import('../pages/companion/CompanionAddMajorSurgery.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: 'visits/:id/dressing',
+        name: 'CompanionAddDressing',
+        component: () => import('../pages/companion/CompanionAddDressing.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: 'visits/:id/oxygen',
+        name: 'CompanionAddOxygen',
+        component: () => import('../pages/companion/CompanionAddOxygen.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
         path: 'billing',
         name: 'CompanionBilling',
         component: () => import('../pages/companion/CompanionBilling.vue'),

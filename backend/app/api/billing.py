@@ -1,7 +1,7 @@
 """
 Billing endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Request, File, UploadFile
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from typing import Optional, List, Union
@@ -16,9 +16,222 @@ from app.models.patient import Patient
 from app.models.bill import Bill, BillItem, Receipt, ReceiptItem
 from app.models.price_list import PriceListItem
 from app.services.price_list_service_v2 import get_price_from_all_tables
+from app.services.opd_government_export import (
+    parse_government_opd_export,
+    parse_government_ipd_export,
+    normalize_service_name,
+)
 import random
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+class GovernmentServiceLineResponse(BaseModel):
+    description: str
+    quantity: float
+    unit: Optional[str] = None
+    total: Optional[float] = None
+    normalized: str
+
+
+class BillingReconciliationItem(BaseModel):
+    bill_item_id: int
+    bill_id: int
+    item_name: str
+    quantity: float
+    unit_price: float
+    total_price: float
+    normalized: str
+
+
+class OpdGovernmentReconciliationResponse(BaseModel):
+    encounter_id: int
+    claim_status: Optional[str] = None
+    insurance_no: Optional[str] = None
+    claim_no: Optional[str] = None
+    patient_name: Optional[str] = None
+    patient_no: Optional[str] = None
+    service_date: Optional[str] = None
+    service_type: Optional[str] = None
+
+    government_lines: List[GovernmentServiceLineResponse]
+    billed_items: List[BillingReconciliationItem]
+
+    missing_in_billing: List[GovernmentServiceLineResponse]
+    extra_in_billing: List[BillingReconciliationItem]
+    quantity_mismatches: List[dict]
+
+
+class IpdInvoiceParseResponse(BaseModel):
+    """Result of parsing an IPD (in-patient) government invoice file."""
+    invoice_no: Optional[str] = None
+    visit_no: Optional[str] = None
+    admission_no: Optional[str] = None
+    patient_no: Optional[str] = None
+    patient_name: Optional[str] = None
+    invoice_date: Optional[str] = None
+    admission_date: Optional[str] = None
+    discharge_date: Optional[str] = None
+    insurance_no: Optional[str] = None
+    billing_info: Optional[str] = None
+    lines: List[GovernmentServiceLineResponse]
+
+
+@router.post("/parse-ipd-invoice", response_model=IpdInvoiceParseResponse)
+async def parse_ipd_invoice(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["Billing", "Admin", "Doctor", "PA", "Nurse"])),
+):
+    """
+    Parse a government IPD (in-patient) invoice file (.xls or .xlsx, often HTML saved as .xls).
+    Returns extracted meta (admission no., patient name, etc.) and line items (SERVICE DESCRIPTION, QTY).
+    Use this to test the IPD check parser or to feed into IPD reconciliation.
+    """
+    if not file.filename or not (file.filename.lower().endswith(".xls") or file.filename.lower().endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="File must be .xls or .xlsx")
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    try:
+        export = parse_government_ipd_export(contents, filename=file.filename or "upload")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return IpdInvoiceParseResponse(
+        invoice_no=export.invoice_no,
+        visit_no=export.visit_no,
+        admission_no=export.admission_no,
+        patient_no=export.patient_no,
+        patient_name=export.patient_name,
+        invoice_date=export.invoice_date,
+        admission_date=export.admission_date,
+        discharge_date=export.discharge_date,
+        insurance_no=export.insurance_no,
+        billing_info=export.billing_info,
+        lines=[
+            GovernmentServiceLineResponse(
+                description=ln.description,
+                quantity=float(ln.quantity),
+                unit=ln.unit,
+                total=ln.total,
+                normalized=normalize_service_name(ln.description),
+            )
+            for ln in export.lines
+        ],
+    )
+
+
+@router.post("/encounter/{encounter_id}/reconcile-opd-government", response_model=OpdGovernmentReconciliationResponse)
+async def reconcile_opd_services_with_government_export(
+    encounter_id: int,
+    file: "UploadFile" = None,  # type: ignore[name-defined]
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "read")),
+):
+    """
+    Compare government OPD export line-items with services billed in the system (BillItems for an encounter).
+    Returns:
+    - missing_in_billing: in government export but not in system billing
+    - extra_in_billing: in system billing but not in government export
+    - quantity_mismatches: matched descriptions but different quantities
+    """
+    # Lazy import to avoid adding at top-level (FastAPI typing only)
+    from fastapi import UploadFile
+
+    if file is None or not isinstance(file, UploadFile):
+        raise HTTPException(status_code=400, detail="File upload is required")
+
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+
+    contents = await file.read()
+    export = parse_government_opd_export(contents, filename=file.filename or "upload")
+
+    gov_lines = [
+        {
+            "description": ln.description,
+            "quantity": float(ln.quantity),
+            "unit": ln.unit,
+            "total": ln.total,
+            "normalized": normalize_service_name(ln.description),
+        }
+        for ln in export.lines
+    ]
+
+    # Load all bill items across all bills for encounter
+    bills = db.query(Bill).options(joinedload(Bill.bill_items)).filter(Bill.encounter_id == encounter_id).all()
+    billed: list[dict] = []
+    for b in bills:
+        for it in b.bill_items:
+            billed.append(
+                {
+                    "bill_item_id": it.id,
+                    "bill_id": b.id,
+                    "item_name": it.item_name,
+                    "quantity": float(it.quantity),
+                    "unit_price": float(it.unit_price),
+                    "total_price": float(it.total_price),
+                    "normalized": normalize_service_name(it.item_name),
+                }
+            )
+
+    # Build matching maps by normalized description
+    gov_by_norm: dict[str, list[dict]] = {}
+    for g in gov_lines:
+        gov_by_norm.setdefault(g["normalized"], []).append(g)
+
+    billed_by_norm: dict[str, list[dict]] = {}
+    for bi in billed:
+        billed_by_norm.setdefault(bi["normalized"], []).append(bi)
+
+    missing_in_billing: list[dict] = []
+    extra_in_billing: list[dict] = []
+    quantity_mismatches: list[dict] = []
+
+    # Missing: gov norm not present in billed
+    for norm, glines in gov_by_norm.items():
+        if not norm:
+            continue
+        if norm not in billed_by_norm:
+            missing_in_billing.extend(glines)
+            continue
+        # Compare quantities (sum across duplicates)
+        gov_qty = sum(float(x["quantity"]) for x in glines)
+        billed_qty = sum(float(x["quantity"]) for x in billed_by_norm[norm])
+        if abs(gov_qty - billed_qty) > 1e-6:
+            quantity_mismatches.append(
+                {
+                    "normalized": norm,
+                    "government_quantity": gov_qty,
+                    "billed_quantity": billed_qty,
+                    "government_lines": glines,
+                    "billed_items": billed_by_norm[norm],
+                }
+            )
+
+    # Extra: billed norm not present in gov
+    for norm, items in billed_by_norm.items():
+        if not norm:
+            continue
+        if norm not in gov_by_norm:
+            extra_in_billing.extend(items)
+
+    return {
+        "encounter_id": encounter_id,
+        "claim_status": export.claim_status,
+        "insurance_no": export.insurance_no,
+        "claim_no": export.claim_no,
+        "patient_name": export.patient_name,
+        "patient_no": export.patient_no,
+        "service_date": export.service_date,
+        "service_type": export.service_type,
+        "government_lines": gov_lines,
+        "billed_items": billed,
+        "missing_in_billing": missing_in_billing,
+        "extra_in_billing": extra_in_billing,
+        "quantity_mismatches": quantity_mismatches,
+    }
 
 
 def generate_unique_receipt_number(db: Session, max_attempts: int = 100) -> str:

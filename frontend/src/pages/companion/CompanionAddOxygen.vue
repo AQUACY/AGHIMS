@@ -2,13 +2,13 @@
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-md">
       <q-btn flat dense icon="arrow_back" :to="backLink" />
-      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Add investigation (Lab)</div>
+      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Oxygen</div>
     </div>
 
     <q-card v-if="visitClosed" class="glass-card q-mb-md" flat>
       <q-card-section>
         <q-banner class="bg-warning/20 text-warning rounded-borders">
-          This visit is closed. You cannot add or remove lab investigations.
+          This visit is closed. You cannot add or remove oxygen services.
         </q-banner>
       </q-card-section>
     </q-card>
@@ -31,10 +31,16 @@
                 <q-item-label class="text-weight-medium" :style="item.cancelled ? 'text-decoration: line-through; opacity: 0.75;' : ''">
                   {{ item.item_name }}
                 </q-item-label>
-                <q-item-label caption>{{ item.item_code }} · GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
-                <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
+                <q-item-label caption>
+                  <template v-if="item.start_time && item.end_time">
+                    Start {{ formatDateTime(item.start_time) }} → End {{ formatDateTime(item.end_time) }}
+                  </template>
+                  <template v-else>{{ item.item_code }}</template>
+                  · {{ formatHours(item.quantity) }} · GH¢ {{ formatPrice(item.unit_price * item.quantity) }}
+                </q-item-label>
+                <q-item-label v-if="item.created_at && !item.start_time" caption class="text-grey-7 q-mt-xs">Added: {{ formatDateTime(item.created_at) }}</q-item-label>
                 <q-item-label v-if="item.cancelled" caption class="text-negative q-mt-xs">
-                  Cancelled {{ formatDateTime(item.cancelled_at) }} — {{ item.cancel_reason || '—' }}
+                  Cancelled {{ formatDateTime(item.cancelled_at) }} by {{ item.cancelled_by_name || '—' }} — {{ item.cancel_reason || '—' }}
                 </q-item-label>
                 <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
                   <q-icon name="receipt" size="18px" class="q-mr-xs" />
@@ -69,16 +75,16 @@
       </q-card-section>
     </q-card>
 
-    <!-- Search and add (any investigation) -->
+    <!-- Search and add -->
     <q-card class="glass-card q-mb-lg" flat>
       <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add investigation</div>
-        <div class="text-caption glass-text-muted q-mb-sm">Type to search, then select to add to this visit.</div>
+        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add oxygen service</div>
+        <div class="text-caption glass-text-muted q-mb-sm">Type to search oxygen services, then select to add to this visit.</div>
         <q-input
           v-model="searchText"
           filled
           dense
-          placeholder="Type investigation name or code..."
+          placeholder="Type oxygen service name or code..."
           class="q-mb-sm"
           clearable
           @update:model-value="onSearchInput"
@@ -101,12 +107,49 @@
           </q-item>
         </q-list>
         <div v-else-if="searchText.trim() && !loadingProcedures" class="text-caption text-grey-7">
-          {{ filteredSearchOptions.length === 0 ? 'No matching investigations.' : '' }}
+          {{ filteredSearchOptions.length === 0 ? 'No matching oxygen services.' : '' }}
         </div>
       </q-card-section>
     </q-card>
 
-    <!-- Regularly requested (card list – Lab Head activates these) -->
+    <!-- Oxygen add dialog: start & end date/time (billed hourly) -->
+    <q-dialog v-model="showOxygenDialog" persistent>
+      <q-card class="glass-card" style="min-width: 360px;">
+        <q-card-section>
+          <div class="text-h6 glass-text">Add oxygen — start & end time</div>
+          <div class="text-caption glass-text-muted q-mb-md">Oxygen is billed hourly. Enter when the service started and ended.</div>
+          <template v-if="selectedProcForDialog">
+            <div class="text-subtitle2 q-mb-sm">{{ selectedProcForDialog.service_name }}</div>
+            <q-input
+              v-model="oxygenDialogStart"
+              filled
+              dense
+              label="Start date & time"
+              type="datetime-local"
+              class="q-mb-md"
+              :rules="[(v) => !!v || 'Required']"
+            />
+            <q-input
+              v-model="oxygenDialogEnd"
+              filled
+              dense
+              label="End date & time"
+              type="datetime-local"
+              :rules="[(v) => !!v || 'Required', () => oxygenEndAfterStart || 'End must be after start']"
+            />
+            <div v-if="oxygenHoursPreview != null" class="text-caption q-mt-sm text-grey-7">
+              {{ formatHours(oxygenHoursPreview) }} × GH¢ {{ formatPrice(selectedProcForDialog ? copaymentPrice(selectedProcForDialog) : 0) }} = GH¢ {{ formatPrice(oxygenTotalPreview) }}
+            </div>
+          </template>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="grey" v-close-popup />
+          <q-btn unelevated label="Add to bill" color="primary" :disable="!canSubmitOxygenDialog" @click="submitOxygenDialog" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Regularly requested (card list) -->
     <div class="text-subtitle1 text-weight-medium glass-text q-mb-md q-ma-md">Regularly requested (cards)</div>
     <div v-if="loadingProcedures || loadingActive" class="row q-col-gutter-md ">
       <q-card v-for="i in 4" :key="i" class="col-12 col-sm-6 col-md-4 glass-card q-ma-md" flat>
@@ -117,10 +160,10 @@
       </q-card>
     </div>
     <div v-else-if="procedures.length === 0" class="text-body2 glass-text-muted">
-      No investigations in the price list for service type "INVESTIGATIONS".
+      No oxygen services in additional services. Add them under Consultation → Additional services.
     </div>
     <div v-else-if="activeProcedures.length === 0" class="text-body2 glass-text-muted">
-      No investigations are on the card list yet. Lab Head can activate regularly requested ones below. Use "Search and add" above to add any investigation to the visit.
+      No oxygen services are on the card list yet. Nurse/Doctor/PA can add regularly requested ones below. Use "Search and add" above to add any oxygen service to the visit.
     </div>
     <div v-else class="row q-col-gutter-md q-ma-md">
       <q-card
@@ -133,7 +176,7 @@
         @click="!visitClosed ? addProcedure(proc) : null"
       >
         <q-card-section class="text-center q-pa-md">
-          <q-icon name="science" size="32px" class="text-primary" />
+          <q-icon name="air" size="32px" class="text-primary" />
           <div class="text-subtitle2 q-mt-sm text-weight-medium glass-text">{{ proc.service_name }}</div>
           <div class="text-caption text-grey-7">{{ proc.g_drg_code }}</div>
           <div class="text-caption q-mt-xs">Copayment: GH¢ {{ formatPrice(copaymentPrice(proc)) }}</div>
@@ -151,11 +194,11 @@
       </q-card>
     </div>
 
-    <!-- Lab Head: manage card list -->
+    <!-- Nurse/Doctor/PA: manage card list -->
     <q-card v-if="canManageActive" class="glass-card q-mt-xl" flat>
       <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Manage card list (Lab Head)</div>
-        <div class="text-caption glass-text-muted q-mb-md">Investigations on the card list appear above. Add or remove them here.</div>
+        <div class="text-h6 glass-text q-mb-md">Manage card list (Nurse / Doctor / PA)</div>
+        <div class="text-caption glass-text-muted q-mb-md">Oxygen services on the card list appear above. Add or remove them here.</div>
         <div class="row q-col-gutter-md q-mb-md">
           <div class="col-12 col-md-6">
             <q-select
@@ -167,7 +210,7 @@
               map-options
               filled
               dense
-              label="Add investigation to card list"
+              label="Add oxygen service to card list"
               use-input
               input-debounce="200"
               @filter="filterProceduresForActive"
@@ -175,7 +218,7 @@
             >
               <template v-slot:no-option>
                 <q-item>
-                  <q-item-section class="text-grey">Type to search INVESTIGATIONS</q-item-section>
+                  <q-item-section class="text-grey">No oxygen additional services</q-item-section>
                 </q-item>
               </template>
             </q-select>
@@ -193,7 +236,7 @@
             {{ getProcedureName(item.g_drg_code) || item.g_drg_code }}
           </q-chip>
         </div>
-        <div v-else class="text-caption text-grey-7">No investigations on the card list yet.</div>
+        <div v-else class="text-caption text-grey-7">No oxygen services on the card list yet.</div>
       </q-card-section>
     </q-card>
   </q-page>
@@ -204,8 +247,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
-import { companionVisitsAPI } from '../../services/api';
-import { priceListAPI } from '../../services/api';
+import { companionVisitsAPI, consultationAPI } from '../../services/api';
 
 const route = useRoute();
 const $q = useQuasar();
@@ -224,10 +266,42 @@ const searchText = ref('');
 const addActiveProc = ref(null);
 const proceduresForActiveSelect = ref([]);
 const allProceduresForActive = ref([]);
+const showOxygenDialog = ref(false);
+const selectedProcForDialog = ref(null);
+const oxygenDialogStart = ref('');
+const oxygenDialogEnd = ref('');
 
-const canManageActive = computed(() => authStore.canAccess(['Lab Head', 'Doctor', 'PA', 'Admin']));
+const canManageActive = computed(() => authStore.canAccess(['Nurse', 'Doctor', 'PA', 'Admin']));
 
-const SERVICE_TYPE = 'INVESTIGATIONS';
+const oxygenEndAfterStart = computed(() => {
+  const s = oxygenDialogStart.value;
+  const e = oxygenDialogEnd.value;
+  if (!s || !e) return true;
+  return new Date(e) > new Date(s);
+});
+const oxygenHoursPreview = computed(() => {
+  const s = oxygenDialogStart.value;
+  const e = oxygenDialogEnd.value;
+  if (!s || !e) return null;
+  const start = new Date(s);
+  const end = new Date(e);
+  if (end <= start) return null;
+  return (end - start) / (1000 * 60 * 60);
+});
+const oxygenTotalPreview = computed(() => {
+  const hours = oxygenHoursPreview.value;
+  const proc = selectedProcForDialog.value;
+  if (hours == null || !proc) return 0;
+  return hours * copaymentPrice(proc);
+});
+const canSubmitOxygenDialog = computed(() => {
+  return selectedProcForDialog.value && oxygenDialogStart.value && oxygenDialogEnd.value && oxygenEndAfterStart.value;
+});
+
+/** Synthetic code used for additional services (consultation API): item_code and card list key */
+function additionalServiceCode(id) {
+  return `ADD_SVC_${id}`;
+}
 
 const activeProcedures = computed(() => {
   const codes = new Set(activeCodes.value.map((a) => a.g_drg_code));
@@ -291,6 +365,13 @@ function formatPrice(val) {
   return n.toFixed(2);
 }
 
+function formatHours(quantity) {
+  const n = Number(quantity);
+  if (Number.isNaN(n) || n < 0) return '0 hours';
+  if (n === 1) return '1 hour';
+  return `${Number(n).toFixed(1)} hours`;
+}
+
 function formatDateTime(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -301,6 +382,8 @@ function formatDateTime(iso) {
 }
 
 function copaymentPrice(proc) {
+  // Additional services (consultation API) use price_per_unit
+  if (proc.price_per_unit != null && !Number.isNaN(Number(proc.price_per_unit))) return Number(proc.price_per_unit);
   const co = proc.nhia_claim_co_payment;
   if (co != null && co !== '' && !Number.isNaN(Number(co))) return Number(co);
   const nhia = proc.nhia_app;
@@ -351,7 +434,7 @@ async function loadVisit() {
 
 async function loadAddedItems() {
   try {
-    const res = await companionVisitsAPI.getItems(visitId.value, 'lab');
+    const res = await companionVisitsAPI.getItems(visitId.value, 'oxygen');
     addedItems.value = res.data || [];
   } catch (e) {
     addedItems.value = [];
@@ -361,23 +444,36 @@ async function loadAddedItems() {
 async function loadProcedures() {
   loadingProcedures.value = true;
   try {
-    const res = await priceListAPI.getProceduresByServiceType(SERVICE_TYPE);
-    procedures.value = res.data || [];
-    allProceduresForActive.value = (res.data || []).map((p) => ({
+    const res = await consultationAPI.getAdditionalServices(false);
+    const raw = Array.isArray(res.data) ? res.data : [];
+    // Only oxygen-related additional services (by name)
+    const oxygenOnly = raw.filter(
+      (s) => s.service_name && String(s.service_name).toLowerCase().includes('oxygen')
+    );
+    // Map to shape expected by this page: id, g_drg_code (synthetic), service_name, price_per_unit
+    procedures.value = oxygenOnly.map((s) => ({
+      id: s.id,
+      g_drg_code: additionalServiceCode(s.id),
+      service_name: s.service_name,
+      price_per_unit: s.price_per_unit,
+      unit_type: s.unit_type,
+    }));
+    allProceduresForActive.value = procedures.value.map((p) => ({
       g_drg_code: p.g_drg_code,
       label: `${p.service_name} (${p.g_drg_code})`,
     }));
   } catch (e) {
     procedures.value = [];
+    allProceduresForActive.value = [];
   } finally {
     loadingProcedures.value = false;
   }
 }
 
-async function loadActiveInvestigations() {
+async function loadActiveOxygens() {
   loadingActive.value = true;
   try {
-    const res = await companionVisitsAPI.getActiveInvestigations();
+    const res = await companionVisitsAPI.getActiveOxygens();
     activeCodes.value = res.data || [];
   } catch (e) {
     activeCodes.value = [];
@@ -386,17 +482,46 @@ async function loadActiveInvestigations() {
   }
 }
 
-async function addProcedure(proc) {
+function openOxygenDialog(proc) {
   if (visitClosed.value) return;
+  selectedProcForDialog.value = proc;
+  const now = new Date();
+  oxygenDialogStart.value = toDatetimeLocal(now);
+  const end = new Date(now.getTime() + 60 * 60 * 1000);
+  oxygenDialogEnd.value = toDatetimeLocal(end);
+  showOxygenDialog.value = true;
+}
+
+function toDatetimeLocal(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function toISO(datetimeLocal) {
+  if (!datetimeLocal) return null;
+  return new Date(datetimeLocal).toISOString();
+}
+
+async function submitOxygenDialog() {
+  if (!canSubmitOxygenDialog.value) return;
+  const proc = selectedProcForDialog.value;
+  const startISO = toISO(oxygenDialogStart.value);
+  const endISO = toISO(oxygenDialogEnd.value);
+  if (!startISO || !endISO) return;
   try {
     await companionVisitsAPI.addItem(visitId.value, {
       item_code: proc.g_drg_code,
       item_name: proc.service_name,
-      category: 'lab',
+      category: 'oxygen',
       unit_price: copaymentPrice(proc),
       quantity: 1,
+      start_time: startISO,
+      end_time: endISO,
     });
     $q.notify({ type: 'positive', message: 'Added to bill', position: 'top' });
+    showOxygenDialog.value = false;
+    selectedProcForDialog.value = null;
+    searchText.value = '';
     await loadAddedItems();
   } catch (e) {
     $q.notify({
@@ -407,9 +532,12 @@ async function addProcedure(proc) {
   }
 }
 
+function addProcedure(proc) {
+  openOxygenDialog(proc);
+}
+
 function selectSearchResult(proc) {
-  addProcedure(proc);
-  searchText.value = '';
+  openOxygenDialog(proc);
 }
 
 async function removeItem(item) {
@@ -443,10 +571,10 @@ async function removeItem(item) {
 async function onAddToCardList(gDrgCode) {
   if (!gDrgCode) return;
   try {
-    await companionVisitsAPI.addActiveInvestigation({ g_drg_code: gDrgCode });
+    await companionVisitsAPI.addActiveOxygen({ g_drg_code: gDrgCode });
     $q.notify({ type: 'positive', message: 'Added to card list', position: 'top' });
     addActiveProc.value = null;
-    await loadActiveInvestigations();
+    await loadActiveOxygens();
   } catch (e) {
     $q.notify({
       type: 'negative',
@@ -458,9 +586,9 @@ async function onAddToCardList(gDrgCode) {
 
 async function removeActive(gDrgCode) {
   try {
-    await companionVisitsAPI.removeActiveInvestigation(gDrgCode);
+    await companionVisitsAPI.removeActiveOxygen(gDrgCode);
     $q.notify({ type: 'positive', message: 'Removed from card list', position: 'top' });
-    await loadActiveInvestigations();
+    await loadActiveOxygens();
   } catch (e) {
     $q.notify({
       type: 'negative',
@@ -474,7 +602,7 @@ onMounted(async () => {
   await loadVisit();
   await loadAddedItems();
   await loadProcedures();
-  await loadActiveInvestigations();
+  await loadActiveOxygens();
 });
 </script>
 

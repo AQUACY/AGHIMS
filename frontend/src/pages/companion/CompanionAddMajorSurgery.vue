@@ -2,13 +2,13 @@
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-md">
       <q-btn flat dense icon="arrow_back" :to="backLink" />
-      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Add investigation (Lab)</div>
+      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Add major surgery</div>
     </div>
 
     <q-card v-if="visitClosed" class="glass-card q-mb-md" flat>
       <q-card-section>
         <q-banner class="bg-warning/20 text-warning rounded-borders">
-          This visit is closed. You cannot add or remove lab investigations.
+          This visit is closed. You cannot add or remove major surgeries.
         </q-banner>
       </q-card-section>
     </q-card>
@@ -69,16 +69,16 @@
       </q-card-section>
     </q-card>
 
-    <!-- Search and add (any investigation) -->
+    <!-- Search and add -->
     <q-card class="glass-card q-mb-lg" flat>
       <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add investigation</div>
+        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add major surgery</div>
         <div class="text-caption glass-text-muted q-mb-sm">Type to search, then select to add to this visit.</div>
         <q-input
           v-model="searchText"
           filled
           dense
-          placeholder="Type investigation name or code..."
+          placeholder="Type major surgery name or code..."
           class="q-mb-sm"
           clearable
           @update:model-value="onSearchInput"
@@ -101,12 +101,12 @@
           </q-item>
         </q-list>
         <div v-else-if="searchText.trim() && !loadingProcedures" class="text-caption text-grey-7">
-          {{ filteredSearchOptions.length === 0 ? 'No matching investigations.' : '' }}
+          {{ filteredSearchOptions.length === 0 ? 'No matching major surgeries.' : '' }}
         </div>
       </q-card-section>
     </q-card>
 
-    <!-- Regularly requested (card list – Lab Head activates these) -->
+    <!-- Regularly requested (card list) -->
     <div class="text-subtitle1 text-weight-medium glass-text q-mb-md q-ma-md">Regularly requested (cards)</div>
     <div v-if="loadingProcedures || loadingActive" class="row q-col-gutter-md ">
       <q-card v-for="i in 4" :key="i" class="col-12 col-sm-6 col-md-4 glass-card q-ma-md" flat>
@@ -117,10 +117,10 @@
       </q-card>
     </div>
     <div v-else-if="procedures.length === 0" class="text-body2 glass-text-muted">
-      No investigations in the price list for service type "INVESTIGATIONS".
+      No items in the surgery price list. Add surgeries (file type surgery) in Price list management.
     </div>
     <div v-else-if="activeProcedures.length === 0" class="text-body2 glass-text-muted">
-      No investigations are on the card list yet. Lab Head can activate regularly requested ones below. Use "Search and add" above to add any investigation to the visit.
+      No major surgeries are on the card list yet. Doctor/PA can add regularly requested ones below. Use "Search and add" above to add any major surgery to the visit.
     </div>
     <div v-else class="row q-col-gutter-md q-ma-md">
       <q-card
@@ -133,7 +133,7 @@
         @click="!visitClosed ? addProcedure(proc) : null"
       >
         <q-card-section class="text-center q-pa-md">
-          <q-icon name="science" size="32px" class="text-primary" />
+          <q-icon name="healing" size="32px" class="text-primary" />
           <div class="text-subtitle2 q-mt-sm text-weight-medium glass-text">{{ proc.service_name }}</div>
           <div class="text-caption text-grey-7">{{ proc.g_drg_code }}</div>
           <div class="text-caption q-mt-xs">Copayment: GH¢ {{ formatPrice(copaymentPrice(proc)) }}</div>
@@ -151,11 +151,11 @@
       </q-card>
     </div>
 
-    <!-- Lab Head: manage card list -->
+    <!-- Doctor/PA: manage card list -->
     <q-card v-if="canManageActive" class="glass-card q-mt-xl" flat>
       <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Manage card list (Lab Head)</div>
-        <div class="text-caption glass-text-muted q-mb-md">Investigations on the card list appear above. Add or remove them here.</div>
+        <div class="text-h6 glass-text q-mb-md">Manage card list (Doctor / PA)</div>
+        <div class="text-caption glass-text-muted q-mb-md">Major surgeries on the card list appear above. Add or remove them here.</div>
         <div class="row q-col-gutter-md q-mb-md">
           <div class="col-12 col-md-6">
             <q-select
@@ -167,7 +167,7 @@
               map-options
               filled
               dense
-              label="Add investigation to card list"
+              label="Add major surgery to card list"
               use-input
               input-debounce="200"
               @filter="filterProceduresForActive"
@@ -175,7 +175,7 @@
             >
               <template v-slot:no-option>
                 <q-item>
-                  <q-item-section class="text-grey">Type to search INVESTIGATIONS</q-item-section>
+                  <q-item-section class="text-grey">Type to search surgery list</q-item-section>
                 </q-item>
               </template>
             </q-select>
@@ -193,7 +193,7 @@
             {{ getProcedureName(item.g_drg_code) || item.g_drg_code }}
           </q-chip>
         </div>
-        <div v-else class="text-caption text-grey-7">No investigations on the card list yet.</div>
+        <div v-else class="text-caption text-grey-7">No major surgeries on the card list yet.</div>
       </q-card-section>
     </q-card>
   </q-page>
@@ -225,9 +225,9 @@ const addActiveProc = ref(null);
 const proceduresForActiveSelect = ref([]);
 const allProceduresForActive = ref([]);
 
-const canManageActive = computed(() => authStore.canAccess(['Lab Head', 'Doctor', 'PA', 'Admin']));
+const canManageActive = computed(() => authStore.canAccess(['Doctor', 'PA', 'Admin']));
 
-const SERVICE_TYPE = 'INVESTIGATIONS';
+/** Major surgery uses the surgery price list (file type surgery), not procedures by service type. */
 
 const activeProcedures = computed(() => {
   const codes = new Set(activeCodes.value.map((a) => a.g_drg_code));
@@ -351,7 +351,7 @@ async function loadVisit() {
 
 async function loadAddedItems() {
   try {
-    const res = await companionVisitsAPI.getItems(visitId.value, 'lab');
+    const res = await companionVisitsAPI.getItems(visitId.value, 'major_surgery');
     addedItems.value = res.data || [];
   } catch (e) {
     addedItems.value = [];
@@ -361,7 +361,7 @@ async function loadAddedItems() {
 async function loadProcedures() {
   loadingProcedures.value = true;
   try {
-    const res = await priceListAPI.getProceduresByServiceType(SERVICE_TYPE);
+    const res = await priceListAPI.getSurgeries();
     procedures.value = res.data || [];
     allProceduresForActive.value = (res.data || []).map((p) => ({
       g_drg_code: p.g_drg_code,
@@ -374,10 +374,10 @@ async function loadProcedures() {
   }
 }
 
-async function loadActiveInvestigations() {
+async function loadActiveMajorSurgeries() {
   loadingActive.value = true;
   try {
-    const res = await companionVisitsAPI.getActiveInvestigations();
+    const res = await companionVisitsAPI.getActiveMajorSurgeries();
     activeCodes.value = res.data || [];
   } catch (e) {
     activeCodes.value = [];
@@ -392,7 +392,7 @@ async function addProcedure(proc) {
     await companionVisitsAPI.addItem(visitId.value, {
       item_code: proc.g_drg_code,
       item_name: proc.service_name,
-      category: 'lab',
+      category: 'major_surgery',
       unit_price: copaymentPrice(proc),
       quantity: 1,
     });
@@ -443,10 +443,10 @@ async function removeItem(item) {
 async function onAddToCardList(gDrgCode) {
   if (!gDrgCode) return;
   try {
-    await companionVisitsAPI.addActiveInvestigation({ g_drg_code: gDrgCode });
+    await companionVisitsAPI.addActiveMajorSurgery({ g_drg_code: gDrgCode });
     $q.notify({ type: 'positive', message: 'Added to card list', position: 'top' });
     addActiveProc.value = null;
-    await loadActiveInvestigations();
+    await loadActiveMajorSurgeries();
   } catch (e) {
     $q.notify({
       type: 'negative',
@@ -458,9 +458,9 @@ async function onAddToCardList(gDrgCode) {
 
 async function removeActive(gDrgCode) {
   try {
-    await companionVisitsAPI.removeActiveInvestigation(gDrgCode);
+    await companionVisitsAPI.removeActiveMajorSurgery(gDrgCode);
     $q.notify({ type: 'positive', message: 'Removed from card list', position: 'top' });
-    await loadActiveInvestigations();
+    await loadActiveMajorSurgeries();
   } catch (e) {
     $q.notify({
       type: 'negative',
@@ -474,7 +474,7 @@ onMounted(async () => {
   await loadVisit();
   await loadAddedItems();
   await loadProcedures();
-  await loadActiveInvestigations();
+  await loadActiveMajorSurgeries();
 });
 </script>
 

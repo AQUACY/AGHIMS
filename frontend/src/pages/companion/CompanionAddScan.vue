@@ -28,9 +28,14 @@
           <q-list bordered class="rounded-borders q-mt-sm">
             <q-item v-for="item in group.items" :key="item.id" class="q-pa-md">
               <q-item-section>
-                <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
+                <q-item-label class="text-weight-medium" :style="item.cancelled ? 'text-decoration: line-through; opacity: 0.75;' : ''">
+                  {{ item.item_name }}
+                </q-item-label>
                 <q-item-label caption>{{ item.item_code }} · GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
                 <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
+                <q-item-label v-if="item.cancelled" caption class="text-negative q-mt-xs">
+                  Cancelled {{ formatDateTime(item.cancelled_at) }} — {{ item.cancel_reason || '—' }}
+                </q-item-label>
                 <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
                   <q-icon name="receipt" size="18px" class="q-mr-xs" />
                   <span class="text-weight-medium">Receipt {{ item.receipt_number }}</span>
@@ -44,7 +49,7 @@
               </q-item-section>
               <q-item-section side>
                 <q-btn
-                  v-if="!visitClosed && !item.receipt_number"
+                  v-if="!visitClosed && !item.receipt_number && !item.cancelled"
                   flat
                   dense
                   round
@@ -217,7 +222,7 @@ const searchText = ref('');
 const addActiveProc = ref(null);
 const proceduresForActiveSelect = ref([]);
 
-const canManageActive = computed(() => authStore.canAccess(['Scan', 'Scan Head', 'Admin']));
+const canManageActive = computed(() => authStore.canAccess(['Scan', 'Scan Head', 'Doctor', 'PA', 'Admin']));
 
 const SERVICE_TYPE = 'ULTRASOUND';
 
@@ -390,13 +395,26 @@ function selectSearchResult(proc) {
 
 async function removeItem(item) {
   if (visitClosed.value) return;
-  try {
-    await companionVisitsAPI.deleteItem(visitId.value, item.id);
-    $q.notify({ type: 'positive', message: 'Removed from bill', position: 'top' });
-    await loadAddedItems();
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to remove', position: 'top' });
-  }
+  $q.dialog({
+    title: 'Cancel service',
+    message: `Cancel "${item.item_name}"? It will be struck through and excluded from billing.`,
+    prompt: {
+      model: '',
+      type: 'text',
+      label: 'Reason for cancellation',
+      isValid: (val) => String(val || '').trim().length >= 3,
+    },
+    cancel: true,
+    persistent: true,
+  }).onOk(async (reason) => {
+    try {
+      await companionVisitsAPI.cancelItem(visitId.value, item.id, String(reason || '').trim());
+      $q.notify({ type: 'positive', message: 'Item cancelled', position: 'top' });
+      await loadAddedItems();
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to cancel', position: 'top' });
+    }
+  });
 }
 
 async function onAddToCardList(gDrgCode) {

@@ -15,12 +15,26 @@ from datetime import date, datetime
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
 from app.core.audit import get_effective_creator_id
+from app.core.datetime_utils import utcnow
+from app.core.audit import is_super_admin
 from app.models.user import User
 from app.models.companion_visit import CompanionVisit
 from app.models.companion_visit_item import CompanionVisitItem
 from app.models.companion_active_investigation import CompanionActiveInvestigation
 from app.models.companion_active_scan import CompanionActiveScan
 from app.models.companion_active_xray import CompanionActiveXray
+from app.models.companion_active_day_surgery import CompanionActiveDaySurgery
+from app.models.companion_active_major_surgery import CompanionActiveMajorSurgery
+from app.models.companion_active_dressing import CompanionActiveDressing
+from app.models.companion_active_oxygen import CompanionActiveOxygen
+from app.services.opd_government_export import (
+    parse_government_opd_export,
+    parse_government_ipd_export,
+    normalize_service_name,
+)
+from app.services.price_list_service_v2 import search_price_items_all_tables, get_price_from_all_tables
+from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
+from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
 
 router = APIRouter(prefix="/companion-visits", tags=["companion-visits"])
 
@@ -204,9 +218,9 @@ class ActiveInvestigationCreate(BaseModel):
 def add_active_investigation(
     data: ActiveInvestigationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab Head", "Admin"])),
+    current_user: User = Depends(require_role(["Lab Head", "Doctor", "PA", "Admin"])),
 ):
-    """Add an investigation to the card list. Lab Head or Admin only."""
+    """Add an investigation to the card list. Lab Head, Doctor, PA, or Admin."""
     code = (data.g_drg_code or "").strip()
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
@@ -223,9 +237,9 @@ def add_active_investigation(
 def remove_active_investigation(
     g_drg_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Lab Head", "Admin"])),
+    current_user: User = Depends(require_role(["Lab Head", "Doctor", "PA", "Admin"])),
 ):
-    """Remove an investigation from the card list. Lab Head or Admin only."""
+    """Remove an investigation from the card list. Lab Head, Doctor, PA, or Admin."""
     row = db.query(CompanionActiveInvestigation).filter(CompanionActiveInvestigation.g_drg_code == g_drg_code).first()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
@@ -254,9 +268,9 @@ class ActiveScanCreate(BaseModel):
 def add_active_scan(
     data: ActiveScanCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Scan", "Scan Head", "Admin"])),
+    current_user: User = Depends(require_role(["Scan", "Scan Head", "Doctor", "PA", "Admin"])),
 ):
-    """Add a scan to the card list. Scan, Scan Head, or Admin."""
+    """Add a scan to the card list. Scan, Scan Head, Doctor, PA, or Admin."""
     code = (data.g_drg_code or "").strip()
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
@@ -273,9 +287,9 @@ def add_active_scan(
 def remove_active_scan(
     g_drg_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Scan", "Scan Head", "Admin"])),
+    current_user: User = Depends(require_role(["Scan", "Scan Head", "Doctor", "PA", "Admin"])),
 ):
-    """Remove a scan from the card list. Scan, Scan Head, or Admin."""
+    """Remove a scan from the card list. Scan, Scan Head, Doctor, PA, or Admin."""
     row = db.query(CompanionActiveScan).filter(CompanionActiveScan.g_drg_code == g_drg_code).first()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
@@ -304,9 +318,9 @@ class ActiveXrayCreate(BaseModel):
 def add_active_xray(
     data: ActiveXrayCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Xray", "Xray Head", "Admin"])),
+    current_user: User = Depends(require_role(["Xray", "Xray Head", "Doctor", "PA", "Admin"])),
 ):
-    """Add an X-ray to the card list. Xray, Xray Head, or Admin."""
+    """Add an X-ray to the card list. Xray, Xray Head, Doctor, PA, or Admin."""
     code = (data.g_drg_code or "").strip()
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
@@ -323,10 +337,210 @@ def add_active_xray(
 def remove_active_xray(
     g_drg_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Xray", "Xray Head", "Admin"])),
+    current_user: User = Depends(require_role(["Xray", "Xray Head", "Doctor", "PA", "Admin"])),
 ):
-    """Remove an X-ray from the card list. Xray, Xray Head, or Admin."""
+    """Remove an X-ray from the card list. Xray, Xray Head, Doctor, PA, or Admin."""
     row = db.query(CompanionActiveXray).filter(CompanionActiveXray.g_drg_code == g_drg_code).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+# --- Active day surgeries (Doctor/PA choose which appear as cards) ---
+
+@router.get("/active-day-surgeries")
+def list_active_day_surgeries(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List g_drg_codes that are shown as cards on Add Day Surgery page. Any authenticated user can read."""
+    rows = db.query(CompanionActiveDaySurgery).order_by(CompanionActiveDaySurgery.g_drg_code).all()
+    return [{"g_drg_code": r.g_drg_code} for r in rows]
+
+
+class ActiveDaySurgeryCreate(BaseModel):
+    g_drg_code: str
+
+
+@router.post("/active-day-surgeries", status_code=status.HTTP_201_CREATED)
+def add_active_day_surgery(
+    data: ActiveDaySurgeryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+):
+    """Add a day surgery to the card list. Doctor, PA, or Admin."""
+    code = (data.g_drg_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
+    existing = db.query(CompanionActiveDaySurgery).filter(CompanionActiveDaySurgery.g_drg_code == code).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already in card list")
+    row = CompanionActiveDaySurgery(g_drg_code=code)
+    db.add(row)
+    db.commit()
+    return {"g_drg_code": code}
+
+
+@router.delete("/active-day-surgeries/{g_drg_code}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_active_day_surgery(
+    g_drg_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+):
+    """Remove a day surgery from the card list. Doctor, PA, or Admin."""
+    row = db.query(CompanionActiveDaySurgery).filter(CompanionActiveDaySurgery.g_drg_code == g_drg_code).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+# --- Active major surgeries (Doctor/PA choose which appear as cards) ---
+
+@router.get("/active-major-surgeries")
+def list_active_major_surgeries(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List g_drg_codes that are shown as cards on Add Major Surgery page. Any authenticated user can read."""
+    rows = db.query(CompanionActiveMajorSurgery).order_by(CompanionActiveMajorSurgery.g_drg_code).all()
+    return [{"g_drg_code": r.g_drg_code} for r in rows]
+
+
+class ActiveMajorSurgeryCreate(BaseModel):
+    g_drg_code: str
+
+
+@router.post("/active-major-surgeries", status_code=status.HTTP_201_CREATED)
+def add_active_major_surgery(
+    data: ActiveMajorSurgeryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+):
+    """Add a major surgery to the card list. Doctor, PA, or Admin."""
+    code = (data.g_drg_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
+    existing = db.query(CompanionActiveMajorSurgery).filter(CompanionActiveMajorSurgery.g_drg_code == code).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already in card list")
+    row = CompanionActiveMajorSurgery(g_drg_code=code)
+    db.add(row)
+    db.commit()
+    return {"g_drg_code": code}
+
+
+@router.delete("/active-major-surgeries/{g_drg_code}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_active_major_surgery(
+    g_drg_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+):
+    """Remove a major surgery from the card list. Doctor, PA, or Admin."""
+    row = db.query(CompanionActiveMajorSurgery).filter(CompanionActiveMajorSurgery.g_drg_code == g_drg_code).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+# --- Active dressing / treatment room (Nurse/Doctor/PA choose which appear as cards) ---
+
+@router.get("/active-dressings")
+def list_active_dressings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List g_drg_codes that are shown as cards on Dressing room page. Any authenticated user can read."""
+    rows = db.query(CompanionActiveDressing).order_by(CompanionActiveDressing.g_drg_code).all()
+    return [{"g_drg_code": r.g_drg_code} for r in rows]
+
+
+class ActiveDressingCreate(BaseModel):
+    g_drg_code: str
+
+
+@router.post("/active-dressings", status_code=status.HTTP_201_CREATED)
+def add_active_dressing(
+    data: ActiveDressingCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Add a dressing/treatment room service to the card list. Nurse, Doctor, PA, or Admin."""
+    code = (data.g_drg_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
+    existing = db.query(CompanionActiveDressing).filter(CompanionActiveDressing.g_drg_code == code).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already in card list")
+    row = CompanionActiveDressing(g_drg_code=code)
+    db.add(row)
+    db.commit()
+    return {"g_drg_code": code}
+
+
+@router.delete("/active-dressings/{g_drg_code}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_active_dressing(
+    g_drg_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Remove a dressing/treatment room service from the card list. Nurse, Doctor, PA, or Admin."""
+    row = db.query(CompanionActiveDressing).filter(CompanionActiveDressing.g_drg_code == g_drg_code).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+# --- Active oxygen (Nurse/Doctor/PA choose which appear as cards) ---
+
+@router.get("/active-oxygens")
+def list_active_oxygens(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List g_drg_codes that are shown as cards on Add Oxygen page. Any authenticated user can read."""
+    rows = db.query(CompanionActiveOxygen).order_by(CompanionActiveOxygen.g_drg_code).all()
+    return [{"g_drg_code": r.g_drg_code} for r in rows]
+
+
+class ActiveOxygenCreate(BaseModel):
+    g_drg_code: str
+
+
+@router.post("/active-oxygens", status_code=status.HTTP_201_CREATED)
+def add_active_oxygen(
+    data: ActiveOxygenCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Add an oxygen service to the card list. Nurse, Doctor, PA, or Admin."""
+    code = (data.g_drg_code or "").strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
+    existing = db.query(CompanionActiveOxygen).filter(CompanionActiveOxygen.g_drg_code == code).first()
+    if existing:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already in card list")
+    row = CompanionActiveOxygen(g_drg_code=code)
+    db.add(row)
+    db.commit()
+    return {"g_drg_code": code}
+
+
+@router.delete("/active-oxygens/{g_drg_code}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_active_oxygen(
+    g_drg_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Remove an oxygen service from the card list. Nurse, Doctor, PA, or Admin."""
+    row = db.query(CompanionActiveOxygen).filter(CompanionActiveOxygen.g_drg_code == g_drg_code).first()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
     db.delete(row)
@@ -460,10 +674,1171 @@ class ParsedDrugLine(BaseModel):
     quantity: float
 
 
+class GovernmentServiceLineResponse(BaseModel):
+    description: str
+    quantity: float
+    unit: Optional[str] = None
+    total: Optional[float] = None
+    normalized: str
+
+
+class CompanionBilledItemResponse(BaseModel):
+    id: int
+    item_code: str
+    item_name: str
+    category: str
+    unit_price: float
+    quantity: float
+    receipt_number: Optional[str] = None
+    created_by_id: Optional[int] = None
+    created_by_name: Optional[str] = None
+    normalized: str
+
+
+class CompanionOpdGovernmentReconciliationResponse(BaseModel):
+    """Reconciliation result for OPD or IPD government export vs companion bill."""
+    visit_id: int
+    external_card_number: str
+    external_visit_number: str
+
+    claim_status: Optional[str] = None
+    insurance_no: Optional[str] = None
+    claim_no: Optional[str] = None
+    patient_name: Optional[str] = None
+    patient_no: Optional[str] = None
+    service_date: Optional[str] = None
+    service_type: Optional[str] = None
+
+    # IPD-specific (optional; when source is IPD invoice)
+    invoice_no: Optional[str] = None
+    admission_no: Optional[str] = None
+    visit_no: Optional[str] = None
+    invoice_date: Optional[str] = None
+    admission_date: Optional[str] = None
+    discharge_date: Optional[str] = None
+    billing_info: Optional[str] = None
+
+    government_lines: List[GovernmentServiceLineResponse]
+    billed_items: List[CompanionBilledItemResponse]
+
+    missing_in_billing: List[GovernmentServiceLineResponse]
+    extra_in_billing: List[CompanionBilledItemResponse]
+    quantity_mismatches: List[dict]
+    imported_at: Optional[datetime] = None
+    imported_by_id: Optional[int] = None
+    imported_by_name: Optional[str] = None
+    file_sha256: Optional[str] = None
+
+
+def _build_companion_reconciliation_response(
+    *,
+    visit: CompanionVisit,
+    export_meta: dict,
+    gov_lines: list[dict],
+    billed_items: list[dict],
+    import_info: Optional[dict] = None,
+) -> dict:
+    def _tokens(s: str) -> set[str]:
+        # normalized strings are already lowercase-ish; keep only alphanum tokens
+        return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if t}
+
+    def _similarity(a: str, b: str) -> float:
+        ta = _tokens(a)
+        tb = _tokens(b)
+        if not ta or not tb:
+            return 0.0
+        inter = len(ta & tb)
+        union = len(ta | tb)
+        return inter / union if union else 0.0
+
+    def _best_match(target_norm: str, candidates: list[str]) -> Optional[str]:
+        if not target_norm:
+            return None
+        # exact first
+        if target_norm in candidates:
+            return target_norm
+        # containment next (covers "hepatitis b surface antigen hbv" vs "hepatitis b surface antigen")
+        for c in candidates:
+            if not c:
+                continue
+            if c in target_norm or target_norm in c:
+                # require at least 3 tokens to avoid very short accidental matches
+                if len(_tokens(c)) >= 3 and len(_tokens(target_norm)) >= 3:
+                    return c
+        # token-overlap fallback
+        best = None
+        best_score = 0.0
+        for c in candidates:
+            if not c:
+                continue
+            score = _similarity(target_norm, c)
+            if score > best_score:
+                best_score = score
+                best = c
+        # Threshold chosen to avoid accidental matches but allow minor construction differences
+        if best and best_score >= 0.75:
+            return best
+        return None
+
+    gov_by_norm: dict[str, list[dict]] = {}
+    for g in gov_lines:
+        gov_by_norm.setdefault(g["normalized"], []).append(g)
+
+    billed_by_norm: dict[str, list[dict]] = {}
+    for b in billed_items:
+        billed_by_norm.setdefault(b["normalized"], []).append(b)
+
+    billed_norms = [k for k in billed_by_norm.keys() if k]
+
+    missing_in_billing: list[dict] = []
+    quantity_mismatches: list[dict] = []
+
+    matched_billed_norms: set[str] = set()
+
+    for gov_norm, glines in gov_by_norm.items():
+        if not gov_norm:
+            continue
+        match_norm = _best_match(gov_norm, billed_norms)
+        if not match_norm:
+            missing_in_billing.extend(glines)
+            continue
+        matched_billed_norms.add(match_norm)
+        gov_qty = sum(float(x["quantity"]) for x in glines)
+        billed_qty = sum(float(x["quantity"]) for x in billed_by_norm.get(match_norm, []))
+        if abs(gov_qty - billed_qty) > 1e-6:
+            quantity_mismatches.append(
+                {
+                    "normalized": match_norm,
+                    "government_quantity": gov_qty,
+                    "billed_quantity": billed_qty,
+                    "government_lines": glines,
+                    "billed_items": billed_by_norm.get(match_norm, []),
+                }
+            )
+
+    extra_in_billing: list[dict] = []
+    for billed_norm, blines in billed_by_norm.items():
+        if not billed_norm:
+            continue
+        if billed_norm not in matched_billed_norms:
+            # If a billed norm matches any gov norm fuzzily, don't mark as extra.
+            gov_norms = [k for k in gov_by_norm.keys() if k]
+            if _best_match(billed_norm, gov_norms):
+                continue
+            extra_in_billing.extend(blines)
+
+    out = {
+        "visit_id": visit.id,
+        "external_card_number": visit.external_card_number,
+        "external_visit_number": visit.external_visit_number,
+        "claim_status": export_meta.get("claim_status"),
+        "insurance_no": export_meta.get("insurance_no"),
+        "claim_no": export_meta.get("claim_no"),
+        "patient_name": export_meta.get("patient_name"),
+        "patient_no": export_meta.get("patient_no"),
+        "service_date": export_meta.get("service_date"),
+        "service_type": export_meta.get("service_type"),
+        "invoice_no": export_meta.get("invoice_no"),
+        "admission_no": export_meta.get("admission_no"),
+        "visit_no": export_meta.get("visit_no"),
+        "invoice_date": export_meta.get("invoice_date"),
+        "admission_date": export_meta.get("admission_date"),
+        "discharge_date": export_meta.get("discharge_date"),
+        "billing_info": export_meta.get("billing_info"),
+        "government_lines": gov_lines,
+        "billed_items": billed_items,
+        "missing_in_billing": missing_in_billing,
+        "extra_in_billing": extra_in_billing,
+        "quantity_mismatches": quantity_mismatches,
+        "imported_at": None,
+        "imported_by_id": None,
+        "imported_by_name": None,
+        "file_sha256": None,
+    }
+    if import_info:
+        out.update({k: import_info.get(k) for k in ["imported_at", "imported_by_id", "imported_by_name", "file_sha256"]})
+    return out
+
+
+@router.get("/{visit_id}/government-opd-export/reconcile", response_model=CompanionOpdGovernmentReconciliationResponse)
+def reconcile_companion_visit_from_saved_government_export(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Reconcile using the last saved government OPD export for this visit (no file upload required).
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+
+    snap = db.query(CompanionGovernmentOpdExport).filter(CompanionGovernmentOpdExport.companion_visit_id == visit_id).first()
+    if not snap:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No government OPD export imported for this visit yet.")
+
+    import json
+
+    gov_raw = json.loads(snap.lines_json or "[]")
+    gov_lines = [
+        {
+            "description": x.get("description"),
+            "quantity": float(x.get("quantity") or 0),
+            "unit": x.get("unit"),
+            "total": x.get("total"),
+            "normalized": normalize_service_name(x.get("description") or ""),
+        }
+        for x in gov_raw
+        if x.get("description")
+    ]
+
+    items = (
+        db.query(CompanionVisitItem)
+        .filter(CompanionVisitItem.companion_visit_id == visit_id)
+        .order_by(CompanionVisitItem.created_at.asc())
+        .all()
+    )
+    billed_items = [
+        {
+            "id": it.id,
+            "item_code": it.item_code,
+            "item_name": it.item_name,
+            "category": it.category,
+            "unit_price": float(it.unit_price),
+            "quantity": float(it.quantity),
+            "receipt_number": it.receipt_number,
+            "created_by_id": getattr(it, "created_by_id", None),
+            "normalized": normalize_service_name(it.item_name),
+        }
+        for it in items
+        if not bool(getattr(it, "cancelled", False))
+    ]
+    uids = {x.get("created_by_id") for x in billed_items if x.get("created_by_id")}
+    if uids:
+        rows = db.query(User).filter(User.id.in_(list(uids))).all()
+        user_map = {u.id: (u.full_name or u.username) for u in rows}
+        for x in billed_items:
+            cid = x.get("created_by_id")
+            if cid:
+                x["created_by_name"] = user_map.get(cid)
+
+    imported_by_name = None
+    if snap.imported_by_id:
+        u = db.query(User).filter(User.id == snap.imported_by_id).first()
+        if u:
+            imported_by_name = u.full_name or u.username
+
+    export_meta = {
+        "claim_status": snap.claim_status,
+        "insurance_no": snap.insurance_no,
+        "claim_no": snap.claim_no,
+        "patient_name": snap.patient_name,
+        "patient_no": snap.patient_no,
+        "service_date": snap.service_date,
+        "service_type": snap.service_type,
+    }
+    import_info = {
+        "imported_at": snap.imported_at,
+        "imported_by_id": snap.imported_by_id,
+        "imported_by_name": imported_by_name,
+        "file_sha256": snap.file_sha256,
+    }
+    return _build_companion_reconciliation_response(
+        visit=visit, export_meta=export_meta, gov_lines=gov_lines, billed_items=billed_items, import_info=import_info
+    )
+
+
+@router.delete("/{visit_id}/government-opd-export", status_code=status.HTTP_204_NO_CONTENT)
+def clear_saved_government_opd_export(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+):
+    """Admin-only: delete the saved gov OPD export snapshot for a visit."""
+    snap = db.query(CompanionGovernmentOpdExport).filter(CompanionGovernmentOpdExport.companion_visit_id == visit_id).first()
+    if not snap:
+        return None
+    db.delete(snap)
+    db.commit()
+    return None
+
+
+# --- IPD (in-patient) government invoice: save, reconcile, clear (same flow as OPD) ---
+
+@router.get("/{visit_id}/government-ipd-export/reconcile", response_model=CompanionOpdGovernmentReconciliationResponse)
+def reconcile_companion_visit_from_saved_ipd_export(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """Reconcile using the last saved government IPD invoice for this visit (no file upload)."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    snap = db.query(CompanionGovernmentIpdExport).filter(CompanionGovernmentIpdExport.companion_visit_id == visit_id).first()
+    if not snap:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No government IPD invoice imported for this visit yet.")
+
+    import json
+    gov_raw = json.loads(snap.lines_json or "[]")
+    gov_lines = [
+        {
+            "description": x.get("description"),
+            "quantity": float(x.get("quantity") or 0),
+            "unit": x.get("unit"),
+            "total": x.get("total"),
+            "normalized": normalize_service_name(x.get("description") or ""),
+        }
+        for x in gov_raw
+        if x.get("description")
+    ]
+    items = (
+        db.query(CompanionVisitItem)
+        .filter(CompanionVisitItem.companion_visit_id == visit_id)
+        .order_by(CompanionVisitItem.created_at.asc())
+        .all()
+    )
+    billed_items = [
+        {
+            "id": it.id,
+            "item_code": it.item_code,
+            "item_name": it.item_name,
+            "category": it.category,
+            "unit_price": float(it.unit_price),
+            "quantity": float(it.quantity),
+            "receipt_number": it.receipt_number,
+            "created_by_id": getattr(it, "created_by_id", None),
+            "normalized": normalize_service_name(it.item_name),
+        }
+        for it in items
+        if not bool(getattr(it, "cancelled", False))
+    ]
+    uids = {x.get("created_by_id") for x in billed_items if x.get("created_by_id")}
+    if uids:
+        rows = db.query(User).filter(User.id.in_(list(uids))).all()
+        user_map = {u.id: (u.full_name or u.username) for u in rows}
+        for x in billed_items:
+            cid = x.get("created_by_id")
+            if cid:
+                x["created_by_name"] = user_map.get(cid)
+    imported_by_name = None
+    if snap.imported_by_id:
+        u = db.query(User).filter(User.id == snap.imported_by_id).first()
+        if u:
+            imported_by_name = u.full_name or u.username
+    export_meta = {
+        "claim_no": snap.admission_no,
+        "patient_no": snap.patient_no,
+        "patient_name": snap.patient_name,
+        "service_date": snap.invoice_date or snap.admission_date,
+        "insurance_no": snap.insurance_no,
+        "invoice_no": snap.invoice_no,
+        "admission_no": snap.admission_no,
+        "visit_no": snap.visit_no,
+        "invoice_date": snap.invoice_date,
+        "admission_date": snap.admission_date,
+        "discharge_date": snap.discharge_date,
+        "billing_info": snap.billing_info,
+    }
+    import_info = {
+        "imported_at": snap.imported_at,
+        "imported_by_id": snap.imported_by_id,
+        "imported_by_name": imported_by_name,
+        "file_sha256": snap.file_sha256,
+    }
+    return _build_companion_reconciliation_response(
+        visit=visit, export_meta=export_meta, gov_lines=gov_lines, billed_items=billed_items, import_info=import_info
+    )
+
+
+@router.delete("/{visit_id}/government-ipd-export", status_code=status.HTTP_204_NO_CONTENT)
+def clear_saved_government_ipd_export(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+):
+    """Admin-only: delete the saved gov IPD invoice snapshot for a visit."""
+    snap = db.query(CompanionGovernmentIpdExport).filter(CompanionGovernmentIpdExport.companion_visit_id == visit_id).first()
+    if not snap:
+        return None
+    db.delete(snap)
+    db.commit()
+    return None
+
+
+@router.post("/{visit_id}/reconcile-ipd-government", response_model=CompanionOpdGovernmentReconciliationResponse)
+async def reconcile_companion_visit_with_ipd_government_export(
+    visit_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Upload government IPD (in-patient) invoice; save snapshot and return reconciliation.
+    Re-import when new data is added on GHIMS. Same add-missing / find-price flow as OPD.
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if not file.filename or not (file.filename.lower().endswith(".xls") or file.filename.lower().endswith(".xlsx")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be .xls or .xlsx")
+    data = await file.read()
+    try:
+        export = parse_government_ipd_export(data, filename=file.filename or "upload")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    import hashlib, json
+    sha = hashlib.sha256(data).hexdigest()
+    gov_lines = [
+        {
+            "description": ln.description,
+            "quantity": float(ln.quantity),
+            "unit": ln.unit,
+            "total": ln.total,
+            "normalized": normalize_service_name(ln.description),
+        }
+        for ln in export.lines
+    ]
+    lines_json = json.dumps(
+        [{"description": ln.description, "quantity": float(ln.quantity), "unit": ln.unit, "total": ln.total} for ln in export.lines],
+        ensure_ascii=False,
+    )
+    snap = db.query(CompanionGovernmentIpdExport).filter(CompanionGovernmentIpdExport.companion_visit_id == visit_id).first()
+    if snap:
+        snap.invoice_no = export.invoice_no
+        snap.admission_no = export.admission_no
+        snap.visit_no = export.visit_no
+        snap.patient_no = export.patient_no
+        snap.patient_name = export.patient_name
+        snap.invoice_date = export.invoice_date
+        snap.admission_date = export.admission_date
+        snap.discharge_date = export.discharge_date
+        snap.insurance_no = export.insurance_no
+        snap.billing_info = export.billing_info
+        snap.file_sha256 = sha
+        snap.lines_json = lines_json
+        snap.imported_by_id = get_effective_creator_id(db, current_user)
+        snap.imported_at = utcnow()
+    else:
+        snap = CompanionGovernmentIpdExport(
+            companion_visit_id=visit_id,
+            invoice_no=export.invoice_no,
+            admission_no=export.admission_no,
+            visit_no=export.visit_no,
+            patient_no=export.patient_no,
+            patient_name=export.patient_name,
+            invoice_date=export.invoice_date,
+            admission_date=export.admission_date,
+            discharge_date=export.discharge_date,
+            insurance_no=export.insurance_no,
+            billing_info=export.billing_info,
+            file_sha256=sha,
+            lines_json=lines_json,
+            imported_by_id=get_effective_creator_id(db, current_user),
+        )
+        db.add(snap)
+    db.commit()
+
+    items = (
+        db.query(CompanionVisitItem)
+        .filter(CompanionVisitItem.companion_visit_id == visit_id)
+        .order_by(CompanionVisitItem.created_at.asc())
+        .all()
+    )
+    billed_items = [
+        {
+            "id": it.id,
+            "item_code": it.item_code,
+            "item_name": it.item_name,
+            "category": it.category,
+            "unit_price": float(it.unit_price),
+            "quantity": float(it.quantity),
+            "receipt_number": it.receipt_number,
+            "created_by_id": getattr(it, "created_by_id", None),
+            "normalized": normalize_service_name(it.item_name),
+        }
+        for it in items
+        if not bool(getattr(it, "cancelled", False))
+    ]
+    uids = {x.get("created_by_id") for x in billed_items if x.get("created_by_id")}
+    user_map = {}
+    if uids:
+        rows = db.query(User).filter(User.id.in_(list(uids))).all()
+        user_map = {u.id: (u.full_name or u.username) for u in rows}
+        for x in billed_items:
+            cid = x.get("created_by_id")
+            if cid:
+                x["created_by_name"] = user_map.get(cid)
+    imported_by_name = current_user.full_name or current_user.username
+    export_meta = {
+        "claim_no": export.admission_no,
+        "patient_no": export.patient_no,
+        "patient_name": export.patient_name,
+        "service_date": export.invoice_date or export.admission_date,
+        "insurance_no": export.insurance_no,
+        "invoice_no": export.invoice_no,
+        "admission_no": export.admission_no,
+        "visit_no": export.visit_no,
+        "invoice_date": export.invoice_date,
+        "admission_date": export.admission_date,
+        "discharge_date": export.discharge_date,
+        "billing_info": export.billing_info,
+    }
+    import_info = {
+        "imported_at": snap.imported_at,
+        "imported_by_id": snap.imported_by_id,
+        "imported_by_name": imported_by_name,
+        "file_sha256": snap.file_sha256,
+    }
+    return _build_companion_reconciliation_response(
+        visit=visit, export_meta=export_meta, gov_lines=gov_lines, billed_items=billed_items, import_info=import_info
+    )
+
+
+class AddMissingFromGovernmentLine(BaseModel):
+    description: str
+    quantity: float = 1.0
+
+
+class AddMissingFromGovernmentRequest(BaseModel):
+    """
+    Bulk-add missing government services to a Companion visit.
+    The system will lookup the co-payment price from the HMS price list and use the quantity from the export.
+    """
+
+    category: str  # lab | scan | xray | drug | inpatient
+    lines: List[AddMissingFromGovernmentLine]
+
+
+class AddMissingFromGovernmentResult(BaseModel):
+    added: List[CompanionVisitItemResponse]
+    failed: List[dict]
+
+
+class PriceSuggestion(BaseModel):
+    item_code: str
+    item_name: str
+    file_type: str
+    service_type: Optional[str] = None
+    unit_price: float
+    score: float
+
+
+class PriceSuggestionsResponse(BaseModel):
+    query: str
+    category: str
+    suggestions: List[PriceSuggestion]
+
+
+class ConfirmFromGovernmentLine(BaseModel):
+    """Single government line to confirm into billing using price list."""
+    description: str
+    quantity: float = 1.0
+
+
+class ConfirmFromGovernmentResponse(BaseModel):
+    added: Optional[CompanionVisitItemResponse] = None
+    matched: bool
+    match_type: Optional[str] = None  # procedure | surgery | unmapped_drg | product
+    matched_code: Optional[str] = None
+    matched_name: Optional[str] = None
+    matched_service_type: Optional[str] = None
+    category: Optional[str] = None
+    unit_price: Optional[float] = None
+    reason: Optional[str] = None
+
+
+def _category_to_service_type(category: str) -> Optional[str]:
+    c = (category or "").strip().lower()
+    if c == "lab":
+        return "INVESTIGATIONS"
+    if c == "scan":
+        return "ULTRASOUND"
+    if c == "xray":
+        return "X RAY"
+    if c == "day_surgery":
+        return "DAY SURGERY"
+    if c == "major_surgery":
+        return "MAJOR SURGERY"
+    if c == "dressing":
+        return "DRESSING AND TREATMENT ROOM"
+    if c == "oxygen":
+        return "OXYGEN"
+    return None
+
+
+def _service_type_to_category(service_type: Optional[str]) -> str:
+    st = (service_type or "").strip().upper()
+    if st == "INVESTIGATIONS":
+        return "lab"
+    if st == "ULTRASOUND":
+        return "scan"
+    if st == "X RAY":
+        return "xray"
+    if st == "DAY SURGERY":
+        return "day_surgery"
+    if st == "MAJOR SURGERY":
+        return "major_surgery"
+    if st == "DRESSING AND TREATMENT ROOM" or st == "DRESSING":
+        return "dressing"
+    if st == "OXYGEN":
+        return "oxygen"
+    return "lab"
+
+
+def _pick_best_price_match(results: list, description: str):
+    """
+    results: list of tuples (type_name, model_instance) from search_price_items_all_tables
+    Prefer exact/contains/fuzzy name match, then first result.
+    """
+    def _tokens(s: str) -> set[str]:
+        return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if t}
+
+    def _similarity(a: str, b: str) -> float:
+        ta = _tokens(a)
+        tb = _tokens(b)
+        if not ta or not tb:
+            return 0.0
+        inter = len(ta & tb)
+        union = len(ta | tb)
+        return inter / union if union else 0.0
+
+    target = normalize_service_name(description)
+    if not results:
+        return None
+
+    scored: list[tuple[float, int, tuple]] = []
+    for type_name, item in results:
+        name = getattr(item, "service_name", None) or getattr(item, "product_name", None) or ""
+        cand = normalize_service_name(str(name))
+        if not cand or not target:
+            continue
+
+        # exact
+        if cand == target:
+            score = 1.0
+        # contains (covers GHIMS longer constructions)
+        elif cand in target or target in cand:
+            # require at least 3 tokens to avoid accidental matches
+            if len(_tokens(cand)) >= 3 and len(_tokens(target)) >= 3:
+                score = 0.95
+            else:
+                score = _similarity(target, cand)
+        else:
+            score = _similarity(target, cand)
+
+        # Prefer procedure rows if tied (OPD services)
+        type_bias = 0 if type_name == "procedure" else 1
+        scored.append((score, type_bias, (type_name, item)))
+
+    if scored:
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        best_score, _, best = scored[0]
+        # Safety threshold: accept only strong matches; otherwise fallback to first search result.
+        if best_score >= 0.75:
+            return best
+
+    return results[0]
+
+
+def _tokens_lower(s: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if t}
+
+
+def _jaccard(a: str, b: str) -> float:
+    ta = _tokens_lower(a)
+    tb = _tokens_lower(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _score_name_match(query_norm: str, cand_norm: str) -> float:
+    if not query_norm or not cand_norm:
+        return 0.0
+    if query_norm == cand_norm:
+        return 1.0
+    if (cand_norm in query_norm or query_norm in cand_norm) and len(_tokens_lower(cand_norm)) >= 3:
+        return 0.95
+    return _jaccard(query_norm, cand_norm)
+
+
+@router.get("/{visit_id}/price-suggestions", response_model=PriceSuggestionsResponse)
+def get_price_suggestions_for_government_line(
+    visit_id: int,
+    category: str,
+    q: str,
+    limit: int = 15,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Suggest similar price list items for a government line description (for officer confirmation).
+    Uses fuzzy matching tolerant of extra wording/structure.
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+
+    cat = (category or "").strip().lower()
+    if cat not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid category")
+
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="q is required")
+
+    service_type = _category_to_service_type(cat)
+    query_norm = normalize_service_name(query)
+
+    # Narrow initial search using first few tokens (avoid pulling huge tables)
+    toks = list(_tokens_lower(query_norm))
+    narrow = " ".join(toks[:4]) if toks else query_norm
+
+    if cat in ("lab", "scan", "xray", "day_surgery", "major_surgery", "dressing", "oxygen") and service_type:
+        raw = search_price_items_all_tables(db, search_term=narrow, service_type=service_type, file_type="procedure")
+        if not raw:
+            raw = search_price_items_all_tables(db, search_term=query_norm, service_type=service_type, file_type="procedure")
+    elif cat == "drug":
+        raw = search_price_items_all_tables(db, search_term=narrow, file_type="product")
+        if not raw:
+            raw = search_price_items_all_tables(db, search_term=query_norm, file_type="product")
+    else:
+        raw = search_price_items_all_tables(db, search_term=narrow, file_type=None)
+        if not raw:
+            raw = search_price_items_all_tables(db, search_term=query_norm, file_type=None)
+
+    suggestions: list[dict] = []
+    for type_name, item in raw:
+        name = getattr(item, "service_name", None) or getattr(item, "product_name", None) or ""
+        cand_norm = normalize_service_name(str(name))
+        score = _score_name_match(query_norm, cand_norm)
+        if score <= 0:
+            continue
+
+        if type_name == "product":
+            code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
+            unit = get_price_from_all_tables(db, str(code), is_insured=True) if code else 0.0
+            suggestions.append(
+                {
+                    "item_code": str(code),
+                    "item_name": getattr(item, "product_name", None) or str(name),
+                    "file_type": type_name,
+                    "service_type": getattr(item, "sub_category_1", None) or getattr(item, "sub_category_2", None),
+                    "unit_price": float(unit),
+                    "score": float(score),
+                }
+            )
+        else:
+            code = getattr(item, "g_drg_code", None)
+            unit = (
+                get_price_from_all_tables(db, str(code), is_insured=True, service_type=service_type, procedure_name=getattr(item, "service_name", None))
+                if code
+                else 0.0
+            )
+            suggestions.append(
+                {
+                    "item_code": str(code),
+                    "item_name": getattr(item, "service_name", None) or str(name),
+                    "file_type": type_name,
+                    "service_type": getattr(item, "service_type", None),
+                    "unit_price": float(unit),
+                    "score": float(score),
+                }
+            )
+
+    suggestions.sort(key=lambda x: (-x["score"], x["item_name"]))
+    suggestions = suggestions[: max(1, min(50, int(limit)))]
+
+    return {"query": query, "category": cat, "suggestions": suggestions}
+
+
+@router.post("/{visit_id}/items/confirm-from-opd-export-line", response_model=ConfirmFromGovernmentResponse)
+def confirm_single_item_from_opd_export_line(
+    visit_id: int,
+    payload: ConfirmFromGovernmentLine,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Confirm a single government line into Companion billing with minimal human interaction.
+
+    - Auto-matches the best price list entry (fuzzy matching).
+    - Auto-detects category (lab/scan/xray/drug) based on matched service_type/table.
+    - Uses quantity from government line.
+    - Allowed even if visit is closed (billing may need to finish after closure).
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+
+    desc = (payload.description or "").strip()
+    qty = float(payload.quantity) if payload.quantity is not None else 1.0
+    if not desc:
+        return {"matched": False, "reason": "Empty description"}
+    if qty <= 0:
+        return {"matched": False, "reason": "Invalid quantity"}
+
+    # Search broadly across price list (procedures filtered by common service types first)
+    # 1) procedures by likely service types
+    candidates = []
+    for st in ("INVESTIGATIONS", "ULTRASOUND", "X RAY", "DAY SURGERY", "MAJOR SURGERY", "DRESSING AND TREATMENT ROOM", "DRESSING", "OXYGEN"):
+        candidates.extend(search_price_items_all_tables(db, search_term=desc, service_type=st, file_type="procedure") or [])
+    # 2) products (drugs)
+    candidates.extend(search_price_items_all_tables(db, search_term=desc, file_type="product") or [])
+    # 3) fallback: any table
+    if not candidates:
+        candidates = search_price_items_all_tables(db, search_term=normalize_service_name(desc), file_type=None) or []
+
+    picked = _pick_best_price_match(candidates, desc)
+    if not picked:
+        return {"matched": False, "reason": "No price list match found"}
+
+    type_name, item = picked
+
+    matched_code = None
+    matched_name = None
+    matched_service_type = None
+    category = None
+    unit_price = 0.0
+
+    if type_name == "product":
+        matched_code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
+        matched_name = getattr(item, "product_name", None) or desc
+        matched_service_type = None
+        category = "drug"
+        if matched_code:
+            unit_price = float(get_price_from_all_tables(db, str(matched_code), is_insured=True))
+    else:
+        matched_code = getattr(item, "g_drg_code", None)
+        matched_name = getattr(item, "service_name", None) or desc
+        matched_service_type = getattr(item, "service_type", None)
+        category = _service_type_to_category(matched_service_type)
+        if matched_code:
+            unit_price = float(
+                get_price_from_all_tables(
+                    db,
+                    str(matched_code),
+                    is_insured=True,
+                    service_type=matched_service_type,
+                    procedure_name=matched_name,
+                )
+            )
+
+    if not matched_code:
+        return {"matched": False, "reason": "Matched price item has no code"}
+
+    # Create visit item
+    new_item = CompanionVisitItem(
+        companion_visit_id=visit_id,
+        item_code=str(matched_code).strip(),
+        item_name=str(matched_name).strip() or desc,
+        category=category or "lab",
+        unit_price=float(unit_price),
+        quantity=float(qty),
+        created_by_id=get_effective_creator_id(db, current_user),
+    )
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+
+    u = db.query(User).filter(User.id == getattr(new_item, "created_by_id", None)).first()
+    added = {
+        "id": new_item.id,
+        "companion_visit_id": new_item.companion_visit_id,
+        "item_code": new_item.item_code,
+        "item_name": new_item.item_name,
+        "category": new_item.category,
+        "unit_price": float(new_item.unit_price),
+        "quantity": float(new_item.quantity),
+        "created_at": new_item.created_at,
+        "created_by_id": getattr(new_item, "created_by_id", None),
+        "created_by_name": (u.full_name or u.username) if u else None,
+        "receipt_number": new_item.receipt_number,
+        "paid_at": new_item.paid_at,
+        "paid_by_id": new_item.paid_by_id,
+        "payment_method": new_item.payment_method,
+    }
+
+    return {
+        "added": added,
+        "matched": True,
+        "match_type": type_name,
+        "matched_code": str(matched_code),
+        "matched_name": matched_name,
+        "matched_service_type": matched_service_type,
+        "category": category,
+        "unit_price": float(unit_price),
+    }
+
+
+@router.post("/{visit_id}/items/add-missing-from-opd-export", response_model=AddMissingFromGovernmentResult)
+def add_missing_items_from_opd_export(
+    visit_id: int,
+    payload: AddMissingFromGovernmentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Bulk add items to a Companion visit by matching government export descriptions to the HMS price list.
+
+    - Uses price list co-payment (insured) pricing.
+    - Uses export quantity.
+    - Adds created_by_id for audit.
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    # Allowed for Billing/Admin even if visit is closed (billing may continue after closure).
+
+    category = (payload.category or "").strip().lower()
+    if category not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid category")
+
+    service_type = _category_to_service_type(category)
+    added: list[dict] = []
+    failed: list[dict] = []
+
+    for ln in payload.lines or []:
+        desc = (ln.description or "").strip()
+        qty = float(ln.quantity) if ln.quantity is not None else 1.0
+        if not desc:
+            failed.append({"description": desc, "reason": "Empty description"})
+            continue
+        if qty <= 0:
+            failed.append({"description": desc, "reason": "Invalid quantity"})
+            continue
+
+        try:
+            # Try searching the price list by description.
+            # For lab/scan/xray/surgeries/dressing, restrict to procedures with matching service_type for better accuracy.
+            if category in ("lab", "scan", "xray", "day_surgery", "major_surgery", "dressing", "oxygen") and service_type:
+                candidates = search_price_items_all_tables(db, search_term=desc, service_type=service_type, file_type="procedure")
+                if not candidates:
+                    # Fallback: use normalized description (removes parentheses and punctuation)
+                    candidates = search_price_items_all_tables(
+                        db, search_term=normalize_service_name(desc), service_type=service_type, file_type="procedure"
+                    )
+            elif category == "drug":
+                candidates = search_price_items_all_tables(db, search_term=desc, file_type="product")
+                if not candidates:
+                    candidates = search_price_items_all_tables(db, search_term=normalize_service_name(desc), file_type="product")
+            else:
+                candidates = search_price_items_all_tables(db, search_term=desc, file_type=None)
+                if not candidates:
+                    candidates = search_price_items_all_tables(db, search_term=normalize_service_name(desc), file_type=None)
+
+            picked = _pick_best_price_match(candidates, desc)
+            if not picked:
+                failed.append({"description": desc, "reason": "No price list match found"})
+                continue
+
+            type_name, item = picked
+            if type_name == "product":
+                item_code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
+                item_name = getattr(item, "product_name", None) or desc
+                price = get_price_from_all_tables(db, str(item_code), is_insured=True, service_type=None, procedure_name=None) if item_code else 0.0
+            else:
+                item_code = getattr(item, "g_drg_code", None)
+                item_name = getattr(item, "service_name", None) or desc
+                price = get_price_from_all_tables(
+                    db,
+                    str(item_code),
+                    is_insured=True,
+                    service_type=service_type,
+                    procedure_name=item_name,
+                ) if item_code else 0.0
+
+            if item_code is None or str(item_code).strip() == "":
+                failed.append({"description": desc, "reason": "Matched price item has no code"})
+                continue
+
+            # Create item on the visit
+            new_item = CompanionVisitItem(
+                companion_visit_id=visit_id,
+                item_code=str(item_code).strip(),
+                item_name=str(item_name).strip() or desc,
+                category=category,
+                unit_price=float(price),
+                quantity=float(qty),
+                created_by_id=get_effective_creator_id(db, current_user),
+            )
+            db.add(new_item)
+            db.flush()
+            u = db.query(User).filter(User.id == getattr(new_item, "created_by_id", None)).first()
+            added.append(
+                {
+                    "id": new_item.id,
+                    "companion_visit_id": new_item.companion_visit_id,
+                    "item_code": new_item.item_code,
+                    "item_name": new_item.item_name,
+                    "category": new_item.category,
+                    "unit_price": float(new_item.unit_price),
+                    "quantity": float(new_item.quantity),
+                    "created_at": new_item.created_at,
+                    "created_by_id": getattr(new_item, "created_by_id", None),
+                    "created_by_name": (u.full_name or u.username) if u else None,
+                    "receipt_number": new_item.receipt_number,
+                    "paid_at": new_item.paid_at,
+                    "paid_by_id": new_item.paid_by_id,
+                    "payment_method": new_item.payment_method,
+                }
+            )
+        except Exception as e:
+            failed.append({"description": desc, "reason": str(e)})
+
+    db.commit()
+    return {"added": added, "failed": failed}
+
+
+@router.post("/{visit_id}/reconcile-opd-government", response_model=CompanionOpdGovernmentReconciliationResponse)
+async def reconcile_companion_visit_with_opd_government_export(
+    visit_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Companion Billing reconciliation against government OPD export.
+
+    IMPORTANT matching constraints:
+    - Government claim_no MUST match CompanionVisit.external_visit_number
+    - Government patient_no MUST match CompanionVisit.external_card_number
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+
+    data = await file.read()
+    export = parse_government_opd_export(data, filename=file.filename or "upload")
+
+    import hashlib, json
+    sha = hashlib.sha256(data).hexdigest()
+
+    claim_no = (export.claim_no or "").strip()
+    patient_no = (export.patient_no or "").strip()
+    if not claim_no or not patient_no:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Could not read claim_no and patient_no from the uploaded file.",
+        )
+
+    # Enforce identity match: government -> companion visit
+    if claim_no != (visit.external_visit_number or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Visit number mismatch. File claim_no='{claim_no}' but selected visit is '{visit.external_visit_number}'.",
+        )
+    if patient_no != (visit.external_card_number or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Card number mismatch. File patient_no='{patient_no}' but selected visit card is '{visit.external_card_number}'.",
+        )
+
+    gov_lines = [
+        {
+            "description": ln.description,
+            "quantity": float(ln.quantity),
+            "unit": ln.unit,
+            "total": ln.total,
+            "normalized": normalize_service_name(ln.description),
+        }
+        for ln in export.lines
+    ]
+
+    # Save snapshot for future checks (upload once, reuse later)
+    snap = db.query(CompanionGovernmentOpdExport).filter(CompanionGovernmentOpdExport.companion_visit_id == visit_id).first()
+    lines_json = json.dumps(
+        [{"description": ln.description, "quantity": float(ln.quantity), "unit": ln.unit, "total": ln.total} for ln in export.lines],
+        ensure_ascii=False,
+    )
+    if snap:
+        snap.claim_no = claim_no
+        snap.patient_no = patient_no
+        snap.claim_status = export.claim_status
+        snap.insurance_no = export.insurance_no
+        snap.patient_name = export.patient_name
+        snap.service_date = export.service_date
+        snap.service_type = export.service_type
+        snap.file_sha256 = sha
+        snap.lines_json = lines_json
+        snap.imported_by_id = get_effective_creator_id(db, current_user)
+        snap.imported_at = utcnow()
+    else:
+        snap = CompanionGovernmentOpdExport(
+            companion_visit_id=visit_id,
+            claim_no=claim_no,
+            patient_no=patient_no,
+            claim_status=export.claim_status,
+            insurance_no=export.insurance_no,
+            patient_name=export.patient_name,
+            service_date=export.service_date,
+            service_type=export.service_type,
+            file_sha256=sha,
+            lines_json=lines_json,
+            imported_by_id=get_effective_creator_id(db, current_user),
+        )
+        db.add(snap)
+    db.commit()
+
+    items = (
+        db.query(CompanionVisitItem)
+        .filter(CompanionVisitItem.companion_visit_id == visit_id)
+        .order_by(CompanionVisitItem.created_at.asc())
+        .all()
+    )
+    billed_items = [
+        {
+            "id": it.id,
+            "item_code": it.item_code,
+            "item_name": it.item_name,
+            "category": it.category,
+            "unit_price": float(it.unit_price),
+            "quantity": float(it.quantity),
+            "receipt_number": it.receipt_number,
+            "created_by_id": getattr(it, "created_by_id", None),
+            "normalized": normalize_service_name(it.item_name),
+        }
+        for it in items
+        if not bool(getattr(it, "cancelled", False))
+    ]
+    # attach names
+    uids = {x.get("created_by_id") for x in billed_items if x.get("created_by_id")}
+    user_map = {}
+    if uids:
+        rows = db.query(User).filter(User.id.in_(list(uids))).all()
+        user_map = {u.id: (u.full_name or u.username) for u in rows}
+        for x in billed_items:
+            cid = x.get("created_by_id")
+            if cid:
+                x["created_by_name"] = user_map.get(cid)
+
+    imported_by_name = current_user.full_name or current_user.username
+    export_meta = {
+        "claim_status": export.claim_status,
+        "insurance_no": export.insurance_no,
+        "claim_no": export.claim_no,
+        "patient_name": export.patient_name,
+        "patient_no": export.patient_no,
+        "service_date": export.service_date,
+        "service_type": export.service_type,
+    }
+    import_info = {
+        "imported_at": snap.imported_at,
+        "imported_by_id": snap.imported_by_id,
+        "imported_by_name": imported_by_name,
+        "file_sha256": snap.file_sha256,
+    }
+    return _build_companion_reconciliation_response(
+        visit=visit, export_meta=export_meta, gov_lines=gov_lines, billed_items=billed_items, import_info=import_info
+    )
+
+
 @router.post("/parse-drugs-pdf", response_model=List[ParsedDrugLine])
 def parse_drugs_pdf(
     file: UploadFile = File(...),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"])),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Doctor", "PA", "Admin"])),
 ):
     """Parse a government-issued drugs PDF and return list of drug name + quantity. Does not add to any visit."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -655,7 +2030,7 @@ def _parse_drugs_excel_bytes(data: bytes, filename: str) -> List[dict]:
 @router.post("/parse-drugs-excel", response_model=List[ParsedDrugLine])
 def parse_drugs_excel(
     file: UploadFile = File(...),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Admin"])),
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Doctor", "PA", "Admin"])),
 ):
     """Parse Excel (.xls or .xlsx) and return list of item description + quantity. Uses only Item description and Quantity columns."""
     if not file.filename:
@@ -1154,9 +2529,11 @@ class CompanionVisitItemCreate(BaseModel):
     """Payload for adding an item to a companion visit."""
     item_code: str
     item_name: str
-    category: str  # lab, scan, xray, drug
+    category: str  # lab, scan, xray, drug, oxygen, ...
     unit_price: float
     quantity: float = 1.0
+    start_time: Optional[datetime] = None  # required for oxygen (billed hourly)
+    end_time: Optional[datetime] = None
 
 
 class CompanionVisitItemResponse(BaseModel):
@@ -1168,7 +2545,16 @@ class CompanionVisitItemResponse(BaseModel):
     category: str
     unit_price: float
     quantity: float
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
     created_at: datetime
+    created_by_id: Optional[int] = None
+    created_by_name: Optional[str] = None
+    cancelled: bool = False
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_id: Optional[int] = None
+    cancelled_by_name: Optional[str] = None
+    cancel_reason: Optional[str] = None
     receipt_number: Optional[str] = None
     paid_at: Optional[datetime] = None
     paid_by_id: Optional[int] = None
@@ -1176,6 +2562,12 @@ class CompanionVisitItemResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CancelVisitItemResult(BaseModel):
+    """Cancel result. If hard_deleted=True, item was removed (superadmin)."""
+    hard_deleted: bool = False
+    item: Optional[CompanionVisitItemResponse] = None
 
 
 class CompanionVisitItemUpdate(BaseModel):
@@ -1199,7 +2591,43 @@ def list_companion_visit_items(
     if category and category.strip():
         q = q.filter(CompanionVisitItem.category == category.strip().lower())
     q = q.order_by(CompanionVisitItem.created_at.asc())
-    return q.all()
+    items = q.all()
+    # Attach created_by_name (best-effort)
+    user_ids = {it.created_by_id for it in items if getattr(it, "created_by_id", None)}
+    user_ids |= {it.cancelled_by_id for it in items if getattr(it, "cancelled_by_id", None)}
+    users = {}
+    if user_ids:
+        rows = db.query(User).filter(User.id.in_(list(user_ids))).all()
+        users = {u.id: (u.full_name or u.username) for u in rows}
+    out = []
+    for it in items:
+        # Pydantic from_attributes does not auto-add computed fields, so return dicts.
+        out.append(
+            {
+                "id": it.id,
+                "companion_visit_id": it.companion_visit_id,
+                "item_code": it.item_code,
+                "item_name": it.item_name,
+                "category": it.category,
+                "unit_price": float(it.unit_price),
+                "quantity": float(it.quantity),
+                "start_time": getattr(it, "start_time", None),
+                "end_time": getattr(it, "end_time", None),
+                "created_at": it.created_at,
+                "created_by_id": getattr(it, "created_by_id", None),
+                "created_by_name": users.get(getattr(it, "created_by_id", None)),
+                "cancelled": bool(getattr(it, "cancelled", False)),
+                "cancelled_at": getattr(it, "cancelled_at", None),
+                "cancelled_by_id": getattr(it, "cancelled_by_id", None),
+                "cancelled_by_name": users.get(getattr(it, "cancelled_by_id", None)),
+                "cancel_reason": getattr(it, "cancel_reason", None),
+                "receipt_number": it.receipt_number,
+                "paid_at": it.paid_at,
+                "paid_by_id": it.paid_by_id,
+                "payment_method": it.payment_method,
+            }
+        )
+    return out
 
 
 @router.post("/{visit_id}/items", response_model=CompanionVisitItemResponse, status_code=status.HTTP_201_CREATED)
@@ -1219,23 +2647,150 @@ def add_companion_visit_item(
             detail="Cannot add items to a closed visit",
         )
     cat = (data.category or "").strip().lower()
-    if cat not in ("lab", "scan", "xray", "drug", "inpatient"):
+    if cat not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="category must be one of: lab, scan, xray, drug, inpatient",
+            detail="category must be one of: lab, scan, xray, drug, inpatient, day_surgery, major_surgery, dressing, oxygen",
         )
+    quantity = float(data.quantity) if data.quantity else 1.0
+    start_time = data.start_time
+    end_time = data.end_time
+    if cat == "oxygen":
+        if not start_time or not end_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Oxygen requires start date/time and end date/time (billed hourly)",
+            )
+        if end_time <= start_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="End date/time must be after start date/time",
+            )
+        quantity = (end_time - start_time).total_seconds() / 3600.0
+        if quantity <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Duration must be positive",
+            )
     item = CompanionVisitItem(
         companion_visit_id=visit_id,
         item_code=(data.item_code or "").strip(),
         item_name=(data.item_name or "").strip() or data.item_code,
         category=cat,
         unit_price=float(data.unit_price),
-        quantity=float(data.quantity) if data.quantity else 1.0,
+        quantity=quantity,
+        start_time=start_time,
+        end_time=end_time,
+        created_by_id=get_effective_creator_id(db, current_user),
     )
     db.add(item)
     db.commit()
     db.refresh(item)
-    return item
+    # return with created_by_name for immediate UI display
+    u = db.query(User).filter(User.id == getattr(item, "created_by_id", None)).first()
+    return {
+        "id": item.id,
+        "companion_visit_id": item.companion_visit_id,
+        "item_code": item.item_code,
+        "item_name": item.item_name,
+        "category": item.category,
+        "unit_price": float(item.unit_price),
+        "quantity": float(item.quantity),
+        "start_time": getattr(item, "start_time", None),
+        "end_time": getattr(item, "end_time", None),
+        "created_at": item.created_at,
+        "created_by_id": getattr(item, "created_by_id", None),
+        "created_by_name": (u.full_name or u.username) if u else None,
+        "cancelled": bool(getattr(item, "cancelled", False)),
+        "cancelled_at": getattr(item, "cancelled_at", None),
+        "cancelled_by_id": getattr(item, "cancelled_by_id", None),
+        "cancelled_by_name": None,
+        "cancel_reason": getattr(item, "cancel_reason", None),
+        "receipt_number": item.receipt_number,
+        "paid_at": item.paid_at,
+        "paid_by_id": item.paid_by_id,
+        "payment_method": item.payment_method,
+    }
+
+
+class CancelVisitItemBody(BaseModel):
+    reason: str
+
+
+@router.post("/{visit_id}/items/{item_id}/cancel", response_model=CancelVisitItemResult)
+def cancel_companion_visit_item(
+    request: Request,
+    visit_id: int,
+    item_id: int,
+    data: CancelVisitItemBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+):
+    """
+    Soft-cancel a companion bill item (strike-through) with required reason.
+    - Normal users: keeps record (who/when/why)
+    - Superadmin (ghost): hard deletes instead (no record)
+    """
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot cancel items on a closed visit")
+
+    item = db.query(CompanionVisitItem).filter(
+        CompanionVisitItem.id == item_id,
+        CompanionVisitItem.companion_visit_id == visit_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+
+    if item.receipt_number:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot cancel an item that has a receipt")
+
+    reason = (data.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancellation reason is required")
+
+    if is_super_admin(current_user):
+        # Ghost superadmin: no cancellation record; hard-delete from DB.
+        db.delete(item)
+        db.commit()
+        return {"hard_deleted": True, "item": None}
+
+    item.cancelled = True
+    item.cancelled_at = utcnow()
+    item.cancelled_by_id = current_user.id
+    item.cancel_reason = reason
+    db.commit()
+    db.refresh(item)
+
+    from app.core.audit import set_audit_summary
+    set_audit_summary(request, f"Cancelled companion bill item '{item.item_name}' for visit {visit.external_visit_number}.")
+
+    u = db.query(User).filter(User.id == item.cancelled_by_id).first()
+    return {"hard_deleted": False, "item": {
+        "id": item.id,
+        "companion_visit_id": item.companion_visit_id,
+        "item_code": item.item_code,
+        "item_name": item.item_name,
+        "category": item.category,
+        "unit_price": float(item.unit_price),
+        "quantity": float(item.quantity),
+        "start_time": getattr(item, "start_time", None),
+        "end_time": getattr(item, "end_time", None),
+        "created_at": item.created_at,
+        "created_by_id": getattr(item, "created_by_id", None),
+        "created_by_name": None,
+        "cancelled": True,
+        "cancelled_at": item.cancelled_at,
+        "cancelled_by_id": item.cancelled_by_id,
+        "cancelled_by_name": (u.full_name or u.username) if u else None,
+        "cancel_reason": item.cancel_reason,
+        "receipt_number": item.receipt_number,
+        "paid_at": item.paid_at,
+        "paid_by_id": item.paid_by_id,
+        "payment_method": item.payment_method,
+    }}
 
 
 @router.delete("/{visit_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1245,7 +2800,7 @@ def delete_companion_visit_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Admin"])),
 ):
-    """Remove a line item from a companion visit. Only when visit is open. Billing/Admin only. Inpatient fee only deletable by Admin."""
+    """Hard-delete a line item from a companion visit. Superadmin only; others must cancel with reason."""
     visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
     if not visit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
@@ -1265,17 +2820,11 @@ def delete_companion_visit_item(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete an item that has been paid (receipt issued)",
         )
-    if item.category == "inpatient":
-        from sqlalchemy.orm import joinedload
-        user_with_roles = db.query(User).options(joinedload(User.additional_roles)).filter(User.id == current_user.id).first()
-        roles = [current_user.role]
-        if user_with_roles and getattr(user_with_roles, "additional_roles", None):
-            roles += [ur.role for ur in user_with_roles.additional_roles]
-        if "Admin" not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only Admin can delete custom inpatient fee items",
-            )
+    if not is_super_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Hard delete is only allowed for superadmin. Use Cancel (with reason) instead.",
+        )
     db.delete(item)
     db.commit()
     return None
@@ -1287,7 +2836,7 @@ def update_companion_visit_item(
     item_id: int,
     data: CompanionVisitItemUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
 ):
     """Update a line item (e.g. custom inpatient fee name/amount). Only when visit is open and item unpaid. Inpatient editable by Admin only."""
     visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()

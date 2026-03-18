@@ -695,6 +695,27 @@ def search_price_items_endpoint(
     return formatted_results
 
 
+@router.get("/surgeries")
+def get_surgeries(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"])),
+    _module_check: User = Depends(require_module_permission("price_list", "read"))
+):
+    """Get all active surgery price list items (file type surgery). Used for major surgery selection in companion app."""
+    surgeries = db.query(SurgeryPrice).filter(SurgeryPrice.is_active == True).order_by(SurgeryPrice.service_name).all()
+    return [
+        {
+            "id": s.id,
+            "g_drg_code": s.g_drg_code,
+            "service_name": s.service_name,
+            "base_rate": float(s.base_rate) if s.base_rate is not None else 0.0,
+            "nhia_app": float(s.nhia_app) if s.nhia_app is not None else None,
+            "nhia_claim_co_payment": float(s.nhia_claim_co_payment) if s.nhia_claim_co_payment is not None else None,
+        }
+        for s in surgeries
+    ]
+
+
 @router.get("/procedures/by-service-type")
 def get_procedures_by_service_type(
     service_type: Optional[str] = None,

@@ -42,6 +42,10 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // When sending FormData, do not set Content-Type so the browser sets multipart/form-data with boundary
+    if (config.data && typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
     return config;
   },
   (error) => {
@@ -262,6 +266,22 @@ export const companionVisitsAPI = {
   addActiveXray: (data) => api.post('/companion-visits/active-xrays', data),
   removeActiveXray: (gDrgCode) =>
     api.delete(`/companion-visits/active-xrays/${encodeURIComponent(gDrgCode)}`),
+  getActiveDaySurgeries: () => api.get('/companion-visits/active-day-surgeries'),
+  addActiveDaySurgery: (data) => api.post('/companion-visits/active-day-surgeries', data),
+  removeActiveDaySurgery: (gDrgCode) =>
+    api.delete(`/companion-visits/active-day-surgeries/${encodeURIComponent(gDrgCode)}`),
+  getActiveMajorSurgeries: () => api.get('/companion-visits/active-major-surgeries'),
+  addActiveMajorSurgery: (data) => api.post('/companion-visits/active-major-surgeries', data),
+  removeActiveMajorSurgery: (gDrgCode) =>
+    api.delete(`/companion-visits/active-major-surgeries/${encodeURIComponent(gDrgCode)}`),
+  getActiveDressings: () => api.get('/companion-visits/active-dressings'),
+  addActiveDressing: (data) => api.post('/companion-visits/active-dressings', data),
+  removeActiveDressing: (gDrgCode) =>
+    api.delete(`/companion-visits/active-dressings/${encodeURIComponent(gDrgCode)}`),
+  getActiveOxygens: () => api.get('/companion-visits/active-oxygens'),
+  addActiveOxygen: (data) => api.post('/companion-visits/active-oxygens', data),
+  removeActiveOxygen: (gDrgCode) =>
+    api.delete(`/companion-visits/active-oxygens/${encodeURIComponent(gDrgCode)}`),
   parseDrugsPdf: (file) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -276,6 +296,29 @@ export const companionVisitsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  reconcileOpdGovernment: (visitId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/companion-visits/${visitId}/reconcile-opd-government`, formData);
+  },
+  reconcileOpdGovernmentSaved: (visitId) => api.get(`/companion-visits/${visitId}/government-opd-export/reconcile`),
+  clearSavedOpdGovernmentExport: (visitId) => api.delete(`/companion-visits/${visitId}/government-opd-export`),
+
+  reconcileIpdGovernment: (visitId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/companion-visits/${visitId}/reconcile-ipd-government`, formData);
+  },
+  reconcileIpdGovernmentSaved: (visitId) => api.get(`/companion-visits/${visitId}/government-ipd-export/reconcile`),
+  clearSavedIpdGovernmentExport: (visitId) => api.delete(`/companion-visits/${visitId}/government-ipd-export`),
+  addMissingFromOpdExport: (visitId, category, lines) =>
+    api.post(`/companion-visits/${visitId}/items/add-missing-from-opd-export`, { category, lines }),
+  getPriceSuggestions: (visitId, category, q, limit = 15) =>
+    api.get(`/companion-visits/${visitId}/price-suggestions`, { params: { category, q, limit } }),
+  confirmFromOpdExportLine: (visitId, description, quantity) =>
+    api.post(`/companion-visits/${visitId}/items/confirm-from-opd-export-line`, { description, quantity }),
+  cancelItem: (visitId, itemId, reason) =>
+    api.post(`/companion-visits/${visitId}/items/${itemId}/cancel`, { reason }),
 };
 
 // Management: transactions and user list for filters (Management, Admin only)
@@ -635,6 +678,12 @@ export const billingAPI = {
   updateBillItem: (billItemId, data) => api.put(`/billing/bill-item/${billItemId}`, data),
   getOpdCccForEncounter: (encounterId) => api.get(`/billing/encounter/${encounterId}/opd-ccc`),
   recalculateBillingWithInsurance: (encounterId, data) => api.post(`/billing/encounter/${encounterId}/recalculate-insurance`, data),
+  /** Parse government IPD (in-patient) invoice file (.xls/.xlsx). For companion app IPD check. */
+  parseIpdInvoice: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/billing/parse-ipd-invoice', formData);
+  },
 };
 
 // Price list endpoints
@@ -728,10 +777,12 @@ export const priceListAPI = {
       } 
     }),
   getServiceTypes: () => api.get('/price-list/service-types'),
-  getProceduresByServiceType: (serviceType) => 
+  getProceduresByServiceType: (serviceType) =>
     api.get('/price-list/procedures/by-service-type', {
       params: { service_type: serviceType }
     }),
+  /** Get all surgery price list items (file type surgery) for major surgery selection. */
+  getSurgeries: () => api.get('/price-list/surgeries'),
   updateItem: (fileType, id, data) => api.put(`/price-list/item/${fileType}/${id}`, data),
 };
 

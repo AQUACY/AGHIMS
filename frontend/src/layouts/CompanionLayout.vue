@@ -204,7 +204,7 @@ const sessionTimeLeftMinutes = computed(() => {
 });
 
 const canAccessRecords = computed(() => authStore.canAccess(['Records', 'Admin']));
-const canAccessBilling = computed(() => authStore.canAccess(['Billing', 'Admin']));
+const canAccessBilling = computed(() => authStore.canAccess(['Billing', 'Doctor', 'PA', 'Admin']));
 
 const formatTimeLeft = (ms) => {
   if (!ms || ms <= 0) return '00:00';
