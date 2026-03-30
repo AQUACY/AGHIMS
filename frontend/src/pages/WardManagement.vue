@@ -5,7 +5,7 @@
         flat
         icon="arrow_back"
         label="Back to Inventory"
-        @click="$router.push('/inventory')"
+        @click="$router.push('/inventory-mode')"
         class="q-mr-md"
       />
       <div class="text-h4 text-weight-bold glass-text">Department/Unit Management</div>

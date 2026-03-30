@@ -71,6 +71,7 @@ from app.models.companion_active_dressing import CompanionActiveDressing
 from app.models.companion_active_oxygen import CompanionActiveOxygen
 from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
 from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
+from app.models.facility_settings import FacilitySettings
 
 __all__ = [
     "User",
@@ -162,5 +163,6 @@ __all__ = [
     "CompanionActiveOxygen",
     "CompanionGovernmentOpdExport",
     "CompanionGovernmentIpdExport",
+    "FacilitySettings",
 ]
 

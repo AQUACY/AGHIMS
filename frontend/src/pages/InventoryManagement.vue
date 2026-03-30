@@ -16,7 +16,7 @@
           class="glass-card module-card cursor-pointer" 
           flat 
           bordered
-          @click="navigateToModule('/pharmacy/requisitions')"
+          @click="navigateToModule('/inventory-mode/requisitions')"
         >
           <q-card-section class="q-pa-lg">
             <div class="column items-center text-center">
@@ -38,7 +38,7 @@
           class="glass-card module-card cursor-pointer" 
           flat 
           bordered
-          @click="navigateToModule('/pharmacy/ward-stock')"
+          @click="navigateToModule('/inventory-mode/ward-stock')"
         >
           <q-card-section class="q-pa-lg">
             <div class="column items-center text-center">
@@ -60,7 +60,7 @@
           class="glass-card module-card cursor-pointer" 
           flat 
           bordered
-          @click="navigateToModule('/admin/store-stock')"
+          @click="navigateToModule('/inventory-mode/store-stock')"
         >
           <q-card-section class="q-pa-lg">
             <div class="column items-center text-center">
@@ -82,7 +82,7 @@
           class="glass-card module-card cursor-pointer" 
           flat 
           bordered
-          @click="navigateToModule('/ipd/store-management')"
+          @click="navigateToModule('/inventory-mode/store-management')"
         >
           <q-card-section class="q-pa-lg">
             <div class="column items-center text-center">
@@ -104,7 +104,7 @@
           class="glass-card module-card cursor-pointer" 
           flat 
           bordered
-          @click="navigateToModule('/ipd/ward-management')"
+          @click="navigateToModule('/inventory-mode/ward-management')"
         >
           <q-card-section class="q-pa-lg">
             <div class="column items-center text-center">
@@ -126,7 +126,7 @@
           class="glass-card module-card cursor-pointer" 
           flat 
           bordered
-          @click="navigateToModule('/pharmacy/inventory-debits')"
+          @click="navigateToModule('/inventory-mode/inventory-debits')"
         >
           <q-card-section class="q-pa-lg">
             <div class="column items-center text-center">

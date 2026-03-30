@@ -35,6 +35,7 @@ from app.api import (
     module_settings,
     companion_visits,
     management,
+    facility_settings,
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -209,6 +210,7 @@ app.include_router(store_stock.router, prefix="/api")
 app.include_router(module_settings.router, prefix="/api")
 app.include_router(companion_visits.router, prefix="/api")
 app.include_router(management.router, prefix="/api")
+app.include_router(facility_settings.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

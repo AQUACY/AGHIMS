@@ -13,6 +13,27 @@ from app.models.module_settings import ModuleSettings
 
 router = APIRouter(prefix="/module-settings", tags=["module-settings"])
 
+MODE_MODULE_DEFAULTS = {
+    "mode_hms": {
+        "module_name": "HMS Mode",
+        "description": "Facility switch for Hospital Management System mode availability",
+        "category": "core",
+        "display_order": 1001,
+    },
+    "mode_companion": {
+        "module_name": "Companion Mode",
+        "description": "Facility switch for Companion mode availability",
+        "category": "core",
+        "display_order": 1002,
+    },
+    "mode_inventory": {
+        "module_name": "Inventory Mode",
+        "description": "Facility switch for Inventory mode availability",
+        "category": "core",
+        "display_order": 1003,
+    },
+}
+
 
 class ModuleSettingsResponse(BaseModel):
     """Response model for module settings"""
@@ -117,34 +138,6 @@ def get_module_setting(
     )
 
 
-@router.get("/status/{module_key}", response_model=ModuleStatusResponse)
-def get_module_status(
-    module_key: str,
-    db: Session = Depends(get_db)
-):
-    """Get module status (public endpoint - no auth required for checking status)"""
-    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
-    if not module:
-        # If module doesn't exist, assume it's active (backward compatibility)
-        return ModuleStatusResponse(
-            module_key=module_key,
-            is_active=True,
-            allow_read=True,
-            allow_create=True,
-            allow_update=True,
-            allow_delete=True
-        )
-    
-    return ModuleStatusResponse(
-        module_key=module.module_key,
-        is_active=module.is_active,
-        allow_read=module.allow_read,
-        allow_create=module.allow_create,
-        allow_update=module.allow_update,
-        allow_delete=module.allow_delete
-    )
-
-
 @router.get("/status/batch", response_model=dict)
 def get_module_status_batch(
     module_keys: str,  # Comma-separated list of module keys
@@ -182,6 +175,34 @@ def get_module_status_batch(
     return result
 
 
+@router.get("/status/{module_key}", response_model=ModuleStatusResponse)
+def get_module_status(
+    module_key: str,
+    db: Session = Depends(get_db)
+):
+    """Get module status (public endpoint - no auth required for checking status)"""
+    module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
+    if not module:
+        # If module doesn't exist, assume it's active (backward compatibility)
+        return ModuleStatusResponse(
+            module_key=module_key,
+            is_active=True,
+            allow_read=True,
+            allow_create=True,
+            allow_update=True,
+            allow_delete=True
+        )
+
+    return ModuleStatusResponse(
+        module_key=module.module_key,
+        is_active=module.is_active,
+        allow_read=module.allow_read,
+        allow_create=module.allow_create,
+        allow_update=module.allow_update,
+        allow_delete=module.allow_delete
+    )
+
+
 @router.put("/{module_key}", response_model=ModuleSettingsResponse)
 def update_module_setting(
     module_key: str,
@@ -192,7 +213,25 @@ def update_module_setting(
     """Update a module setting"""
     module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
     if not module:
-        raise HTTPException(status_code=404, detail="Module setting not found")
+        # Auto-create known app-mode module keys so facility mode setup works out-of-the-box.
+        if module_key in MODE_MODULE_DEFAULTS:
+            defaults = MODE_MODULE_DEFAULTS[module_key]
+            module = ModuleSettings(
+                module_key=module_key,
+                module_name=defaults["module_name"],
+                description=defaults["description"],
+                is_active=True,
+                allow_read=True,
+                allow_create=True,
+                allow_update=True,
+                allow_delete=True,
+                category=defaults["category"],
+                display_order=defaults["display_order"],
+            )
+            db.add(module)
+            db.flush()
+        else:
+            raise HTTPException(status_code=404, detail="Module setting not found")
     
     # Update fields if provided
     if update_data.is_active is not None:
@@ -237,7 +276,25 @@ def toggle_module(
     """Quick toggle to enable/disable a module"""
     module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
     if not module:
-        raise HTTPException(status_code=404, detail="Module setting not found")
+        # Auto-create known app-mode module keys so toggles work even before seed scripts run.
+        if module_key in MODE_MODULE_DEFAULTS:
+            defaults = MODE_MODULE_DEFAULTS[module_key]
+            module = ModuleSettings(
+                module_key=module_key,
+                module_name=defaults["module_name"],
+                description=defaults["description"],
+                is_active=True,
+                allow_read=True,
+                allow_create=True,
+                allow_update=True,
+                allow_delete=True,
+                category=defaults["category"],
+                display_order=defaults["display_order"],
+            )
+            db.add(module)
+            db.flush()
+        else:
+            raise HTTPException(status_code=404, detail="Module setting not found")
     
     module.is_active = not module.is_active
     db.commit()

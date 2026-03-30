@@ -192,11 +192,13 @@ import { ref, computed, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { misReportsAPI } from '../services/api';
 import { priceListAPI } from '../services/api';
+import { useFacilityStore, DEFAULT_FACILITY_DISPLAY_NAME } from '../stores/facility';
 
 export default {
   name: 'MISReport',
   setup() {
     const $q = useQuasar();
+    const facilityStore = useFacilityStore();
 
     // State
     const selectedReport = ref('consulting_room_register');
@@ -681,7 +683,11 @@ export default {
       try {
         let response;
         let filename;
-        
+
+        await facilityStore.fetchPublic();
+        const clinicExportName =
+          (facilityStore.displayName || '').trim() || DEFAULT_FACILITY_DISPLAY_NAME;
+
         // Convert selected departments array to comma-separated string
         const departmentsStr = selectedDepartments.value && selectedDepartments.value.length > 0
           ? selectedDepartments.value.join(',')
@@ -691,7 +697,8 @@ export default {
           response = await misReportsAPI.exportConsultingRoomRegister(
             startDate.value,
             endDate.value,
-            departmentsStr
+            departmentsStr,
+            clinicExportName
           );
           const startFormatted = startDate.value.replace(/-/g, '_');
           const endFormatted = endDate.value.replace(/-/g, '_');
@@ -700,7 +707,8 @@ export default {
           response = await misReportsAPI.exportStatementOfOutpatient(
             startDate.value,
             endDate.value,
-            departmentsStr
+            departmentsStr,
+            clinicExportName
           );
           const startFormatted = startDate.value.replace(/-/g, '_');
           const endFormatted = endDate.value.replace(/-/g, '_');
@@ -709,7 +717,8 @@ export default {
           response = await misReportsAPI.exportOPDMorbidity(
             startDate.value,
             endDate.value,
-            departmentsStr
+            departmentsStr,
+            clinicExportName
           );
           const startFormatted = startDate.value.replace(/-/g, '_');
           const endFormatted = endDate.value.replace(/-/g, '_');
@@ -758,9 +767,10 @@ export default {
     };
 
     // Initialize
-    onMounted(() => {
+    onMounted(async () => {
       loadDepartmentOptions();
-      
+      await facilityStore.fetchPublic();
+
       // Set default dates (current month)
       const today = new Date();
       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);

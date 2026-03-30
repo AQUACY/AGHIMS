@@ -1048,7 +1048,9 @@ import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
+import { useFacilityStore, DEFAULT_FACILITY_DISPLAY_NAME } from '../stores/facility';
 
+const facilityStore = useFacilityStore();
 const $route = useRoute();
 const $router = useRouter();
 const $q = useQuasar();
@@ -1090,7 +1092,7 @@ const prescriptionForm = reactive({
 
 // Provider Information
 const providerInfo = reactive({
-  provider_name: 'ASESEWA GOVERNMENT HOSPITAL, ASESEWA',
+  provider_name: DEFAULT_FACILITY_DISPLAY_NAME,
   scheme_code: '',
   month_of_claim: new Date().toISOString().split('T')[0],
 });
@@ -2247,6 +2249,9 @@ onMounted(async () => {
   }
   // View mode from query (main claims list uses View → view=true; vetting can view read-only, then Reopen to edit)
   isViewMode.value = route.query.view === 'true';
+
+  await facilityStore.fetchPublic();
+  providerInfo.provider_name = facilityStore.displayName;
 
   await loadClaimData();
   lastSavedClaimPayload.value = JSON.stringify(buildClaimPayload());

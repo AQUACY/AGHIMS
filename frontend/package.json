@@ -10,6 +10,9 @@
   "dependencies": {
     "@quasar/extras": "^1.16.9",
     "axios": "^1.6.2",
+    "exceljs": "^4.4.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
     "pinia": "^2.1.7",
     "quasar": "^2.14.2",
     "vue": "^3.4.3",
@@ -31,4 +34,3 @@
     "npm": ">=8.0.0"
   }
 }
-

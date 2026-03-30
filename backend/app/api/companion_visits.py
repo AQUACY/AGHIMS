@@ -10,7 +10,8 @@ import shutil
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict, Set
+from collections import defaultdict
 from datetime import date, datetime
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user
@@ -52,6 +53,8 @@ class CompanionVisitUpdate(BaseModel):
     external_visit_number: Optional[str] = None
     client_name: Optional[str] = None
     status: Optional[str] = None  # open | closed
+    admission_deposit_amount: Optional[float] = None
+    admission_deposit_receipt_number: Optional[str] = None
 
 
 class CompanionVisitResponse(BaseModel):
@@ -82,6 +85,13 @@ class CompanionVisitResponse(BaseModel):
     undertaking_unapproved_by_id: Optional[int] = None
     undertaking_unapproved_by_name: Optional[str] = None
     undertaking_unapprove_reason: Optional[str] = None
+    admission_deposit_amount: Optional[float] = None
+    admission_deposit_receipt_number: Optional[str] = None
+    admission_deposit_remaining: float = 0.0
+    # Billing snapshot (computed from line items + undertaking deposit; for list/detail without extra round-trips)
+    bill_total: float = 0.0
+    paid_amount: float = 0.0
+    balance_due: float = 0.0
 
     class Config:
         from_attributes = True
@@ -109,14 +119,119 @@ class ReopenVisitBody(BaseModel):
     reason: str
 
 
+def _companion_item_row_amount(it: CompanionVisitItem) -> float:
+    return float(it.unit_price or 0) * float(it.quantity or 1)
+
+
+def _companion_item_cancelled(it: CompanionVisitItem) -> bool:
+    return bool(getattr(it, "cancelled", False))
+
+
+ADMISSION_DEPOSIT_PAYMENT_METHOD = "admission_deposit"
+MIXED_DEPOSIT_CASH_PAYMENT_METHOD = "mixed"
+
+
+def _admission_deposit_applied_on_item(it: CompanionVisitItem) -> float:
+    """Amount of admission deposit pool applied to this line."""
+    v_raw = getattr(it, "admission_deposit_applied", None)
+    if v_raw is not None and float(v_raw) > 0.005:
+        return float(v_raw)
+    if (getattr(it, "payment_method", None) or "").strip() == ADMISSION_DEPOSIT_PAYMENT_METHOD:
+        return _companion_item_row_amount(it)
+    return 0.0
+
+
+def _companion_item_is_paid(it: CompanionVisitItem) -> bool:
+    T = round(_companion_item_row_amount(it), 2)
+    if T <= 0:
+        return True
+    v_raw = getattr(it, "admission_deposit_applied", None)
+    pm = (getattr(it, "payment_method", None) or "").strip()
+    ln = (getattr(it, "admission_deposit_line_receipt", None) or "").strip()
+    rn = (it.receipt_number or "").strip()
+
+    # Legacy: full line from deposit, synthetic stored in receipt_number only
+    if v_raw is None and pm == ADMISSION_DEPOSIT_PAYMENT_METHOD:
+        return bool(rn and it.paid_at)
+
+    if v_raw is not None:
+        d = float(v_raw)
+        rem = round(T - d, 2)
+        if rem <= 0.005:
+            return bool(ln and it.paid_at)
+        return bool(ln and rn and it.paid_at)
+
+    return bool(rn and it.paid_at)
+
+
+def _billing_summary_for_items(items: List[CompanionVisitItem], deposit: float) -> Tuple[float, float, float]:
+    """Returns (bill_total, paid_amount, balance_due). Matches companion billing UI logic."""
+    total = sum(_companion_item_row_amount(it) for it in items if not _companion_item_cancelled(it))
+    paid = sum(
+        _companion_item_row_amount(it)
+        for it in items
+        if not _companion_item_cancelled(it) and _companion_item_is_paid(it)
+    )
+    bal = max(0.0, float(total) - float(paid) - float(deposit or 0.0))
+    return (float(total), float(paid), float(bal))
+
+
+def _admission_deposit_consumed_from_items(items: List[CompanionVisitItem]) -> float:
+    consumed = 0.0
+    for it in items:
+        if _companion_item_cancelled(it):
+            continue
+        consumed += _admission_deposit_applied_on_item(it)
+    return float(consumed)
+
+
+def _admission_deposit_remaining_for_visit(visit: CompanionVisit, items: List[CompanionVisitItem]) -> float:
+    cap = float(getattr(visit, "admission_deposit_amount", None) or 0.0)
+    if cap <= 0:
+        return 0.0
+    return max(0.0, round(cap - _admission_deposit_consumed_from_items(items), 2))
+
+
+def _max_admission_deposit_receipt_suffix(items: List[CompanionVisitItem], base: str) -> int:
+    if not base:
+        return 0
+    pat = re.compile(rf"^{re.escape(base)}-(\d+)$")
+    max_n = 0
+    for it in items:
+        candidates = [(getattr(it, "admission_deposit_line_receipt", None) or "").strip()]
+        pm = (getattr(it, "payment_method", None) or "").strip()
+        if pm == ADMISSION_DEPOSIT_PAYMENT_METHOD and getattr(it, "admission_deposit_applied", None) is None:
+            candidates.append((it.receipt_number or "").strip())
+        for rn in candidates:
+            if not rn:
+                continue
+            m = pat.match(rn)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+    return max_n
+
+
+def _batch_visit_billing_summaries(db: Session, visits: List[CompanionVisit]) -> Dict[int, Tuple[float, float, float]]:
+    if not visits:
+        return {}
+    ids = [v.id for v in visits]
+    deposit_map = {v.id: float(getattr(v, "undertaking_deposit_amount", None) or 0) for v in visits}
+    all_items = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id.in_(ids)).all()
+    by_vid: Dict[int, List[CompanionVisitItem]] = defaultdict(list)
+    for it in all_items:
+        by_vid[it.companion_visit_id].append(it)
+    return {vid: _billing_summary_for_items(by_vid.get(vid, []), deposit_map.get(vid, 0.0)) for vid in ids}
+
+
 def _visit_all_items_paid(visit_id: int, db: Session) -> bool:
-    """True if every bill item has been paid (receipt_number set or amount 0)."""
+    """True if every bill item is fully paid (including deposit + top-up splits)."""
     items = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit_id).all()
     if not items:
         return True
     for it in items:
-        amount = (it.unit_price or 0) * (it.quantity or 1)
-        if amount > 0 and not (it.receipt_number or it.paid_at):
+        if _companion_item_cancelled(it):
+            continue
+        if not _companion_item_is_paid(it):
             return False
     return True
 
@@ -162,7 +277,7 @@ def create_companion_visit(
     db.add(visit_obj)
     db.commit()
     db.refresh(visit_obj)
-    return visit_obj
+    return _visit_to_response(visit_obj, db)
 
 
 @router.get("/", response_model=List[CompanionVisitResponse])
@@ -195,7 +310,8 @@ def list_companion_visits(
         q = q.filter(CompanionVisit.created_at <= datetime.combine(date_to, datetime.max.time()))
     q = q.order_by(CompanionVisit.created_at.desc())
     visits = q.all()
-    return [_visit_to_response(v, db) for v in visits]
+    summaries = _batch_visit_billing_summaries(db, visits)
+    return [_visit_to_response(v, db, billing=summaries.get(v.id)) for v in visits]
 
 
 # --- Active investigations (Lab Head chooses which appear as cards) ---
@@ -348,7 +464,7 @@ def remove_active_xray(
     return None
 
 
-# --- Active day surgeries (Doctor/PA choose which appear as cards) ---
+# --- Active day surgeries (Nurse/Doctor/PA choose which appear as cards) ---
 
 @router.get("/active-day-surgeries")
 def list_active_day_surgeries(
@@ -368,9 +484,9 @@ class ActiveDaySurgeryCreate(BaseModel):
 def add_active_day_surgery(
     data: ActiveDaySurgeryCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
 ):
-    """Add a day surgery to the card list. Doctor, PA, or Admin."""
+    """Add a day surgery to the card list. Nurse, Doctor, PA, or Admin."""
     code = (data.g_drg_code or "").strip()
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
@@ -387,9 +503,9 @@ def add_active_day_surgery(
 def remove_active_day_surgery(
     g_drg_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
 ):
-    """Remove a day surgery from the card list. Doctor, PA, or Admin."""
+    """Remove a day surgery from the card list. Nurse, Doctor, PA, or Admin."""
     row = db.query(CompanionActiveDaySurgery).filter(CompanionActiveDaySurgery.g_drg_code == g_drg_code).first()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
@@ -398,7 +514,7 @@ def remove_active_day_surgery(
     return None
 
 
-# --- Active major surgeries (Doctor/PA choose which appear as cards) ---
+# --- Active major surgeries (Nurse/Doctor/PA choose which appear as cards) ---
 
 @router.get("/active-major-surgeries")
 def list_active_major_surgeries(
@@ -418,9 +534,9 @@ class ActiveMajorSurgeryCreate(BaseModel):
 def add_active_major_surgery(
     data: ActiveMajorSurgeryCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
 ):
-    """Add a major surgery to the card list. Doctor, PA, or Admin."""
+    """Add a major surgery to the card list. Nurse, Doctor, PA, or Admin."""
     code = (data.g_drg_code or "").strip()
     if not code:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="g_drg_code is required")
@@ -437,9 +553,9 @@ def add_active_major_surgery(
 def remove_active_major_surgery(
     g_drg_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "PA", "Admin"])),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
 ):
-    """Remove a major surgery from the card list. Doctor, PA, or Admin."""
+    """Remove a major surgery from the card list. Nurse, Doctor, PA, or Admin."""
     row = db.query(CompanionActiveMajorSurgery).filter(CompanionActiveMajorSurgery.g_drg_code == g_drg_code).first()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not in card list")
@@ -1558,7 +1674,10 @@ def confirm_single_item_from_opd_export_line(
         "receipt_number": new_item.receipt_number,
         "paid_at": new_item.paid_at,
         "paid_by_id": new_item.paid_by_id,
+        "paid_by_name": None,
         "payment_method": new_item.payment_method,
+        "admission_deposit_applied": getattr(new_item, "admission_deposit_applied", None),
+        "admission_deposit_line_receipt": getattr(new_item, "admission_deposit_line_receipt", None),
     }
 
     return {
@@ -1682,7 +1801,10 @@ def add_missing_items_from_opd_export(
                     "receipt_number": new_item.receipt_number,
                     "paid_at": new_item.paid_at,
                     "paid_by_id": new_item.paid_by_id,
+                    "paid_by_name": None,
                     "payment_method": new_item.payment_method,
+                    "admission_deposit_applied": getattr(new_item, "admission_deposit_applied", None),
+                    "admission_deposit_line_receipt": getattr(new_item, "admission_deposit_line_receipt", None),
                 }
             )
         except Exception as e:
@@ -2050,8 +2172,12 @@ def parse_drugs_excel(
     return [ParsedDrugLine(drug_name=x["drug_name"], quantity=x["quantity"]) for x in lines]
 
 
-def _visit_to_response(visit: CompanionVisit, db: Session) -> CompanionVisitResponse:
-    """Build visit response with optional undertaking_*_by_name fields."""
+def _visit_to_response(
+    visit: CompanionVisit,
+    db: Session,
+    billing: Optional[Tuple[float, float, float]] = None,
+) -> CompanionVisitResponse:
+    """Build visit response with optional undertaking_*_by_name fields and billing totals."""
     req_by_name = None
     if getattr(visit, "undertaking_requested_by_id", None):
         u = db.query(User).filter(User.id == visit.undertaking_requested_by_id).first()
@@ -2067,6 +2193,14 @@ def _visit_to_response(visit: CompanionVisit, db: Session) -> CompanionVisitResp
         u = db.query(User).filter(User.id == visit.undertaking_unapproved_by_id).first()
         if u:
             unapproved_by_name = u.full_name or u.username
+    items_for_admission = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit.id).all()
+    if billing is None:
+        dep = float(getattr(visit, "undertaking_deposit_amount", None) or 0)
+        billing = _billing_summary_for_items(items_for_admission, dep)
+    bill_total, paid_amount, balance_due = billing
+    adm_amt = getattr(visit, "admission_deposit_amount", None)
+    adm_rn = getattr(visit, "admission_deposit_receipt_number", None)
+    adm_rem = _admission_deposit_remaining_for_visit(visit, items_for_admission)
     return CompanionVisitResponse(
         id=visit.id,
         external_card_number=visit.external_card_number,
@@ -2094,6 +2228,12 @@ def _visit_to_response(visit: CompanionVisit, db: Session) -> CompanionVisitResp
         undertaking_unapproved_by_id=getattr(visit, "undertaking_unapproved_by_id", None),
         undertaking_unapproved_by_name=unapproved_by_name,
         undertaking_unapprove_reason=getattr(visit, "undertaking_unapprove_reason", None),
+        admission_deposit_amount=float(adm_amt) if adm_amt is not None else None,
+        admission_deposit_receipt_number=(adm_rn or None),
+        admission_deposit_remaining=adm_rem,
+        bill_total=bill_total,
+        paid_amount=paid_amount,
+        balance_due=balance_due,
     )
 
 
@@ -2477,6 +2617,52 @@ def update_companion_visit(
         visit.external_visit_number = visit_no
     if data.client_name is not None:
         visit.client_name = (data.client_name or "").strip() or None
+    if data.admission_deposit_amount is not None or data.admission_deposit_receipt_number is not None:
+        user_roles = _get_user_roles(current_user, db)
+        if visit.status != "open":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admission deposit can only be changed on an open visit",
+            )
+        if not any(r in user_roles for r in ("Billing", "Admin")):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only Billing or Admin can set admission deposit",
+            )
+        visit_items = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit_id).all()
+        consumed = _admission_deposit_consumed_from_items(visit_items)
+        if data.admission_deposit_amount is not None:
+            amt = float(data.admission_deposit_amount)
+            if amt < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="admission_deposit_amount cannot be negative",
+                )
+            if amt < consumed - 0.005:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Cannot reduce admission deposit below GH¢ {consumed:.2f} already applied to bill lines. "
+                        "Reverse payments on those lines first if you need to lower the deposit cap."
+                    ),
+                )
+            if amt == 0:
+                visit.admission_deposit_amount = None
+                visit.admission_deposit_receipt_number = None
+            else:
+                visit.admission_deposit_amount = amt
+        if data.admission_deposit_receipt_number is not None:
+            rn = (data.admission_deposit_receipt_number or "").strip() or None
+            visit.admission_deposit_receipt_number = rn
+        dep_now = float(getattr(visit, "admission_deposit_amount", None) or 0)
+        if dep_now > 0 and not (visit.admission_deposit_receipt_number or "").strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="admission_deposit_receipt_number is required when admission deposit amount is set",
+            )
+        if dep_now <= 0:
+            visit.admission_deposit_amount = None
+            visit.admission_deposit_receipt_number = None
     if data.status is not None:
         s = (data.status or "").strip().lower()
         if s not in ("open", "closed"):
@@ -2497,7 +2683,7 @@ def update_companion_visit(
         visit.status = s
     db.commit()
     db.refresh(visit)
-    return visit
+    return _visit_to_response(visit, db)
 
 
 @router.delete("/{visit_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -2558,7 +2744,10 @@ class CompanionVisitItemResponse(BaseModel):
     receipt_number: Optional[str] = None
     paid_at: Optional[datetime] = None
     paid_by_id: Optional[int] = None
+    paid_by_name: Optional[str] = None
     payment_method: Optional[str] = None
+    admission_deposit_applied: Optional[float] = None
+    admission_deposit_line_receipt: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -2595,6 +2784,7 @@ def list_companion_visit_items(
     # Attach created_by_name (best-effort)
     user_ids = {it.created_by_id for it in items if getattr(it, "created_by_id", None)}
     user_ids |= {it.cancelled_by_id for it in items if getattr(it, "cancelled_by_id", None)}
+    user_ids |= {it.paid_by_id for it in items if getattr(it, "paid_by_id", None)}
     users = {}
     if user_ids:
         rows = db.query(User).filter(User.id.in_(list(user_ids))).all()
@@ -2624,7 +2814,10 @@ def list_companion_visit_items(
                 "receipt_number": it.receipt_number,
                 "paid_at": it.paid_at,
                 "paid_by_id": it.paid_by_id,
+                "paid_by_name": users.get(getattr(it, "paid_by_id", None)),
                 "payment_method": it.payment_method,
+                "admission_deposit_applied": getattr(it, "admission_deposit_applied", None),
+                "admission_deposit_line_receipt": getattr(it, "admission_deposit_line_receipt", None),
             }
         )
     return out
@@ -2709,7 +2902,10 @@ def add_companion_visit_item(
         "receipt_number": item.receipt_number,
         "paid_at": item.paid_at,
         "paid_by_id": item.paid_by_id,
+        "paid_by_name": None,
         "payment_method": item.payment_method,
+        "admission_deposit_applied": getattr(item, "admission_deposit_applied", None),
+        "admission_deposit_line_receipt": getattr(item, "admission_deposit_line_receipt", None),
     }
 
 
@@ -2724,7 +2920,7 @@ def cancel_companion_visit_item(
     item_id: int,
     data: CancelVisitItemBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Admin"])),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "PA", "Nurse", "Admin"])),
 ):
     """
     Soft-cancel a companion bill item (strike-through) with required reason.
@@ -2744,8 +2940,8 @@ def cancel_companion_visit_item(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
-    if item.receipt_number:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot cancel an item that has a receipt")
+    if _companion_item_is_paid(item):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot cancel an item that has been paid")
 
     reason = (data.reason or "").strip()
     if not reason:
@@ -2768,6 +2964,8 @@ def cancel_companion_visit_item(
     set_audit_summary(request, f"Cancelled companion bill item '{item.item_name}' for visit {visit.external_visit_number}.")
 
     u = db.query(User).filter(User.id == item.cancelled_by_id).first()
+    u_paid = db.query(User).filter(User.id == getattr(item, "paid_by_id", None)).first()
+    u_created = db.query(User).filter(User.id == getattr(item, "created_by_id", None)).first()
     return {"hard_deleted": False, "item": {
         "id": item.id,
         "companion_visit_id": item.companion_visit_id,
@@ -2780,7 +2978,7 @@ def cancel_companion_visit_item(
         "end_time": getattr(item, "end_time", None),
         "created_at": item.created_at,
         "created_by_id": getattr(item, "created_by_id", None),
-        "created_by_name": None,
+        "created_by_name": (u_created.full_name or u_created.username) if u_created else None,
         "cancelled": True,
         "cancelled_at": item.cancelled_at,
         "cancelled_by_id": item.cancelled_by_id,
@@ -2789,7 +2987,10 @@ def cancel_companion_visit_item(
         "receipt_number": item.receipt_number,
         "paid_at": item.paid_at,
         "paid_by_id": item.paid_by_id,
+        "paid_by_name": (u_paid.full_name or u_paid.username) if u_paid else None,
         "payment_method": item.payment_method,
+        "admission_deposit_applied": getattr(item, "admission_deposit_applied", None),
+        "admission_deposit_line_receipt": getattr(item, "admission_deposit_line_receipt", None),
     }}
 
 
@@ -2815,7 +3016,7 @@ def delete_companion_visit_item(
     ).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if item.receipt_number:
+    if _companion_item_is_paid(item):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete an item that has been paid (receipt issued)",
@@ -2853,7 +3054,7 @@ def update_companion_visit_item(
     ).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if item.receipt_number:
+    if _companion_item_is_paid(item):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot edit an item that has been paid (receipt issued)",
@@ -2879,9 +3080,10 @@ def update_companion_visit_item(
 
 
 class MarkItemsPaidBody(BaseModel):
-    receipt_number: str
+    receipt_number: Optional[str] = None
     item_ids: List[int]
     payment_method: Optional[str] = None
+    use_admission_deposit: bool = False
 
 
 @router.post("/{visit_id}/items/mark-paid")
@@ -2896,27 +3098,127 @@ def mark_companion_visit_items_paid(
     visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
     if not visit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
-    receipt_number = (data.receipt_number or "").strip()
-    if not receipt_number:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="receipt_number is required")
-    payment_method = (data.payment_method or "").strip() or None
     now = datetime.utcnow()
     updated = 0
+    last_receipt: Optional[str] = None
+
+    if data.use_admission_deposit:
+        base_amt = float(getattr(visit, "admission_deposit_amount", None) or 0)
+        base_rn = (getattr(visit, "admission_deposit_receipt_number", None) or "").strip()
+        if base_amt <= 0 or not base_rn:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No admission deposit on file. Save deposit amount and receipt on the visit first, or turn off 'use admission deposit' and enter a payment receipt.",
+            )
+        all_items = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit_id).all()
+        remaining_pool = _admission_deposit_remaining_for_visit(visit, all_items)
+        seen: Set[int] = set()
+        to_mark: List[CompanionVisitItem] = []
+        for raw_id in data.item_ids or []:
+            if raw_id in seen:
+                continue
+            seen.add(raw_id)
+            item = db.query(CompanionVisitItem).filter(
+                CompanionVisitItem.id == raw_id,
+                CompanionVisitItem.companion_visit_id == visit_id,
+            ).first()
+            if not item or _companion_item_cancelled(item) or _companion_item_is_paid(item):
+                continue
+            row_amt = _companion_item_row_amount(item)
+            if row_amt <= 0:
+                continue
+            to_mark.append(item)
+        allocations: List[Tuple[CompanionVisitItem, float, float]] = []
+        rem = round(remaining_pool, 2)
+        for item in to_mark:
+            row_amt = round(_companion_item_row_amount(item), 2)
+            from_dep = round(min(rem, row_amt), 2)
+            allocations.append((item, from_dep, row_amt))
+            rem = round(rem - from_dep, 2)
+        if not allocations:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No unpaid lines selected.",
+            )
+        any_dep = any(a[1] > 0.005 for a in allocations)
+        if not any_dep:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No admission deposit balance left for these lines. Turn off 'Pay from admission deposit' and record a payment receipt for the full amount.",
+            )
+        total_top = round(sum(a[2] - a[1] for a in allocations), 2)
+        cash_rn = (data.receipt_number or "").strip()
+        pm_cash = (data.payment_method or "").strip() or "cash"
+        if total_top > 0.005 and not cash_rn:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"GH¢ {total_top:.2f} is still due after applying the admission deposit to these lines. "
+                    "Enter the top-up receipt number (same receipt you give the client for that balance)."
+                ),
+            )
+        if total_top <= 0.005:
+            cash_rn = ""
+        seq = _max_admission_deposit_receipt_suffix(all_items, base_rn)
+        eff_uid = get_effective_creator_id(db, current_user)
+        for item, from_dep, row_amt in allocations:
+            cash_part = round(row_amt - from_dep, 2)
+            if from_dep > 0.005:
+                seq += 1
+                syn = f"{base_rn}-{seq}"
+                item.admission_deposit_applied = from_dep
+                item.admission_deposit_line_receipt = syn
+            else:
+                item.admission_deposit_applied = None
+                item.admission_deposit_line_receipt = None
+            if cash_part > 0.005:
+                item.receipt_number = cash_rn
+                item.payment_method = MIXED_DEPOSIT_CASH_PAYMENT_METHOD if from_dep > 0.005 else pm_cash
+            else:
+                item.receipt_number = None
+                item.payment_method = ADMISSION_DEPOSIT_PAYMENT_METHOD
+            item.paid_at = now
+            item.paid_by_id = eff_uid
+            updated += 1
+            if cash_part > 0.005 and from_dep > 0.005:
+                last_receipt = f"{item.admission_deposit_line_receipt}+{cash_rn}"
+            elif cash_part > 0.005:
+                last_receipt = cash_rn
+            else:
+                last_receipt = item.admission_deposit_line_receipt
+        db.commit()
+        from app.core.audit import set_audit_summary
+        set_audit_summary(
+            request,
+            f"Marked {updated} item(s) using admission deposit (and top-up receipt where needed) for companion visit.",
+        )
+        return {"updated": updated, "receipt_number": last_receipt, "used_admission_deposit": True, "top_up_amount": total_top}
+
+    receipt_number = (data.receipt_number or "").strip()
+    if not receipt_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="receipt_number is required when not paying from admission deposit",
+        )
+    payment_method = (data.payment_method or "").strip() or None
     for item_id in data.item_ids or []:
         item = db.query(CompanionVisitItem).filter(
             CompanionVisitItem.id == item_id,
             CompanionVisitItem.companion_visit_id == visit_id,
         ).first()
-        if item and not item.receipt_number:
+        if item and not _companion_item_is_paid(item):
             item.receipt_number = receipt_number
             item.paid_at = now
             item.paid_by_id = get_effective_creator_id(db, current_user)
             item.payment_method = payment_method
+            item.admission_deposit_applied = None
+            item.admission_deposit_line_receipt = None
             updated += 1
+            last_receipt = receipt_number
     db.commit()
     from app.core.audit import set_audit_summary
     set_audit_summary(request, f"Marked {updated} item(s) as paid for companion visit (receipt {receipt_number}).")
-    return {"updated": updated, "receipt_number": receipt_number}
+    return {"updated": updated, "receipt_number": last_receipt, "used_admission_deposit": False}
 
 
 class RefundItemsBody(BaseModel):
@@ -2941,11 +3243,13 @@ def refund_companion_visit_items(
             CompanionVisitItem.id == item_id,
             CompanionVisitItem.companion_visit_id == visit_id,
         ).first()
-        if item and item.receipt_number:
+        if item and _companion_item_is_paid(item):
             item.receipt_number = None
             item.paid_at = None
             item.paid_by_id = None
             item.payment_method = None
+            item.admission_deposit_applied = None
+            item.admission_deposit_line_receipt = None
             updated += 1
     db.commit()
     from app.core.audit import set_audit_summary

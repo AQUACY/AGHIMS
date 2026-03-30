@@ -8,6 +8,44 @@
       Control which modules are active in the system. When a module is inactive, users can still view data they created but cannot create, edit, or delete records.
     </q-banner>
 
+    <q-card v-if="isSuperAdmin" class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-sm glass-text">Facility Mode Setup</div>
+        <div class="text-caption q-mb-md">
+          Enable or disable app modes for this facility. Inactive modes are hidden for regular users on mode selection.
+        </div>
+        <div class="row q-col-gutter-md">
+          <div class="col-12 col-md-4">
+            <q-toggle
+              :model-value="modeToggles.hms"
+              label="HMS Mode Active"
+              color="primary"
+              :loading="togglingMode === 'hms'"
+              @update:model-value="(value) => updateModeToggle('hms', value)"
+            />
+          </div>
+          <div class="col-12 col-md-4">
+            <q-toggle
+              :model-value="modeToggles.companion"
+              label="Companion Mode Active"
+              color="primary"
+              :loading="togglingMode === 'companion'"
+              @update:model-value="(value) => updateModeToggle('companion', value)"
+            />
+          </div>
+          <div class="col-12 col-md-4">
+            <q-toggle
+              :model-value="modeToggles.inventory"
+              label="Inventory Mode Active"
+              color="primary"
+              :loading="togglingMode === 'inventory'"
+              @update:model-value="(value) => updateModeToggle('inventory', value)"
+            />
+          </div>
+        </div>
+      </q-card-section>
+    </q-card>
+
     <!-- Filter by Category -->
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
@@ -163,12 +201,24 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useQuasar } from 'quasar';
 import { moduleSettingsAPI } from '../services/api';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
+import { useAuthStore } from '../stores/auth';
+import { APP_MODES, APP_MODE_MODULE_KEYS } from '../stores/appMode';
 
 const $q = useQuasar();
+const authStore = useAuthStore();
+const moduleSettingsStore = useModuleSettingsStore();
+
+const isSuperAdmin = computed(() => authStore.isSuperAdmin);
+const togglingMode = ref(null);
+const modeToggles = ref({
+  hms: true,
+  companion: true,
+  inventory: true,
+});
 
 const modules = ref([]);
 const loading = ref(false);
@@ -258,6 +308,48 @@ const loadModules = async () => {
   }
 };
 
+const loadModeSetup = async () => {
+  if (!isSuperAdmin.value) return;
+  try {
+    await moduleSettingsStore.fetchModuleStatus(Object.values(APP_MODE_MODULE_KEYS));
+    modeToggles.value = {
+      hms: moduleSettingsStore.isModuleActive(APP_MODE_MODULE_KEYS[APP_MODES.HMS]),
+      companion: moduleSettingsStore.isModuleActive(APP_MODE_MODULE_KEYS[APP_MODES.COMPANION]),
+      inventory: moduleSettingsStore.isModuleActive(APP_MODE_MODULE_KEYS[APP_MODES.INVENTORY]),
+    };
+  } catch (error) {
+    console.error('Error loading facility mode setup:', error);
+  }
+};
+
+const updateModeToggle = async (mode, value) => {
+  const moduleKey = APP_MODE_MODULE_KEYS[mode];
+  if (!moduleKey) return;
+  const previousValue = modeToggles.value[mode];
+  modeToggles.value[mode] = value;
+  try {
+    togglingMode.value = mode;
+    await moduleSettingsAPI.update(moduleKey, { is_active: value });
+    moduleSettingsStore.clearCache();
+    await moduleSettingsStore.fetchModuleStatus([moduleKey]);
+    $q.notify({
+      type: 'positive',
+      message: `${mode.charAt(0).toUpperCase() + mode.slice(1)} mode ${value ? 'activated' : 'deactivated'}`,
+      position: 'top',
+    });
+  } catch (error) {
+    modeToggles.value[mode] = previousValue;
+    console.error('Error updating mode toggle:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to update mode setup. Ensure mode keys exist in Module Settings.',
+      position: 'top',
+    });
+  } finally {
+    togglingMode.value = null;
+  }
+};
+
 const toggleModule = async (module) => {
   try {
     module.toggling = true;
@@ -335,6 +427,7 @@ const saveModule = async () => {
 
 onMounted(() => {
   loadModules();
+  loadModeSetup();
 });
 </script>
 

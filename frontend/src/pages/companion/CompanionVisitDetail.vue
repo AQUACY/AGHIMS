@@ -60,99 +60,72 @@
       <div class="text-subtitle1 text-weight-medium glass-text q-mt-lg q-mb-sm">Account summary</div>
       <q-card class="glass-card account-summary-card q-mb-md" flat>
         <q-card-section class="account-summary-section">
-          <div class="row q-col-gutter-lg items-center">
-            <div class="col-12 col-sm-auto">
-              <div class="text-caption text-grey-7">Total bill</div>
-              <div class="text-h6 text-weight-bold">GH¢ {{ formatPrice(billTotal) }}</div>
+          <p class="account-summary-hint text-caption text-grey-7">
+            Tap any amount below for a receipt-style breakdown (lines, receipts, who recorded payment).
+          </p>
+          <div class="account-summary-grid">
+            <div
+              class="account-summary-cell receipt-amount-hit"
+              tabindex="0"
+              role="button"
+              @click="openReceiptDialog('total')"
+              @keyup.enter="openReceiptDialog('total')"
+            >
+              <div class="account-summary-label text-caption text-grey-7">Total bill</div>
+              <div class="text-h6 text-weight-bold q-mt-xs">GH¢ {{ formatPrice(billTotal) }}</div>
+              <q-tooltip anchor="top middle" self="bottom middle">Open bill &amp; payment viewer</q-tooltip>
             </div>
-            <div class="col-12 col-sm-auto">
-              <div class="text-caption text-grey-7">Paid so far</div>
-              <div class="text-h6 text-positive">GH¢ {{ formatPrice(paidAmount) }}</div>
+            <div
+              class="account-summary-cell receipt-amount-hit"
+              tabindex="0"
+              role="button"
+              @click="openReceiptDialog('paid')"
+              @keyup.enter="openReceiptDialog('paid')"
+            >
+              <div class="account-summary-label text-caption text-grey-7">Paid so far</div>
+              <div class="text-h6 text-positive q-mt-xs">GH¢ {{ formatPrice(paidAmount) }}</div>
+              <q-tooltip anchor="top middle" self="bottom middle">Money received — receipts &amp; cashiers</q-tooltip>
             </div>
-            <div v-if="undertakingDepositAmount != null && undertakingDepositAmount > 0" class="col-12 col-sm-auto">
-              <div class="text-caption text-grey-7">Deposit (undertaking)</div>
-              <div class="text-body1">GH¢ {{ formatPrice(undertakingDepositAmount) }}</div>
+            <div
+              class="account-summary-cell receipt-amount-hit"
+              tabindex="0"
+              role="button"
+              @click="openReceiptDialog('deposit')"
+              @keyup.enter="openReceiptDialog('deposit')"
+            >
+              <div class="account-summary-label text-caption text-grey-7">Part payment</div>
+              <div class="text-h6 q-mt-xs">
+                {{
+                  undertakingDepositAmount != null && undertakingDepositAmount > 0
+                    ? 'GH¢ ' + formatPrice(undertakingDepositAmount)
+                    : '—'
+                }}
+              </div>
+              <q-tooltip anchor="top middle" self="bottom middle">Amount paid on behalf of the client now; undertaking covers the agreement to pay the balance later</q-tooltip>
             </div>
-            <div class="col-12 col-sm">
-              <div class="text-caption text-grey-7">Balance due (amount client owes)</div>
-              <div class="balance-due" :class="balanceDue > 0 ? 'text-weight-bold text-primary' : 'text-positive'">
+            <div
+              class="account-summary-cell account-summary-cell--balance receipt-amount-hit"
+              tabindex="0"
+              role="button"
+              @click="openReceiptDialog('balance')"
+              @keyup.enter="openReceiptDialog('balance')"
+            >
+              <div class="account-summary-label text-caption text-grey-7">Balance due</div>
+              <div class="text-caption text-grey-7 q-mb-xs">Amount client owes</div>
+              <div class="balance-due q-mt-xs" :class="balanceDue > 0 ? 'text-weight-bold text-primary' : 'text-positive'">
                 GH¢ {{ formatPrice(balanceDue) }}
               </div>
+              <q-tooltip anchor="top middle" self="bottom middle">Overview &amp; full bill</q-tooltip>
             </div>
           </div>
         </q-card-section>
       </q-card>
 
-      <!-- Services billed for client: grouped by category, then by date (visible to all roles when viewing service details) -->
-      <div class="text-subtitle1 text-weight-medium glass-text q-mt-lg q-mb-sm">Services billed for client</div>
-      <q-card class="glass-card q-mb-md" flat>
-        <q-card-section v-if="loadingItems" class="text-center q-pa-md">
-          <q-spinner size="32px" />
-        </q-card-section>
-        <q-card-section v-else-if="!groupedServicesByCategory.length" class="text-body2 glass-text-muted">
-          No services added yet. Use the cards below to add lab, scan, X-ray, drugs, surgeries, dressing room, or oxygen services. When the visit is closed, you can still view all services that were billed here.
-        </q-card-section>
-        <q-card-section v-else class="q-pt-none">
-          <q-expansion-item
-            v-for="catGroup in groupedServicesByCategory"
-            :key="catGroup.key"
-            :label="catGroup.title"
-            :caption="catGroup.caption"
-            icon="folder"
-            class="q-mb-sm"
-            header-class="text-weight-medium"
-            expand-icon-class="text-grey-7"
-          >
-            <q-expansion-item
-              v-for="dateGroup in catGroup.dateGroups"
-              :key="dateGroup.dateKey"
-              :label="dateGroup.dateLabel"
-              :caption="dateGroup.items.length === 1 ? '1 item' : dateGroup.items.length + ' items'"
-              icon="event"
-              class="q-ml-md q-mb-sm"
-              dense
-              expand-icon-class="text-grey-7"
-            >
-              <div class="receipt-block rounded-borders q-pa-sm">
-                <div
-                  v-for="(item, idx) in dateGroup.items"
-                  :key="item.id"
-                  class="receipt-line q-py-md q-px-sm"
-                  :class="{ 'receipt-line--last': idx === dateGroup.items.length - 1 }"
-                >
-                  <div class="row items-start justify-between no-wrap receipt-line__row">
-                    <div class="col receipt-line__main">
-                      <div class="text-body2 text-weight-medium receipt-line__name" :style="item.cancelled ? 'text-decoration: line-through; opacity: 0.75;' : ''">
-                        {{ item.item_name }}
-                      </div>
-                      <div class="text-caption text-grey-7 receipt-line__code">
-                        <template v-if="item.category === 'oxygen' && item.start_time && item.end_time">
-                          {{ formatOxygenPeriod(item) }}
-                        </template>
-                        <template v-else>{{ item.item_code }} · Qty {{ item.quantity }}</template>
-                      </div>
-                      <div v-if="item.created_by_name" class="text-caption text-grey-6 receipt-line__meta">Added by {{ item.created_by_name }}</div>
-                      <div v-if="item.cancelled" class="text-caption text-negative receipt-line__meta">
-                        Cancelled {{ item.cancelled_at ? formatDate(item.cancelled_at) : '' }} by {{ item.cancelled_by_name || '—' }} — {{ item.cancel_reason || '—' }}
-                      </div>
-                      <div v-if="item.receipt_number" class="text-caption text-positive receipt-line__meta">
-                        Receipt {{ item.receipt_number }}{{ item.paid_at ? ' · Paid ' + formatDate(item.paid_at) : '' }}
-                      </div>
-                    </div>
-                    <div class="col-auto text-right receipt-line__amount">
-                      <span class="text-body2 text-weight-medium">GH¢ {{ formatPrice((item.unit_price || 0) * (item.quantity || 1)) }}</span>
-                      <div class="text-caption text-grey-7">{{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </q-expansion-item>
-          </q-expansion-item>
-        </q-card-section>
-      </q-card>
-
       <!-- Role-based action cards: active only for matching roles -->
-      <div class="text-subtitle1 text-weight-medium glass-text q-mt-lg  q-mb-sm">Add services</div>
+      <div class="text-subtitle1 text-weight-medium glass-text q-mt-lg q-mb-sm">Add services</div>
+      <div class="text-body2 glass-text-muted q-mb-sm">
+        Full line-by-line bill (with receipts and payment details) is in Account summary — tap any amount above.
+      </div>
       <div class="row q-col-gutter-md q-ma-md">
         <q-card
           v-for="card in actionCards"
@@ -182,6 +155,14 @@
       </div>
     </template>
     <div v-else class="text-body1">Visit not found.</div>
+
+    <CompanionBillingReceiptDialog
+      v-model="receiptOpen"
+      :visit="visit"
+      :items="billItems"
+      :loading="false"
+      :focus-hint="receiptFocus"
+    />
 
     <q-dialog v-model="showEditDialog" persistent>
       <q-card class="glass-card" style="min-width: 400px;">
@@ -238,6 +219,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI } from '../../services/api';
+import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -246,7 +228,6 @@ const authStore = useAuthStore();
 const loading = ref(true);
 const visit = ref(null);
 const billItems = ref([]);
-const loadingItems = ref(false);
 const showEditDialog = ref(false);
 const saving = ref(false);
 const editForm = ref({
@@ -255,6 +236,13 @@ const editForm = ref({
   client_name: '',
   status: 'open',
 });
+const receiptOpen = ref(false);
+const receiptFocus = ref('overview');
+
+function openReceiptDialog(hint) {
+  receiptFocus.value = hint || 'overview';
+  receiptOpen.value = true;
+}
 
 const statusOptions = [
   { label: 'Open', value: 'open' },
@@ -262,88 +250,6 @@ const statusOptions = [
 ];
 
 const id = computed(() => route.params.id);
-
-function normalizeCategory(cat) {
-  const c = String(cat || '').trim().toLowerCase();
-  if (!c) return 'other';
-  if (c.includes('drug')) return 'drugs';
-  if (c.includes('investigation') || c.includes('lab')) return 'investigations';
-  if (c.includes('scan')) return 'scans';
-  if (c.includes('xray') || c.includes('x-ray') || c.includes('x ray')) return 'xrays';
-  if (c === 'day_surgery' || c === 'major_surgery') return 'surgeries';
-  if (c === 'dressing' || c === 'dressing_room') return 'dressing';
-  if (c === 'oxygen') return 'oxygen';
-  if (c === 'inpatient') return 'inpatient';
-  return c;
-}
-
-function categoryTitle(key) {
-  if (key === 'drugs') return 'Drugs';
-  if (key === 'investigations') return 'Investigations / Lab';
-  if (key === 'scans') return 'Scans';
-  if (key === 'xrays') return 'X-rays';
-  if (key === 'surgeries') return 'Surgeries';
-  if (key === 'dressing') return 'Dressing / Treatment room';
-  if (key === 'oxygen') return 'Oxygen';
-  if (key === 'inpatient') return 'Inpatient';
-  if (key === 'other') return 'Other';
-  return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
-}
-
-const preferredCategoryOrder = ['drugs', 'investigations', 'scans', 'xrays', 'surgeries', 'dressing', 'oxygen', 'inpatient', 'other'];
-
-const groupedServicesByCategory = computed(() => {
-  const items = billItems.value || [];
-  const byCategory = new Map();
-  for (const item of items) {
-    const key = normalizeCategory(item.category);
-    if (!byCategory.has(key)) byCategory.set(key, []);
-    byCategory.get(key).push(item);
-  }
-  const keys = Array.from(byCategory.keys());
-  keys.sort((a, b) => {
-    const ai = preferredCategoryOrder.indexOf(a);
-    const bi = preferredCategoryOrder.indexOf(b);
-    if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-    return a.localeCompare(b);
-  });
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  return keys.map((key) => {
-    const catItems = byCategory.get(key) || [];
-    const byDate = new Map();
-    for (const item of catItems) {
-      let dateKey = 'no-date';
-      let dateObj = null;
-      if (item.created_at) {
-        const d = new Date(item.created_at);
-        if (!Number.isNaN(d.getTime())) {
-          dateKey = d.toISOString().slice(0, 10);
-          dateObj = d;
-        }
-      }
-      if (!byDate.has(dateKey)) byDate.set(dateKey, { dateKey, dateObj, items: [] });
-      byDate.get(dateKey).items.push(item);
-    }
-    const dateGroups = Array.from(byDate.values());
-    dateGroups.sort((a, b) => (b.dateObj ? b.dateObj.getTime() : 0) - (a.dateObj ? a.dateObj.getTime() : 0));
-    for (const g of dateGroups) {
-      if (g.dateObj) {
-        const d = g.dateObj.getDate();
-        const ord = d === 1 || d === 21 || d === 31 ? 'st' : d === 2 || d === 22 ? 'nd' : d === 3 || d === 23 ? 'rd' : 'th';
-        g.dateLabel = `${d}${ord} ${monthNames[g.dateObj.getMonth()]}, ${g.dateObj.getFullYear()}`;
-      } else {
-        g.dateLabel = 'No service date';
-      }
-    }
-    const totalItems = catItems.length;
-    return {
-      key,
-      title: categoryTitle(key),
-      caption: totalItems === 1 ? '1 item' : totalItems + ' items',
-      dateGroups,
-    };
-  });
-});
 
 function formatPrice(val) {
   const n = Number(val);
@@ -359,7 +265,20 @@ function isCancelledRow(row) {
 }
 function isPaidRow(row) {
   if (rowAmount(row) === 0) return true;
-  return Boolean(row.receipt_number);
+  const T = rowAmount(row);
+  const ln = String(row.admission_deposit_line_receipt || '').trim();
+  const rn = String(row.receipt_number || '').trim();
+  const rawApplied = row.admission_deposit_applied;
+  const pm = (row.payment_method || '').trim();
+  if (rawApplied == null && pm === 'admission_deposit') {
+    return Boolean(rn);
+  }
+  if (rawApplied != null) {
+    const rem = Math.round((T - Number(rawApplied)) * 100) / 100;
+    if (rem <= 0.01) return Boolean(ln);
+    return Boolean(ln && rn);
+  }
+  return Boolean(rn);
 }
 
 const billTotal = computed(() => {
@@ -406,8 +325,8 @@ const actionCards = computed(() => {
     { name: 'drugs', title: 'Add drugs', icon: 'medication', routeName: 'CompanionAddDrugs', roles: ['Pharmacy', 'Pharmacy Head', 'Doctor', 'PA', 'Admin'] },
     { name: 'scan', title: 'Add scan', icon: 'biotech', routeName: 'CompanionAddScan', roles: ['Scan', 'Scan Head', 'Doctor', 'PA', 'Admin'] },
     { name: 'xray', title: 'Add X-ray', icon: 'contrast', routeName: 'CompanionAddXray', roles: ['Xray', 'Xray Head', 'Doctor', 'PA', 'Admin'] },
-    { name: 'day_surgery', title: 'Add day surgery', icon: 'medical_services', routeName: 'CompanionAddDaySurgery', roles: ['Doctor', 'PA', 'Admin'] },
-    { name: 'major_surgery', title: 'Add major surgery', icon: 'healing', routeName: 'CompanionAddMajorSurgery', roles: ['Doctor', 'PA', 'Admin'] },
+    { name: 'day_surgery', title: 'Add day surgery', icon: 'medical_services', routeName: 'CompanionAddDaySurgery', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+    { name: 'major_surgery', title: 'Add major surgery', icon: 'healing', routeName: 'CompanionAddMajorSurgery', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
     { name: 'dressing', title: 'Dressing room', icon: 'vaccines', routeName: 'CompanionAddDressing', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
     { name: 'oxygen', title: 'Oxygen', icon: 'air', routeName: 'CompanionAddOxygen', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
   ];
@@ -421,15 +340,6 @@ function goTo(routeName) {
 function formatDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString();
-}
-
-function formatOxygenPeriod(item) {
-  if (!item?.start_time || !item?.end_time) return '';
-  const start = new Date(item.start_time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  const end = new Date(item.end_time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  const qty = Number(item.quantity);
-  const hours = Number.isNaN(qty) ? '' : (qty === 1 ? '1 hour' : `${qty.toFixed(1)} hours`);
-  return hours ? `Start ${start} → End ${end} · ${hours}` : `Start ${start} → End ${end}`;
 }
 
 function openEditDialog() {
@@ -504,14 +414,11 @@ async function loadVisit() {
 
 async function loadItems() {
   if (!id.value) return;
-  loadingItems.value = true;
   try {
     const res = await companionVisitsAPI.getItems(id.value);
     billItems.value = res.data || [];
   } catch (e) {
     billItems.value = [];
-  } finally {
-    loadingItems.value = false;
   }
 }
 
@@ -536,53 +443,96 @@ onMounted(async () => {
   transform: translateY(-2px);
 }
 
-/* Receipt-style service lines */
-.receipt-block {
-  background: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-}
-.body--dark .receipt-block {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-.receipt-line {
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.12);
-}
-.receipt-line--last {
-  border-bottom: none;
-}
-.body--dark .receipt-line {
-  border-bottom-color: rgba(255, 255, 255, 0.12);
-}
-.body--dark .receipt-line--last {
-  border-bottom: none;
-}
-.receipt-line__row {
-  gap: 1rem;
-}
-.receipt-line__name {
-  line-height: 1.35;
-  margin-bottom: 2px;
-}
-.receipt-line__code {
-  margin-bottom: 2px;
-}
-.receipt-line__meta {
-  margin-top: 4px;
-}
-.receipt-line__amount {
-  min-width: 100px;
-  white-space: nowrap;
-}
-
-/* Account summary: prominent so every account sees total vs paid and balance */
+/* Account summary: grid so columns never overlap; balance cell highlighted, not full-width */
 .account-summary-card {
   border-left: 4px solid var(--q-primary);
 }
-.account-summary-section .balance-due {
-  font-size: 1.25rem;
-}
 .body--dark .account-summary-card {
   border-left-color: var(--q-primary);
+}
+
+.account-summary-hint {
+  margin: 0 0 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  line-height: 1.45;
+  max-width: 100%;
+}
+.body--dark .account-summary-hint {
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+.account-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  width: 100%;
+}
+@media (min-width: 600px) {
+  .account-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+}
+@media (min-width: 1024px) {
+  .account-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+.account-summary-cell {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+.body--dark .account-summary-cell {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.account-summary-cell--balance {
+  border-width: 2px;
+  border-color: var(--q-primary);
+  background: rgba(25, 118, 210, 0.06);
+}
+.body--dark .account-summary-cell--balance {
+  background: rgba(100, 181, 246, 0.12);
+}
+
+.account-summary-label {
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.account-summary-section .balance-due {
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+/* Click targets: no negative margins inside summary (they caused overlap) */
+.account-summary-section .receipt-amount-hit {
+  cursor: pointer;
+  outline-offset: 2px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  margin: 0;
+}
+.account-summary-section .receipt-amount-hit:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.03);
+}
+.body--dark .account-summary-section .receipt-amount-hit:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+}
+.account-summary-section .receipt-amount-hit:focus {
+  outline: 2px solid var(--q-primary);
+  outline-offset: 2px;
 }
 </style>

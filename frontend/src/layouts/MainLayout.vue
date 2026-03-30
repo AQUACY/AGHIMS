@@ -14,10 +14,21 @@
         >
           <q-tooltip>{{ drawerOpen ? 'Hide Sidebar' : 'Show Sidebar' }}</q-tooltip>
         </q-btn>
-        <q-toolbar-title class="text-weight-bold">
-          <img src="../../public/logos/ghana-health-service-logo.png" alt="AGHIMS" width="32px" height="32px" /> 
-          ASESEWA GOVERNMENT HOSPITAL
+        <q-toolbar-title class="text-weight-bold row items-center no-wrap q-gutter-sm">
+          <img src="../../public/logos/ghana-health-service-logo.png" :alt="facilityStore.displayName" width="32px" height="32px" />
+          <span class="ellipsis">{{ facilityStore.displayName }}</span>
+          <q-badge
+            v-if="facilityStore.facilityCodeDisplay"
+            color="amber-8"
+            text-color="black"
+            class="text-caption"
+          >
+            {{ facilityStore.facilityCodeDisplay }}
+          </q-badge>
         </q-toolbar-title>
+        <q-badge color="blue-8" text-color="white" class="q-mr-md">
+          Current Mode: HMS
+        </q-badge>
         <q-space />
         <!-- Session Timer -->
         <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
@@ -32,11 +43,11 @@
         <q-btn
           flat
           icon="swap_horiz"
-          label="Companion"
+          label="Switch Mode"
           class="q-mr-sm glass-button"
-          @click="switchToCompanion"
+          @click="switchMode"
         >
-          <q-tooltip>Switch to Companion / Copayment mode</q-tooltip>
+          <q-tooltip>Switch application mode</q-tooltip>
         </q-btn>
         <q-btn
           flat
@@ -327,22 +338,6 @@
           </q-item-section>
         </q-item>
         <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy', 'Pharmacy Head', 'Store Manager', 'Department Head', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'InventoryManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="inventory_2" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Inventory Management</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
           v-if="canAccess(['Lab', 'Admin', 'Lab Head'])"
           clickable
           v-ripple
@@ -470,7 +465,7 @@
           <q-item-section>
             <q-item-label>Undertakings</q-item-label>
           </q-item-section>
-          <q-tooltip>Approve pending undertakings (Companion)</q-tooltip>
+            <q-tooltip>Approve undertakings and part payments (Companion)</q-tooltip>
         </q-item>
 
         <q-item
@@ -626,6 +621,21 @@
           </q-item-section>
         </q-item>
         <q-item
+          v-if="canAccess(['Admin']) || authStore.isSuperAdmin"
+          clickable
+          v-ripple
+          :to="{ name: 'FacilitySetup' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="business" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Facility branding</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
           v-if="canAccess(['Admin', 'Auditor'])"
           clickable
           v-ripple
@@ -676,9 +686,10 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { useAppModeStore, APP_MODES } from '../stores/appMode';
+import { useAppModeStore } from '../stores/appMode';
 import { useThemeStore } from '../stores/theme';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
+import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
 import { patientsAPI, notificationsAPI } from '../services/api';
 import NotificationsPanel from '../components/NotificationsPanel.vue';
@@ -689,6 +700,7 @@ const authStore = useAuthStore();
 const appModeStore = useAppModeStore();
 const themeStore = useThemeStore();
 const moduleSettingsStore = useModuleSettingsStore();
+const facilityStore = useFacilityStore();
 const drawerOpen = ref(true);
 
 // Session timer
@@ -1162,9 +1174,8 @@ const getModuleStatus = (moduleKey) => {
   return moduleSettingsStore.getModuleStatus(moduleKey);
 };
 
-const switchToCompanion = () => {
-  appModeStore.setMode(APP_MODES.COMPANION);
-  router.push('/companion');
+const switchMode = () => {
+  router.push('/choose-mode');
 };
 
 const goToProfile = () => {

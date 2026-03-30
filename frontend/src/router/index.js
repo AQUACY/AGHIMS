@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
+import { useAppModeStore, APP_MODES, APP_MODE_MODULE_KEYS } from '../stores/appMode';
 import { Notify } from 'quasar';
 
 const routes = [
@@ -268,6 +269,12 @@ const routes = [
         meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
+        path: '/admin/facility-setup',
+        name: 'FacilitySetup',
+        component: () => import('../pages/FacilitySetup.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin', facilitySetup: true },
+      },
+      {
         path: '/ipd/inventory-debit/:id',
         name: 'InpatientInventoryDebit',
         component: () => import('../pages/InpatientInventoryDebit.vue'),
@@ -390,6 +397,73 @@ const routes = [
     ],
   },
   {
+    path: '/inventory-mode',
+    component: () => import('../layouts/InventoryLayout.vue'),
+    meta: { requiresAuth: true },
+    children: [
+      {
+        path: '',
+        name: 'InventoryModeDashboard',
+        component: () => import('../pages/InventoryManagement.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'store-stock',
+        name: 'InventoryModeStoreStock',
+        component: () => import('../pages/StoreStockManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin', 'Store Manager', 'Department Head', 'Pharmacy Head'] },
+      },
+      {
+        path: 'requisitions',
+        name: 'InventoryModeRequisitions',
+        component: () => import('../pages/PharmacyRequisitions.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'] },
+      },
+      {
+        path: 'requisitions/create',
+        name: 'InventoryModeCreateRequisition',
+        component: () => import('../pages/CreateRequisition.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+      },
+      {
+        path: 'ward-stock',
+        name: 'InventoryModeWardStock',
+        component: () => import('../pages/WardStock.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'] },
+      },
+      {
+        path: 'inventory-debits',
+        name: 'InventoryModeDebits',
+        component: () => import('../pages/InventoryDebitManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'] },
+      },
+      {
+        path: 'store-management',
+        name: 'InventoryModeStoreManagement',
+        component: () => import('../pages/StoreManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin'] },
+      },
+      {
+        path: 'ward-management',
+        name: 'InventoryModeWardManagement',
+        component: () => import('../pages/WardManagement.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Admin'] },
+      },
+      {
+        path: 'profile',
+        name: 'InventoryModeProfile',
+        component: () => import('../pages/UserProfile.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'facility-setup',
+        name: 'InventoryFacilitySetup',
+        component: () => import('../pages/FacilitySetup.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin', facilitySetup: true },
+      },
+    ],
+  },
+  {
     path: '/companion',
     component: () => import('../layouts/CompanionLayout.vue'),
     meta: { requiresAuth: true },
@@ -405,6 +479,12 @@ const routes = [
         name: 'CompanionProfile',
         component: () => import('../pages/UserProfile.vue'),
         meta: { requiresAuth: true },
+      },
+      {
+        path: 'facility-setup',
+        name: 'CompanionFacilitySetup',
+        component: () => import('../pages/FacilitySetup.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin', facilitySetup: true },
       },
       {
         path: 'visits/create',
@@ -452,13 +532,13 @@ const routes = [
         path: 'visits/:id/day-surgery',
         name: 'CompanionAddDaySurgery',
         component: () => import('../pages/companion/CompanionAddDaySurgery.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'PA', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
         path: 'visits/:id/major-surgery',
         name: 'CompanionAddMajorSurgery',
         component: () => import('../pages/companion/CompanionAddMajorSurgery.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Doctor', 'PA', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
       },
       {
         path: 'visits/:id/dressing',
@@ -536,7 +616,15 @@ const routeModuleMap = {
   'BloodTransfusionLabManagement': 'ipd',
   'PriceListManagement': 'price_list',
   'InventoryManagement': 'inventory',
+  'InventoryModeDashboard': 'inventory',
   'StoreStockManagement': 'inventory',
+  'InventoryModeStoreStock': 'inventory',
+  'InventoryModeRequisitions': 'inventory',
+  'InventoryModeCreateRequisition': 'inventory',
+  'InventoryModeWardStock': 'inventory',
+  'InventoryModeDebits': 'inventory',
+  'InventoryModeStoreManagement': 'inventory',
+  'InventoryModeWardManagement': 'inventory',
   'Icd10DrgMapping': 'icd10_mapping',
   'StaffManagement': 'staff',
   'AuditLogs': 'audit_logs',
@@ -553,6 +641,8 @@ router.beforeEach(async (to, from, next) => {
   try {
     const authStore = useAuthStore();
     const moduleSettingsStore = useModuleSettingsStore();
+    const appModeStore = useAppModeStore();
+    const isSuperAdmin = Boolean(authStore.user?.is_super_admin);
 
     // Initialize auth if needed
     if (!authStore.isAuthenticated && localStorage.getItem('auth_token')) {
@@ -563,55 +653,102 @@ router.beforeEach(async (to, from, next) => {
       next('/login');
     } else if (to.path === '/login' && authStore.isAuthenticated) {
       next('/choose-mode');
-    } else if (to.meta.requiresRole) {
-      // Check for specific role requirement (e.g., Admin only)
-      // Check both primary role and additional roles
-      if (!authStore.canAccess([to.meta.requiresRole])) {
-        next('/');
+    } else if (to.path === '/' && authStore.isAuthenticated) {
+      if (appModeStore.currentMode === APP_MODES.COMPANION) {
+        next('/companion');
+      } else if (appModeStore.currentMode === APP_MODES.INVENTORY) {
+        next('/inventory-mode');
       } else {
         next();
       }
-    } else if (to.meta.allowedRoles) {
-      const canAccess = authStore.canAccess(to.meta.allowedRoles);
-      if (!canAccess) {
-        console.warn('Access denied:', {
-          path: to.path,
-          userRole: authStore.userRole,
-          allUserRoles: authStore.allUserRoles,
-          allowedRoles: to.meta.allowedRoles,
-          user: authStore.user
-        });
-        // Show notification and redirect to dashboard
-        Notify.create({
-          type: 'negative',
-          message: `Access denied. Your role (${authStore.userRole || 'Unknown'}) does not have permission to access this page. Required roles: ${to.meta.allowedRoles.join(', ')}`,
-          position: 'top',
-        });
-        next('/');
-      } else {
-        next();
-      }
-    } else {
-      // Check module status if route has a module mapping
-      const moduleKey = routeModuleMap[to.name];
-      if (moduleKey) {
-        // Fetch module status if not already loaded
-        if (!moduleSettingsStore.modules[moduleKey]) {
-          await moduleSettingsStore.fetchModuleStatus([moduleKey]);
-        }
-        
-        const moduleStatus = moduleSettingsStore.getModuleStatus(moduleKey);
-        if (!moduleStatus.is_active) {
-          Notify.create({
-            type: 'warning',
-            message: 'This module is currently inactive',
-            position: 'top',
-          });
-          next('/'); // Redirect to dashboard
+    } else if (to.path === '/choose-mode') {
+      next();
+    } else if (authStore.isAuthenticated) {
+      // Facility-level mode activation check (Super Admin bypass).
+      const selectedModeModuleKey = APP_MODE_MODULE_KEYS[appModeStore.currentMode];
+      if (!isSuperAdmin && selectedModeModuleKey) {
+        // Always fetch fresh status to avoid stale cache allowing inactive mode access.
+        await moduleSettingsStore.fetchModuleStatus([selectedModeModuleKey]);
+        if (!moduleSettingsStore.isModuleActive(selectedModeModuleKey)) {
+          next('/choose-mode');
           return;
         }
       }
-      
+
+      // Restrict navigation based on currently selected application mode.
+      const isCompanionRoute = to.path.startsWith('/companion');
+      const isInventoryRoute = to.path.startsWith('/inventory-mode');
+
+      if (!isSuperAdmin && appModeStore.currentMode === APP_MODES.COMPANION && !isCompanionRoute) {
+        next('/companion');
+      } else if (!isSuperAdmin && appModeStore.currentMode === APP_MODES.INVENTORY && !isInventoryRoute) {
+        const inventoryPathRedirects = {
+          '/inventory': '/inventory-mode',
+          '/admin/store-stock': '/inventory-mode/store-stock',
+          '/pharmacy/requisitions': '/inventory-mode/requisitions',
+          '/pharmacy/requisitions/create': '/inventory-mode/requisitions/create',
+          '/pharmacy/ward-stock': '/inventory-mode/ward-stock',
+          '/pharmacy/inventory-debits': '/inventory-mode/inventory-debits',
+          '/ipd/store-management': '/inventory-mode/store-management',
+          '/ipd/ward-management': '/inventory-mode/ward-management',
+        };
+        next(inventoryPathRedirects[to.path] || '/inventory-mode');
+      } else if (!isSuperAdmin && appModeStore.currentMode === APP_MODES.HMS && (isCompanionRoute || isInventoryRoute)) {
+        next('/');
+      } else if (to.meta.requiresRole) {
+        // Check for specific role requirement (e.g., Admin only)
+        // Super Admin may open facility setup without Admin role
+        const roleOk = authStore.canAccess([to.meta.requiresRole]);
+        const superOk = to.meta.facilitySetup && authStore.isSuperAdmin;
+        if (!roleOk && !superOk) {
+          next('/');
+        } else {
+          next();
+        }
+      } else if (to.meta.allowedRoles) {
+        const canAccess = authStore.canAccess(to.meta.allowedRoles);
+        if (!canAccess) {
+          console.warn('Access denied:', {
+            path: to.path,
+            userRole: authStore.userRole,
+            allUserRoles: authStore.allUserRoles,
+            allowedRoles: to.meta.allowedRoles,
+            user: authStore.user
+          });
+          // Show notification and redirect to dashboard
+          Notify.create({
+            type: 'negative',
+            message: `Access denied. Your role (${authStore.userRole || 'Unknown'}) does not have permission to access this page. Required roles: ${to.meta.allowedRoles.join(', ')}`,
+            position: 'top',
+          });
+          next('/');
+        } else {
+          next();
+        }
+      } else {
+        // Check module status if route has a module mapping
+        const moduleKey = routeModuleMap[to.name];
+        if (moduleKey) {
+          // Fetch module status if not already loaded
+          if (!moduleSettingsStore.modules[moduleKey]) {
+            await moduleSettingsStore.fetchModuleStatus([moduleKey]);
+          }
+
+          const moduleStatus = moduleSettingsStore.getModuleStatus(moduleKey);
+          if (!moduleStatus.is_active) {
+            Notify.create({
+              type: 'warning',
+              message: 'This module is currently inactive',
+              position: 'top',
+            });
+            next('/'); // Redirect to dashboard
+            return;
+          }
+        }
+
+        next();
+      }
+    } else {
       next();
     }
   } catch (error) {

@@ -18,6 +18,7 @@ from app.models.investigation import Investigation
 from app.models.lab_result import LabResult
 from app.models.scan_result import ScanResult
 from app.models.xray_result import XrayResult
+from app.models.facility_settings import FacilitySettings
 import pandas as pd
 from io import BytesIO
 from fastapi.responses import StreamingResponse
@@ -28,6 +29,18 @@ from app.api.mis_reports_morbidity import (
 )
 
 router = APIRouter(prefix="/mis-reports", tags=["mis-reports"])
+
+DEFAULT_CLINIC_DISPLAY_NAME = "KDG Health App"
+
+
+def _resolve_clinic_name_for_export(db: Session, clinic_name: Optional[str]) -> str:
+    """Use explicit query value when provided; otherwise load from facility_settings."""
+    if clinic_name is not None and str(clinic_name).strip():
+        return str(clinic_name).strip()
+    row = db.query(FacilitySettings).order_by(FacilitySettings.id).first()
+    if row and (row.display_name or "").strip():
+        return row.display_name.strip()
+    return DEFAULT_CLINIC_DISPLAY_NAME
 
 
 def format_age_for_dhims(patient: Patient, encounter_date: date) -> str:
@@ -294,7 +307,7 @@ def export_consulting_room_register(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     department: Optional[str] = Query(None, description="Filter by department(s) - comma-separated for multiple"),
-    clinic_name: str = Query("Asesewa Government Hospital", description="Clinic name for header"),
+    clinic_name: Optional[str] = Query(None, description="Clinic name for header (defaults to facility settings)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Records", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("mis_reports", "read"))
@@ -303,6 +316,7 @@ def export_consulting_room_register(
     Export Consulting Room Register as Excel file matching DHIMS template format
     """
     try:
+        clinic_name = _resolve_clinic_name_for_export(db, clinic_name)
         # Get report data
         report_response = get_consulting_room_register(
             start_date=start_date,
@@ -323,7 +337,7 @@ def export_consulting_room_register(
         # Create DataFrame with proper structure matching template
         # First, create header rows
         header_rows = [
-            [f"MIAM's Consulting Room Register From {start_formatted} To {end_formatted}", None, None, None, None, None, None, None, None, None, None, None, None, None],
+            [f"{clinic_name} - Consulting Room Register From {start_formatted} To {end_formatted}", None, None, None, None, None, None, None, None, None, None, None, None, None],
             [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             [f"Clinic : {clinic_name}", None, None, None, None, None, None, None, None, None, None, None, None, None],
             [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
@@ -654,8 +668,8 @@ def export_statement_of_outpatient(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     departments: Optional[str] = Query(None, description="Comma-separated list of departments"),
-    clinic_name: str = Query("Asesewa Government Hospital", description="Clinic name for header"),
-    clinic_city: str = Query("Asesewa", description="Clinic city for header"),
+    clinic_name: Optional[str] = Query(None, description="Clinic name for header (defaults to facility settings)"),
+    clinic_city: str = Query("", description="Clinic city for header"),
     clinic_region: str = Query("N/A", description="Clinic region for header"),
     clinic_district: str = Query("N/A", description="Clinic district for header"),
     db: Session = Depends(get_db),
@@ -666,6 +680,7 @@ def export_statement_of_outpatient(
     Export Statement of Outpatient as Excel file matching DHIMS template format
     """
     try:
+        clinic_name = _resolve_clinic_name_for_export(db, clinic_name)
         # Get report data
         report_response = get_statement_of_outpatient(
             start_date=start_date,
@@ -949,8 +964,8 @@ def export_opd_morbidity(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     departments: Optional[str] = Query(None, description="Comma-separated list of departments"),
-    clinic_name: str = Query("Asesewa Government Hospital", description="Clinic name for header"),
-    clinic_city: str = Query("Asesewa", description="Clinic city for header"),
+    clinic_name: Optional[str] = Query(None, description="Clinic name for header (defaults to facility settings)"),
+    clinic_city: str = Query("", description="Clinic city for header"),
     clinic_region: str = Query("N/A", description="Clinic region for header"),
     clinic_district: str = Query("N/A", description="Clinic district for header"),
     db: Session = Depends(get_db),
@@ -961,6 +976,7 @@ def export_opd_morbidity(
     Export OPD Morbidity Report as Excel file matching DHIMS template format
     """
     try:
+        clinic_name = _resolve_clinic_name_for_export(db, clinic_name)
         # Get report data
         report_response = get_opd_morbidity(
             start_date=start_date,
@@ -989,7 +1005,7 @@ def export_opd_morbidity(
         
         # Create header rows
         header_rows = [
-            [f"MIAM's DHIMS Monthly - Out-Patient Morbidity Returns From {start_formatted} To {end_formatted}", None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
+            [f"{clinic_name} - DHIMS Monthly - Out-Patient Morbidity Returns From {start_formatted} To {end_formatted}", None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             [f"Clinic : {clinic_name}", None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             [f"Report Generation Date: {report_gen_date}", None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             [f"Month : {month}", None, f"Year : {year}", None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],

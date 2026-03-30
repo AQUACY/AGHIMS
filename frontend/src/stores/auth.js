@@ -12,6 +12,10 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     userRole: (state) => state.user?.role || null, // Primary role (for layout)
     userName: (state) => state.user?.full_name || state.user?.username || null,
+    isSuperAdmin: (state) => {
+      const role = (state.user?.role || '').toLowerCase();
+      return Boolean(state.user?.is_super_admin) || role === 'super admin' || role === 'superadmin';
+    },
     allUserRoles: (state) => {
       // Get all roles (primary + additional)
       if (!state.user) return [];

@@ -2035,10 +2035,12 @@ import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, patientsAPI, encountersAPI, vitalsAPI, priceListAPI, staffAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
+import { useFacilityStore } from '../stores/facility';
 
 const $q = useQuasar();
 const route = useRoute();
 const authStore = useAuthStore();
+const facilityStore = useFacilityStore();
 const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
@@ -5136,6 +5138,9 @@ const formatReceiptLine = (label, value) => {
   return `<div><span class=\"lbl\">${label}</span><span class=\"val\">${value}</span></div>`;
 };
 
+const facilityNameForPrint = () =>
+  (facilityStore.displayName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 const buildReceiptHtml = async (onlyNewlyDispensed = false) => {
   // Ensure staff is loaded before building receipt
   if (Object.keys(staffMap.value).length === 0) {
@@ -5248,7 +5253,7 @@ const buildReceiptHtml = async (onlyNewlyDispensed = false) => {
         <img src=\"/logos/ministry-of-health-logo.png\" alt=\"Ministry of Health\" class=\"logo\" onerror=\"this.style.display='none'\">
         <img src=\"/logos/ghana-health-service-logo.png\" alt=\"Ghana Health Service\" class=\"logo\" onerror=\"this.style.display='none'\">
       </div>
-      <div class=\"center hospital-name\">ASESEWA GOVERNMENT HOSPITAL</div>
+      <div class=\"center hospital-name\">${facilityNameForPrint()}</div>
       <div class=\"hdr center\">
         <div class=\"dept-name\">PHARMACY DEPARTMENT BILL CARD</div>
       <div>${now.toLocaleString()}</div>
@@ -5472,7 +5477,7 @@ const buildIPDReceiptHtml = async (onlyNewlyDispensed = false) => {
         <img src=\"/logos/ministry-of-health-logo.png\" alt=\"Ministry of Health\" class=\"logo\" onerror=\"this.style.display='none'\">
         <img src=\"/logos/ghana-health-service-logo.png\" alt=\"Ghana Health Service\" class=\"logo\" onerror=\"this.style.display='none'\">
       </div>
-      <div class=\"center hospital-name\">ASESEWA GOVERNMENT HOSPITAL</div>
+      <div class=\"center hospital-name\">${facilityNameForPrint()}</div>
       <div class=\"hdr center\">
         <div class=\"dept-name\">IPD PHARMACY DEPARTMENT BILL CARD</div>
         <div>${now.toLocaleString()}</div>
@@ -5730,7 +5735,7 @@ const buildExternalPrescriptionHtml = async () => {
         <img src="/logos/ministry-of-health-logo.png" alt="Ministry of Health" class="logo" onerror="this.style.display='none'">
         <img src="/logos/ghana-health-service-logo.png" alt="Ghana Health Service" class="logo" onerror="this.style.display='none'">
       </div>
-      <div class="center hospital-name">ASESEWA GOVERNMENT HOSPITAL</div>
+      <div class="center hospital-name">${facilityNameForPrint()}</div>
       <div class="hdr center">
         <div class="dept-name">EXTERNAL PRESCRIPTION</div>
         <div><span class="external-badge">TO BE FILLED OUTSIDE</span></div>

@@ -105,7 +105,7 @@
                   Undertaking approved
                 </q-badge>
                 <span v-if="(selectedVisit.undertaking_status === 'pending' || selectedVisit.undertaking_status === 'approved') && selectedVisit.undertaking_deposit_amount != null" class="q-ml-sm text-body2">
-                  Deposit: GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount) }}
+                  Part payment: GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount) }}
                 </span>
                 <div v-if="selectedVisit.undertaking_status === 'approved' && selectedVisit.undertaking_approved_by_name" class="q-mt-xs text-body2 text-grey-8">
                   Approved by <strong>{{ selectedVisit.undertaking_approved_by_name }}</strong> on {{ formatDate(selectedVisit.undertaking_approved_at) }}
@@ -188,6 +188,47 @@
         </q-card-section>
       </q-card>
 
+      <q-card v-if="selectedVisit && canMarkPaid" class="q-mb-md glass-card" flat>
+        <q-card-section>
+          <div class="text-subtitle1 text-weight-bold glass-text">Admission deposit</div>
+          <div class="text-caption text-grey-7 q-mt-xs">
+            Amount taken on admission or at the start of the visit (with a physical receipt). When you record payment for services, you can draw from this pool:
+            each line receives a synthetic receipt like
+            <span v-if="admissionDepositReceiptBase" class="text-weight-medium text-grey-9">{{ admissionDepositReceiptBase }}-1</span>
+            <span v-else class="text-weight-medium text-grey-9">(receipt)-1</span>, <span class="text-weight-medium text-grey-9">-2</span>, …
+            If services exceed the pool, turn off “Pay from admission deposit” and record the usual receipt for the difference.
+            If the bill is lower than the deposit, the unused balance can be refunded at discharge.
+          </div>
+          <div v-if="selectedVisit.status === 'open'" class="row q-mt-md items-center q-col-gutter-md flex-wrap">
+            <div class="col-auto text-body2">
+              On file: <strong>GH¢ {{ formatPrice(admissionDepositCap) }}</strong>
+              <span v-if="admissionDepositReceiptBase" class="text-grey-7"> · Bank/cash receipt <strong>{{ admissionDepositReceiptBase }}</strong></span>
+            </div>
+            <div class="col-auto text-body2">
+              Remaining for bill lines: <strong>GH¢ {{ formatPrice(admissionDepositRemaining) }}</strong>
+            </div>
+            <q-btn
+              flat
+              color="primary"
+              icon="savings"
+              label="Set or edit deposit"
+              @click="openAdmissionDepositDialog"
+            />
+          </div>
+          <div v-else class="text-body2 text-grey-7 q-mt-sm">
+            Deposit was GH¢ {{ formatPrice(admissionDepositCap) }}<span v-if="admissionDepositReceiptBase"> ({{ admissionDepositReceiptBase }})</span>.
+          </div>
+          <q-banner
+            v-if="admissionDepositRefundHint"
+            rounded
+            class="bg-teal-1 text-dark q-mt-sm"
+            dense
+          >
+            {{ admissionDepositRefundHint }}
+          </q-banner>
+        </q-card-section>
+      </q-card>
+
       <q-card class="q-mb-md glass-card" flat>
         <q-card-section>
           <div class="row items-center q-mb-md">
@@ -225,6 +266,7 @@
             />
             <div v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'" class="text-caption text-grey-7">
               Payments are grouped by category (one receipt per category by default). You can still override receipts per item.
+              Use an admission deposit from the card above to pay lines without a separate cash receipt until the pool runs out.
             </div>
             <div v-if="selectedVisit && selectedVisit.status === 'closed' && !canAdmin" class="text-caption text-grey-7">
               This visit is closed. Only Admin can reopen or edit.
@@ -318,7 +360,7 @@
                           @click="paySingle(props.row)"
                         />
                       </template>
-                      <template v-else-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open' && isPaidRow(props.row) && props.row.receipt_number && !props.row.cancelled">
+                      <template v-else-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open' && isPaidRow(props.row) && !props.row.cancelled">
                         <q-btn
                           flat
                           dense
@@ -332,7 +374,7 @@
                           <q-tooltip>Reverse payment for this item</q-tooltip>
                         </q-btn>
                       </template>
-                      <template v-if="canAddItems && selectedVisit && selectedVisit.status === 'open' && !props.row.receipt_number && !props.row.cancelled">
+                      <template v-if="canAddItems && selectedVisit && selectedVisit.status === 'open' && !isPaidRow(props.row) && !props.row.cancelled">
                         <q-btn
                           flat
                           dense
@@ -346,7 +388,7 @@
                           <q-tooltip>Cancel this item (reason required)</q-tooltip>
                         </q-btn>
                       </template>
-                      <template v-if="isSuperAdmin && selectedVisit && selectedVisit.status === 'open' && !props.row.receipt_number">
+                      <template v-if="isSuperAdmin && selectedVisit && selectedVisit.status === 'open' && !isPaidRow(props.row)">
                         <q-btn
                           flat
                           dense
@@ -430,13 +472,48 @@
           </q-card>
 
           <div v-if="billItems.length > 0" class="row q-mt-lg justify-end column items-end">
-            <div class="text-h6 text-weight-bold">Total: GH¢ {{ formatPrice(billTotal) }}</div>
-            <div class="text-body2 text-grey-7">Paid so far: GH¢ {{ formatPrice(paidAmount) }}</div>
-            <div v-if="undertakingDepositAmount != null && undertakingDepositAmount > 0" class="text-body2 text-grey-7">
-              Deposit: GH¢ {{ formatPrice(undertakingDepositAmount) }}
+            <div class="text-caption text-grey-7 q-mb-xs self-end">Tap an amount to open receipt view (lines, receipts, who recorded payment).</div>
+            <div
+              class="text-h6 text-weight-bold receipt-amount-hit q-pa-xs rounded-borders"
+              tabindex="0"
+              role="button"
+              @click="openBillingReceiptDialog('total')"
+              @keyup.enter="openBillingReceiptDialog('total')"
+            >
+              Total: GH¢ {{ formatPrice(billTotal) }}
+              <q-tooltip anchor="center left" self="center right">Bill &amp; payment viewer</q-tooltip>
+            </div>
+            <div
+              class="text-body2 text-grey-7 receipt-amount-hit q-pa-xs rounded-borders"
+              tabindex="0"
+              role="button"
+              @click="openBillingReceiptDialog('paid')"
+              @keyup.enter="openBillingReceiptDialog('paid')"
+            >
+              Paid so far: GH¢ {{ formatPrice(paidAmount) }}
+              <q-tooltip anchor="center left" self="center right">Money received</q-tooltip>
+            </div>
+            <div
+              class="text-body2 text-grey-7 receipt-amount-hit q-pa-xs rounded-borders"
+              tabindex="0"
+              role="button"
+              @click="openBillingReceiptDialog('deposit')"
+              @keyup.enter="openBillingReceiptDialog('deposit')"
+            >
+              Part payment: GH¢ {{ formatPrice(undertakingDepositAmount != null ? undertakingDepositAmount : 0) }}
+              <q-tooltip anchor="center left" self="center right">Amount paid on behalf of the client now; undertaking covers the agreement to pay the balance later</q-tooltip>
             </div>
             <div class="row items-center q-gutter-sm no-wrap">
-              <div class="text-subtitle1 text-weight-medium">Pending balance: GH¢ {{ formatPrice(pendingBalance) }}</div>
+              <div
+                class="text-subtitle1 text-weight-medium receipt-amount-hit q-pa-xs rounded-borders"
+                tabindex="0"
+                role="button"
+                @click="openBillingReceiptDialog('balance')"
+                @keyup.enter="openBillingReceiptDialog('balance')"
+              >
+                Pending balance: GH¢ {{ formatPrice(pendingBalance) }}
+                <q-tooltip anchor="center left" self="center right">Balance due overview</q-tooltip>
+              </div>
               <q-btn
                 v-if="showCloseVisitByBalance"
                 unelevated
@@ -939,12 +1016,39 @@
           </div>
         </q-card-section>
         <q-card-section class="q-pt-none">
+          <q-toggle
+            v-model="useAdmissionDepositForPayment"
+            color="primary"
+            :disable="admissionDepositRemaining <= 0 || !admissionDepositReceiptBase"
+            label="Pay from admission deposit"
+            class="q-mb-sm"
+          />
+          <div v-if="useAdmissionDepositForPayment" class="text-caption text-grey-7 q-mb-md">
+            <template v-if="depositTopUpAmount > 0.0001">
+              GH¢ {{ formatPrice(admissionDepositRemaining) }} will be taken from the deposit (synthetic receipts
+              <template v-if="admissionDepositReceiptBase">{{ admissionDepositReceiptBase }}-n</template>
+              <template v-else>(deposit)-n</template>).
+              GH¢ {{ formatPrice(depositTopUpAmount) }} must be paid with a separate counter receipt — enter it below with the payment method.
+            </template>
+            <template v-else>
+              Lines are paid only from the pool; receipt numbers are generated as
+              <template v-if="admissionDepositReceiptBase">
+                {{ admissionDepositReceiptBase }}-1, {{ admissionDepositReceiptBase }}-2, …
+              </template>
+              <template v-else>(deposit receipt)-1, -2, …</template>
+              (about GH¢ {{ formatPrice(admissionDepositRemaining) }} left).
+            </template>
+          </div>
+          <div v-else-if="admissionDepositCap > 0" class="text-caption text-grey-7 q-mb-md">
+            Leave “Pay from admission deposit” off to record the real receipt you issue (cash, card, MoMo, etc.).
+          </div>
           <q-input
             v-model="payDialogDefaultReceipt"
             dense
             outlined
-            label="Receipt number (default for this category)"
             class="q-mb-md"
+            :label="useAdmissionDepositForPayment && depositTopUpAmount > 0.0001 ? 'Top-up receipt (balance beyond deposit)' : 'Receipt number (default for this category)'"
+            :disable="useAdmissionDepositForPayment && depositTopUpAmount <= 0.0001"
           />
           <q-select
             v-model="payDialogPaymentMethod"
@@ -956,6 +1060,7 @@
             options-dense
             label="Payment method"
             class="q-mb-md"
+            :disable="useAdmissionDepositForPayment && depositTopUpAmount <= 0.0001"
           >
             <template v-slot:prepend>
               <q-icon name="payments" />
@@ -985,6 +1090,7 @@
                   outlined
                   placeholder="Override receipt (optional)"
                   class="receipt-input"
+                  :disable="useAdmissionDepositForPayment && depositTopUpAmount <= 0.0001"
                 />
               </q-td>
             </template>
@@ -999,6 +1105,47 @@
             :disable="!hasAnyReceiptInDialog"
             :loading="markingPaid"
             @click="confirmMarkPaid"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Admission deposit: amount + physical receipt -->
+    <q-dialog v-model="showAdmissionDepositDialog" persistent>
+      <q-card style="min-width: 360px">
+        <q-card-section>
+          <div class="text-h6">Admission deposit</div>
+          <div class="text-caption text-grey-7 q-mt-sm">
+            Total amount received on admission (or at visit). Save the same receipt number you used at the desk; it is the base for synthetic line receipts when paying from the pool.
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <q-input
+            v-model.number="admissionDepositFormAmount"
+            type="number"
+            min="0"
+            step="0.01"
+            filled
+            dense
+            label="Deposit amount (GH¢)"
+          />
+          <q-input
+            v-model="admissionDepositFormReceipt"
+            filled
+            dense
+            label="Physical receipt number"
+            class="q-mt-md"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" color="grey" v-close-popup />
+          <q-btn
+            unelevated
+            label="Save"
+            color="primary"
+            :disable="!admissionDepositFormValid"
+            :loading="savingAdmissionDeposit"
+            @click="saveAdmissionDeposit"
           />
         </q-card-actions>
       </q-card>
@@ -1086,12 +1233,15 @@
       </q-card>
     </q-dialog>
 
-    <!-- Request undertaking dialog: optional deposit -->
+    <!-- Request undertaking dialog -->
     <q-dialog v-model="showRequestUndertakingDialog" persistent>
       <q-card style="min-width: 360px">
         <q-card-section>
           <div class="text-h6">Request undertaking</div>
-          <div class="text-caption text-grey-7 q-mt-sm">Client will pay later. Optionally record a deposit amount (not mapped to items) to solidify the agreement.</div>
+          <div class="text-caption text-grey-7 q-mt-sm">
+            The client may pay a part payment now (on their behalf), then enters an undertaking to settle the remainder later.
+            Optionally record the part payment (not mapped to individual lines).
+          </div>
         </q-card-section>
         <q-card-section>
           <q-input
@@ -1101,14 +1251,14 @@
             step="0.01"
             filled
             dense
-            label="Deposit amount (GH¢) – optional"
+            label="Part payment amount (GH¢) – optional"
             placeholder="0 or leave empty"
           />
           <q-input
             v-model="requestUndertakingDepositReceipt"
             filled
             dense
-            label="Deposit receipt number (optional)"
+            label="Part payment receipt number (optional)"
             class="q-mt-md"
           />
         </q-card-section>
@@ -1125,12 +1275,12 @@
       </q-card>
     </q-dialog>
 
-    <!-- Edit undertaking dialog: change deposit or cancel -->
+    <!-- Edit undertaking dialog: change part payment or cancel -->
     <q-dialog v-model="showEditUndertakingDialog" persistent>
       <q-card style="min-width: 360px">
         <q-card-section>
           <div class="text-h6">Edit undertaking</div>
-          <div class="text-caption text-grey-7 q-mt-sm">Change the deposit amount or cancel the undertaking if the client has paid in full.</div>
+          <div class="text-caption text-grey-7 q-mt-sm">Change the part payment amount or cancel the undertaking if the client has settled the bill in full.</div>
         </q-card-section>
         <q-card-section>
           <q-input
@@ -1140,13 +1290,13 @@
             step="0.01"
             filled
             dense
-            label="Deposit amount (GH¢)"
+            label="Part payment amount (GH¢)"
           />
           <q-input
             v-model="editUndertakingDepositReceipt"
             filled
             dense
-            label="Deposit receipt number (optional)"
+            label="Part payment receipt number (optional)"
             class="q-mt-md"
           />
         </q-card-section>
@@ -1172,8 +1322,8 @@
           <div class="text-h6">Approve undertaking</div>
           <div class="text-caption text-grey-7 q-mt-sm">Review and approve. The visit can then be closed even with unpaid items.</div>
           <q-card v-if="selectedVisit" flat bordered class="q-mt-md q-pa-md">
-            <div class="text-body2"><strong>Deposit:</strong> GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount || 0) }}</div>
-            <div class="text-body2 q-mt-sm"><strong>Deposit receipt:</strong> {{ selectedVisit.undertaking_deposit_receipt_number || '—' }}</div>
+            <div class="text-body2"><strong>Part payment:</strong> GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount || 0) }}</div>
+            <div class="text-body2 q-mt-sm"><strong>Part payment receipt:</strong> {{ selectedVisit.undertaking_deposit_receipt_number || '—' }}</div>
             <div class="text-body2 q-mt-sm"><strong>Requested at:</strong> {{ formatDate(selectedVisit.undertaking_requested_at) }}</div>
             <div class="text-body2 q-mt-sm"><strong>Requested by:</strong> {{ selectedVisit.undertaking_requested_by_name || '—' }}</div>
           </q-card>
@@ -1252,6 +1402,14 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <CompanionBillingReceiptDialog
+      v-model="showReceiptDialog"
+      :visit="selectedVisit"
+      :items="billItems"
+      :loading="false"
+      :focus-hint="receiptDialogFocus"
+    />
   </q-page>
 </template>
 
@@ -1260,6 +1418,7 @@ import { ref, reactive, computed } from 'vue';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI, billingAPI } from '../../services/api';
+import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
 
 const $q = useQuasar();
 const authStore = useAuthStore();
@@ -1313,7 +1472,21 @@ const payDialogDefaultReceipt = ref('');
 const payDialogCategoryKey = ref(null);
 const payDialogItemIds = ref([]);
 const markingPaid = ref(false);
+const useAdmissionDepositForPayment = ref(false);
+const showAdmissionDepositDialog = ref(false);
+const admissionDepositFormAmount = ref(null);
+const admissionDepositFormReceipt = ref('');
+const savingAdmissionDeposit = ref(false);
 const refundingItemId = ref(null);
+
+const showReceiptDialog = ref(false);
+const receiptDialogFocus = ref('overview');
+
+function openBillingReceiptDialog(hint) {
+  if (!selectedVisit.value) return;
+  receiptDialogFocus.value = hint || 'overview';
+  showReceiptDialog.value = true;
+}
 
 const showReconcileDialog = ref(false);
 const reconcileFile = ref(null);
@@ -1441,8 +1614,8 @@ const deletingItemId = ref(null);
 const cancellingItemId = ref(null);
 
 const canMarkPaid = computed(() => authStore.canAccess(['Billing', 'Admin']));
-/** Can add services (lab, scan, xray, drugs) and cancel items. Doctor and PA can add/cancel; only Billing/Admin can mark paid. */
-const canAddItems = computed(() => authStore.canAccess(['Billing', 'Doctor', 'PA', 'Admin']));
+/** Cancels unpaid items and matches Doctor/PA/Nurse billing actions; only Billing/Admin can mark paid. */
+const canAddItems = computed(() => authStore.canAccess(['Billing', 'Doctor', 'PA', 'Nurse', 'Admin']));
 const canAdmin = computed(() => authStore.canAccess(['Admin']));
 const isSuperAdmin = computed(() => Boolean(authStore.user?.is_super_admin));
 const canEditDeleteInpatient = computed(() => authStore.canAccess(['Admin']));
@@ -1489,10 +1662,34 @@ function rowAmount(row) {
   return (Number(row.unit_price) || 0) * (Number(row.quantity) || 1);
 }
 
+function admissionAppliedOnRow(row) {
+  if (row.admission_deposit_applied != null && Number(row.admission_deposit_applied) > 0) {
+    return Number(row.admission_deposit_applied);
+  }
+  if ((row.payment_method || '') === 'admission_deposit') {
+    return rowAmount(row);
+  }
+  return 0;
+}
+
 function isPaidRow(row) {
-  // Amount of 0 means already paid (or free), treat as paid.
   if (rowAmount(row) === 0) return true;
-  return Boolean(row.receipt_number);
+  const T = rowAmount(row);
+  const d = admissionAppliedOnRow(row);
+  const ln = String(row.admission_deposit_line_receipt || '').trim();
+  const rn = String(row.receipt_number || '').trim();
+  const rawApplied = row.admission_deposit_applied;
+  const pm = (row.payment_method || '').trim();
+
+  if (rawApplied == null && pm === 'admission_deposit') {
+    return Boolean(rn);
+  }
+  if (rawApplied != null) {
+    const rem = Math.round((T - Number(rawApplied)) * 100) / 100;
+    if (rem <= 0.01) return Boolean(ln);
+    return Boolean(ln && rn);
+  }
+  return Boolean(rn);
 }
 
 function isCancelledRow(row) {
@@ -1505,7 +1702,18 @@ function isInpatientItem(row) {
 
 function paidLabel(row) {
   if (rowAmount(row) === 0) return 'Paid (0.00)';
-  return row.receipt_number ? `Receipt ${row.receipt_number}` : 'Paid';
+  const ln = String(row.admission_deposit_line_receipt || '').trim();
+  const rn = String(row.receipt_number || '').trim();
+  if ((row.payment_method || '') === 'mixed' && ln && rn) {
+    return `Deposit ${ln} + top-up ${rn}`;
+  }
+  if ((row.payment_method || '') === 'admission_deposit') {
+    const show = ln || rn;
+    return show ? `Admission deposit · ${show}` : 'Paid';
+  }
+  if (rn) return `Receipt ${rn}`;
+  if (ln) return `Admission deposit · ${ln}`;
+  return 'Paid';
 }
 
 function normalizeCategory(cat) {
@@ -1582,7 +1790,66 @@ const payDialogTitle = computed(() => {
   return 'items';
 });
 
+const admissionDepositReceiptBase = computed(() =>
+  String(selectedVisit.value?.admission_deposit_receipt_number || '').trim(),
+);
+
+const admissionDepositCap = computed(() => {
+  const v = selectedVisit.value?.admission_deposit_amount;
+  if (v == null || !Number.isFinite(Number(v))) return 0;
+  return Math.max(0, Number(v));
+});
+
+const admissionDepositConsumed = computed(() =>
+  (billItems.value || []).reduce((sum, row) => {
+    if (isCancelledRow(row)) return sum;
+    return sum + admissionAppliedOnRow(row);
+  }, 0),
+);
+
+const payDialogSelectionTotal = computed(() =>
+  itemsToPay.value.reduce((s, i) => s + rowAmount(i), 0),
+);
+
+const depositTopUpAmount = computed(() => {
+  const need = payDialogSelectionTotal.value;
+  const rem = admissionDepositRemaining.value;
+  return Math.max(0, Math.round((need - rem) * 100) / 100);
+});
+
+const admissionDepositRemaining = computed(() =>
+  Math.max(0, admissionDepositCap.value - admissionDepositConsumed.value),
+);
+
+const payFromDepositShortfall = computed(() => {
+  if (!useAdmissionDepositForPayment.value) return '';
+  const need = itemsToPay.value.reduce((s, i) => s + rowAmount(i), 0);
+  if (need <= admissionDepositRemaining.value + 0.0001) return '';
+  if (admissionDepositRemaining.value <= 0.0001) {
+    return 'No admission deposit left. Turn off “Pay from admission deposit” and record a receipt for the full amount.';
+  }
+  const cashRn = String(payDialogDefaultReceipt.value || '').trim();
+  if (!cashRn) {
+    return `GH¢ ${formatPrice(need - admissionDepositRemaining.value)} is due after the deposit. Enter the top-up receipt and payment method.`;
+  }
+  return '';
+});
+
+const admissionDepositFormValid = computed(() => {
+  const amt = Number(admissionDepositFormAmount.value);
+  if (!Number.isFinite(amt) || amt < 0) return false;
+  if (amt === 0) return true;
+  return String(admissionDepositFormReceipt.value || '').trim().length > 0;
+});
+
 const hasAnyReceiptInDialog = computed(() => {
+  if (payFromDepositShortfall.value) return false;
+  if (useAdmissionDepositForPayment.value && admissionDepositReceiptBase.value) {
+    const need = payDialogSelectionTotal.value;
+    if (need <= 0) return false;
+    if (need <= admissionDepositRemaining.value + 0.0001) return true;
+    return Boolean(String(payDialogDefaultReceipt.value || '').trim());
+  }
   const defaultReceipt = String(payDialogDefaultReceipt.value || '').trim();
   if (defaultReceipt) return true;
   return itemsToPay.value.some((item) => String(itemReceipts.value[item.id] || '').trim());
@@ -1620,6 +1887,12 @@ const allBillItemsPaid = computed(() => {
   const items = billItems.value || [];
   if (items.length === 0) return true;
   return items.filter((row) => !isCancelledRow(row)).every((row) => isPaidRow(row));
+});
+
+const admissionDepositRefundHint = computed(() => {
+  if (!selectedVisit.value || selectedVisit.value.status !== 'open') return '';
+  if (!allBillItemsPaid.value || admissionDepositRemaining.value <= 0) return '';
+  return `All bill lines are settled. GH¢ ${formatPrice(admissionDepositRemaining.value)} is still unused on the admission deposit — arrange a refund with finance if the client is owed this balance.`;
 });
 
 const undertakingApproved = computed(() => (selectedVisit.value?.undertaking_status || '').toLowerCase() === 'approved');
@@ -2028,11 +2301,83 @@ function openPayDialogForCategory(categoryKey, itemIdsOverride = null) {
   const byId = {};
   (billItems.value || []).filter((i) => ids.includes(i.id)).forEach((item) => { byId[item.id] = ''; });
   itemReceipts.value = byId;
+  useAdmissionDepositForPayment.value =
+    admissionDepositRemaining.value > 0 && Boolean(selectedVisit.value?.admission_deposit_receipt_number);
   showMarkPaidDialog.value = true;
+}
+
+function openAdmissionDepositDialog() {
+  const cap = selectedVisit.value?.admission_deposit_amount;
+  admissionDepositFormAmount.value = cap != null && Number(cap) >= 0 ? Number(cap) : null;
+  admissionDepositFormReceipt.value = String(selectedVisit.value?.admission_deposit_receipt_number || '');
+  showAdmissionDepositDialog.value = true;
+}
+
+async function saveAdmissionDeposit() {
+  if (!selectedVisit.value || !admissionDepositFormValid.value) return;
+  const amt = Number(admissionDepositFormAmount.value);
+  const receipt = String(admissionDepositFormReceipt.value || '').trim();
+  savingAdmissionDeposit.value = true;
+  try {
+    await companionVisitsAPI.update(selectedVisit.value.id, {
+      admission_deposit_amount: amt,
+      admission_deposit_receipt_number: receipt || undefined,
+    });
+    showAdmissionDepositDialog.value = false;
+    $q.notify({ type: 'positive', message: 'Admission deposit saved', position: 'top' });
+    await selectVisit(selectedVisit.value);
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || 'Failed to save admission deposit',
+      position: 'top',
+    });
+  } finally {
+    savingAdmissionDeposit.value = false;
+  }
 }
 
 async function confirmMarkPaid() {
   if (!selectedVisit.value || itemsToPay.value.length === 0) return;
+  if (payFromDepositShortfall.value) {
+    $q.notify({ type: 'warning', message: payFromDepositShortfall.value, position: 'top' });
+    return;
+  }
+
+  if (useAdmissionDepositForPayment.value && admissionDepositReceiptBase.value) {
+    const ids = itemsToPay.value.map((i) => i.id);
+    if (ids.length === 0) return;
+    markingPaid.value = true;
+    try {
+      const topUp = depositTopUpAmount.value;
+      const payload = {
+        item_ids: ids,
+        use_admission_deposit: true,
+      };
+      if (topUp > 0.0001) {
+        payload.receipt_number = String(payDialogDefaultReceipt.value || '').trim();
+        payload.payment_method = payDialogPaymentMethod.value || null;
+      }
+      await companionVisitsAPI.markItemsPaid(selectedVisit.value.id, payload);
+      const msg =
+        topUp > 0.0001
+          ? `${ids.length} item(s) paid (deposit + GH¢ ${formatPrice(topUp)} top-up)`
+          : `${ids.length} item(s) paid from admission deposit`;
+      $q.notify({ type: 'positive', message: msg, position: 'top' });
+      showMarkPaidDialog.value = false;
+      await selectVisit(selectedVisit.value);
+    } catch (e) {
+      $q.notify({
+        type: 'negative',
+        message: e.response?.data?.detail || 'Failed to mark as paid from deposit',
+        position: 'top',
+      });
+    } finally {
+      markingPaid.value = false;
+    }
+    return;
+  }
+
   const defaultReceipt = String(payDialogDefaultReceipt.value || '').trim();
   const toMark = itemsToPay.value.filter((item) => {
     const overrideReceipt = String(itemReceipts.value[item.id] || '').trim();
@@ -2485,3 +2830,19 @@ async function confirmGovItem(row) {
   }
 }
 </script>
+
+<style scoped>
+.receipt-amount-hit {
+  cursor: pointer;
+  outline-offset: 2px;
+}
+.receipt-amount-hit:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.body--dark .receipt-amount-hit:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.receipt-amount-hit:focus {
+  outline: 2px solid var(--q-primary);
+}
+</style>

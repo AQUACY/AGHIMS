@@ -31,9 +31,9 @@
                 <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
                 <q-item-label caption>{{ item.item_code }} · {{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }} = GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
                 <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
-                <div v-if="item.receipt_number" class="receipt-badge q-mt-sm">
+                <div v-if="isCompanionBillItemPaid(item)" class="receipt-badge q-mt-sm">
                   <q-icon name="receipt" size="18px" class="q-mr-xs" />
-                  <span class="text-weight-medium">Receipt {{ item.receipt_number }}</span>
+                  <span class="text-weight-medium">{{ companionBillPaidLabel(item) }}</span>
                   <span v-if="item.paid_at" class="q-ml-sm text-caption">· Paid {{ formatDateTime(item.paid_at) }}</span>
                 </div>
                 <div v-else class="unpaid-badge q-mt-sm">
@@ -44,7 +44,7 @@
               </q-item-section>
               <q-item-section side>
                 <q-btn
-                  v-if="!visitClosed && !item.receipt_number"
+                  v-if="!visitClosed && !isCompanionBillItemPaid(item)"
                   flat
                   dense
                   round
@@ -54,7 +54,7 @@
                 >
                   <q-tooltip>Remove from bill</q-tooltip>
                 </q-btn>
-                <q-tooltip v-else-if="item.receipt_number" content="Paid — cannot remove">
+                <q-tooltip v-else-if="isCompanionBillItemPaid(item)" content="Paid — cannot remove">
                   <q-icon name="check_circle" color="positive" size="24px" />
                 </q-tooltip>
               </q-item-section>
@@ -244,6 +244,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { companionVisitsAPI, priceListAPI } from '../../services/api';
+import { isCompanionBillItemPaid, companionBillPaidLabel } from '../../utils/companionBillItemPaid.js';
 
 const route = useRoute();
 const $q = useQuasar();

@@ -48,6 +48,10 @@ class CompanionVisit(Base):
     undertaking_unapproved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     undertaking_unapprove_reason = Column(Text, nullable=True)
 
+    # Admission deposit: prepaid at admission/visit; consumed against bill lines with synthetic receipts (BASE-1, BASE-2, …)
+    admission_deposit_amount = Column(Float, nullable=True)
+    admission_deposit_receipt_number = Column(String(50), nullable=True)
+
     __table_args__ = (
         UniqueConstraint(
             "external_card_number",

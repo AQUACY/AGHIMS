@@ -6,7 +6,7 @@
         <img src="/logos/ministry-of-health-logo.png" alt="Ministry of Health" class="logo" onerror="this.style.display='none'">
         <img src="/logos/ghana-health-service-logo.png" alt="Ghana Health Service" class="logo" onerror="this.style.display='none'">
       </div>
-      <div class="hospital-name">ASESEWA GOVERNMENT HOSPITAL</div>
+      <div class="hospital-name">{{ facilityStore.displayName }}</div>
       <div class="dept-name">LABORATORY DEPARTMENT</div>
       <div class="report-date">{{ formatDate(resultDate) }}</div>
     </div>
@@ -139,6 +139,9 @@
 
 <script setup>
 import { computed } from 'vue';
+import { useFacilityStore } from '../stores/facility';
+
+const facilityStore = useFacilityStore();
 
 const formatDate = (dateString) => {
   if (!dateString) return '';

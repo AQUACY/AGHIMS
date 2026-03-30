@@ -5,7 +5,7 @@
         flat
         icon="arrow_back"
         label="Back to Inventory"
-        @click="$router.push('/inventory')"
+        @click="$router.push('/inventory-mode')"
         class="q-mr-md"
       />
       <div class="text-h4 text-weight-bold glass-text">Requisitions</div>
@@ -33,7 +33,7 @@
         color="primary"
         icon="add"
         label="Create Requisition"
-        @click="$router.push({ name: 'CreateRequisition' })"
+        @click="$router.push({ name: $route.path.startsWith('/inventory-mode') ? 'InventoryModeCreateRequisition' : 'CreateRequisition' })"
         size="md"
         class="q-mr-sm"
       />
@@ -41,7 +41,7 @@
         color="secondary"
         icon="inventory_2"
         label="View Department/Unit Stock"
-        @click="$router.push({ name: 'WardStock' })"
+        @click="$router.push({ name: $route.path.startsWith('/inventory-mode') ? 'InventoryModeWardStock' : 'WardStock' })"
         size="md"
       />
       <q-space />

@@ -29,11 +29,13 @@ class CompanionVisitItem(Base):
     cancelled_at = Column(DateTime, nullable=True)
     cancelled_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     cancel_reason = Column(Text, nullable=True)
-    receipt_number = Column(String(50), nullable=True)  # set when this line is paid; prevents delete
+    receipt_number = Column(String(50), nullable=True)  # cash top-up receipt when split; full receipt for cash-only lines
     paid_at = Column(DateTime, nullable=True)
     # Who received the payment and how (for Management reporting)
     paid_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    payment_method = Column(String(50), nullable=True)  # cash, card, mobile_money, etc.
+    payment_method = Column(String(50), nullable=True)  # cash, admission_deposit, mixed, etc.
+    admission_deposit_applied = Column(Float, nullable=True)  # portion taken from visit admission deposit pool
+    admission_deposit_line_receipt = Column(String(50), nullable=True)  # synthetic e.g. BASE-1 when pool applied
 
     def __repr__(self):
         return f"<CompanionVisitItem {self.item_code} - {self.item_name}>"

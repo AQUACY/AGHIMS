@@ -4,7 +4,8 @@
       Undertakings
     </div>
     <div class="text-subtitle1 text-secondary q-mb-lg">
-      Approve or unapprove pending undertakings for Companion (copayment) visits. Once approved, Billing can close the visit even when items are unpaid.
+      Approve or unapprove undertakings for Companion (copayment) visits: clients may pay a part payment now and promise (undertaking) to pay the balance later.
+      Once approved, Billing can close the visit even when line items are unpaid.
     </div>
 
     <q-card class="q-mb-md glass-card" flat>
@@ -156,8 +157,8 @@
             <div class="text-subtitle2">Undertaking</div>
             <div class="text-body2">
               Status: <strong>{{ billingVisit?.undertaking_status || '—' }}</strong>,
-              Deposit: <strong>GH¢ {{ formatPrice(billingVisit?.undertaking_deposit_amount) }}</strong>,
-              Deposit receipt: <strong>{{ billingVisit?.undertaking_deposit_receipt_number || '—' }}</strong>
+              Part payment: <strong>GH¢ {{ formatPrice(billingVisit?.undertaking_deposit_amount) }}</strong>,
+              Part payment receipt: <strong>{{ billingVisit?.undertaking_deposit_receipt_number || '—' }}</strong>
             </div>
             <div class="text-body2 q-mt-xs">
               Approved by: <strong>{{ billingVisit?.undertaking_approved_by_name || '—' }}</strong>,
@@ -166,7 +167,7 @@
             <div class="text-body2 q-mt-xs">
               Total items: <strong>GH¢ {{ formatPrice(itemsTotal) }}</strong>,
               Paid so far: <strong>GH¢ {{ formatPrice(paidTotal) }}</strong>,
-              Remaining after deposit: <strong>GH¢ {{ formatPrice(remainingToPay) }}</strong>
+              Remaining after part payment: <strong>GH¢ {{ formatPrice(remainingToPay) }}</strong>
             </div>
           </div>
           <q-tabs
@@ -247,7 +248,7 @@ const columns = [
   { name: 'client_name', label: 'Client', field: 'client_name', align: 'left' },
   { name: 'undertaking_requested_at', label: 'Requested at', field: 'undertaking_requested_at', align: 'left' },
   { name: 'undertaking_requested_by_name', label: 'Requested by', field: 'undertaking_requested_by_name', align: 'left' },
-  { name: 'undertaking_deposit_amount', label: 'Deposit', field: 'undertaking_deposit_amount', align: 'right' },
+  { name: 'undertaking_deposit_amount', label: 'Part payment', field: 'undertaking_deposit_amount', align: 'right' },
   { name: 'actions', label: 'Actions', field: 'actions', align: 'left' },
 ];
 

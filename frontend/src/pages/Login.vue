@@ -3,11 +3,14 @@
     <div class="login-container">
       <q-card class="login-card glass-card" flat>
         <q-card-section>
-          <div class="text-h5 text-center q-mb-md text-weight-bold" >
-            Hospital Management System
+          <div class="text-h5 text-center q-mb-md text-weight-bold">
+            {{ facilityStore.displayName }}
           </div>
-          <div class="text-subtitle2 text-center q-mb-lg" >
+          <div class="text-subtitle2 text-center q-mb-lg">
             Sign in to continue
+          </div>
+          <div v-if="facilityStore.facilityCodeDisplay" class="text-caption text-center q-mb-md">
+            Facility code: <strong>{{ facilityStore.facilityCodeDisplay }}</strong>
           </div>
         </q-card-section>
 
@@ -54,10 +57,12 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
+import { useFacilityStore } from '../stores/facility';
 
 const router = useRouter();
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
+const facilityStore = useFacilityStore();
 
 const username = ref('');
 const password = ref('');
@@ -65,6 +70,7 @@ const loading = ref(false);
 
 onMounted(() => {
   themeStore.initTheme();
+  facilityStore.fetchPublic();
 });
 
 const onSubmit = async () => {

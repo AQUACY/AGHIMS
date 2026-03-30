@@ -11,6 +11,7 @@ from app.core.security import decode_access_token
 from app.core.config import settings
 from app.models.user import User
 from app.models.module_settings import ModuleSettings
+from app.core.audit import is_super_admin
 
 # Initialize OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
@@ -74,6 +75,32 @@ def require_role(allowed_roles: List[str]):
         )
     
     return role_checker
+
+
+def require_admin_or_super_admin():
+    """
+    Admin (primary or additional role) or super admin may manage facility-wide configuration.
+    """
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if is_super_admin(current_user):
+            return current_user
+        if current_user.role == "Admin":
+            return current_user
+        from sqlalchemy.orm import joinedload
+        user_with_roles = (
+            db.query(User).options(joinedload(User.additional_roles)).filter(User.id == current_user.id).first()
+        )
+        if user_with_roles and any(ur.role == "Admin" for ur in user_with_roles.additional_roles):
+            return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Admin or Super Admin required.",
+        )
+
+    return checker
 
 
 def require_module_permission(module_key: str, permission: str = "read"):

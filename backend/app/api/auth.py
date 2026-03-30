@@ -34,6 +34,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     role: str
     additional_roles: List[str] = []  # List of additional role names
+    is_super_admin: bool = False
     
     class Config:
         from_attributes = True
@@ -105,7 +106,8 @@ def get_current_user_info(
         "email": current_user.email,
         "full_name": current_user.full_name,
         "role": current_user.role,
-        "additional_roles": additional_roles
+        "additional_roles": additional_roles,
+        "is_super_admin": bool(getattr(current_user, "is_super_admin", False)),
     }
 
 

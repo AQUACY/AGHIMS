@@ -13,10 +13,21 @@
         >
           <q-tooltip>{{ drawerOpen ? 'Hide Sidebar' : 'Show Sidebar' }}</q-tooltip>
         </q-btn>
-        <q-toolbar-title class="text-weight-bold">
-          <img src="../../public/logos/ghana-health-service-logo.png" alt="AGHIMS" width="32px" height="32px" />
-          ASESEWA GOVERNMENT HOSPITAL — Companion
+        <q-toolbar-title class="text-weight-bold row items-center no-wrap q-gutter-sm">
+          <img src="../../public/logos/ghana-health-service-logo.png" :alt="facilityStore.displayName" width="32px" height="32px" />
+          <span class="ellipsis">{{ facilityStore.displayName }} — Companion</span>
+          <q-badge
+            v-if="facilityStore.facilityCodeDisplay"
+            color="amber-8"
+            text-color="black"
+            class="text-caption"
+          >
+            {{ facilityStore.facilityCodeDisplay }}
+          </q-badge>
         </q-toolbar-title>
+        <q-badge color="deep-purple-8" text-color="white" class="q-mr-md">
+          Current Mode: Companion
+        </q-badge>
         <q-space />
         <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
           <q-icon name="schedule" size="sm" />
@@ -27,11 +38,11 @@
         <q-btn
           flat
           icon="swap_horiz"
-          label="HMS Mode"
+          label="Switch Mode"
           class="q-mr-sm glass-button"
-          @click="switchToHms"
+          @click="switchMode"
         >
-          <q-tooltip>Switch to full Hospital Management System</q-tooltip>
+          <q-tooltip>Switch application mode</q-tooltip>
         </q-btn>
         <q-btn
           flat
@@ -165,6 +176,32 @@
           </q-item-section>
           <q-item-label>Profile</q-item-label>
         </q-item>
+        <q-item
+          v-if="isSuperAdmin"
+          clickable
+          v-ripple
+          :to="{ name: 'ModuleManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="settings_applications" />
+          </q-item-section>
+          <q-item-label>Module Management</q-item-label>
+        </q-item>
+        <q-item
+          v-if="canAccessAdminOrSuper"
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionFacilitySetup' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="business" />
+          </q-item-section>
+          <q-item-label>Facility branding</q-item-label>
+        </q-item>
       </q-list>
     </q-drawer>
 
@@ -178,8 +215,9 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { useAppModeStore, APP_MODES } from '../stores/appMode';
+import { useAppModeStore } from '../stores/appMode';
 import { useThemeStore } from '../stores/theme';
+import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
 import { notificationsAPI } from '../services/api';
 import NotificationsPanel from '../components/NotificationsPanel.vue';
@@ -189,6 +227,7 @@ const router = useRouter();
 const authStore = useAuthStore();
 const appModeStore = useAppModeStore();
 const themeStore = useThemeStore();
+const facilityStore = useFacilityStore();
 const drawerOpen = ref(true);
 
 const sessionTimeLeft = ref(null);
@@ -205,6 +244,8 @@ const sessionTimeLeftMinutes = computed(() => {
 
 const canAccessRecords = computed(() => authStore.canAccess(['Records', 'Admin']));
 const canAccessBilling = computed(() => authStore.canAccess(['Billing', 'Doctor', 'PA', 'Admin']));
+const isSuperAdmin = computed(() => authStore.isSuperAdmin);
+const canAccessAdminOrSuper = computed(() => authStore.canAccess(['Admin']) || authStore.isSuperAdmin);
 
 const formatTimeLeft = (ms) => {
   if (!ms || ms <= 0) return '00:00';
@@ -274,9 +315,8 @@ const stopSessionTimer = () => {
   }
 };
 
-const switchToHms = () => {
-  appModeStore.setMode(APP_MODES.HMS);
-  router.push('/');
+const switchMode = () => {
+  router.push('/choose-mode');
 };
 
 const goToProfile = () => {

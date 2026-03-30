@@ -5,11 +5,14 @@
 <script setup>
 import { onMounted } from 'vue';
 import { useThemeStore } from './stores/theme';
+import { useFacilityStore } from './stores/facility';
 
 const themeStore = useThemeStore();
+const facilityStore = useFacilityStore();
 
 onMounted(() => {
   themeStore.initTheme();
+  facilityStore.fetchPublic();
 });
 </script>
 

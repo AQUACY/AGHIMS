@@ -324,6 +324,7 @@ export const companionVisitsAPI = {
 // Management: transactions and user list for filters (Management, Admin only)
 export const managementAPI = {
   getTransactions: (params = {}) => api.get('/management/transactions', { params }),
+  getPendingPayments: (params = {}) => api.get('/management/pending-payments', { params }),
   getUsers: () => api.get('/management/users'),
 };
 
@@ -1031,9 +1032,12 @@ export const misReportsAPI = {
     if (department) params.department = department;
     return api.get('/mis-reports/consulting-room-register', { params });
   },
-  exportConsultingRoomRegister: (startDate, endDate, department = null, clinicName = 'Asesewa Government Hospital') => {
-    const params = { start_date: startDate, end_date: endDate, clinic_name: clinicName };
+  exportConsultingRoomRegister: (startDate, endDate, department = null, clinicName) => {
+    const params = { start_date: startDate, end_date: endDate };
     if (department) params.department = department;
+    if (clinicName != null && String(clinicName).trim() !== '') {
+      params.clinic_name = String(clinicName).trim();
+    }
     return api.get('/mis-reports/consulting-room-register/export', { 
       params,
       responseType: 'blob'
@@ -1044,15 +1048,17 @@ export const misReportsAPI = {
     if (departments) params.departments = departments;
     return api.get('/mis-reports/statement-of-outpatient', { params });
   },
-  exportStatementOfOutpatient: (startDate, endDate, departments = null, clinicName = 'Asesewa Government Hospital', clinicCity = 'Asesewa', clinicRegion = 'N/A', clinicDistrict = 'N/A') => {
-    const params = { 
-      start_date: startDate, 
-      end_date: endDate, 
-      clinic_name: clinicName,
+  exportStatementOfOutpatient: (startDate, endDate, departments = null, clinicName, clinicCity = '', clinicRegion = 'N/A', clinicDistrict = 'N/A') => {
+    const params = {
+      start_date: startDate,
+      end_date: endDate,
       clinic_city: clinicCity,
       clinic_region: clinicRegion,
-      clinic_district: clinicDistrict
+      clinic_district: clinicDistrict,
     };
+    if (clinicName != null && String(clinicName).trim() !== '') {
+      params.clinic_name = String(clinicName).trim();
+    }
     if (departments) params.departments = departments;
     return api.get('/mis-reports/statement-of-outpatient/export', { 
       params,
@@ -1064,15 +1070,17 @@ export const misReportsAPI = {
     if (departments) params.departments = departments;
     return api.get('/mis-reports/opd-morbidity', { params });
   },
-  exportOPDMorbidity: (startDate, endDate, departments = null, clinicName = 'Asesewa Government Hospital', clinicCity = 'Asesewa', clinicRegion = 'N/A', clinicDistrict = 'N/A') => {
-    const params = { 
-      start_date: startDate, 
-      end_date: endDate, 
-      clinic_name: clinicName,
+  exportOPDMorbidity: (startDate, endDate, departments = null, clinicName, clinicCity = '', clinicRegion = 'N/A', clinicDistrict = 'N/A') => {
+    const params = {
+      start_date: startDate,
+      end_date: endDate,
       clinic_city: clinicCity,
       clinic_region: clinicRegion,
-      clinic_district: clinicDistrict
+      clinic_district: clinicDistrict,
     };
+    if (clinicName != null && String(clinicName).trim() !== '') {
+      params.clinic_name = String(clinicName).trim();
+    }
     if (departments) params.departments = departments;
     return api.get('/mis-reports/opd-morbidity/export', { 
       params,
@@ -1135,6 +1143,11 @@ export const moduleSettingsAPI = {
   update: (moduleKey, data) => api.put(`/module-settings/${moduleKey}`, data),
   toggle: (moduleKey) => api.put(`/module-settings/${moduleKey}/toggle`),
   setPermissions: (moduleKey, permissions) => api.put(`/module-settings/${moduleKey}/set-permissions`, permissions),
+};
+
+export const facilitySettingsAPI = {
+  getPublic: () => api.get('/facility-settings/public'),
+  update: (data) => api.put('/facility-settings/', data),
 };
 
 export const departmentStaffAssignmentsAPI = {
