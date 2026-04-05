@@ -258,7 +258,11 @@ def get_stock(
     status: Optional[str] = Query(None, description="Filter by status (pending, approved, rejected, expired)"),
     vendor_id: Optional[int] = Query(None, description="Filter by vendor ID"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(
+        require_role(
+            ["Store Manager", "Department Head", "Pharmacy Head", "Pharmacy", "Management", "Admin"]
+        )
+    ),
 ):
     """Get stock entries with optional filters"""
     query = db.query(StoreStock)
@@ -424,7 +428,11 @@ def get_stock_summary_by_product(
     _module_check: User = Depends(require_module_permission("inventory", "read")),
     store_id: Optional[int] = Query(None, description="Filter by store ID"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"]))
+    current_user: User = Depends(
+        require_role(
+            ["Store Manager", "Department Head", "Pharmacy Head", "Pharmacy", "Management", "Admin"]
+        )
+    ),
 ):
     """Get stock summary grouped by product"""
     query = db.query(StoreStock)
@@ -488,8 +496,12 @@ def get_stock_summary_by_product(
 def get_stock_item(
     stock_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Store Manager", "Department Head", "Pharmacy Head", "Admin"])),
-    _module_check: User = Depends(require_module_permission("inventory", "read"))
+    current_user: User = Depends(
+        require_role(
+            ["Store Manager", "Department Head", "Pharmacy Head", "Pharmacy", "Management", "Admin"]
+        )
+    ),
+    _module_check: User = Depends(require_module_permission("inventory", "read")),
 ):
     """Get a specific stock entry by ID"""
     stock = db.query(StoreStock).filter(StoreStock.id == stock_id).first()

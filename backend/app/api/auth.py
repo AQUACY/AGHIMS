@@ -12,6 +12,12 @@ from app.core.security import verify_password, get_password_hash, create_access_
 from app.core.config import settings
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.core.inventory_access import (
+    get_assigned_store_ids,
+    get_ic_managed_ward_names,
+    get_inventory_access_flags,
+    get_inventory_dashboard_scope,
+)
 from app.core.dependencies import get_current_user
 from app.core.audit import log_activity
 from sqlalchemy.orm import joinedload
@@ -35,7 +41,15 @@ class UserResponse(BaseModel):
     role: str
     additional_roles: List[str] = []  # List of additional role names
     is_super_admin: bool = False
-    
+    is_department_ic_or_deputy: bool = False  # Active IC or Deputy on any department (ward)
+    has_store_manager_assignment: bool = False  # Active StoreStaffAssignment as store manager
+    has_store_department_head_assignment: bool = False  # Active assignment as store-linked department head
+    can_access_inventory_mode: bool = False  # Assignments + key roles (see /me implementation)
+    inventory_dashboard_can_filter_stores: bool = False
+    inventory_dashboard_can_filter_departments: bool = False
+    ic_managed_department_names: List[str] = []
+    assigned_store_ids: List[int] = []
+
     class Config:
         from_attributes = True
 
@@ -99,7 +113,13 @@ def get_current_user_info(
     additional_roles = []
     if user_with_roles:
         additional_roles = [ur.role for ur in user_with_roles.additional_roles]
-    
+
+    inv = get_inventory_access_flags(db, current_user, additional_roles)
+    is_super = bool(getattr(current_user, "is_super_admin", False))
+    dash_scope = get_inventory_dashboard_scope(db, current_user, additional_roles)
+    ic_names = get_ic_managed_ward_names(db, current_user.id)
+    store_ids = get_assigned_store_ids(db, current_user.id)
+
     return {
         "id": current_user.id,
         "username": current_user.username,
@@ -107,7 +127,15 @@ def get_current_user_info(
         "full_name": current_user.full_name,
         "role": current_user.role,
         "additional_roles": additional_roles,
-        "is_super_admin": bool(getattr(current_user, "is_super_admin", False)),
+        "is_super_admin": is_super,
+        "is_department_ic_or_deputy": inv.is_department_ic_or_deputy,
+        "has_store_manager_assignment": inv.has_store_manager_assignment,
+        "has_store_department_head_assignment": inv.has_store_department_head_assignment,
+        "can_access_inventory_mode": inv.can_access_inventory_mode,
+        "inventory_dashboard_can_filter_stores": dash_scope.unrestricted_filters,
+        "inventory_dashboard_can_filter_departments": dash_scope.unrestricted_filters,
+        "ic_managed_department_names": ic_names,
+        "assigned_store_ids": store_ids,
     }
 
 

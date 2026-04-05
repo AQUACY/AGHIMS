@@ -25,6 +25,12 @@ export const useAuthStore = defineStore('auth', {
       }
       return roles;
     },
+    /** Inventory mode: server flag from assignments + roles (Admin, Management, Store/Dept head, Pharmacy, IC/deputy, store assignments). */
+    canAccessInventoryMode: (state) => {
+      if (!state.user) return false;
+      if (Boolean(state.user.is_super_admin)) return true;
+      return Boolean(state.user.can_access_inventory_mode);
+    },
     canAccess: (state) => (roles) => {
       if (!state.user) {
         console.warn('canAccess: No user in state');

@@ -5,7 +5,7 @@ Handles ward requests for pharmacy items with approval and fulfillment workflow
 from typing import Optional, List
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, func
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
@@ -23,6 +23,11 @@ from app.models.department_staff_assignment import DepartmentStaffAssignment, De
 from app.models.store_staff_assignment import StoreStaffAssignment, StoreRole
 from app.core.notifications import create_notifications_for_roles, create_notification_for_user
 from app.models.notification import NotificationType
+from app.core.inventory_access import (
+    user_may_view_ward_stock,
+    get_pharmacy_requisition_access_scope,
+    pharmacy_requisition_record_allowed,
+)
 
 router = APIRouter(prefix="/pharmacy-requisitions", tags=["pharmacy-requisitions"])
 
@@ -209,12 +214,13 @@ def check_user_is_department_ic_or_deputy(db: Session, user_id: int, department_
 def create_requisition(
     requisition_data: RequisitionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+    current_user: User = Depends(get_current_user),
     _module_check: User = Depends(require_module_permission("pharmacy", "create"))
 ):
     """
     Create a new pharmacy requisition from a department.
-    Only IC and Deputies can create requisitions for their department.
+    Any user may submit if they are Department IC or Deputy for that unit; Admin bypasses.
+    Primary clinical role is not required.
     Prevents duplicate requests for items that have pending requisitions.
     """
     if not requisition_data.items:
@@ -393,40 +399,37 @@ def get_requisitions(
 ):
     """Get all requisitions with optional filtering"""
     query = db.query(PharmacyRequisition)
-    
-    # Filter by store for users with store assignments (Store Managers and Department Heads)
-    # Check if user has ANY active store assignment, regardless of their main role
-    # This ensures Department Heads assigned to stores are automatically filtered
-    user_store_ids = None
-    store_assignments = db.query(StoreStaffAssignment).filter(
-        and_(
-            StoreStaffAssignment.user_id == current_user.id,
-            StoreStaffAssignment.is_active == True
-        )
-    ).all()
-    
-    if store_assignments:
-        # User has store assignments - filter to only show requisitions for their assigned stores
-        # Also exclude requisitions with NULL store_id
-        user_store_ids = [sa.store_id for sa in store_assignments]
-        # Use explicit filter to ensure it's applied correctly
-        if len(user_store_ids) == 1:
-            # Single store - use equality for better performance
+
+    scope = get_pharmacy_requisition_access_scope(db, current_user)
+    user_store_ids = scope.store_ids if scope.store_ids else None
+    store_assignments = bool(scope.store_ids)
+
+    if scope.unrestricted:
+        pass
+    elif scope.store_ids:
+        if len(scope.store_ids) == 1:
             query = query.filter(
                 and_(
-                    PharmacyRequisition.store_id == user_store_ids[0],
-                    PharmacyRequisition.store_id.isnot(None)
+                    PharmacyRequisition.store_id == scope.store_ids[0],
+                    PharmacyRequisition.store_id.isnot(None),
                 )
             )
         else:
-            # Multiple stores - use IN clause
             query = query.filter(
                 and_(
-                    PharmacyRequisition.store_id.in_(user_store_ids),
-                    PharmacyRequisition.store_id.isnot(None)
+                    PharmacyRequisition.store_id.in_(scope.store_ids),
+                    PharmacyRequisition.store_id.isnot(None),
                 )
             )
-    # Note: If user has no store assignments, they can see all requisitions (if they have permission)
+    elif scope.ic_department_ids or scope.ic_ward_names:
+        ic_conds = []
+        if scope.ic_department_ids:
+            ic_conds.append(PharmacyRequisition.department_id.in_(scope.ic_department_ids))
+        if scope.ic_ward_names:
+            ic_conds.append(PharmacyRequisition.ward.in_(scope.ic_ward_names))
+        query = query.filter(or_(*ic_conds))
+    else:
+        query = query.filter(PharmacyRequisition.requested_by == current_user.id)
     
     # Legacy ward filter (for backward compatibility)
     if ward:
@@ -578,22 +581,19 @@ def get_requisition(
             detail="Requisition not found"
         )
     
-    # Check if user has store assignments and verify they have access to this requisition's store
-    store_assignments = db.query(StoreStaffAssignment).filter(
-        and_(
-            StoreStaffAssignment.user_id == current_user.id,
-            StoreStaffAssignment.is_active == True
+    scope = get_pharmacy_requisition_access_scope(db, current_user)
+    if not pharmacy_requisition_record_allowed(
+        scope,
+        requisition.department_id,
+        requisition.ward,
+        requisition.store_id,
+        user_id=current_user.id,
+        requested_by=requisition.requested_by,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this requisition",
         )
-    ).all()
-    
-    if store_assignments:
-        user_store_ids = [sa.store_id for sa in store_assignments]
-        # Check if requisition's store is in user's assigned stores
-        if requisition.store_id not in user_store_ids:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to requisitions from this store"
-            )
     
     # Load relationships
     requisition.items = db.query(RequisitionItem).filter(RequisitionItem.requisition_id == requisition.id).all()
@@ -1582,7 +1582,22 @@ def get_ward_stock(
 ):
     """Get ward stock for a specific ward/department"""
     from app.models.store_staff_assignment import StoreStaffAssignment
-    
+
+    u = (
+        db.query(User)
+        .options(joinedload(User.additional_roles))
+        .filter(User.id == current_user.id)
+        .first()
+    )
+    if not u:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    additional = [r.role for r in u.additional_roles] if u.additional_roles else []
+    if not user_may_view_ward_stock(db, u, additional, ward):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You may only view stock for department(s) you are assigned to as in-charge or deputy.",
+        )
+
     query = db.query(WardStock).filter(WardStock.ward == ward)
     
     # Auto-filter by store if user is Store Manager or Department Head
@@ -1606,9 +1621,8 @@ def get_ward_stock(
     
     if product_code:
         query = query.filter(WardStock.product_code.ilike(f"%{product_code}%"))
-    
-    # Load store relationship
-    from sqlalchemy.orm import joinedload
+
+    # Load store relationship (joinedload imported at module level)
     stocks = query.options(joinedload(WardStock.store)).order_by(WardStock.product_name).all()
     
     # Build response with store names
@@ -1639,18 +1653,33 @@ def get_ward_stock_item(
     _module_check: User = Depends(require_module_permission("pharmacy", "read"))
 ):
     """Get specific ward stock item"""
+    u = (
+        db.query(User)
+        .options(joinedload(User.additional_roles))
+        .filter(User.id == current_user.id)
+        .first()
+    )
+    if not u:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    additional = [r.role for r in u.additional_roles] if u.additional_roles else []
+    if not user_may_view_ward_stock(db, u, additional, ward):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You may only view stock for department(s) you are assigned to as in-charge or deputy.",
+        )
+
     stock = db.query(WardStock).filter(
         and_(
             WardStock.ward == ward,
             WardStock.product_code == product_code
         )
     ).first()
-    
+
     if not stock:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stock not found for ward {ward} and product {product_code}"
         )
-    
+
     return WardStockResponse(**stock.__dict__)
 

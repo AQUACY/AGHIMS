@@ -78,13 +78,13 @@
             <q-icon name="inventory_2" size="64px" class="q-mb-md" />
             <div class="text-h6 q-mb-sm glass-text">Inventory Mode</div>
             <div class="text-body2 glass-text-muted">
-              Inventory and store stock workflows only - focused interface for stock operations.
+              For staff assigned as department IC/deputy or store roles, plus Management, Pharmacy, and Admin — assignments matter, not only job title.
             </div>
             <q-btn
               unelevated
               label="Enter Inventory"
               class="glass-button q-mt-lg"
-              :disable="!canSelectMode(APP_MODES.INVENTORY)",.
+              :disable="!canSelectMode(APP_MODES.INVENTORY)"
               no-caps
             />
             <div v-if="!canSelectMode(APP_MODES.INVENTORY)" class="text-caption text-negative q-mt-sm">
@@ -125,7 +125,9 @@ const isModeActive = (mode) => {
 const canSelectMode = (mode) => {
   if (isSuperAdmin.value) return true;
   if (!modeStatusLoaded.value) return false;
-  return isModeActive(mode);
+  if (!isModeActive(mode)) return false;
+  if (mode === APP_MODES.INVENTORY && !authStore.canAccessInventoryMode) return false;
+  return true;
 };
 const allModesInactiveForRegularUser = computed(() => {
   if (isSuperAdmin.value) return false;
@@ -162,6 +164,13 @@ const selectMode = (mode) => {
 
 onMounted(async () => {
   try {
+    if (authStore.isAuthenticated && authStore.user?.can_access_inventory_mode === undefined) {
+      try {
+        await authStore.fetchUser();
+      } catch (e) {
+        void 0;
+      }
+    }
     modeStatusLoaded.value = false;
     await moduleSettingsStore.fetchModuleStatus(Object.values(APP_MODE_MODULE_KEYS));
   } catch (error) {

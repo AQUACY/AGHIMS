@@ -4,7 +4,7 @@ Common dependencies for API routes
 from typing import Generator, List, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from jose import JWTError, jwt
 from app.core.database import get_db
 from app.core.security import decode_access_token
@@ -173,4 +173,35 @@ def require_module_permission(module_key: str, permission: str = "read"):
         return current_user
     
     return permission_checker
+
+
+def require_inventory_mode_access():
+    """IC/deputy or store assignments, or Admin/Management/Store/Dept/Pharmacy roles — see inventory_access.INVENTORY_MODE_ROLES."""
+
+    def checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        from app.core.inventory_access import get_inventory_access_flags
+
+        u = (
+            db.query(User)
+            .options(joinedload(User.additional_roles))
+            .filter(User.id == current_user.id)
+            .first()
+        )
+        if not u:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+            )
+        additional = [ur.role for ur in u.additional_roles] if u.additional_roles else []
+        if not get_inventory_access_flags(db, u, additional).can_access_inventory_mode:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Inventory access requires department IC/deputy assignment, store assignment, or an authorized role.",
+            )
+        return current_user
+
+    return checker
 

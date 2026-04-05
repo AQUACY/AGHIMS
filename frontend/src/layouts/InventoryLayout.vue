@@ -91,12 +91,12 @@
             <q-icon name="inventory_2" />
           </q-item-section>
           <q-item-section>
-            <q-item-label>Inventory Management</q-item-label>
+            <q-item-label>Dashboard</q-item-label>
           </q-item-section>
         </q-item>
 
         <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'])"
+          v-if="authStore.canAccessInventoryMode"
           clickable
           v-ripple
           :to="{ name: 'InventoryModeRequisitions' }"
@@ -112,7 +112,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Pharmacy Head', 'Store Manager', 'Admin'])"
+          v-if="authStore.canAccessInventoryMode"
           clickable
           v-ripple
           :to="{ name: 'InventoryModeWardStock' }"
@@ -144,7 +144,7 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Admin', 'Store Manager', 'Department Head', 'Pharmacy Head'])"
+          v-if="showStoreStockNav"
           clickable
           v-ripple
           :to="{ name: 'InventoryModeStoreStock' }"
@@ -247,6 +247,22 @@ const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 const canAccessAdminOrSuper = computed(() => authStore.canAccess(['Admin']) || authStore.isSuperAdmin);
 
 const canAccess = (roles) => authStore.canAccess(roles);
+
+const showStoreStockNav = computed(() => {
+  if (authStore.isSuperAdmin) return true;
+  return (
+    authStore.canAccess([
+      'Admin',
+      'Management',
+      'Store Manager',
+      'Department Head',
+      'Pharmacy Head',
+      'Pharmacy',
+    ]) ||
+    Boolean(authStore.user?.has_store_manager_assignment) ||
+    Boolean(authStore.user?.has_store_department_head_assignment)
+  );
+});
 
 const switchMode = () => {
   router.push('/choose-mode');

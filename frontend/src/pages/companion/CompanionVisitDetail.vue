@@ -329,6 +329,13 @@ const actionCards = computed(() => {
     { name: 'major_surgery', title: 'Add major surgery', icon: 'healing', routeName: 'CompanionAddMajorSurgery', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
     { name: 'dressing', title: 'Dressing room', icon: 'vaccines', routeName: 'CompanionAddDressing', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
     { name: 'oxygen', title: 'Oxygen', icon: 'air', routeName: 'CompanionAddOxygen', roles: ['Nurse', 'Doctor', 'PA', 'Admin'] },
+    {
+      name: 'inventory_debit',
+      title: 'Inventory debit',
+      icon: 'inventory_2',
+      routeName: 'CompanionInventoryDebit',
+      roles: ['Nurse', 'Doctor', 'PA', 'Pharmacy', 'Pharmacy Head', 'Billing', 'Admin'],
+    },
   ];
   return cards.map((c) => ({ ...c, active: authStore.canAccess(c.roles) }));
 });

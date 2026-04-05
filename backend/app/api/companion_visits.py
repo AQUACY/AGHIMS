@@ -7,7 +7,8 @@ come from the external government system; no internal patient/encounter IDs are 
 import io
 import re
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Request, Response
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List, Tuple, Dict, Set
@@ -36,6 +37,8 @@ from app.services.opd_government_export import (
 from app.services.price_list_service_v2 import search_price_items_all_tables, get_price_from_all_tables
 from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
 from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
+from app.models.companion_inventory_debit import CompanionInventoryDebit
+from app.models.ward_stock import WardStock
 
 router = APIRouter(prefix="/companion-visits", tags=["companion-visits"])
 
@@ -612,6 +615,52 @@ def remove_active_dressing(
     db.delete(row)
     db.commit()
     return None
+
+
+# Ward stock preview for companion inventory debit — MUST stay above any `/{visit_id}` route so
+# `/companion-visits/ward-stock` is not matched as visit_id = "ward-stock".
+
+
+class CompanionWardStockItem(BaseModel):
+    """Aggregated ward stock for one product code (sums quantity across store rows)."""
+
+    product_code: str
+    product_name: str
+    quantity: float
+
+
+@router.get("/ward-stock", response_model=List[CompanionWardStockItem])
+def companion_department_stock_list(
+    ward: str = Query(..., min_length=1, description="Department/ward name (must match ward stock)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Nurse", "Doctor", "PA", "Pharmacy", "Pharmacy Head", "Billing", "Admin"])
+    ),
+):
+    """List products in stock for a department (for companion inventory debit item pickers)."""
+    w = (ward or "").strip()
+    if not w:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ward is required")
+
+    rows = (
+        db.query(
+            WardStock.product_code.label("product_code"),
+            func.max(WardStock.product_name).label("product_name"),
+            func.sum(WardStock.quantity).label("quantity"),
+        )
+        .filter(WardStock.ward == w)
+        .group_by(WardStock.product_code)
+        .order_by(func.max(WardStock.product_name))
+        .all()
+    )
+    return [
+        CompanionWardStockItem(
+            product_code=r.product_code,
+            product_name=(r.product_name or "").strip() or r.product_code,
+            quantity=float(r.quantity or 0),
+        )
+        for r in rows
+    ]
 
 
 # --- Active oxygen (Nurse/Doctor/PA choose which appear as cards) ---
@@ -1498,7 +1547,7 @@ def get_price_suggestions_for_government_line(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
 
     cat = (category or "").strip().lower()
-    if cat not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen"):
+    if cat not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen", "inventory_debit"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid category")
 
     query = (q or "").strip()
@@ -1516,7 +1565,7 @@ def get_price_suggestions_for_government_line(
         raw = search_price_items_all_tables(db, search_term=narrow, service_type=service_type, file_type="procedure")
         if not raw:
             raw = search_price_items_all_tables(db, search_term=query_norm, service_type=service_type, file_type="procedure")
-    elif cat == "drug":
+    elif cat == "drug" or cat == "inventory_debit":
         raw = search_price_items_all_tables(db, search_term=narrow, file_type="product")
         if not raw:
             raw = search_price_items_all_tables(db, search_term=query_norm, file_type="product")
@@ -2840,10 +2889,10 @@ def add_companion_visit_item(
             detail="Cannot add items to a closed visit",
         )
     cat = (data.category or "").strip().lower()
-    if cat not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen"):
+    if cat not in ("lab", "scan", "xray", "drug", "inpatient", "day_surgery", "major_surgery", "dressing", "oxygen", "inventory_debit"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="category must be one of: lab, scan, xray, drug, inpatient, day_surgery, major_surgery, dressing, oxygen",
+            detail="category must be one of: lab, scan, xray, drug, inpatient, day_surgery, major_surgery, dressing, oxygen, inventory_debit",
         )
     quantity = float(data.quantity) if data.quantity else 1.0
     start_time = data.start_time
@@ -3255,3 +3304,481 @@ def refund_companion_visit_items(
     from app.core.audit import set_audit_summary
     set_audit_summary(request, f"Refunded {updated} item(s) for companion visit (card {visit.external_card_number}).")
     return {"updated": updated}
+
+
+# --- Companion inventory debits (department-chosen ward stock; optional charge to copayment bill) ---
+
+
+class CompanionInventoryDebitCreate(BaseModel):
+    requesting_department: str
+    product_code: str
+    product_name: str
+    quantity: float = 1.0
+    unit_price: Optional[float] = None
+    notes: Optional[str] = None
+    charge_to_client: bool = False
+
+
+class CompanionInventoryDebitLineIn(BaseModel):
+    """One line for batch create (same as single create + charge flag)."""
+
+    requesting_department: str
+    product_code: str
+    product_name: str
+    quantity: float = 1.0
+    unit_price: Optional[float] = None
+    notes: Optional[str] = None
+    charge_to_client: bool = False
+
+
+class CompanionInventoryDebitBatchBody(BaseModel):
+    items: List[CompanionInventoryDebitLineIn]
+
+
+class CompanionInventoryDebitUpdate(BaseModel):
+    quantity: Optional[float] = None
+    notes: Optional[str] = None
+
+
+def _companion_inventory_debit_dict(db: Session, d: CompanionInventoryDebit) -> dict:
+    rec = db.query(User).filter(User.id == d.recorded_by_id).first()
+    rel = db.query(User).filter(User.id == d.released_by_id).first() if d.released_by_id else None
+    return {
+        "id": d.id,
+        "companion_visit_id": d.companion_visit_id,
+        "requesting_department": d.requesting_department,
+        "product_code": d.product_code,
+        "product_name": d.product_name,
+        "quantity": d.quantity,
+        "unit_price": d.unit_price,
+        "total_price": d.total_price,
+        "notes": d.notes,
+        "recorded_by_id": d.recorded_by_id,
+        "recorded_by_name": (rec.full_name or rec.username) if rec else None,
+        "created_at": d.created_at,
+        "is_released": d.is_released,
+        "released_by_id": d.released_by_id,
+        "released_by_name": (rel.full_name or rel.username) if rel else None,
+        "released_at": d.released_at,
+        "charged_to_client": d.charged_to_client,
+        "companion_visit_item_id": d.companion_visit_item_id,
+        "charged_at": d.charged_at,
+    }
+
+
+def _ward_stock_return_to_ward(
+    db: Session, dept: str, product_code: str, product_name: str, qty: float
+) -> None:
+    """Put quantity back into ward stock (first matching row, or new row)."""
+    if qty <= 0:
+        return
+    rows = (
+        db.query(WardStock)
+        .filter(and_(WardStock.ward == dept, WardStock.product_code == product_code))
+        .order_by(WardStock.id)
+        .all()
+    )
+    if rows:
+        rows[0].quantity = float(rows[0].quantity) + qty
+    else:
+        db.add(
+            WardStock(
+                ward=dept,
+                product_code=product_code,
+                product_name=(product_name or "").strip() or product_code,
+                quantity=qty,
+            )
+        )
+
+
+def _charge_debit_to_bill_inner(
+    db: Session,
+    visit_id: int,
+    debit: CompanionInventoryDebit,
+    current_user: User,
+) -> None:
+    item = CompanionVisitItem(
+        companion_visit_id=visit_id,
+        item_code=debit.product_code,
+        item_name=f"Inventory: {debit.product_name}",
+        category="inventory_debit",
+        unit_price=float(debit.unit_price),
+        quantity=float(debit.quantity),
+        created_by_id=get_effective_creator_id(db, current_user),
+    )
+    db.add(item)
+    db.flush()
+    debit.charged_to_client = True
+    debit.companion_visit_item_id = item.id
+    debit.charged_at = utcnow()
+
+
+def _create_companion_inventory_debit_inner(
+    db: Session,
+    visit: CompanionVisit,
+    data: CompanionInventoryDebitCreate,
+    current_user: User,
+) -> CompanionInventoryDebit:
+    dept = (data.requesting_department or "").strip()
+    if not dept:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="requesting_department is required")
+    product_code = (data.product_code or "").strip()
+    product_name = (data.product_name or "").strip()
+    if not product_code or not product_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="product_code and product_name are required")
+    qty = float(data.quantity or 0)
+    if qty <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="quantity must be positive")
+
+    stock_rows = (
+        db.query(WardStock)
+        .filter(and_(WardStock.ward == dept, WardStock.product_code == product_code))
+        .order_by(WardStock.id)
+        .all()
+    )
+    available_quantity = sum(float(r.quantity) for r in stock_rows) if stock_rows else 0.0
+    if available_quantity < qty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Insufficient stock in {dept}. Available: {available_quantity}, Required: {qty}. "
+                "Submit a pharmacy requisition to restock this department, then try again."
+            ),
+        )
+
+    if data.unit_price is not None:
+        unit_price = float(data.unit_price)
+    else:
+        unit_price = get_price_from_all_tables(db, product_code, True)
+        if unit_price == 0.0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Product '{product_name}' has no price — provide unit_price.",
+            )
+    total_price = unit_price * qty
+
+    remaining = qty
+    for row in stock_rows:
+        if remaining <= 0:
+            break
+        rq = float(row.quantity)
+        if rq <= 0:
+            continue
+        take = min(rq, remaining)
+        row.quantity = rq - take
+        remaining -= take
+
+    debit = CompanionInventoryDebit(
+        companion_visit_id=visit.id,
+        requesting_department=dept,
+        product_code=product_code,
+        product_name=product_name,
+        quantity=qty,
+        unit_price=unit_price,
+        total_price=total_price,
+        notes=(data.notes or "").strip() or None,
+        recorded_by_id=get_effective_creator_id(db, current_user),
+    )
+    db.add(debit)
+    db.flush()
+    return debit
+
+
+@router.get("/{visit_id}/inventory-debits")
+def list_companion_inventory_debits(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    rows = (
+        db.query(CompanionInventoryDebit)
+        .filter(CompanionInventoryDebit.companion_visit_id == visit_id)
+        .order_by(CompanionInventoryDebit.created_at.desc())
+        .all()
+    )
+    return [_companion_inventory_debit_dict(db, d) for d in rows]
+
+
+@router.post("/{visit_id}/inventory-debits", status_code=status.HTTP_201_CREATED)
+def create_companion_inventory_debit(
+    visit_id: int,
+    data: CompanionInventoryDebitCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Record ward stock used for this companion visit. Optionally add to client bill in one step."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot record inventory debits on a closed visit",
+        )
+
+    debit = _create_companion_inventory_debit_inner(db, visit, data, current_user)
+    if data.charge_to_client:
+        _charge_debit_to_bill_inner(db, visit_id, debit, current_user)
+    db.commit()
+    db.refresh(debit)
+    return _companion_inventory_debit_dict(db, debit)
+
+
+@router.post("/{visit_id}/inventory-debits/batch", status_code=status.HTTP_201_CREATED)
+def create_companion_inventory_debits_batch(
+    visit_id: int,
+    body: CompanionInventoryDebitBatchBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Pharmacy", "Pharmacy Head", "Billing", "Admin"])),
+):
+    """Record multiple inventory debits; optionally add each to the client bill via charge_to_client on each line."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot record inventory debits on a closed visit",
+        )
+    if not body.items:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="items cannot be empty")
+
+    out = []
+    try:
+        for line in body.items:
+            data = CompanionInventoryDebitCreate(
+                requesting_department=line.requesting_department,
+                product_code=line.product_code,
+                product_name=line.product_name,
+                quantity=line.quantity,
+                unit_price=line.unit_price,
+                notes=line.notes,
+                charge_to_client=line.charge_to_client,
+            )
+            debit = _create_companion_inventory_debit_inner(db, visit, data, current_user)
+            if line.charge_to_client:
+                _charge_debit_to_bill_inner(db, visit_id, debit, current_user)
+            out.append(debit)
+        db.commit()
+        for debit in out:
+            db.refresh(debit)
+    except HTTPException:
+        db.rollback()
+        raise
+    return [_companion_inventory_debit_dict(db, d) for d in out]
+
+
+@router.post("/{visit_id}/inventory-debits/{debit_id}/charge-to-bill")
+def charge_companion_inventory_debit_to_bill(
+    visit_id: int,
+    debit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Billing", "Nurse", "Doctor", "PA", "Pharmacy", "Pharmacy Head", "Admin"])
+    ),
+):
+    """Add a billing line (category inventory_debit) and link this stock debit to the client's bill."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot add bill lines to a closed visit",
+        )
+    debit = (
+        db.query(CompanionInventoryDebit)
+        .filter(
+            CompanionInventoryDebit.id == debit_id,
+            CompanionInventoryDebit.companion_visit_id == visit_id,
+        )
+        .first()
+    )
+    if not debit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory debit not found")
+    if debit.charged_to_client:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This debit is already on the client's bill",
+        )
+
+    _charge_debit_to_bill_inner(db, visit_id, debit, current_user)
+
+    db.commit()
+    db.refresh(debit)
+    item = db.query(CompanionVisitItem).filter(CompanionVisitItem.id == debit.companion_visit_item_id).first()
+    creator = db.query(User).filter(User.id == item.created_by_id).first() if item else None
+    return {
+        "debit": _companion_inventory_debit_dict(db, debit),
+        "item": (
+            {
+                "id": item.id,
+                "companion_visit_id": item.companion_visit_id,
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "category": item.category,
+                "unit_price": float(item.unit_price),
+                "quantity": float(item.quantity),
+                "created_at": item.created_at,
+                "created_by_id": item.created_by_id,
+                "created_by_name": (creator.full_name or creator.username) if creator else None,
+            }
+            if item
+            else None
+        ),
+    }
+
+
+@router.patch("/{visit_id}/inventory-debits/{debit_id}")
+def update_companion_inventory_debit(
+    visit_id: int,
+    debit_id: int,
+    data: CompanionInventoryDebitUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Adjust quantity (stock adjusted) or notes. Not allowed after pharmacy release or if bill line is paid."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Visit must be open")
+    debit = (
+        db.query(CompanionInventoryDebit)
+        .filter(
+            CompanionInventoryDebit.id == debit_id,
+            CompanionInventoryDebit.companion_visit_id == visit_id,
+        )
+        .first()
+    )
+    if not debit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory debit not found")
+    if debit.is_released:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot edit — inventory already released by pharmacy",
+        )
+
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No updates provided")
+
+    if "notes" in updates:
+        debit.notes = (updates["notes"] or "").strip() or None
+
+    if "quantity" in updates and updates["quantity"] is not None:
+        new_qty = float(updates["quantity"])
+        if new_qty <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="quantity must be positive")
+        old_qty = float(debit.quantity)
+        delta = new_qty - old_qty
+        dept = debit.requesting_department
+        pc = debit.product_code
+        pn = debit.product_name
+        if abs(delta) > 1e-9:
+            if delta > 0:
+                stock_rows = (
+                    db.query(WardStock)
+                    .filter(and_(WardStock.ward == dept, WardStock.product_code == pc))
+                    .order_by(WardStock.id)
+                    .all()
+                )
+                avail = sum(float(r.quantity) for r in stock_rows) if stock_rows else 0.0
+                if avail < delta:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Insufficient stock to increase quantity. Available: {avail}, "
+                            f"need extra: {delta}."
+                        ),
+                    )
+                rem = delta
+                for row in stock_rows:
+                    if rem <= 0:
+                        break
+                    rq = float(row.quantity)
+                    if rq <= 0:
+                        continue
+                    take = min(rq, rem)
+                    row.quantity = rq - take
+                    rem -= take
+            else:
+                _ward_stock_return_to_ward(db, dept, pc, pn, -delta)
+        debit.quantity = new_qty
+        debit.total_price = float(debit.unit_price) * new_qty
+        if debit.charged_to_client and debit.companion_visit_item_id:
+            item = (
+                db.query(CompanionVisitItem)
+                .filter(
+                    CompanionVisitItem.id == debit.companion_visit_item_id,
+                    CompanionVisitItem.companion_visit_id == visit_id,
+                )
+                .first()
+            )
+            if item and _companion_item_is_paid(item):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot change quantity — bill line is already paid",
+                )
+            if item:
+                item.quantity = new_qty
+
+    db.commit()
+    db.refresh(debit)
+    return _companion_inventory_debit_dict(db, debit)
+
+
+@router.delete("/{visit_id}/inventory-debits/{debit_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_companion_inventory_debit(
+    visit_id: int,
+    debit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Nurse", "Doctor", "PA", "Admin"])),
+):
+    """Remove a debit and restore ward stock. Not allowed after pharmacy release or if bill line is paid."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Visit must be open")
+    debit = (
+        db.query(CompanionInventoryDebit)
+        .filter(
+            CompanionInventoryDebit.id == debit_id,
+            CompanionInventoryDebit.companion_visit_id == visit_id,
+        )
+        .first()
+    )
+    if not debit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory debit not found")
+    if debit.is_released:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete — pharmacy has already released this debit",
+        )
+    if debit.charged_to_client and debit.companion_visit_item_id:
+        item = (
+            db.query(CompanionVisitItem)
+            .filter(CompanionVisitItem.id == debit.companion_visit_item_id)
+            .first()
+        )
+        if item and _companion_item_is_paid(item):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete — bill line is already paid",
+            )
+        if item:
+            db.delete(item)
+    _ward_stock_return_to_ward(
+        db,
+        debit.requesting_department,
+        debit.product_code,
+        debit.product_name,
+        float(debit.quantity),
+    )
+    db.delete(debit)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

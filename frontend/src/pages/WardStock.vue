@@ -15,7 +15,8 @@
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      View available inventory stock for each department/unit. Stock is updated when requisitions are fulfilled by Store Manager. Items can be filtered by store.
+      <span v-if="isIcUnitOnly">You can only view stock for department(s) where you are in-charge or deputy.</span>
+      <span v-else>View available inventory stock for each department/unit. Store managers and store department heads may review all units for their assigned stores.</span>
     </q-banner>
 
     <!-- Filters and Actions -->
@@ -26,6 +27,7 @@
         label="Select Department/Unit"
         filled
         class="col-12 col-md-3"
+        :disable="isIcUnitOnly && wardOptions.length <= 1"
         @update:model-value="loadWardStock"
       />
       <q-select
@@ -38,7 +40,7 @@
         map-options
         class="col-12 col-md-3"
         @update:model-value="loadWardStock"
-        :disable="isStoreManagerOrDeptHead && userStoreIds.length > 0"
+        :disable="hasStoreAssignment && userStoreIds.length > 0"
       >
         <template v-slot:prepend>
           <q-icon name="store" />
@@ -170,8 +172,18 @@ export default {
     const storeOptions = ref([]);
     const userStoreIds = ref([]);
     
-    const isStoreManagerOrDeptHead = computed(() => {
-      return authStore.userRole === 'Store Manager' || authStore.userRole === 'Department Head';
+    const isIcUnitOnly = computed(() => {
+      const u = authStore.user;
+      if (!u) return false;
+      return (
+        !u.inventory_dashboard_can_filter_departments &&
+        (u.ic_managed_department_names?.length || 0) > 0 &&
+        !(u.assigned_store_ids?.length || 0)
+      );
+    });
+
+    const hasStoreAssignment = computed(() => {
+      return (authStore.user?.assigned_store_ids?.length || 0) > 0;
     });
 
     const columns = [
@@ -206,7 +218,7 @@ export default {
       try {
         // Determine store_id to filter by
         let storeId = null;
-        if (isStoreManagerOrDeptHead.value && userStoreIds.value.length > 0) {
+        if (hasStoreAssignment.value && userStoreIds.value.length > 0) {
           // Auto-filter by user's assigned store (use the selected store which is auto-set)
           storeId = selectedStore.value || userStoreIds.value[0];
         } else if (selectedStore.value) {
@@ -266,20 +278,17 @@ export default {
     };
 
     const loadUserStoreAssignments = async () => {
-      if (!isStoreManagerOrDeptHead.value) {
-        return;
-      }
-
       try {
         const response = await storeStaffAssignmentsAPI.getAll({
           user_id: authStore.user?.id,
           active_only: true,
         });
-        userStoreIds.value = (response.data || []).map(assignment => assignment.store_id);
-        
-        // Auto-select first assigned store (always set for Store Managers/Department Heads)
-        if (userStoreIds.value.length > 0) {
-          selectedStore.value = userStoreIds.value[0];
+        const ids = (response.data || []).map((assignment) => assignment.store_id);
+        if (ids.length > 0) {
+          userStoreIds.value = ids;
+          if (selectedStore.value == null) {
+            selectedStore.value = ids[0];
+          }
         }
       } catch (error) {
         console.error('Error loading user store assignments:', error);
@@ -287,10 +296,33 @@ export default {
     };
 
     onMounted(async () => {
-      await loadWards();
+      if (
+        authStore.isAuthenticated &&
+        authStore.user?.inventory_dashboard_can_filter_departments === undefined
+      ) {
+        try {
+          await authStore.fetchUser();
+        } catch (e) {
+          void 0;
+        }
+      }
+
+      if (isIcUnitOnly.value && authStore.user?.ic_managed_department_names?.length) {
+        wardOptions.value = [...authStore.user.ic_managed_department_names];
+        selectedWard.value = wardOptions.value[0] || null;
+      } else {
+        await loadWards();
+      }
       await loadStores();
-      await loadUserStoreAssignments();
-      
+
+      if (authStore.user?.assigned_store_ids?.length) {
+        userStoreIds.value = [...authStore.user.assigned_store_ids];
+        selectedStore.value = userStoreIds.value[0];
+      }
+      if (!userStoreIds.value.length) {
+        await loadUserStoreAssignments();
+      }
+
       if (selectedWard.value) {
         loadWardStock();
       }
@@ -305,7 +337,8 @@ export default {
       wardOptions,
       storeOptions,
       userStoreIds,
-      isStoreManagerOrDeptHead,
+      isIcUnitOnly,
+      hasStoreAssignment,
       columns,
       filteredStock,
       loadWardStock,

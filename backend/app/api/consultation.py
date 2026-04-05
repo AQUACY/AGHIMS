@@ -12577,8 +12577,8 @@ class InpatientInventoryDebitCreate(BaseModel):
 
 class InpatientInventoryDebitResponse(BaseModel):
     id: int
-    ward_admission_id: int
-    encounter_id: int
+    ward_admission_id: Optional[int] = None
+    encounter_id: Optional[int] = None
     product_code: str
     product_name: str
     quantity: float
@@ -12602,7 +12602,9 @@ class InpatientInventoryDebitResponse(BaseModel):
     ward: Optional[str] = None  # Current ward (for backward compatibility)
     requesting_ward: Optional[str] = None  # Original ward that requested the inventory
     admitted_at: Optional[datetime] = None
-    
+    debit_source: Optional[str] = "inpatient"  # inpatient | companion
+    row_key: Optional[str] = None  # unique across sources (e.g. inpatient-12, companion-3)
+
     class Config:
         from_attributes = True
 
@@ -12899,13 +12901,16 @@ def get_all_inventory_debits(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin", "Nurse", "Doctor", "PA"]))
 ):
-    """Get all inventory debits with optional filtering - for pharmacy staff to view and release"""
+    """Get all inventory debits with optional filtering - for pharmacy staff to view and release.
+    Includes inpatient (IPD) debits and companion (copayment) debits."""
     from app.models.inpatient_inventory_debit import InpatientInventoryDebit
     from app.models.ward_admission import WardAdmission
     from app.models.encounter import Encounter
     from app.models.patient import Patient
+    from app.models.companion_inventory_debit import CompanionInventoryDebit
+    from app.models.companion_visit import CompanionVisit
     from datetime import datetime as dt
-    
+
     # Build query with outer joins to handle old data that might have missing relationships
     query = db.query(InpatientInventoryDebit).outerjoin(
         WardAdmission, InpatientInventoryDebit.ward_admission_id == WardAdmission.id
@@ -12969,26 +12974,26 @@ def get_all_inventory_debits(
     
     # Order by used_at descending (most recent first)
     debits = query.order_by(InpatientInventoryDebit.used_at.desc()).all()
-    
+
     result = []
     for debit in debits:
         # Get user who used the product
         user = db.query(User).filter(User.id == debit.used_by).first()
-        
+
         # Get ward admission details
         ward_admission = db.query(WardAdmission).filter(WardAdmission.id == debit.ward_admission_id).first()
-        
+
         # Get encounter and patient details
         encounter = db.query(Encounter).filter(Encounter.id == debit.encounter_id).first()
         patient = None
         if encounter:
             patient = db.query(Patient).filter(Patient.id == encounter.patient_id).first()
-        
+
         # Get user who released (if released)
         released_by_user = None
         if debit.released_by:
             released_by_user = db.query(User).filter(User.id == debit.released_by).first()
-        
+
         result.append({
             "id": debit.id,
             "ward_admission_id": debit.ward_admission_id,
@@ -13016,45 +13021,146 @@ def get_all_inventory_debits(
             "ward": ward_admission.ward if ward_admission else None,  # Current ward (for backward compatibility)
             "requesting_ward": getattr(debit, 'requesting_ward', None) or (ward_admission.ward if ward_admission else None),  # Original requesting ward
             "admitted_at": ward_admission.admitted_at if ward_admission else None,
+            "debit_source": "inpatient",
+            "row_key": f"inpatient-{debit.id}",
         })
-    
+
+    # Companion (copayment) inventory debits — same filters where applicable
+    cq = (
+        db.query(CompanionInventoryDebit)
+        .join(CompanionVisit, CompanionInventoryDebit.companion_visit_id == CompanionVisit.id)
+        .options(joinedload(CompanionInventoryDebit.visit))
+    )
+    if ward:
+        cq = cq.filter(CompanionInventoryDebit.requesting_department == ward)
+    if is_released is not None:
+        cq = cq.filter(CompanionInventoryDebit.is_released == is_released)
+    if start_date:
+        try:
+            start_dt = dt.strptime(start_date, "%Y-%m-%d")
+            cq = cq.filter(CompanionInventoryDebit.created_at >= start_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD")
+    if end_date:
+        try:
+            end_dt = dt.strptime(end_date, "%Y-%m-%d")
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            cq = cq.filter(CompanionInventoryDebit.created_at <= end_dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD")
+    if used_by_name:
+        cq = cq.join(User, CompanionInventoryDebit.recorded_by_id == User.id).filter(
+            User.full_name.ilike(f"%{used_by_name}%")
+        )
+    if product_code:
+        cq = cq.filter(CompanionInventoryDebit.product_code.ilike(f"%{product_code}%"))
+    if product_name:
+        cq = cq.filter(CompanionInventoryDebit.product_name.ilike(f"%{product_name}%"))
+
+    companion_debits = cq.order_by(CompanionInventoryDebit.created_at.desc()).all()
+    for d in companion_debits:
+        visit = d.visit
+        rec_user = db.query(User).filter(User.id == d.recorded_by_id).first()
+        rel_user = None
+        if d.released_by_id:
+            rel_user = db.query(User).filter(User.id == d.released_by_id).first()
+        used_at = d.created_at
+        result.append({
+            "id": d.id,
+            "ward_admission_id": None,
+            "encounter_id": None,
+            "product_code": d.product_code,
+            "product_name": d.product_name,
+            "quantity": d.quantity,
+            "unit_price": d.unit_price,
+            "total_price": d.total_price,
+            "notes": d.notes,
+            "is_billed": d.charged_to_client,
+            "bill_item_id": d.companion_visit_item_id,
+            "is_released": d.is_released,
+            "released_by": d.released_by_id,
+            "released_by_name": rel_user.full_name if rel_user else None,
+            "released_at": d.released_at,
+            "used_by": d.recorded_by_id,
+            "used_by_name": rec_user.full_name if rec_user else None,
+            "used_at": used_at,
+            "created_at": d.created_at,
+            "updated_at": d.created_at,
+            "patient_name": (visit.client_name if visit else None),
+            "patient_card_number": (visit.external_card_number if visit else None),
+            "ward": d.requesting_department,
+            "requesting_ward": d.requesting_department,
+            "admitted_at": None,
+            "debit_source": "companion",
+            "row_key": f"companion-{d.id}",
+        })
+
+    result.sort(key=lambda r: r["used_at"] or datetime(1970, 1, 1), reverse=True)
     return result
 
 
 @router.put("/inventory-debits/{debit_id}/release")
 def release_inventory_debit(
     debit_id: int,
+    source: str = Query("inpatient", description="'inpatient' (ward/IPD) or 'companion' (copayment visit)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
 ):
-    """Release inventory debit - pharmacy staff marks inventory as released for ward administration"""
+    """Release inventory debit - pharmacy staff marks inventory as released for ward administration."""
+    src = (source or "inpatient").strip().lower()
+    if src not in ("inpatient", "companion"):
+        raise HTTPException(status_code=400, detail="source must be 'inpatient' or 'companion'")
+
+    if src == "companion":
+        from app.models.companion_inventory_debit import CompanionInventoryDebit
+
+        debit = db.query(CompanionInventoryDebit).filter(CompanionInventoryDebit.id == debit_id).first()
+        if not debit:
+            raise HTTPException(status_code=404, detail="Inventory debit not found")
+        if debit.is_released:
+            raise HTTPException(status_code=400, detail="Inventory debit has already been released")
+        debit.is_released = True
+        debit.released_by_id = current_user.id
+        debit.released_at = utcnow()
+        db.commit()
+        db.refresh(debit)
+        released_by_user = db.query(User).filter(User.id == debit.released_by_id).first()
+        return {
+            "message": "Inventory debit released successfully",
+            "id": debit.id,
+            "is_released": debit.is_released,
+            "released_by": debit.released_by_id,
+            "released_by_name": released_by_user.full_name if released_by_user else None,
+            "released_at": debit.released_at,
+            "debit_source": "companion",
+        }
+
     from app.models.inpatient_inventory_debit import InpatientInventoryDebit
-    
+
     debit = db.query(InpatientInventoryDebit).filter(InpatientInventoryDebit.id == debit_id).first()
     if not debit:
         raise HTTPException(status_code=404, detail="Inventory debit not found")
-    
+
     if debit.is_released:
         raise HTTPException(status_code=400, detail="Inventory debit has already been released")
-    
-    # Mark as released
+
     debit.is_released = True
     debit.released_by = current_user.id
     debit.released_at = utcnow()
-    
+
     db.commit()
     db.refresh(debit)
-    
-    # Get user who released
+
     released_by_user = db.query(User).filter(User.id == debit.released_by).first()
-    
+
     return {
         "message": "Inventory debit released successfully",
         "id": debit.id,
         "is_released": debit.is_released,
         "released_by": debit.released_by,
         "released_by_name": released_by_user.full_name if released_by_user else None,
-        "released_at": debit.released_at
+        "released_at": debit.released_at,
+        "debit_source": "inpatient",
     }
 
 

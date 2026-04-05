@@ -158,7 +158,7 @@
         <q-table
           :rows="filteredDebits"
           :columns="columns"
-          row-key="id"
+          :row-key="debitRowKey"
           :loading="loading"
           flat
           bordered
@@ -168,6 +168,12 @@
           <template v-slot:body-cell-patient="props">
             <q-td :props="props">
               <div>
+                <q-badge
+                  v-if="props.row.debit_source === 'companion'"
+                  color="secondary"
+                  label="Companion"
+                  class="q-mb-xs"
+                />
                 <div class="text-weight-medium">{{ props.row.patient_name || 'N/A' }}</div>
                 <div class="text-caption text-grey-7">
                   Card: {{ props.row.patient_card_number || 'N/A' }}
@@ -387,11 +393,17 @@ const releasedCount = computed(() => {
   return inventoryDebits.value.filter(d => d.is_released).length;
 });
 
+function debitRowKey(row) {
+  return row.row_key || `inpatient-${row.id}`;
+}
+
 const filteredDebits = computed(() => {
   let filtered = inventoryDebits.value;
-  
+
   if (selectedWard.value) {
-    filtered = filtered.filter(d => d.ward === selectedWard.value);
+    filtered = filtered.filter(
+      (d) => (d.requesting_ward || d.ward) === selectedWard.value
+    );
   }
   
   if (releaseStatusFilter.value !== null) {
@@ -488,7 +500,9 @@ const releaseDebit = async (debit) => {
   }).onOk(async () => {
     releasingId.value = debit.id;
     try {
-      await consultationAPI.releaseInventoryDebit(debit.id);
+      await consultationAPI.releaseInventoryDebit(debit.id, {
+        source: debit.debit_source || 'inpatient',
+      });
       $q.notify({
         type: 'positive',
         message: 'Inventory released successfully',

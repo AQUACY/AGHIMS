@@ -15,8 +15,8 @@
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      <div v-if="isWardStaff">
-        Request items from stores. Your requisitions must be approved by Pharmacy Head and fulfilled by Store Manager or Pharmacy Head before items are added to your department/unit stock.
+      <div v-if="canCreateRequisition">
+        Request items from stores (department in-charge or deputy). Requisitions are approved by Pharmacy Head and fulfilled by Store Manager or Pharmacy Head before items are added to your department/unit stock.
       </div>
       <div v-else-if="isPharmacyHead">
         Review and approve/reject requisition requests from departments/units. You can also fulfill approved requisitions.
@@ -29,7 +29,7 @@
     <!-- Action Buttons -->
     <div class="row q-gutter-md q-mb-md items-center">
       <q-btn
-        v-if="isWardStaff || isAdmin"
+        v-if="canCreateRequisition"
         color="primary"
         icon="add"
         label="Create Requisition"
@@ -80,7 +80,7 @@
             map-options
             class="col-12 col-md-2"
             @update:model-value="loadRequisitions"
-            :disable="isStoreManagerOrDeptHead && userStoreIds.length > 0"
+            :disable="hasStoreScope"
           >
             <template v-slot:prepend>
               <q-icon name="store" />
@@ -232,6 +232,18 @@
                 size="sm"
               >
                 <q-tooltip>Revert Fulfillment</q-tooltip>
+              </q-btn>
+              <q-btn
+                v-if="canPrintFulfillment(props.row)"
+                flat
+                dense
+                round
+                icon="print"
+                color="secondary"
+                @click="printRequisitionFulfillment(props.row)"
+                size="sm"
+              >
+                <q-tooltip>Print fulfillment record (store manager / store department head for this store)</q-tooltip>
               </q-btn>
               <q-btn
                 v-if="(isWardStaff && props.row.status === 'pending' && props.row.requested_by === currentUserId) || (isAdmin && props.row.status === 'pending')"
@@ -430,6 +442,14 @@
         </q-card-section>
 
         <q-card-actions align="right">
+          <q-btn
+            v-if="selectedRequisition && canPrintFulfillment(selectedRequisition)"
+            outline
+            color="secondary"
+            icon="print"
+            label="Print fulfillment"
+            @click="printRequisitionFulfillment(selectedRequisition)"
+          />
           <q-btn flat label="Close" v-close-popup />
         </q-card-actions>
       </q-card>
@@ -672,14 +692,25 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { useFacilityStore } from '../stores/facility';
 import { useQuasar, Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, storeStaffAssignmentsAPI } from '../services/api';
+
+function escapeHtml(s) {
+  if (s == null || s === '') return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 export default {
   name: 'PharmacyRequisitions',
   setup() {
     const router = useRouter();
     const authStore = useAuthStore();
+    const facilityStore = useFacilityStore();
     const $q = useQuasar();
     
     const requisitions = ref([]);
@@ -726,6 +757,20 @@ export default {
       return role && ['Nurse', 'Doctor', 'PA', 'Admin'].includes(role);
     });
 
+    const canCreateRequisition = computed(() => {
+      if (authStore.canAccess(['Admin'])) return true;
+      return Boolean(authStore.user?.is_department_ic_or_deputy);
+    });
+
+    const canPrintFulfillment = (row) => {
+      if (!row || (row.status !== 'fulfilled' && row.status !== 'partially_fulfilled')) return false;
+      if (authStore.isSuperAdmin) return true;
+      const sid = row.store_id;
+      if (sid == null || sid === undefined) return false;
+      const ids = authStore.user?.assigned_store_ids || [];
+      return Array.isArray(ids) && ids.includes(sid);
+    };
+
     const isPharmacyHead = computed(() => {
       const role = authStore.userRole;
       return role && ['Pharmacy Head', 'Admin'].includes(role);
@@ -740,6 +785,8 @@ export default {
       const role = authStore.userRole;
       return role && ['Store Manager', 'Department Head'].includes(role);
     });
+
+    const hasStoreScope = computed(() => userStoreIds.value.length > 0);
 
     // Get current user ID safely
     const currentUserId = computed(() => {
@@ -797,7 +844,7 @@ export default {
     const clearFilters = () => {
       filters.value = {
         department_id: null,
-        store_id: isStoreManagerOrDeptHead.value && userStoreIds.value.length > 0 ? userStoreIds.value[0] : null,
+        store_id: hasStoreScope.value ? userStoreIds.value[0] : null,
         status: null,
         start_date: null,
         end_date: null,
@@ -815,10 +862,7 @@ export default {
           end_date: filters.value.end_date ? formatDateForAPI(filters.value.end_date) : null,
         };
         
-        // Auto-filter by store for Store Managers/Department Heads
-        // The filter is already set in loadUserStoreAssignments, but ensure it's applied
-        if (isStoreManagerOrDeptHead.value && userStoreIds.value.length > 0) {
-          // Always use the filter value (which is auto-set to first assigned store)
+        if (hasStoreScope.value) {
           if (!apiFilters.store_id) {
             apiFilters.store_id = filters.value.store_id || userStoreIds.value[0];
           }
@@ -1431,6 +1475,182 @@ export default {
       return new Date(dateTime).toLocaleString();
     };
 
+    const buildRequisitionFulfillmentHtml = (req) => {
+      const now = new Date();
+      const facilityName = escapeHtml(facilityStore.displayName || '');
+
+      const rowsHtml = (req.items || []).map((it, idx) => {
+        const approved = it.approved_quantity != null && it.approved_quantity !== undefined
+          ? Number(it.approved_quantity)
+          : Number(it.requested_quantity);
+        const fulfilled = Number(it.fulfilled_quantity ?? 0);
+        return `<tr>
+          <td>${idx + 1}</td>
+          <td>${escapeHtml(it.product_name)}</td>
+          <td>${escapeHtml(it.product_code)}</td>
+          <td style="text-align:right">${approved}</td>
+          <td style="text-align:right">${fulfilled}</td>
+        </tr>`;
+      }).join('');
+
+      const reqName = escapeHtml(req.requested_by_name || '—');
+      const appName = escapeHtml(req.approved_by_name || '—');
+      const fulName = escapeHtml(req.fulfilled_by_name || '—');
+      const reqDate = formatDateTime(req.created_at);
+      const appDate = formatDateTime(req.approved_at);
+      const fulDate = formatDateTime(req.fulfilled_at);
+
+      return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Requisition ${escapeHtml(req.requisition_number)} — Fulfillment</title>
+<style>
+  @page { size: A4; margin: 16mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; font-size: 11px; line-height: 1.5; color: #333; }
+  .header { text-align: center; border-bottom: 3px solid #000; padding-bottom: 12px; margin-bottom: 18px; }
+  .logo-container { display: flex; justify-content: center; align-items: center; gap: 20px; margin-bottom: 8px; }
+  .logo { max-width: 72px; max-height: 72px; object-fit: contain; }
+  .hospital-name { font-size: 16px; font-weight: bold; margin: 6px 0; }
+  .document-title { font-size: 14px; font-weight: bold; text-transform: uppercase; }
+  .meta { margin: 14px 0; font-size: 10px; }
+  .meta div { margin: 4px 0; }
+  table.data-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 10px; }
+  table.data-table th, table.data-table td { border: 1px solid #333; padding: 6px 8px; text-align: left; }
+  table.data-table th { background: #f5f5f5; font-weight: bold; }
+  .section-title { font-size: 12px; font-weight: bold; text-transform: uppercase; border-bottom: 2px solid #333; padding-bottom: 4px; margin: 18px 0 10px; }
+  .signatory-wrap { margin-top: 22px; page-break-inside: avoid; }
+  .signatory-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .signatory-box { border: 1px solid #333; padding: 10px; min-height: 140px; }
+  .signatory-role { font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; color: #000; }
+  .signatory-line { margin: 6px 0; font-size: 10px; }
+  .sign-line { border-bottom: 1px solid #000; margin-top: 28px; margin-bottom: 4px; min-height: 20px; }
+  .sign-label { font-size: 9px; color: #555; }
+  .footer-note { margin-top: 14px; font-size: 9px; color: #666; text-align: center; }
+  @media print { .signatory-wrap { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-container">
+      <img src="/logos/ministry-of-health-logo.png" alt="" class="logo" onerror="this.style.display='none'" />
+      <img src="/logos/ghana-health-service-logo.png" alt="" class="logo" onerror="this.style.display='none'" />
+    </div>
+    <div class="hospital-name">GHANA HEALTH SERVICE</div>
+    <div class="hospital-name">${facilityName || '—'}</div>
+    <div class="document-title">Store requisition — fulfillment record</div>
+    <div style="margin-top:8px;font-size:10px;">Printed: ${escapeHtml(now.toLocaleString('en-GB'))}</div>
+  </div>
+
+  <div class="meta">
+    <div><strong>Requisition #:</strong> ${escapeHtml(req.requisition_number)}</div>
+    <div><strong>Status:</strong> ${escapeHtml(String(req.status || ''))}</div>
+    <div><strong>Department / unit:</strong> ${escapeHtml(req.ward || req.department_name || '—')}</div>
+    <div><strong>Store:</strong> ${escapeHtml(req.store_name || '—')}</div>
+    ${req.notes ? `<div><strong>Notes:</strong> ${escapeHtml(req.notes)}</div>` : ''}
+  </div>
+
+  <h3 class="section-title">Items approved &amp; quantity fulfilled</h3>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th style="width:36px">#</th>
+        <th>Product</th>
+        <th>Code</th>
+        <th style="text-align:right">Qty approved</th>
+        <th style="text-align:right">Qty fulfilled</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml || '<tr><td colspan="5" style="text-align:center">No items</td></tr>'}</tbody>
+  </table>
+
+  <div class="section-title" style="margin-top:20px">Signatories</div>
+  <div class="signatory-wrap">
+    <div class="signatory-grid">
+      <div class="signatory-box">
+        <div class="signatory-role">Requestor</div>
+        <div class="signatory-line"><strong>Name:</strong> ${reqName}</div>
+        <div class="signatory-line"><strong>Date requested:</strong> ${escapeHtml(reqDate)}</div>
+        <div class="sign-line"></div>
+        <div class="sign-label">Signature</div>
+      </div>
+      <div class="signatory-box">
+        <div class="signatory-role">Approver (Pharmacy head)</div>
+        <div class="signatory-line"><strong>Name:</strong> ${appName}</div>
+        <div class="signatory-line"><strong>Date approved:</strong> ${escapeHtml(appDate)}</div>
+        <div class="sign-line"></div>
+        <div class="sign-label">Signature</div>
+      </div>
+      <div class="signatory-box">
+        <div class="signatory-role">Fulfilled by (store)</div>
+        <div class="signatory-line"><strong>Name:</strong> ${fulName}</div>
+        <div class="signatory-line"><strong>Date fulfilled:</strong> ${escapeHtml(fulDate)}</div>
+        <div class="sign-line"></div>
+        <div class="sign-label">Signature</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer-note">Sign in ink where indicated. This document confirms quantities issued against the approved requisition.</p>
+</body>
+</html>`;
+    };
+
+    const printRequisitionFulfillment = async (row) => {
+      if (!row || (row.status !== 'fulfilled' && row.status !== 'partially_fulfilled')) {
+        Notify.create({
+          type: 'warning',
+          message: 'Print is only available for fulfilled or partially fulfilled requisitions.',
+          position: 'top',
+        });
+        return;
+      }
+      if (!canPrintFulfillment(row)) {
+        Notify.create({
+          type: 'warning',
+          message: 'Only the store manager or store department head assigned to this store can print fulfillment slips.',
+          position: 'top',
+        });
+        return;
+      }
+      try {
+        if (!facilityStore.loaded) {
+          await facilityStore.fetchPublic();
+        }
+        const response = await pharmacyRequisitionsAPI.get(row.id);
+        const req = response.data;
+        const html = buildRequisitionFulfillmentHtml(req);
+        const w = window.open('', '_blank', 'width=900,height=1100');
+        if (!w) {
+          Notify.create({
+            type: 'negative',
+            message: 'Please allow popups to print the requisition',
+            position: 'top',
+          });
+          return;
+        }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        setTimeout(() => {
+          try {
+            w.focus();
+            w.print();
+          } catch (e) {
+            console.error(e);
+          }
+        }, 450);
+      } catch (error) {
+        console.error('Print requisition failed:', error);
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to prepare print',
+          position: 'top',
+        });
+      }
+    };
+
     const loadWards = async () => {
       try {
         const response = await wardsAPI.getAll(true); // Get only active departments/units
@@ -1466,20 +1686,17 @@ export default {
     };
 
     const loadUserStoreAssignments = async () => {
-      if (!isStoreManagerOrDeptHead.value) {
-        return;
-      }
-
       try {
         const response = await storeStaffAssignmentsAPI.getAll({
           user_id: authStore.user?.id,
           active_only: true,
         });
-        userStoreIds.value = (response.data || []).map(assignment => assignment.store_id);
-        
-        // Auto-set filter to first assigned store (always set for Store Managers/Department Heads)
-        if (userStoreIds.value.length > 0) {
-          filters.value.store_id = userStoreIds.value[0];
+        const ids = (response.data || []).map((assignment) => assignment.store_id);
+        if (ids.length > 0) {
+          userStoreIds.value = ids;
+          if (filters.value.store_id == null) {
+            filters.value.store_id = ids[0];
+          }
         }
       } catch (error) {
         console.error('Error loading user store assignments:', error);
@@ -1495,9 +1712,28 @@ export default {
     });
 
     onMounted(async () => {
+      if (!facilityStore.loaded) {
+        facilityStore.fetchPublic();
+      }
+      if (
+        authStore.isAuthenticated &&
+        authStore.user?.assigned_store_ids === undefined
+      ) {
+        try {
+          await authStore.fetchUser();
+        } catch (e) {
+          void 0;
+        }
+      }
+      if (authStore.user?.assigned_store_ids?.length) {
+        userStoreIds.value = [...authStore.user.assigned_store_ids];
+        filters.value.store_id = userStoreIds.value[0];
+      }
       await loadWards();
       await loadStores();
-      await loadUserStoreAssignments();
+      if (!userStoreIds.value.length) {
+        await loadUserStoreAssignments();
+      }
       loadRequisitions();
     });
 
@@ -1528,6 +1764,8 @@ export default {
       itemSearch,
       productResults,
       isWardStaff,
+      canCreateRequisition,
+      canPrintFulfillment,
       isPharmacyHead,
       isStoreManager,
       isAdmin,
@@ -1536,6 +1774,7 @@ export default {
       storeOptions,
       userStoreIds,
       isStoreManagerOrDeptHead,
+      hasStoreScope,
       statusOptions,
       columns,
       itemColumns,
@@ -1565,6 +1804,7 @@ export default {
       cancelRequisition,
       getStatusColor,
       formatDateTime,
+      printRequisitionFulfillment,
     };
   },
 };

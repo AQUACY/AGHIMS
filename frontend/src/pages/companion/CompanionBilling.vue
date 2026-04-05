@@ -1728,6 +1728,7 @@ function normalizeCategory(cat) {
   if (c === 'dressing' || c === 'dressing_room') return 'dressing';
   if (c === 'oxygen') return 'oxygen';
   if (c === 'inpatient') return 'inpatient';
+  if (c === 'inventory_debit') return 'inventory_debits';
   return c;
 }
 
@@ -1740,6 +1741,7 @@ function categoryTitle(key) {
   if (key === 'dressing') return 'Dressing / Treatment room';
   if (key === 'oxygen') return 'Oxygen';
   if (key === 'inpatient') return 'Inpatient';
+  if (key === 'inventory_debits') return 'Inventory debits';
   if (key === 'other') return 'Other';
   return key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
@@ -1752,7 +1754,18 @@ const groupedBillItems = computed(() => {
     map.get(key).push(item);
   }
   const keys = Array.from(map.keys());
-  const preferredOrder = ['drugs', 'investigations', 'scans', 'xrays', 'surgeries', 'dressing', 'oxygen', 'inpatient', 'other'];
+  const preferredOrder = [
+    'drugs',
+    'investigations',
+    'scans',
+    'xrays',
+    'surgeries',
+    'dressing',
+    'oxygen',
+    'inventory_debits',
+    'inpatient',
+    'other',
+  ];
   keys.sort((a, b) => {
     const ai = preferredOrder.indexOf(a);
     const bi = preferredOrder.indexOf(b);

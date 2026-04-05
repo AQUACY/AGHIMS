@@ -319,6 +319,19 @@ export const companionVisitsAPI = {
     api.post(`/companion-visits/${visitId}/items/confirm-from-opd-export-line`, { description, quantity }),
   cancelItem: (visitId, itemId, reason) =>
     api.post(`/companion-visits/${visitId}/items/${itemId}/cancel`, { reason }),
+  /** Aggregated ward stock lines for a department (for picking items to debit). */
+  getDepartmentStock: (ward) =>
+    api.get('/companion-visits/ward-stock', { params: { ward } }),
+  listInventoryDebits: (visitId) => api.get(`/companion-visits/${visitId}/inventory-debits`),
+  createInventoryDebit: (visitId, data) => api.post(`/companion-visits/${visitId}/inventory-debits`, data),
+  batchInventoryDebits: (visitId, items) =>
+    api.post(`/companion-visits/${visitId}/inventory-debits/batch`, { items }),
+  updateInventoryDebit: (visitId, debitId, data) =>
+    api.patch(`/companion-visits/${visitId}/inventory-debits/${debitId}`, data),
+  deleteInventoryDebit: (visitId, debitId) =>
+    api.delete(`/companion-visits/${visitId}/inventory-debits/${debitId}`),
+  chargeInventoryDebitToBill: (visitId, debitId) =>
+    api.post(`/companion-visits/${visitId}/inventory-debits/${debitId}/charge-to-bill`),
 };
 
 // Management: transactions and user list for filters (Management, Admin only)
@@ -606,7 +619,8 @@ export const consultationAPI = {
     getInpatientInventoryDebits: (wardAdmissionId) => api.get(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits`),
     deleteInpatientInventoryDebit: (wardAdmissionId, debitId) => api.delete(`/consultation/ward-admissions/${wardAdmissionId}/inventory-debits/${debitId}`),
     getAllInventoryDebits: (params = {}) => api.get('/consultation/inventory-debits', { params }),
-    releaseInventoryDebit: (debitId) => api.put(`/consultation/inventory-debits/${debitId}/release`),
+    releaseInventoryDebit: (debitId, params = {}) =>
+      api.put(`/consultation/inventory-debits/${debitId}/release`, null, { params }),
     // Encounter Inventory Debits (for OPD)
     createEncounterInventoryDebit: (encounterId, debitData) => api.post(`/consultation/encounters/${encounterId}/inventory-debits`, debitData),
     getEncounterInventoryDebits: (encounterId) => api.get(`/consultation/encounters/${encounterId}/inventory-debits`),
@@ -1125,6 +1139,11 @@ export const storesAPI = {
   create: (data) => api.post('/stores', data),
   update: (storeId, data) => api.put(`/stores/${storeId}`, data),
   delete: (storeId) => api.delete(`/stores/${storeId}`),
+};
+
+/** Inventory mode: store/department scoped KPIs, trends, top products */
+export const inventoryAnalyticsAPI = {
+  getDashboard: (params = {}) => api.get('/inventory-analytics/dashboard', { params }),
 };
 
 // Module Settings endpoints
