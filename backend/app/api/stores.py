@@ -1,17 +1,17 @@
 """
 Store management API endpoints
 """
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role, require_module_permission
 from app.core.datetime_utils import utcnow
 from app.models.user import User
-from app.models.store import Store
+from app.models.store import Store, StoreKind
 
 router = APIRouter(prefix="/stores", tags=["stores"])
 
@@ -20,12 +20,14 @@ router = APIRouter(prefix="/stores", tags=["stores"])
 class StoreCreate(BaseModel):
     name: str
     description: Optional[str] = None
+    store_kind: Literal["general", "pharmacy"] = "general"
     is_active: bool = True
 
 
 class StoreUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    store_kind: Optional[Literal["general", "pharmacy"]] = None
     is_active: Optional[bool] = None
 
 
@@ -33,6 +35,7 @@ class StoreResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
+    store_kind: str = Field(description="'general' (main / consumables) or 'pharmacy' (drug supply)")
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -93,11 +96,11 @@ def create_store(
             detail=f"Store with name '{store_data.name}' already exists"
         )
     
-    # Create new store
     new_store = Store(
         name=store_data.name,
         description=store_data.description,
-        is_active=store_data.is_active
+        store_kind=store_data.store_kind,
+        is_active=store_data.is_active,
     )
     
     try:
@@ -145,7 +148,15 @@ def update_store(
     
     if store_data.is_active is not None:
         store.is_active = store_data.is_active
-    
+
+    if store_data.store_kind is not None:
+        if store_data.store_kind not in (StoreKind.GENERAL.value, StoreKind.PHARMACY.value):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="store_kind must be 'general' or 'pharmacy'",
+            )
+        store.store_kind = store_data.store_kind
+
     store.updated_at = utcnow()
     
     try:

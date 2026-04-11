@@ -1,10 +1,19 @@
 """
 Store model - for managing stores (Main Store, Pharmacy Store, etc.)
 """
+import enum
+
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 from app.core.datetime_utils import utcnow_callable
+
+
+class StoreKind(str, enum.Enum):
+    """Pharmacy supply store vs general (main) store — used for labels and report presets."""
+
+    GENERAL = "general"
+    PHARMACY = "pharmacy"
 
 
 class Store(Base):
@@ -14,6 +23,7 @@ class Store(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, unique=True, index=True)
     description = Column(String(500), nullable=True)
+    store_kind = Column(String(32), nullable=False, default=StoreKind.GENERAL.value, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=utcnow_callable, nullable=False)
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable, nullable=False)

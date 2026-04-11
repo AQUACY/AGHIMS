@@ -1146,6 +1146,22 @@ export const inventoryAnalyticsAPI = {
   getDashboard: (params = {}) => api.get('/inventory-analytics/dashboard', { params }),
 };
 
+/** Inventory reports (requisitions + store stock); scope matches inventory dashboard */
+export const inventoryReportsAPI = {
+  getRequisitions: (params = {}) => api.get('/inventory-reports/requisitions', { params }),
+  getStoreStock: (params = {}) => api.get('/inventory-reports/store-stock', { params }),
+  downloadRequisitionsCsv: (params = {}) =>
+    api.get('/inventory-reports/requisitions', {
+      params: { ...params, export_csv: true },
+      responseType: 'blob',
+    }),
+  downloadStoreStockCsv: (params = {}) =>
+    api.get('/inventory-reports/store-stock', {
+      params: { ...params, export_csv: true },
+      responseType: 'blob',
+    }),
+};
+
 // Module Settings endpoints
 export const moduleSettingsAPI = {
   getAll: (category = null) => {

@@ -436,39 +436,6 @@
         </q-item>
 
         <q-item
-          v-if="canAccess(['Management', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'ManagementTransactions' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="receipt_long" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Transactions</q-item-label>
-          </q-item-section>
-          <q-tooltip>Monetary transactions by date, client, service, user</q-tooltip>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Management', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'ManagementUndertakings' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="verified_user" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Undertakings</q-item-label>
-          </q-item-section>
-            <q-tooltip>Approve undertakings and part payments (Companion)</q-tooltip>
-        </q-item>
-
-        <q-item
           v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
           clickable
           v-ripple

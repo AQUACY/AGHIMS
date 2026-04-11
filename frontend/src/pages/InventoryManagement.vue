@@ -263,6 +263,17 @@
           </q-card-section>
         </q-card>
       </div>
+      <div v-if="canAccessRequisitions" class="col-12 col-md-6 col-lg-3">
+        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/reports')">
+          <q-card-section class="q-pa-lg">
+            <div class="column items-center text-center">
+              <q-icon name="assessment" size="56px" color="cyan" class="q-mb-md" />
+              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Reports</div>
+              <div class="text-caption text-secondary">Requisitions &amp; store stock CSV</div>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
       <div v-if="canAccessDepartmentStock" class="col-12 col-md-6 col-lg-3">
         <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/ward-stock')">
           <q-card-section class="q-pa-lg">
@@ -325,6 +336,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { useRouter } from 'vue-router';
 import { inventoryAnalyticsAPI, storesAPI, wardsAPI } from '../services/api';
+import { storeSelectLabel } from '../utils/storeKind';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -477,7 +489,7 @@ function formatEventTime(at) {
 async function loadStores() {
   try {
     const res = await storesAPI.getAll(true);
-    storeOptions.value = (res.data || []).map((s) => ({ label: s.name, value: s.id }));
+    storeOptions.value = (res.data || []).map((s) => ({ label: storeSelectLabel(s), value: s.id }));
   } catch {
     storeOptions.value = [];
   }

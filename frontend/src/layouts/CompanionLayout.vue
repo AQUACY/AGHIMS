@@ -165,6 +165,34 @@
           <q-item-label>Billing</q-item-label>
         </q-item>
         <q-item
+          v-if="canAccessManagement"
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionManagementTransactions' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="receipt_long" />
+          </q-item-section>
+          <q-item-label>Transactions</q-item-label>
+          <q-tooltip>Monetary transactions by date, client, service, user</q-tooltip>
+        </q-item>
+        <q-item
+          v-if="canAccessUndertakings"
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionManagementUndertakings' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="verified_user" />
+          </q-item-section>
+          <q-item-label>Undertakings</q-item-label>
+          <q-tooltip>Approve undertakings and part payments (Companion)</q-tooltip>
+        </q-item>
+        <q-item
           clickable
           v-ripple
           to="/companion/profile"
@@ -201,6 +229,19 @@
             <q-icon name="business" />
           </q-item-section>
           <q-item-label>Facility branding</q-item-label>
+        </q-item>
+        <q-item
+          v-if="canAccessAuditLogs"
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionAuditLogs' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="history" />
+          </q-item-section>
+          <q-item-label>Audit Trail Logs</q-item-label>
         </q-item>
       </q-list>
     </q-drawer>
@@ -244,6 +285,9 @@ const sessionTimeLeftMinutes = computed(() => {
 
 const canAccessRecords = computed(() => authStore.canAccess(['Records', 'Admin']));
 const canAccessBilling = computed(() => authStore.canAccess(['Billing', 'Doctor', 'PA', 'Admin']));
+const canAccessManagement = computed(() => authStore.canAccess(['Management', 'Admin']));
+const canAccessUndertakings = computed(() => authStore.canAccess(['Management', 'Admin', 'Billing']));
+const canAccessAuditLogs = computed(() => authStore.canAccess(['Admin', 'Auditor']));
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 const canAccessAdminOrSuper = computed(() => authStore.canAccess(['Admin']) || authStore.isSuperAdmin);
 

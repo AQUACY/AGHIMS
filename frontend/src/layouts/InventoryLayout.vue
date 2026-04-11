@@ -115,6 +115,22 @@
           v-if="authStore.canAccessInventoryMode"
           clickable
           v-ripple
+          :to="{ name: 'InventoryModeReports' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="assessment" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Reports</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="authStore.canAccessInventoryMode"
+          clickable
+          v-ripple
           :to="{ name: 'InventoryModeWardStock' }"
           class="glass-nav-item"
           active-class="glass-nav-active"
@@ -220,6 +236,21 @@
             <q-item-label>Facility branding</q-item-label>
           </q-item-section>
         </q-item>
+        <q-item
+          v-if="canAccessAuditLogs"
+          clickable
+          v-ripple
+          :to="{ name: 'InventoryModeAuditLogs' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="history" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Audit Trail Logs</q-item-label>
+          </q-item-section>
+        </q-item>
       </q-list>
     </q-drawer>
 
@@ -245,6 +276,7 @@ const facilityStore = useFacilityStore();
 const drawerOpen = ref(true);
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 const canAccessAdminOrSuper = computed(() => authStore.canAccess(['Admin']) || authStore.isSuperAdmin);
+const canAccessAuditLogs = computed(() => authStore.canAccess(['Admin', 'Auditor']));
 
 const canAccess = (roles) => authStore.canAccess(roles);
 

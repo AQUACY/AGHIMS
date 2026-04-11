@@ -20,7 +20,7 @@ from app.core.inventory_access import (
 )
 from app.models.user import User
 from app.models.store_stock import StoreStock, StockStatus
-from app.models.store import Store
+from app.models.store import Store, StoreKind
 from app.models.ward_stock import WardStock
 from app.models.ward import Ward
 from app.models.pharmacy_requisition import PharmacyRequisition, RequisitionStatus
@@ -147,7 +147,14 @@ def get_inventory_dashboard(
     if store_ids_eff is not None and len(store_ids_eff) == 1:
         st = db.query(Store).filter(Store.id == store_ids_eff[0]).first()
         if st:
-            store_name = st.name
+            tag = (
+                "Pharmacy"
+                if st.store_kind == StoreKind.PHARMACY.value
+                else "General"
+                if st.store_kind == StoreKind.GENERAL.value
+                else None
+            )
+            store_name = f"{st.name} ({tag})" if tag else st.name
     elif store_ids_eff is not None and len(store_ids_eff) > 1:
         store_name = f"{len(store_ids_eff)} stores"
 

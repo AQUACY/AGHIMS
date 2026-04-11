@@ -695,6 +695,7 @@ import { useAuthStore } from '../stores/auth';
 import { useFacilityStore } from '../stores/facility';
 import { useQuasar, Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, storeStaffAssignmentsAPI } from '../services/api';
+import { storeSelectLabel } from '../utils/storeKind';
 
 function escapeHtml(s) {
   if (s == null || s === '') return '';
@@ -1671,8 +1672,8 @@ export default {
     const loadStores = async () => {
       try {
         const response = await storesAPI.getAll(true); // Get only active stores
-        storeOptions.value = (response.data || []).map(store => ({
-          label: store.name,
+        storeOptions.value = (response.data || []).map((store) => ({
+          label: storeSelectLabel(store),
           value: store.id,
         }));
       } catch (error) {

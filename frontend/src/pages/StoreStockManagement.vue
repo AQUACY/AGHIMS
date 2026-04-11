@@ -635,6 +635,7 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
 import { useRouter } from 'vue-router';
 import { vendorsAPI, storeStockAPI, storesAPI, priceListAPI, storeStaffAssignmentsAPI } from '../services/api';
+import { storeSelectLabel } from '../utils/storeKind';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -806,9 +807,9 @@ const canDeleteStock = (stock) => {
 const loadStores = async () => {
   try {
     const response = await storesAPI.getAll(true); // Get only active stores
-    storeOptions.value = (response.data || []).map(store => ({
-      label: store.name,
-      value: store.id
+    storeOptions.value = (response.data || []).map((store) => ({
+      label: storeSelectLabel(store),
+      value: store.id,
     }));
   } catch (error) {
     $q.notify({

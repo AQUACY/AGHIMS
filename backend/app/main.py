@@ -37,6 +37,7 @@ from app.api import (
     management,
     facility_settings,
     inventory_analytics,
+    inventory_reports,
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -213,6 +214,7 @@ app.include_router(companion_visits.router, prefix="/api")
 app.include_router(management.router, prefix="/api")
 app.include_router(facility_settings.router, prefix="/api")
 app.include_router(inventory_analytics.router, prefix="/api")
+app.include_router(inventory_reports.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

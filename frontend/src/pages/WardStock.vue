@@ -156,6 +156,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import { Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, wardsAPI, storesAPI, storeStaffAssignmentsAPI } from '../services/api';
+import { storeSelectLabel } from '../utils/storeKind';
 
 export default {
   name: 'WardStock',
@@ -263,8 +264,8 @@ export default {
     const loadStores = async () => {
       try {
         const response = await storesAPI.getAll(true); // Get only active stores
-        storeOptions.value = (response.data || []).map(store => ({
-          label: store.name,
+        storeOptions.value = (response.data || []).map((store) => ({
+          label: storeSelectLabel(store),
           value: store.id,
         }));
       } catch (error) {

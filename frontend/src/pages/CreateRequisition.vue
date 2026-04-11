@@ -200,6 +200,7 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, departmentStaffAssignmentsAPI } from '../services/api';
+import { storeSelectLabel } from '../utils/storeKind';
 
 export default {
   name: 'CreateRequisition',
@@ -269,8 +270,8 @@ export default {
     const loadStores = async () => {
       try {
         const response = await storesAPI.getAll(true); // Get only active stores
-        storeOptions.value = (response.data || []).map(store => ({
-          label: store.name,
+        storeOptions.value = (response.data || []).map((store) => ({
+          label: storeSelectLabel(store),
           value: store.id,
         }));
       } catch (error) {

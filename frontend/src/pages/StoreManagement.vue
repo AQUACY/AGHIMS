@@ -14,7 +14,7 @@
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      Manage hospital stores (Main Store, Pharmacy Store, etc.). Stores are where departments request items from.
+      Each store is a supply source for requisitions. Mark a row as <strong>Pharmacy</strong> (drug/pharmacy items) or <strong>General</strong> (main store / consumables) so lists and dashboards stay clear; requests stay tied to the store you pick when creating a requisition.
     </q-banner>
 
     <!-- Create New Store -->
@@ -37,6 +37,15 @@
               filled
               type="textarea"
               class="col-12 col-md-6"
+            />
+            <q-select
+              v-model="storeForm.store_kind"
+              :options="storeKindOptions"
+              label="Store type *"
+              filled
+              class="col-12 col-md-6"
+              emit-value
+              map-options
             />
             <q-toggle
               v-model="storeForm.is_active"
@@ -90,6 +99,15 @@
           :pagination="pagination"
           flat
         >
+          <template v-slot:body-cell-store_kind="props">
+            <q-td :props="props">
+              <q-badge
+                :color="props.row.store_kind === 'pharmacy' ? 'deep-purple' : 'grey-8'"
+                :label="props.row.store_kind === 'pharmacy' ? 'Pharmacy' : 'General'"
+              />
+            </q-td>
+          </template>
+
           <template v-slot:body-cell-is_active="props">
             <q-td :props="props">
               <q-badge
@@ -245,6 +263,15 @@
               type="textarea"
               class="q-mb-md"
             />
+            <q-select
+              v-model="editForm.store_kind"
+              :options="storeKindOptions"
+              label="Store type *"
+              filled
+              class="q-mb-md"
+              emit-value
+              map-options
+            />
             <q-toggle
               v-model="editForm.is_active"
               label="Active"
@@ -299,9 +326,15 @@ export default {
     const loadingStaff = ref(false);
     const addingAssignment = ref(false);
 
+    const storeKindOptions = [
+      { label: 'General (main store / consumables)', value: 'general' },
+      { label: 'Pharmacy supply (drugs & pharmacy items)', value: 'pharmacy' },
+    ];
+
     const columns = [
       { name: 'id', label: 'ID', field: 'id', align: 'left', sortable: true },
       { name: 'name', label: 'Store Name', field: 'name', align: 'left', sortable: true },
+      { name: 'store_kind', label: 'Type', field: 'store_kind', align: 'center', sortable: true },
       { name: 'description', label: 'Description', field: 'description', align: 'left', sortable: true },
       { name: 'is_active', label: 'Status', field: 'is_active', align: 'center', sortable: true },
       { name: 'created_at', label: 'Created', field: 'created_at', align: 'left', sortable: true },
@@ -315,6 +348,7 @@ export default {
     const storeForm = reactive({
       name: '',
       description: '',
+      store_kind: 'general',
       is_active: true,
     });
 
@@ -322,6 +356,7 @@ export default {
       id: null,
       name: '',
       description: '',
+      store_kind: 'general',
       is_active: true,
     });
 
@@ -405,6 +440,7 @@ export default {
       editForm.id = row.id;
       editForm.name = row.name;
       editForm.description = row.description || '';
+      editForm.store_kind = row.store_kind === 'pharmacy' ? 'pharmacy' : 'general';
       editForm.is_active = row.is_active;
       showEditDialog.value = true;
     };
@@ -419,6 +455,7 @@ export default {
         await storesAPI.update(editForm.id, {
           name: editForm.name,
           description: editForm.description,
+          store_kind: editForm.store_kind,
           is_active: editForm.is_active,
         });
         $q.notify({
@@ -646,6 +683,7 @@ export default {
       allStaffOptions,
       filterStaff,
       roleOptions,
+      storeKindOptions,
       newAssignment,
       openStaffAssignmentDialog,
       addAssignment,

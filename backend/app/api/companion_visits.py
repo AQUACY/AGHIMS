@@ -243,7 +243,7 @@ def _visit_all_items_paid(visit_id: int, db: Session) -> bool:
 def create_companion_visit(
     data: CompanionVisitCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin"])),
+    current_user: User = Depends(require_role(["Records", "Billing", "Admin"])),
 ):
     """
     Create a companion visit (service) from external system identifiers.
