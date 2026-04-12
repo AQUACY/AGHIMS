@@ -213,6 +213,8 @@ const authStore = useAuthStore();
 const moduleSettingsStore = useModuleSettingsStore();
 
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
+/** Mode toggles are super-admin only; hide these module rows from the table for everyone else. */
+const APP_MODE_MODULE_KEY_SET = new Set(Object.values(APP_MODE_MODULE_KEYS));
 const togglingMode = ref(null);
 const modeToggles = ref({
   hms: true,
@@ -292,7 +294,11 @@ const loadModules = async () => {
   try {
     loading.value = true;
     const response = await moduleSettingsAPI.getAll(selectedCategory.value);
-    modules.value = response.data.map((module) => ({
+    let list = response.data || [];
+    if (!isSuperAdmin.value) {
+      list = list.filter((m) => !APP_MODE_MODULE_KEY_SET.has(m.module_key));
+    }
+    modules.value = list.map((module) => ({
       ...module,
       toggling: false,
     }));

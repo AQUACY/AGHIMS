@@ -193,6 +193,32 @@
           <q-tooltip>Approve undertakings and part payments (Companion)</q-tooltip>
         </q-item>
         <q-item
+          v-if="canAccessPriceList"
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionPriceListManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="price_check" />
+          </q-item-section>
+          <q-item-label>Price List Management</q-item-label>
+        </q-item>
+        <q-item
+          v-if="canAccessStaffManagement"
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionStaffManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="people" />
+          </q-item-section>
+          <q-item-label>Staff Management</q-item-label>
+        </q-item>
+        <q-item
           clickable
           v-ripple
           to="/companion/profile"
@@ -288,6 +314,8 @@ const canAccessBilling = computed(() => authStore.canAccess(['Billing', 'Doctor'
 const canAccessManagement = computed(() => authStore.canAccess(['Management', 'Admin']));
 const canAccessUndertakings = computed(() => authStore.canAccess(['Management', 'Admin', 'Billing']));
 const canAccessAuditLogs = computed(() => authStore.canAccess(['Admin', 'Auditor']));
+const canAccessPriceList = computed(() => authStore.canAccess(['Admin', 'Pharmacy Head', 'Store Manager']));
+const canAccessStaffManagement = computed(() => authStore.canAccess(['Admin']));
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 const canAccessAdminOrSuper = computed(() => authStore.canAccess(['Admin']) || authStore.isSuperAdmin);
 

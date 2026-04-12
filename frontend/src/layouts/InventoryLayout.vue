@@ -207,6 +207,36 @@
           </q-item-section>
         </q-item>
         <q-item
+          v-if="canAccess(['Admin', 'Pharmacy Head', 'Store Manager'])"
+          clickable
+          v-ripple
+          :to="{ name: 'InventoryModePriceListManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="price_check" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Price List Management</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
+          v-if="canAccess(['Admin'])"
+          clickable
+          v-ripple
+          :to="{ name: 'InventoryModeStaffManagement' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="people" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Staff Management</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
           v-if="isSuperAdmin"
           clickable
           v-ripple
