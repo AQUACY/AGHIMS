@@ -29,6 +29,7 @@
         <q-badge color="blue-8" text-color="white" class="q-mr-md">
           Current Mode: HMS
         </q-badge>
+        <LicenseTitleLink />
         <q-space />
         <!-- Session Timer -->
         <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
@@ -660,6 +661,7 @@ import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
 import { patientsAPI, notificationsAPI } from '../services/api';
 import NotificationsPanel from '../components/NotificationsPanel.vue';
+import LicenseTitleLink from '../components/LicenseTitleLink.vue';
 
 const $q = useQuasar();
 const router = useRouter();

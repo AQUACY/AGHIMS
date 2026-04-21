@@ -75,7 +75,13 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive"
         )
-    
+
+    from app.core.audit import is_super_admin
+    from app.services import license_runtime
+
+    if not is_super_admin(user) and license_runtime.enforcement_enabled():
+        license_runtime.assert_login_allowed(db)
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     # Debug: Log token expiration setting
     print(f"DEBUG: Creating token with expiration: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
@@ -85,7 +91,6 @@ def login(
     )
     
     # Log successful login (skip for super admin / ghost account)
-    from app.core.audit import is_super_admin
     if not is_super_admin(user):
         log_activity(
             db=db,

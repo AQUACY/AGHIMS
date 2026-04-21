@@ -18,6 +18,7 @@ from app.models.icd10_drg_mapping import ICD10DRGMapping
 from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
 from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
+from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.models.consultation_notes import ConsultationNotes
 from app.models.doctor_note_entry import DoctorNoteEntry
 from app.models.admission import AdmissionRecommendation
@@ -73,6 +74,8 @@ from app.models.companion_active_oxygen import CompanionActiveOxygen
 from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
 from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
 from app.models.facility_settings import FacilitySettings
+from app.models.app_license_state import AppLicenseState
+from app.models.app_license_activation_log import AppLicenseActivationLog
 
 __all__ = [
     "User",
@@ -104,6 +107,8 @@ __all__ = [
     "ClaimProcedure",
     "ClaimItReportBatch",
     "ClaimItReportError",
+    "ClaimXmlImportBatch",
+    "ClaimXmlImportItem",
     "ConsultationNotes",
     "DoctorNoteEntry",
     "AdmissionRecommendation",
@@ -166,5 +171,7 @@ __all__ = [
     "CompanionGovernmentOpdExport",
     "CompanionGovernmentIpdExport",
     "FacilitySettings",
+    "AppLicenseState",
+    "AppLicenseActivationLog",
 ]
 

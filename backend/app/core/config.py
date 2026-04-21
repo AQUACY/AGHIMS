@@ -61,6 +61,24 @@ class Settings(BaseSettings):
     # Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (e.g., "2024-01-15" or "2024-01-15 10:30:00")
     # Leave empty to use system date
     APPLICATION_REFERENCE_DATE: str = ""  # Override date for application (empty = use system date)
+
+    # Installation license (signed file + optional online checks). Generation lives in separate license-portal DB.
+    LICENSE_ENFORCEMENT: bool = False
+    LICENSE_RSA_PUBLIC_KEY_PEM: str = ""
+    LICENSE_RSA_PUBLIC_KEY_FILE: str = ""  # If set, PEM is read from this path (overrides empty PEM)
+    LICENSE_ISSUER_SLUG: str = ""  # Must match claim issuer_slug on every license you issue
+    LICENSE_DISTRIBUTION_ID: str = ""  # Optional; if set, must match claim distribution_id
+    LICENSE_VERIFY_URL: str = ""  # Base URL of license portal, e.g. https://licenses.example.com/api
+    LICENSE_VERIFY_API_KEY: str = ""  # Shared secret; HMS sends X-License-Server-Key
+    LICENSE_ONLINE_CHECK_INTERVAL_HOURS: int = 24
+    LICENSE_ONLINE_GRACE_SECONDS: int = 172800  # 2 days after last successful online verify when URL is set
+    # Detect local clock rollback. If app time goes behind last seen time by more than this,
+    # login is blocked until time catches up.
+    LICENSE_CLOCK_ROLLBACK_TOLERANCE_SECONDS: int = 300
+    # When LICENSE_VERIFY_URL is set: signed file alone is allowed only until this many days after
+    # license_activated_at (set on activation, or anchored on first check after DB upgrade).
+    LICENSE_ONLINE_BOOTSTRAP_MAX_DAYS: int = 7
+    LICENSE_SETUP_TOKEN: str = ""  # One-time style secret required to POST /license/activate (unauthenticated)
     
     @property
     def DATABASE_URL(self) -> str:

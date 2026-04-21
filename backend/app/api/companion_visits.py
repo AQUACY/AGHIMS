@@ -5,13 +5,15 @@ Service creation and listing for Companion mode. All identifiers (card number, v
 come from the external government system; no internal patient/encounter IDs are used.
 """
 import io
+import json
+import math
 import re
 import shutil
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Request, Response
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional, List, Tuple, Dict, Set
+from typing import Any, Optional, List, Tuple, Dict, Set
 from collections import defaultdict
 from datetime import date, datetime
 from app.core.database import get_db
@@ -32,6 +34,7 @@ from app.models.companion_active_oxygen import CompanionActiveOxygen
 from app.services.opd_government_export import (
     parse_government_opd_export,
     parse_government_ipd_export,
+    parse_government_export_auto,
     normalize_service_name,
 )
 from app.services.price_list_service_v2 import search_price_items_all_tables, get_price_from_all_tables
@@ -41,6 +44,36 @@ from app.models.companion_inventory_debit import CompanionInventoryDebit
 from app.models.ward_stock import WardStock
 
 router = APIRouter(prefix="/companion-visits", tags=["companion-visits"])
+
+
+def _json_finite_qty(value: Any) -> float:
+    """JSON/API-safe quantity (NaN/Inf from Excel or DB → 0)."""
+    try:
+        x = float(value if value is not None else 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return x if math.isfinite(x) else 0.0
+
+
+def _json_finite_optional_float(value: Any) -> Optional[float]:
+    """Optional monetary/total field: NaN/Inf → None for valid JSON."""
+    if value is None:
+        return None
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def _snapshot_line_dict_from_parsed(ln: Any) -> dict:
+    """One government export line for lines_json and reconcile payloads (strict JSON floats)."""
+    return {
+        "description": getattr(ln, "description", None) or "",
+        "quantity": _json_finite_qty(getattr(ln, "quantity", None)),
+        "unit": getattr(ln, "unit", None),
+        "total": _json_finite_optional_float(getattr(ln, "total", None)),
+    }
 
 
 class CompanionVisitCreate(BaseModel):
@@ -120,6 +153,125 @@ class UndertakingUnapproveBody(BaseModel):
 class ReopenVisitBody(BaseModel):
     """Reason required for reopening a closed visit (audit)."""
     reason: str
+
+
+class CreateFromGovernmentExportResponse(BaseModel):
+    """Result of creating a companion visit from an uploaded GHIMS OPD or IPD export."""
+
+    visit: CompanionVisitResponse
+    export_kind: str  # opd | ipd
+    added_count: int
+    failed: List[Dict[str, Any]]
+
+
+def _try_add_visit_item_from_government_line(
+    db: Session,
+    visit_id: int,
+    description: str,
+    quantity: float,
+    created_by_id: int,
+) -> tuple[bool, Optional[dict], Optional[str]]:
+    """
+    Match one government service line to the price list and insert a CompanionVisitItem.
+    Does not commit. On success returns (True, extra, None) where extra has keys:
+    added, match_type, matched_code, matched_name, matched_service_type, category, unit_price.
+    """
+    desc = (description or "").strip()
+    qty = float(quantity) if quantity is not None else 1.0
+    if not desc:
+        return False, None, "Empty description"
+    if qty <= 0:
+        return False, None, "Invalid quantity"
+
+    candidates: list = []
+    for st in ("INVESTIGATIONS", "ULTRASOUND", "X RAY", "DAY SURGERY", "MAJOR SURGERY", "DRESSING AND TREATMENT ROOM", "DRESSING", "OXYGEN"):
+        candidates.extend(search_price_items_all_tables(db, search_term=desc, service_type=st, file_type="procedure") or [])
+    candidates.extend(search_price_items_all_tables(db, search_term=desc, file_type="product") or [])
+    if not candidates:
+        candidates = search_price_items_all_tables(db, search_term=normalize_service_name(desc), file_type=None) or []
+
+    picked = _pick_best_price_match(candidates, desc)
+    if not picked:
+        return False, None, "No price list match found"
+
+    type_name, item = picked
+
+    matched_code = None
+    matched_name = None
+    matched_service_type = None
+    category = None
+    unit_price = 0.0
+
+    if type_name == "product":
+        matched_code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
+        matched_name = getattr(item, "product_name", None) or desc
+        matched_service_type = None
+        category = "drug"
+        if matched_code:
+            unit_price = float(get_price_from_all_tables(db, str(matched_code), is_insured=True))
+    else:
+        matched_code = getattr(item, "g_drg_code", None)
+        matched_name = getattr(item, "service_name", None) or desc
+        matched_service_type = getattr(item, "service_type", None)
+        category = _service_type_to_category(matched_service_type)
+        if matched_code:
+            unit_price = float(
+                get_price_from_all_tables(
+                    db,
+                    str(matched_code),
+                    is_insured=True,
+                    service_type=matched_service_type,
+                    procedure_name=matched_name,
+                )
+            )
+
+    if not matched_code:
+        return False, None, "Matched price item has no code"
+
+    new_item = CompanionVisitItem(
+        companion_visit_id=visit_id,
+        item_code=str(matched_code).strip(),
+        item_name=str(matched_name).strip() or desc,
+        category=category or "lab",
+        unit_price=float(unit_price),
+        quantity=float(qty),
+        created_by_id=created_by_id,
+    )
+    db.add(new_item)
+    db.flush()
+    db.refresh(new_item)
+
+    u = db.query(User).filter(User.id == getattr(new_item, "created_by_id", None)).first()
+    added = {
+        "id": new_item.id,
+        "companion_visit_id": new_item.companion_visit_id,
+        "item_code": new_item.item_code,
+        "item_name": new_item.item_name,
+        "category": new_item.category,
+        "unit_price": float(new_item.unit_price),
+        "quantity": float(new_item.quantity),
+        "created_at": new_item.created_at,
+        "created_by_id": getattr(new_item, "created_by_id", None),
+        "created_by_name": (u.full_name or u.username) if u else None,
+        "receipt_number": new_item.receipt_number,
+        "paid_at": new_item.paid_at,
+        "paid_by_id": new_item.paid_by_id,
+        "paid_by_name": None,
+        "payment_method": new_item.payment_method,
+        "admission_deposit_applied": getattr(new_item, "admission_deposit_applied", None),
+        "admission_deposit_line_receipt": getattr(new_item, "admission_deposit_line_receipt", None),
+    }
+
+    extra = {
+        "added": added,
+        "match_type": type_name,
+        "matched_code": str(matched_code),
+        "matched_name": matched_name,
+        "matched_service_type": matched_service_type,
+        "category": category,
+        "unit_price": float(unit_price),
+    }
+    return True, extra, None
 
 
 def _companion_item_row_amount(it: CompanionVisitItem) -> float:
@@ -315,6 +467,149 @@ def list_companion_visits(
     visits = q.all()
     summaries = _batch_visit_billing_summaries(db, visits)
     return [_visit_to_response(v, db, billing=summaries.get(v.id)) for v in visits]
+
+
+@router.post(
+    "/create-from-government-export",
+    response_model=CreateFromGovernmentExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_companion_visit_from_government_export(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Records", "Admin"])),
+):
+    """
+    Create a companion visit from a GHIMS OPD billing export or IPD invoice (Excel/HTML).
+
+    Parses the file, creates the visit (card + visit/claim number), auto-matches each line to the
+    co-payment price list, and saves the same snapshot used by OPD/IPD reconcile so later
+    "check vs government" runs without re-uploading.
+    """
+    import hashlib
+
+    fn = (file.filename or "upload").strip()
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+
+    try:
+        export_kind, export = parse_government_export_auto(data, filename=fn)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    if export_kind == "opd":
+        card = (export.patient_no or "").strip()
+        vn = (export.claim_no or "").strip()
+        client_name = (export.patient_name or "").strip() or None
+    else:
+        card = (export.patient_no or "").strip()
+        # IPD: companion visit number must match GHIMS visit number, not admission number.
+        vn = (export.visit_no or export.invoice_no or "").strip()
+        client_name = (export.patient_name or "").strip() or None
+
+    if not card or not vn:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Could not read card number and visit/claim number from the export.",
+        )
+
+    existing = (
+        db.query(CompanionVisit)
+        .filter(
+            CompanionVisit.external_card_number == card,
+            CompanionVisit.external_visit_number == vn,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "A visit with this card number and visit number already exists. Open it and use government import from the bill view if needed.",
+                "existing_visit_id": existing.id,
+            },
+        )
+
+    visit_obj = CompanionVisit(
+        external_card_number=card,
+        external_visit_number=vn,
+        client_name=client_name,
+        status="open",
+        created_by=get_effective_creator_id(db, current_user),
+    )
+    db.add(visit_obj)
+    db.flush()
+
+    creator_id = get_effective_creator_id(db, current_user)
+    failed: List[Dict[str, Any]] = []
+    added_count = 0
+    for ln in export.lines:
+        ok, _extra, reason = _try_add_visit_item_from_government_line(
+            db, visit_obj.id, ln.description, _json_finite_qty(ln.quantity), creator_id
+        )
+        if ok:
+            added_count += 1
+        else:
+            failed.append({"description": ln.description, "reason": reason or "Unknown"})
+
+    if added_count == 0:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "No export lines matched the Hospital price list.",
+                "failed": failed,
+            },
+        )
+
+    sha = hashlib.sha256(data).hexdigest()
+    lines_json = json.dumps([_snapshot_line_dict_from_parsed(ln) for ln in export.lines], ensure_ascii=False)
+
+    if export_kind == "opd":
+        snap = CompanionGovernmentOpdExport(
+            companion_visit_id=visit_obj.id,
+            claim_no=(export.claim_no or "").strip(),
+            patient_no=(export.patient_no or "").strip(),
+            claim_status=export.claim_status,
+            insurance_no=export.insurance_no,
+            patient_name=export.patient_name,
+            service_date=export.service_date,
+            service_type=export.service_type,
+            file_sha256=sha,
+            lines_json=lines_json,
+            imported_by_id=creator_id,
+        )
+        db.add(snap)
+    else:
+        snap = CompanionGovernmentIpdExport(
+            companion_visit_id=visit_obj.id,
+            invoice_no=export.invoice_no,
+            admission_no=export.admission_no,
+            visit_no=export.visit_no,
+            patient_no=export.patient_no,
+            patient_name=export.patient_name,
+            invoice_date=export.invoice_date,
+            admission_date=export.admission_date,
+            discharge_date=export.discharge_date,
+            insurance_no=export.insurance_no,
+            billing_info=export.billing_info,
+            file_sha256=sha,
+            lines_json=lines_json,
+            imported_by_id=creator_id,
+        )
+        db.add(snap)
+
+    db.commit()
+    db.refresh(visit_obj)
+    summaries = _batch_visit_billing_summaries(db, [visit_obj])
+    visit_resp = _visit_to_response(visit_obj, db, billing=summaries.get(visit_obj.id))
+    return CreateFromGovernmentExportResponse(
+        visit=visit_resp,
+        export_kind=export_kind,
+        added_count=added_count,
+        failed=failed,
+    )
 
 
 # --- Active investigations (Lab Head chooses which appear as cards) ---
@@ -968,8 +1263,8 @@ def _build_companion_reconciliation_response(
             missing_in_billing.extend(glines)
             continue
         matched_billed_norms.add(match_norm)
-        gov_qty = sum(float(x["quantity"]) for x in glines)
-        billed_qty = sum(float(x["quantity"]) for x in billed_by_norm.get(match_norm, []))
+        gov_qty = sum(_json_finite_qty(x.get("quantity")) for x in glines)
+        billed_qty = sum(_json_finite_qty(x.get("quantity")) for x in billed_by_norm.get(match_norm, []))
         if abs(gov_qty - billed_qty) > 1e-6:
             quantity_mismatches.append(
                 {
@@ -1638,106 +1933,27 @@ def confirm_single_item_from_opd_export_line(
     if not visit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
 
-    desc = (payload.description or "").strip()
     qty = float(payload.quantity) if payload.quantity is not None else 1.0
-    if not desc:
-        return {"matched": False, "reason": "Empty description"}
-    if qty <= 0:
-        return {"matched": False, "reason": "Invalid quantity"}
-
-    # Search broadly across price list (procedures filtered by common service types first)
-    # 1) procedures by likely service types
-    candidates = []
-    for st in ("INVESTIGATIONS", "ULTRASOUND", "X RAY", "DAY SURGERY", "MAJOR SURGERY", "DRESSING AND TREATMENT ROOM", "DRESSING", "OXYGEN"):
-        candidates.extend(search_price_items_all_tables(db, search_term=desc, service_type=st, file_type="procedure") or [])
-    # 2) products (drugs)
-    candidates.extend(search_price_items_all_tables(db, search_term=desc, file_type="product") or [])
-    # 3) fallback: any table
-    if not candidates:
-        candidates = search_price_items_all_tables(db, search_term=normalize_service_name(desc), file_type=None) or []
-
-    picked = _pick_best_price_match(candidates, desc)
-    if not picked:
-        return {"matched": False, "reason": "No price list match found"}
-
-    type_name, item = picked
-
-    matched_code = None
-    matched_name = None
-    matched_service_type = None
-    category = None
-    unit_price = 0.0
-
-    if type_name == "product":
-        matched_code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
-        matched_name = getattr(item, "product_name", None) or desc
-        matched_service_type = None
-        category = "drug"
-        if matched_code:
-            unit_price = float(get_price_from_all_tables(db, str(matched_code), is_insured=True))
-    else:
-        matched_code = getattr(item, "g_drg_code", None)
-        matched_name = getattr(item, "service_name", None) or desc
-        matched_service_type = getattr(item, "service_type", None)
-        category = _service_type_to_category(matched_service_type)
-        if matched_code:
-            unit_price = float(
-                get_price_from_all_tables(
-                    db,
-                    str(matched_code),
-                    is_insured=True,
-                    service_type=matched_service_type,
-                    procedure_name=matched_name,
-                )
-            )
-
-    if not matched_code:
-        return {"matched": False, "reason": "Matched price item has no code"}
-
-    # Create visit item
-    new_item = CompanionVisitItem(
-        companion_visit_id=visit_id,
-        item_code=str(matched_code).strip(),
-        item_name=str(matched_name).strip() or desc,
-        category=category or "lab",
-        unit_price=float(unit_price),
-        quantity=float(qty),
-        created_by_id=get_effective_creator_id(db, current_user),
+    ok, extra, reason = _try_add_visit_item_from_government_line(
+        db,
+        visit_id,
+        payload.description or "",
+        qty,
+        get_effective_creator_id(db, current_user),
     )
-    db.add(new_item)
+    if not ok or not extra:
+        return {"matched": False, "reason": reason or "Failed"}
+
     db.commit()
-    db.refresh(new_item)
-
-    u = db.query(User).filter(User.id == getattr(new_item, "created_by_id", None)).first()
-    added = {
-        "id": new_item.id,
-        "companion_visit_id": new_item.companion_visit_id,
-        "item_code": new_item.item_code,
-        "item_name": new_item.item_name,
-        "category": new_item.category,
-        "unit_price": float(new_item.unit_price),
-        "quantity": float(new_item.quantity),
-        "created_at": new_item.created_at,
-        "created_by_id": getattr(new_item, "created_by_id", None),
-        "created_by_name": (u.full_name or u.username) if u else None,
-        "receipt_number": new_item.receipt_number,
-        "paid_at": new_item.paid_at,
-        "paid_by_id": new_item.paid_by_id,
-        "paid_by_name": None,
-        "payment_method": new_item.payment_method,
-        "admission_deposit_applied": getattr(new_item, "admission_deposit_applied", None),
-        "admission_deposit_line_receipt": getattr(new_item, "admission_deposit_line_receipt", None),
-    }
-
     return {
-        "added": added,
+        "added": extra["added"],
         "matched": True,
-        "match_type": type_name,
-        "matched_code": str(matched_code),
-        "matched_name": matched_name,
-        "matched_service_type": matched_service_type,
-        "category": category,
-        "unit_price": float(unit_price),
+        "match_type": extra["match_type"],
+        "matched_code": extra["matched_code"],
+        "matched_name": extra["matched_name"],
+        "matched_service_type": extra["matched_service_type"],
+        "category": extra["category"],
+        "unit_price": extra["unit_price"],
     }
 
 
@@ -2605,7 +2821,7 @@ def _get_user_roles(user: User, db: Session) -> List[str]:
 
 def _can_edit_or_delete(visit: CompanionVisit, current_user: User, db: Session, action: str) -> bool:
     """
-    Edit/delete: if open -> Records, Admin (edit also Billing for marking closed).
+    Edit/delete: if open -> Records, Admin, Billing (Billing often creates visits from GHIMS upload).
     If closed -> only Admin.
     """
     user_roles = _get_user_roles(current_user, db)
@@ -2615,7 +2831,7 @@ def _can_edit_or_delete(visit: CompanionVisit, current_user: User, db: Session, 
         return False
     if action == "edit":
         return any(r in ["Records", "Admin", "Billing"] for r in user_roles)
-    return any(r in ["Records", "Admin"] for r in user_roles)
+    return any(r in ["Records", "Admin", "Billing"] for r in user_roles)
 
 
 @router.patch("/{visit_id}", response_model=CompanionVisitResponse)
@@ -2742,8 +2958,8 @@ def delete_companion_visit(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Delete a companion visit.
-    Open visits: Records or Admin can delete. Closed visits: only Admin can delete.
+    Delete a companion visit and all dependent rows (bill lines, saved government imports, inventory debits).
+    Open visits: Records, Billing, or Admin. Closed visits: only Admin.
     """
     visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
     if not visit:
@@ -2753,7 +2969,18 @@ def delete_companion_visit(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only Admin can delete a closed visit",
         )
-    db.delete(visit)
+    # Explicit cleanup so deletes succeed even when the DB does not enforce ON DELETE CASCADE (e.g. SQLite without FK pragma).
+    db.query(CompanionGovernmentOpdExport).filter(CompanionGovernmentOpdExport.companion_visit_id == visit_id).delete(
+        synchronize_session=False
+    )
+    db.query(CompanionGovernmentIpdExport).filter(CompanionGovernmentIpdExport.companion_visit_id == visit_id).delete(
+        synchronize_session=False
+    )
+    db.query(CompanionInventoryDebit).filter(CompanionInventoryDebit.companion_visit_id == visit_id).delete(
+        synchronize_session=False
+    )
+    db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit_id).delete(synchronize_session=False)
+    db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).delete(synchronize_session=False)
     db.commit()
     return None
 

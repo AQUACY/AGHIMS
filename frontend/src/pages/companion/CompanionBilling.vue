@@ -3,6 +3,36 @@
     <div class="text-h4 q-mb-md text-weight-bold glass-text">Billing</div>
     <div class="text-body2 glass-text-muted q-mb-lg">Search by card or visit number, select a service (visit), then view the bill and record payment.</div>
 
+    <!-- Create visit from GHIMS government export -->
+    <q-card class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-sm glass-text">Create service from GHIMS export</div>
+        <div class="text-body2 glass-text-muted q-mb-md">
+          Upload an OPD billing export or an in-patient invoice from GHIMS. The system creates the companion visit, adds lines that match the co-payment price list, and saves the government snapshot so “check vs government OPD” or “IPD invoice” works when you open the bill again.
+        </div>
+        <div class="row q-col-gutter-md items-end">
+          <q-file
+            v-model="createFromExportFile"
+            filled
+            dense
+            label="Export file (.xls, .xlsx)"
+            accept=".xls,.xlsx,.html"
+            clearable
+            class="col-12 col-sm-8"
+          />
+          <q-btn
+            unelevated
+            label="Create visit and import lines"
+            class="glass-button col-12 col-sm-auto"
+            icon="upload_file"
+            :disable="!createFromExportFile"
+            :loading="creatingFromExport"
+            @click="submitCreateFromExport"
+          />
+        </div>
+      </q-card-section>
+    </q-card>
+
     <!-- Search visits -->
     <q-card class="q-mb-md glass-card" flat>
       <q-card-section>
@@ -182,6 +212,17 @@
                 :loading="undertakingUnapproving"
                 @click="showUnapproveUndertakingDialog = true"
               />
+              <q-btn
+                v-if="canDeleteVisit"
+                flat
+                color="negative"
+                icon="delete_forever"
+                label="Delete visit"
+                :loading="deletingVisit"
+                @click="confirmDeleteVisit"
+              >
+                <q-tooltip>Remove this service and all bill lines and saved government imports (cannot undo).</q-tooltip>
+              </q-btn>
             </div>
             <q-btn flat dense icon="close" label="Clear" @click="clearSelection" />
           </div>
@@ -1425,6 +1466,8 @@ const authStore = useAuthStore();
 
 const loadingVisits = ref(false);
 const loadingItems = ref(false);
+const createFromExportFile = ref(null);
+const creatingFromExport = ref(false);
 const searched = ref(false);
 const visits = ref([]);
 const selectedVisit = ref(null);
@@ -1620,6 +1663,12 @@ const canAdmin = computed(() => authStore.canAccess(['Admin']));
 const isSuperAdmin = computed(() => Boolean(authStore.user?.is_super_admin));
 const canEditDeleteInpatient = computed(() => authStore.canAccess(['Admin']));
 const canReopenVisitRole = computed(() => authStore.canAccess(['Admin']));
+/** Same rules as service list / API: open visit → Records, Billing, or Admin. */
+const canDeleteVisit = computed(() => {
+  if (!selectedVisit.value) return false;
+  if (selectedVisit.value.status === 'closed') return authStore.canAccess(['Admin']);
+  return authStore.canAccess(['Records', 'Admin', 'Billing']);
+});
 const canApproveUndertakingRole = computed(() => authStore.canAccess(['Management', 'Admin']));
 
   const paymentMethodOptions = [
@@ -1630,6 +1679,7 @@ const canApproveUndertakingRole = computed(() => authStore.canAccess(['Managemen
   ];
 
 const closingVisit = ref(false);
+const deletingVisit = ref(false);
 const reopeningVisit = ref(false);
 const showReopenDialog = ref(false);
 const reopenReason = ref('');
@@ -1974,6 +2024,44 @@ function formatOxygenPeriod(row) {
   return hours ? `Start ${start} → End ${end} · ${hours}` : `Start ${start} → End ${end}`;
 }
 
+async function submitCreateFromExport() {
+  if (!createFromExportFile.value) return;
+  let file = createFromExportFile.value;
+  if (Array.isArray(file)) file = file[0];
+  if (!file || !(file instanceof File)) {
+    $q.notify({ type: 'warning', message: 'Choose a file to upload', position: 'top' });
+    return;
+  }
+  creatingFromExport.value = true;
+  try {
+    const res = await companionVisitsAPI.createFromGovernmentExport(file);
+    const v = res.data?.visit;
+    const kind = res.data?.export_kind;
+    const n = res.data?.added_count ?? 0;
+    const failed = res.data?.failed || [];
+    createFromExportFile.value = null;
+    if (v?.external_card_number != null) filters.card_number = v.external_card_number;
+    if (v?.external_visit_number != null) filters.visit_number = v.external_visit_number;
+    await loadVisits();
+    const row = visits.value.find((x) => x.id === v.id) || v;
+    if (row?.id) await selectVisit(row);
+    let msg = `Created ${String(kind || '').toUpperCase()} visit with ${n} line(s).`;
+    if (failed.length) msg += ` ${failed.length} line(s) could not be matched — add them manually if needed.`;
+    $q.notify({ type: 'positive', message: msg, position: 'top', timeout: 6000 });
+  } catch (e) {
+    const d = e.response?.data?.detail;
+    let msg = 'Import failed';
+    if (typeof d === 'string') msg = d;
+    else if (d && typeof d === 'object') {
+      msg = d.message || msg;
+      if (d.existing_visit_id != null) msg += ` (existing visit id ${d.existing_visit_id})`;
+    }
+    $q.notify({ type: 'negative', message: msg, position: 'top', timeout: 8000 });
+  } finally {
+    creatingFromExport.value = false;
+  }
+}
+
 async function loadVisits() {
   loadingVisits.value = true;
   searched.value = true;
@@ -2025,6 +2113,37 @@ async function selectVisit(visit) {
 function clearSelection() {
   selectedVisit.value = null;
   billItems.value = [];
+}
+
+function confirmDeleteVisit() {
+  if (!selectedVisit.value) return;
+  const vid = selectedVisit.value.id;
+  $q.dialog({
+    title: 'Delete visit',
+    message:
+      'Permanently remove this service, all bill lines, and saved government imports? You can then upload the GHIMS file again for the same card and visit number.',
+    cancel: true,
+    persistent: true,
+    ok: { label: 'Delete', color: 'negative' },
+  }).onOk(async () => {
+    deletingVisit.value = true;
+    try {
+      await companionVisitsAPI.delete(vid);
+      clearSelection();
+      reconcileResult.value = null;
+      ipdReconcileResult.value = null;
+      await loadVisits();
+      $q.notify({ type: 'positive', message: 'Visit deleted', position: 'top' });
+    } catch (e) {
+      $q.notify({
+        type: 'negative',
+        message: e.response?.data?.detail || e.message || 'Delete failed',
+        position: 'top',
+      });
+    } finally {
+      deletingVisit.value = false;
+    }
+  });
 }
 
 async function confirmCloseVisit() {

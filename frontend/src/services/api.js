@@ -27,6 +27,8 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+export { getApiBaseUrl, API_BASE_URL };
+
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -232,6 +234,13 @@ export const encountersAPI = {
 // Companion (copayment) visits - external card/visit from government system
 export const companionVisitsAPI = {
   create: (data) => api.post('/companion-visits/', data),
+  createFromGovernmentExport: (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post('/companion-visits/create-from-government-export', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   list: (params = {}) => api.get('/companion-visits/', { params }),
   get: (visitId) => api.get(`/companion-visits/${visitId}`),
   update: (visitId, data) => api.patch(`/companion-visits/${visitId}`, data),
@@ -848,6 +857,20 @@ export const claimsAPI = {
   getClaimitBatch: (batchId) => api.get(`/claims/claimit-report/batches/${batchId}`),
   setClaimitErrorComplete: (batchId, errorId, completed) =>
     api.patch(`/claims/claimit-report/batches/${batchId}/errors/${errorId}/complete`, { completed }),
+  // GHIMS XML import batches
+  uploadGhimsXml: (formData) =>
+    api.post('/claims/ghims-import/upload', formData, {
+      timeout: 120000,
+      headers: { 'Content-Type': undefined },
+    }),
+  getGhimsImportBatches: () => api.get('/claims/ghims-import/batches'),
+  getGhimsImportBatch: (batchId) => api.get(`/claims/ghims-import/batches/${batchId}`),
+  deleteGhimsImportBatch: (batchId) => api.delete(`/claims/ghims-import/batches/${batchId}`),
+  getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
+  updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
+  finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
+  reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
+  exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
 };
 
 // Staff endpoints
@@ -1183,6 +1206,15 @@ export const moduleSettingsAPI = {
 export const facilitySettingsAPI = {
   getPublic: () => api.get('/facility-settings/public'),
   update: (data) => api.put('/facility-settings/', data),
+};
+
+export const licenseAPI = {
+  getPublicStatus: () => api.get('/license/public-status'),
+  activate: (document, setupToken) =>
+    api.post('/license/activate', { document, setup_token: setupToken }),
+  getStatus: () => api.get('/license/status'),
+  getActivationSummary: () => api.get('/license/activation-summary'),
+  analyzeDocument: (document) => api.post('/license/analyze', { document }),
 };
 
 export const departmentStaffAssignmentsAPI = {

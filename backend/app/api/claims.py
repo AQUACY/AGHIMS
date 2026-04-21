@@ -21,6 +21,8 @@ from app.services.xml_export import export_claims_xml, export_claims_by_date_ran
 from app.models.diagnosis import Diagnosis
 from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.services.claimit_report_parser import parse_claimit_report_html
+from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
+from app.services.claim_xml_import_parser import parse_claims_xml, build_claims_xml_from_payloads
 
 router = APIRouter(prefix="/claims", tags=["claims"])
 
@@ -2967,4 +2969,256 @@ def set_claimit_error_completed(
         err.completed_by_id = None
     db.commit()
     return {"id": err.id, "completed": body.completed, "completed_at": err.completed_at.isoformat() if err.completed_at else None, "completed_by_id": err.completed_by_id}
+
+
+# ---------- GHIMS XML import batches ----------
+
+@router.post("/ghims-import/upload")
+async def upload_ghims_claims_xml(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Upload GHIMS exported XML and create an import batch linked to existing claims."""
+    if not file.filename or not file.filename.lower().endswith(".xml"):
+        raise HTTPException(status_code=400, detail="Please upload an XML file.")
+    try:
+        content = await file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read file.")
+
+    xml_str = None
+    for encoding in ("utf-8", "cp1252", "iso-8859-1", "latin-1"):
+        try:
+            xml_str = content.decode(encoding)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    if xml_str is None:
+        xml_str = content.decode("latin-1", errors="replace")
+
+    parsed = parse_claims_xml(xml_str)
+    claims = parsed.get("claims") or []
+
+    batch = ClaimXmlImportBatch(
+        file_name=file.filename or "claims.xml",
+        uploaded_by_id=get_effective_creator_id(db, current_user),
+        claim_count=len(claims),
+    )
+    db.add(batch)
+    db.flush()
+
+    for row in claims:
+        db.add(ClaimXmlImportItem(
+            batch_id=batch.id,
+            claim_claim_id=row["claim_id"],
+            row_index=row.get("row_index"),
+            status="draft",
+            payload=row.get("payload") or {},
+        ))
+
+    db.commit()
+    db.refresh(batch)
+    return {
+        "batch_id": batch.id,
+        "file_name": batch.file_name,
+        "claim_count": batch.claim_count,
+        "claim_ids": [r["claim_id"] for r in claims],
+    }
+
+
+@router.get("/ghims-import/batches")
+def list_ghims_import_batches(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """List GHIMS XML import batches (newest first)."""
+    batches = (
+        db.query(ClaimXmlImportBatch)
+        .order_by(ClaimXmlImportBatch.uploaded_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [
+        {
+            "id": b.id,
+            "file_name": b.file_name,
+            "uploaded_at": b.uploaded_at.isoformat() if b.uploaded_at else None,
+            "claim_count": b.claim_count,
+            "finalized_count": sum(1 for i in (b.items or []) if i.status == "finalized"),
+        }
+        for b in batches
+    ]
+
+
+@router.get("/ghims-import/batches/{batch_id}")
+def get_ghims_import_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Get one imported XML batch with mapped claim records."""
+    batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+
+    items = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.batch_id == batch_id)
+        .order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id)
+        .all()
+    )
+    rows = []
+    for i in items:
+        p = i.payload or {}
+        surname = str(p.get("surname") or "").strip()
+        other_names = str(p.get("otherNames") or "").strip()
+        rows.append({
+            "id": i.id,
+            "row_index": i.row_index,
+            "claim_claim_id": i.claim_claim_id,
+            "claim_check_code": p.get("claimCheckCode"),
+            "hospital_rec_no": p.get("hospitalRecNo"),
+            "client_name": " ".join([x for x in [surname, other_names] if x]).strip() or None,
+            "type_of_attendance": p.get("typeOfAttendance"),
+            "specialty_attended": p.get("specialtyAttended"),
+            "status": i.status,
+        })
+
+    return {
+        "id": batch.id,
+        "file_name": batch.file_name,
+        "uploaded_at": batch.uploaded_at.isoformat() if batch.uploaded_at else None,
+        "claim_count": batch.claim_count,
+        "claims": rows,
+    }
+
+
+class GhimsImportItemUpdateBody(BaseModel):
+    payload: dict
+
+
+@router.get("/ghims-import/items/{item_id}")
+def get_ghims_import_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    return {
+        "id": item.id,
+        "batch_id": item.batch_id,
+        "claim_claim_id": item.claim_claim_id,
+        "row_index": item.row_index,
+        "status": item.status,
+        "payload": item.payload or {},
+    }
+
+
+@router.put("/ghims-import/items/{item_id}")
+def update_ghims_import_item(
+    item_id: int,
+    body: GhimsImportItemUpdateBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    payload = body.payload or {}
+    claim_id = str(payload.get("claimID") or "").strip()
+    if not claim_id:
+        raise HTTPException(status_code=400, detail="claimID is required.")
+    item.claim_claim_id = claim_id
+    item.payload = payload
+    db.commit()
+    return {"id": item.id, "updated": True}
+
+
+@router.patch("/ghims-import/items/{item_id}/finalize")
+def finalize_ghims_import_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    from app.core.datetime_utils import utcnow
+    item.status = "finalized"
+    item.finalized_at = utcnow()
+    db.commit()
+    return {"id": item.id, "status": item.status}
+
+
+@router.patch("/ghims-import/items/{item_id}/reopen")
+def reopen_ghims_import_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    item.status = "draft"
+    item.finalized_at = None
+    db.commit()
+    return {"id": item.id, "status": item.status}
+
+
+@router.delete("/ghims-import/batches/{batch_id}")
+def delete_ghims_import_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "delete")),
+):
+    batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    db.delete(batch)
+    db.commit()
+    return {"deleted": True}
+
+
+class GhimsExportBatchBody(BaseModel):
+    item_ids: List[int]
+
+
+@router.post("/ghims-import/export")
+def export_ghims_import_items(
+    body: GhimsExportBatchBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    if not body.item_ids:
+        raise HTTPException(status_code=400, detail="No imported claim IDs selected.")
+    items = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.id.in_(body.item_ids))
+        .all()
+    )
+    if len(items) != len(set(body.item_ids)):
+        raise HTTPException(status_code=404, detail="Some imported claims were not found.")
+    not_finalized = [i.id for i in items if i.status != "finalized"]
+    if not_finalized:
+        raise HTTPException(status_code=400, detail="Only finalized imported claims can be exported.")
+    payloads = [i.payload or {} for i in sorted(items, key=lambda x: x.row_index or 0)]
+    xml_content = build_claims_xml_from_payloads(payloads)
+    filename = f"NHIS_CLA_imported_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+    return Response(
+        content=xml_content,
+        media_type="application/xml",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 

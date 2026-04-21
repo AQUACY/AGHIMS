@@ -1,5 +1,7 @@
 <template>
   <q-page class="q-pa-md">
+    <LicenseStatusBanner />
+
     <div class="text-h4 q-mb-md text-weight-bold">
       Dashboard
     </div>
@@ -121,6 +123,7 @@
 import { onMounted } from 'vue';
 import { useDashboardStore } from '../stores/dashboard';
 import { useAuthStore } from '../stores/auth';
+import LicenseStatusBanner from '../components/LicenseStatusBanner.vue';
 
 const dashboardStore = useDashboardStore();
 const authStore = useAuthStore();

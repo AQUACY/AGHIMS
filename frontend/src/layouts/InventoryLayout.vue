@@ -28,6 +28,7 @@
         <q-badge color="amber-8" text-color="black" class="q-mr-md">
           Current Mode: Inventory
         </q-badge>
+        <LicenseTitleLink />
         <q-space />
         <q-btn
           flat
@@ -297,6 +298,7 @@ import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
+import LicenseTitleLink from '../components/LicenseTitleLink.vue';
 
 const $q = useQuasar();
 const router = useRouter();

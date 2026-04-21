@@ -1,5 +1,7 @@
 <template>
   <q-page class="q-pa-md inventory-dashboard-page">
+    <LicenseStatusBanner />
+
     <div class="row items-end q-col-gutter-md q-mb-lg">
       <div class="col-12 col-md-8">
         <div class="text-h4 text-weight-bold glass-text">Inventory dashboard</div>
@@ -334,6 +336,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
+import LicenseStatusBanner from '../components/LicenseStatusBanner.vue';
 import { useRouter } from 'vue-router';
 import { inventoryAnalyticsAPI, storesAPI, wardsAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';

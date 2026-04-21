@@ -316,7 +316,7 @@ const canEdit = computed(() => {
 const canDelete = computed(() => {
   if (!visit.value) return false;
   if (visit.value.status === 'closed') return authStore.canAccess(['Admin']);
-  return authStore.canAccess(['Records', 'Admin']);
+  return authStore.canAccess(['Records', 'Admin', 'Billing']);
 });
 
 const actionCards = computed(() => {

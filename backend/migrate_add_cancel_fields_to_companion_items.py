@@ -23,6 +23,31 @@ from sqlalchemy import text
 from app.core.database import engine
 
 
+def _table_exists_mysql(table: str) -> bool:
+    with engine.connect() as conn:
+        res = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = :table
+                """
+            ),
+            {"table": table},
+        )
+        return int(res.scalar() or 0) > 0
+
+
+def _table_exists_sqlite(table: str) -> bool:
+    with engine.connect() as conn:
+        res = conn.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=:table"),
+            {"table": table},
+        )
+        return int(res.scalar() or 0) > 0
+
+
 def _col_exists_mysql(table: str, column: str) -> bool:
     with engine.connect() as conn:
         res = conn.execute(
@@ -51,12 +76,23 @@ def migrate() -> None:
     table = "companion_visit_items"
     dialect = engine.dialect.name.lower()
 
+    def table_exists() -> bool:
+        if dialect.startswith("mysql"):
+            return _table_exists_mysql(table)
+        if dialect.startswith("sqlite"):
+            return _table_exists_sqlite(table)
+        return False
+
     def col_exists(c: str) -> bool:
         if dialect.startswith("mysql"):
             return _col_exists_mysql(table, c)
         if dialect.startswith("sqlite"):
             return _col_exists_sqlite(table, c)
         return False
+
+    if not table_exists():
+        print(f"SKIP: table '{table}' does not exist yet.")
+        return
 
     stmts = []
     if not col_exists("cancelled"):

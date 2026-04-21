@@ -251,10 +251,10 @@ function canEdit(row) {
   return authStore.canAccess(['Records', 'Admin', 'Billing']);
 }
 
-/** Delete: when closed only Admin; when open Records or Admin. */
+/** Delete: when closed only Admin; when open Records, Billing, or Admin. */
 function canDelete(row) {
   if (row.status === 'closed') return authStore.canAccess(['Admin']);
-  return authStore.canAccess(['Records', 'Admin']);
+  return authStore.canAccess(['Records', 'Admin', 'Billing']);
 }
 
 function editDeleteTooltip(row, action) {

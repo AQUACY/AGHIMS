@@ -28,6 +28,7 @@
         <q-badge color="deep-purple-8" text-color="white" class="q-mr-md">
           Current Mode: Companion
         </q-badge>
+        <LicenseTitleLink />
         <q-space />
         <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
           <q-icon name="schedule" size="sm" />
@@ -288,6 +289,7 @@ import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
 import { notificationsAPI } from '../services/api';
 import NotificationsPanel from '../components/NotificationsPanel.vue';
+import LicenseTitleLink from '../components/LicenseTitleLink.vue';
 
 const $q = useQuasar();
 const router = useRouter();

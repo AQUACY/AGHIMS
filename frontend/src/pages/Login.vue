@@ -9,6 +9,9 @@
           <div class="text-subtitle2 text-center q-mb-lg">
             Sign in to continue
           </div>
+          <div class="text-center q-mb-sm">
+            <q-btn flat dense no-caps label="License activation" to="/license-setup" color="primary" />
+          </div>
           <div v-if="facilityStore.facilityCodeDisplay" class="text-caption text-center q-mb-md">
             Facility code: <strong>{{ facilityStore.facilityCodeDisplay }}</strong>
           </div>

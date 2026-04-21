@@ -3,8 +3,16 @@ import { useAuthStore } from '../stores/auth';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
 import { useAppModeStore, APP_MODES, APP_MODE_MODULE_KEYS } from '../stores/appMode';
 import { Notify } from 'quasar';
+import { licenseAPI } from '../services/api';
+import { getCachedLicensePublic } from '../utils/licensePublicCache';
 
 const routes = [
+  {
+    path: '/license-setup',
+    name: 'LicenseSetup',
+    component: () => import('../pages/LicenseSetup.vue'),
+    meta: { requiresAuth: false },
+  },
   {
     path: '/login',
     name: 'Login',
@@ -188,6 +196,24 @@ const routes = [
         path: '/claims/correct-errors/batch/:batchId',
         name: 'ClaimItCorrectErrorsBatch',
         component: () => import('../pages/ClaimItCorrectErrors.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/ghims-import',
+        name: 'GhimsXmlImport',
+        component: () => import('../pages/GhimsXmlImport.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/ghims-import/batch/:batchId',
+        name: 'GhimsXmlImportBatch',
+        component: () => import('../pages/GhimsXmlImport.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/ghims-import/item/:itemId',
+        name: 'GhimsImportedClaimEdit',
+        component: () => import('../pages/GhimsImportedClaimEdit.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
@@ -592,7 +618,7 @@ const routes = [
         path: 'billing',
         name: 'CompanionBilling',
         component: () => import('../pages/companion/CompanionBilling.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Billing', 'Admin'] },
+        meta: { requiresAuth: true, allowedRoles: ['Billing', 'Records', 'Admin'] },
       },
       {
         path: 'audit-logs',
@@ -722,6 +748,20 @@ router.beforeEach(async (to, from, next) => {
       authStore.initAuth();
     }
 
+    let licenseOk = true;
+    try {
+      const data = await getCachedLicensePublic(() => licenseAPI.getPublicStatus());
+      if (data.enforcement_enabled && !data.has_valid_license) {
+        licenseOk = false;
+      }
+    } catch {
+      licenseOk = true;
+    }
+
+    if (!licenseOk && to.meta.requiresAuth) {
+      next('/license-setup');
+      return;
+    }
     if (to.meta.requiresAuth && !authStore.isAuthenticated) {
       next('/login');
     } else if (to.path === '/login' && authStore.isAuthenticated) {
@@ -737,6 +777,12 @@ router.beforeEach(async (to, from, next) => {
     } else if (to.path === '/choose-mode') {
       next();
     } else if (authStore.isAuthenticated) {
+      // License page must not run mode/module/role guards (avoids blank screen and redirect loops).
+      if (to.path === '/license-setup') {
+        next();
+        return;
+      }
+
       // Facility-level mode activation check (Super Admin bypass).
       const selectedModeModuleKey = APP_MODE_MODULE_KEYS[appModeStore.currentMode];
       if (!isSuperAdmin && selectedModeModuleKey) {
@@ -752,11 +798,21 @@ router.beforeEach(async (to, from, next) => {
       const isCompanionRoute = to.path.startsWith('/companion');
       const isInventoryRoute = to.path.startsWith('/inventory-mode');
 
-      if (!isSuperAdmin && appModeStore.currentMode === APP_MODES.COMPANION && !isCompanionRoute) {
+      if (
+        !isSuperAdmin &&
+        appModeStore.currentMode === APP_MODES.COMPANION &&
+        !isCompanionRoute &&
+        to.path !== '/license-setup'
+      ) {
         next('/companion');
         return;
       }
-      if (!isSuperAdmin && appModeStore.currentMode === APP_MODES.INVENTORY && !isInventoryRoute) {
+      if (
+        !isSuperAdmin &&
+        appModeStore.currentMode === APP_MODES.INVENTORY &&
+        !isInventoryRoute &&
+        to.path !== '/license-setup'
+      ) {
         const inventoryPathRedirects = {
           '/inventory': '/inventory-mode',
           '/admin/store-stock': '/inventory-mode/store-stock',
@@ -962,7 +1018,10 @@ router.beforeEach(async (to, from, next) => {
     }
   } catch (error) {
     console.error('Router guard error:', error);
-    // If there's an error, allow navigation to login
+    if (to.path === '/license-setup') {
+      next();
+      return;
+    }
     if (to.path !== '/login') {
       next('/login');
     } else {

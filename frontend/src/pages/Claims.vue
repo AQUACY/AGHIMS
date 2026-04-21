@@ -39,6 +39,23 @@
           </q-card-section>
         </q-card>
       </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
+          @click="$router.push('/claims/ghims-import')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="upload_file" size="64px" color="teal" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Import GHIMS XML</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Upload exported XML, review imported claims, finalize or revert, then export again.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
   </q-page>
 </template>

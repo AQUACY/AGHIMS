@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pathlib import Path
 from app.api import (
+    license as license_api,
     auth,
     patients,
     encounters,
@@ -187,6 +188,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # Include routers
 app.include_router(auth.router, prefix="/api")
+app.include_router(license_api.router, prefix="/api")
 app.include_router(patients.router, prefix="/api")
 app.include_router(encounters.router, prefix="/api")
 app.include_router(vitals.router, prefix="/api")

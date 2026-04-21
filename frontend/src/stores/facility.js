@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { facilitySettingsAPI } from '../services/api';
+import { clearLicensePublicCache } from '../utils/licensePublicCache';
 
 export const DEFAULT_FACILITY_DISPLAY_NAME = 'KDG Health App';
 
@@ -40,6 +41,7 @@ export const useFacilityStore = defineStore('facility', {
     async save(payload) {
       const response = await facilitySettingsAPI.update(payload);
       this.applyPayload(response.data);
+      clearLicensePublicCache();
       return response.data;
     },
   },

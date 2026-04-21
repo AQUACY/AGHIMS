@@ -1,5 +1,7 @@
 <template>
   <q-page class="q-pa-md">
+    <LicenseStatusBanner />
+
     <div class="text-h4 q-mb-md text-weight-bold glass-text">
       Companion / Copayment
     </div>
@@ -36,6 +38,7 @@
 <script setup>
 import { computed } from 'vue';
 import { useAuthStore } from '../stores/auth';
+import LicenseStatusBanner from '../components/LicenseStatusBanner.vue';
 
 const authStore = useAuthStore();
 const canAccessRecords = computed(() => authStore.canAccess(['Records', 'Admin']));
