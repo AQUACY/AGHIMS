@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     APPLICATION_REFERENCE_DATE: str = ""  # Override date for application (empty = use system date)
 
     # Installation license (signed file + optional online checks). Generation lives in separate license-portal DB.
-    LICENSE_ENFORCEMENT: bool = False
+    LICENSE_ENFORCEMENT: bool = True
     LICENSE_RSA_PUBLIC_KEY_PEM: str = ""
     LICENSE_RSA_PUBLIC_KEY_FILE: str = ""  # If set, PEM is read from this path (overrides empty PEM)
     LICENSE_ISSUER_SLUG: str = ""  # Must match claim issuer_slug on every license you issue
