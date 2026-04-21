@@ -2,33 +2,45 @@
 Migration script to create Urine Chemistry lab result template
 Run this script to create the Urine Chemistry template in the database
 """
+import json
 import sys
 from pathlib import Path
 
 # Add parent directory to path to import app modules
 sys.path.insert(0, str(Path(__file__).parent))
 
+from sqlalchemy import text
+
 from app.core.database import SessionLocal
-from app.models.lab_result_template import LabResultTemplate
-from app.models.user import User
 
 def migrate():
     """Create Urine Chemistry template"""
     db = SessionLocal()
     
     try:
-        # Get admin user (or first user)
-        admin_user = db.query(User).filter(User.role == "Admin").first()
+        # Resolve creator without importing ORM User model, to avoid mapper init failures.
+        admin_user = db.execute(
+            text("SELECT id FROM users WHERE role = 'Admin' ORDER BY id ASC LIMIT 1")
+        ).first()
         if not admin_user:
-            admin_user = db.query(User).first()
+            admin_user = db.execute(text("SELECT id FROM users ORDER BY id ASC LIMIT 1")).first()
         
         if not admin_user:
             print("ERROR: No user found in database. Please run init_db.py first.")
             return
         
         # Check if template already exists
-        existing = db.query(LabResultTemplate).filter(
-            LabResultTemplate.procedure_name == "Urine Chemistry"
+        existing = db.execute(
+            text(
+                """
+                SELECT id
+                FROM lab_result_templates
+                WHERE procedure_name = :procedure_name
+                ORDER BY id ASC
+                LIMIT 1
+                """
+            ),
+            {"procedure_name": "Urine Chemistry"},
         ).first()
         
         if existing:
@@ -229,26 +241,43 @@ def migrate():
             "patient_fields": ["age", "ward", "doctor"]
         }
         
-        # Create the template
-        urine_template = LabResultTemplate(
-            g_drg_code=None,  # Optional - can be set if needed for reference
-            procedure_name="Urine Chemistry",  # PRIMARY MATCHING FIELD
-            template_name="Urine Chemistry",
-            template_structure=urine_chemistry_template_structure,
-            created_by=admin_user.id,
-            is_active=1
+        db.execute(
+            text(
+                """
+                INSERT INTO lab_result_templates
+                (g_drg_code, procedure_name, template_name, template_structure, created_by, is_active)
+                VALUES (:g_drg_code, :procedure_name, :template_name, :template_structure, :created_by, :is_active)
+                """
+            ),
+            {
+                "g_drg_code": None,
+                "procedure_name": "Urine Chemistry",
+                "template_name": "Urine Chemistry",
+                "template_structure": json.dumps(urine_chemistry_template_structure),
+                "created_by": admin_user.id,
+                "is_active": 1,
+            },
         )
-        
-        db.add(urine_template)
         db.commit()
-        db.refresh(urine_template)
+        inserted = db.execute(
+            text(
+                """
+                SELECT id
+                FROM lab_result_templates
+                WHERE procedure_name = :procedure_name
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ),
+            {"procedure_name": "Urine Chemistry"},
+        ).first()
         
         print("=" * 70)
         print("Urine Chemistry template created successfully!")
         print("=" * 70)
-        print(f"Template ID: {urine_template.id}")
-        print(f"Template Name: {urine_template.template_name}")
-        print(f"Procedure Name: {urine_template.procedure_name}")
+        print(f"Template ID: {inserted.id if inserted else 'unknown'}")
+        print("Template Name: Urine Chemistry")
+        print("Procedure Name: Urine Chemistry")
         print(f"Total Fields: {len(urine_chemistry_template_structure['fields'])}")
         print()
         print("Fields created:")

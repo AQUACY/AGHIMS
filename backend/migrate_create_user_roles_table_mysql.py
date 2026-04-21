@@ -59,7 +59,6 @@ def migrate():
         
         if result[0] > 0:
             print("Table 'user_roles' already exists. Skipping creation.")
-            conn.close()
             return
         
         # Create user_roles table
@@ -92,7 +91,10 @@ def migrate():
             conn.rollback()
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except pymysql.Error:
+                pass
             print("Database connection closed")
 
 if __name__ == "__main__":
