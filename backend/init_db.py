@@ -2,6 +2,8 @@
 Database initialization script
 Creates tables and default admin user
 """
+import sys
+
 from app.core.database import Base, engine, SessionLocal
 from app.models.user import User
 from app.core.security import get_password_hash
@@ -41,6 +43,11 @@ def init_db():
         db.close()
 
 if __name__ == "__main__":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     print("Initializing database...")
     init_db()
     print("Database initialization complete!")

@@ -49,7 +49,6 @@ def migrate():
             result = cursor.fetchone()
             if result['count'] == 0:
                 print("⚠ vitals table does not exist, skipping")
-                connection.close()
                 return
             
             # Get existing columns
@@ -60,7 +59,11 @@ def migrate():
                 AND table_name = 'vitals'
             """, (DB_CONFIG['database'],))
             
-            existing_columns = {row['column_name'] for row in cursor.fetchall()}
+            existing_columns = {
+                row.get("column_name") or row.get("COLUMN_NAME")
+                for row in cursor.fetchall()
+            }
+            existing_columns.discard(None)
             
             # Columns to add
             columns_to_add = [

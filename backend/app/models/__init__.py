@@ -2,6 +2,7 @@
 Database models
 """
 from app.models.user import User
+from app.models.user_role import UserRole
 from app.models.patient import Patient
 from app.models.encounter import Encounter, EncounterStatus, Department
 from app.models.vital import Vital
@@ -79,6 +80,7 @@ from app.models.app_license_activation_log import AppLicenseActivationLog
 
 __all__ = [
     "User",
+    "UserRole",
     "Patient",
     "Encounter",
     "EncounterStatus",
