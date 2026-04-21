@@ -49,7 +49,11 @@ def migrate():
                 """,
                 (DB_CONFIG["database"],),
             )
-            existing = {row["column_name"] for row in cursor.fetchall()}
+            existing = {
+                row.get("column_name") or row.get("COLUMN_NAME")
+                for row in cursor.fetchall()
+            }
+            existing.discard(None)
 
             columns_to_add = [
                 ("admission_deposit_amount", "DOUBLE NULL"),

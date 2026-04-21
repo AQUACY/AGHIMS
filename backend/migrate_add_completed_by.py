@@ -17,6 +17,12 @@ def migrate():
     cursor = conn.cursor()
     
     try:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='investigations'")
+        if not cursor.fetchone():
+            print("investigations table does not exist yet. Skipping.")
+            conn.close()
+            return True
+
         # Check if column already exists
         cursor.execute("PRAGMA table_info(investigations)")
         columns = [col[1] for col in cursor.fetchall()]

@@ -30,13 +30,30 @@ def migrate():
         with connection.cursor() as cursor:
             cursor.execute(
                 """
+                SELECT COUNT(*) AS cnt
+                FROM information_schema.tables
+                WHERE table_schema = %s AND table_name = 'companion_visits'
+                """,
+                (DB_CONFIG["database"],),
+            )
+            exists_row = cursor.fetchone() or {}
+            if int(exists_row.get("cnt") or 0) == 0:
+                print("SKIP: companion_visits table does not exist yet.")
+                return
+
+            cursor.execute(
+                """
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_schema = %s AND table_name = 'companion_visits'
                 """,
                 (DB_CONFIG["database"],),
             )
-            existing = {row["column_name"] for row in cursor.fetchall()}
+            existing = {
+                row.get("column_name") or row.get("COLUMN_NAME")
+                for row in cursor.fetchall()
+            }
+            existing.discard(None)
 
             columns_to_add = [
                 ("closed_at", "DATETIME NULL"),

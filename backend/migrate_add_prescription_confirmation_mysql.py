@@ -49,7 +49,6 @@ def migrate():
             result = cursor.fetchone()
             if result['count'] == 0:
                 print("⚠ prescriptions table does not exist, skipping")
-                connection.close()
                 return
             
             # Check if columns already exist
@@ -61,7 +60,11 @@ def migrate():
                 AND column_name IN ('confirmed_by', 'confirmed_at')
             """, (DB_CONFIG['database'],))
             
-            existing_columns = {row['column_name'] for row in cursor.fetchall()}
+            existing_columns = {
+                row.get("column_name") or row.get("COLUMN_NAME")
+                for row in cursor.fetchall()
+            }
+            existing_columns.discard(None)
             
             # Add confirmed_by column if it doesn't exist
             if 'confirmed_by' not in existing_columns:

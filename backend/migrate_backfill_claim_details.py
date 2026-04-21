@@ -18,11 +18,26 @@ def migrate():
     cursor = conn.cursor()
     
     try:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='claims'")
+        if not cursor.fetchone():
+            print("claims table does not exist yet. Skipping.")
+            return
+
         # Check if claim detail tables exist
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='claim_diagnoses'")
         if not cursor.fetchone():
             print("Claim detail tables do not exist! Please run migrate_add_claim_details.py first.")
             return
+
+        required_tables = ["diagnoses", "investigations", "prescriptions", "encounters"]
+        for table_name in required_tables:
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            )
+            if not cursor.fetchone():
+                print(f"{table_name} table does not exist yet. Skipping.")
+                return
         
         # Get all claims that don't have claim details yet
         cursor.execute("""

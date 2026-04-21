@@ -36,6 +36,10 @@ def migrate():
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='investigations'")
+        if not cursor.fetchone():
+            print("investigations table does not exist yet. Skipping migration.")
+            return True
         
         # Check if column already exists and is nullable
         cursor.execute("PRAGMA table_info(investigations)")

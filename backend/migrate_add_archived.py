@@ -23,6 +23,10 @@ def migrate():
     try:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='encounters'")
+        if not cursor.fetchone():
+            print("⚠ encounters table does not exist yet. Skipping.")
+            return
         # Check if column already exists
         cursor.execute("PRAGMA table_info(encounters)")
         columns = [col[1] for col in cursor.fetchall()]
