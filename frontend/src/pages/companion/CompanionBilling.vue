@@ -305,6 +305,15 @@
               class="glass-button q-mr-md"
               @click="openAddInpatientFeeDialog"
             />
+            <q-btn
+              v-if="selectedVisit && hasPaidItemsOverall"
+              flat
+              color="primary"
+              icon="print"
+              label="Print paid receipt (all sections)"
+              class="q-mr-sm"
+              @click="printPaidReceiptForAllSections"
+            />
             <div v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'" class="text-caption text-grey-7">
               Payments are grouped by category (one receipt per category by default). You can still override receipts per item.
               Use an admission deposit from the card above to pay lines without a separate cash receipt until the pool runs out.
@@ -339,6 +348,15 @@
                     label="Pay selected"
                     :disable="selectedIdsByCategory[group.key].length === 0"
                     @click="openPayDialogForCategory(group.key)"
+                  />
+                  <q-btn
+                    v-if="hasPaidItemsInGroup(group)"
+                    flat
+                    color="primary"
+                    icon="print"
+                    label="Print paid"
+                    class="q-ml-sm"
+                    @click="printPaidReceiptForGroup(group)"
                   />
                 </div>
               </q-card-section>
@@ -1447,9 +1465,10 @@
     <CompanionBillingReceiptDialog
       v-model="showReceiptDialog"
       :visit="selectedVisit"
-      :items="billItems"
+      :items="receiptDialogItems"
       :loading="false"
       :focus-hint="receiptDialogFocus"
+      :title="receiptDialogTitle"
     />
   </q-page>
 </template>
@@ -1458,11 +1477,13 @@
 import { ref, reactive, computed } from 'vue';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
+import { useFacilityStore } from '../../stores/facility';
 import { companionVisitsAPI, billingAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
 
 const $q = useQuasar();
 const authStore = useAuthStore();
+const facilityStore = useFacilityStore();
 
 const loadingVisits = ref(false);
 const loadingItems = ref(false);
@@ -1524,10 +1545,14 @@ const refundingItemId = ref(null);
 
 const showReceiptDialog = ref(false);
 const receiptDialogFocus = ref('overview');
+const receiptDialogItems = ref([]);
+const receiptDialogTitle = ref('Bill & payment receipt');
 
-function openBillingReceiptDialog(hint) {
+function openBillingReceiptDialog(hint, items = null, title = 'Bill & payment receipt') {
   if (!selectedVisit.value) return;
   receiptDialogFocus.value = hint || 'overview';
+  receiptDialogItems.value = Array.isArray(items) ? items : (billItems.value || []);
+  receiptDialogTitle.value = title || 'Bill & payment receipt';
   showReceiptDialog.value = true;
 }
 
@@ -1939,6 +1964,12 @@ const paidAmount = computed(() => {
   }, 0);
 });
 
+const paidBillItems = computed(() =>
+  (billItems.value || []).filter((row) => !isCancelledRow(row) && isPaidRow(row)),
+);
+
+const hasPaidItemsOverall = computed(() => paidBillItems.value.length > 0);
+
 const pendingBalance = computed(() => {
   const total = billTotal.value;
   const deposit = undertakingDepositAmount.value || 0;
@@ -2024,8 +2055,201 @@ function formatOxygenPeriod(row) {
   return hours ? `Start ${start} → End ${end} · ${hours}` : `Start ${start} → End ${end}`;
 }
 
+function parseOutstandingPayload(err) {
+  const detail = err?.response?.data?.detail;
+  if (!detail || typeof detail !== 'object') return null;
+  if (detail.code !== 'OUTSTANDING_BALANCE') return null;
+  return detail;
+}
+
+function outstandingPromptMessage(payload) {
+  const visits = Array.isArray(payload?.outstanding_visits) ? payload.outstanding_visits : [];
+  const total = Number(payload?.total_due || 0);
+  const sample = visits.slice(0, 3).map((v) => {
+    const u = (v?.undertaking_status || '').toString().trim();
+    const undertakingPart = u ? `, undertaking ${u}` : '';
+    return `Visit ${v.external_visit_number}: GH¢ ${(Number(v.balance_due || 0)).toFixed(2)} (${v.status}${undertakingPart})`;
+  });
+  const more = visits.length > 3 ? `\n...and ${visits.length - 3} more visit(s)` : '';
+  return `This client has previous unpaid companion bill(s).\nOutstanding total: GH¢ ${total.toFixed(2)}\n\n${sample.join('\n')}${more}\n\nIgnore and continue creating/importing this service?`;
+}
+
+function askOutstandingOverride(payload) {
+  return new Promise((resolve) => {
+    $q.dialog({
+      title: 'Outstanding previous bill found',
+      message: outstandingPromptMessage(payload),
+      cancel: { label: 'No, stop import', flat: true },
+      ok: { label: 'Yes, ignore and continue', color: 'warning' },
+      persistent: true,
+    }).onOk(() => resolve(true)).onCancel(() => resolve(false)).onDismiss(() => resolve(false));
+  });
+}
+
+async function openOutstandingForBilling(payload) {
+  const card = String(payload?.card_number || '').trim();
+  if (!card) return;
+  filters.card_number = card;
+  filters.visit_number = '';
+  filters.status = null;
+  await loadVisits();
+  const outstandingIds = new Set((payload?.outstanding_visits || []).map((v) => v.id));
+  const pick = visits.value.find((v) => outstandingIds.has(v.id)) || visits.value[0];
+  if (pick) await selectVisit(pick);
+}
+
+function hasPaidItemsInGroup(group) {
+  return (group?.items || []).some((row) => !isCancelledRow(row) && isPaidRow(row));
+}
+
+function printPaidReceiptForGroup(group) {
+  if (!selectedVisit.value || !group) return;
+  const rows = (group.items || []).filter((row) => !isCancelledRow(row) && isPaidRow(row));
+  if (rows.length === 0) {
+    $q.notify({ type: 'warning', message: `No paid items in ${group.title}`, position: 'top' });
+    return;
+  }
+  const html = buildCompanionPaidReceiptHtml(rows, `${group.title} paid receipt`);
+  openAndPrintReceiptHtml(html);
+}
+
+function printPaidReceiptForAllSections() {
+  if (!selectedVisit.value) return;
+  const rows = paidBillItems.value;
+  if (rows.length === 0) {
+    $q.notify({ type: 'warning', message: 'No paid items available to print', position: 'top' });
+    return;
+  }
+  const html = buildCompanionPaidReceiptHtml(rows, 'Paid receipt (all sections)');
+  openAndPrintReceiptHtml(html);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatReceiptLine(label, value) {
+  if (value == null || value === '') return '';
+  return `<div><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(value)}</span></div>`;
+}
+
+function buildCompanionPaidReceiptHtml(rows, title) {
+  const visit = selectedVisit.value || {};
+  const now = new Date();
+  const total = rows.reduce((sum, row) => sum + rowAmount(row), 0);
+  const itemsHtml = rows.map((row, idx) => {
+    const amount = rowAmount(row);
+    const receiptNo = String(row.admission_deposit_line_receipt || row.receipt_number || '').trim() || '—';
+    return `
+      <div class="item">
+        <div class="i1">${idx + 1}. ${escapeHtml(row.item_name || '')}</div>
+        <div class="i2">${escapeHtml(row.item_code || '')} · Qty: ${escapeHtml(row.quantity)}</div>
+        <div class="i3">Unit: GH¢ ${Number(row.unit_price || 0).toFixed(2)} · Amount: GH¢ ${amount.toFixed(2)}</div>
+        <div class="i4">Receipt: ${escapeHtml(receiptNo)}</div>
+        <div class="i4">Method: ${escapeHtml(row.payment_method || '—')}</div>
+        <div class="i4">Cashier: ${escapeHtml(row.paid_by_name || '—')}</div>
+      </div>
+    `;
+  }).join('');
+
+  const facilityName = escapeHtml((facilityStore.displayName || '').trim() || 'Health Facility');
+  return `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      @page { size: 70mm auto; margin: 2mm; }
+      html, body { width: 70mm; margin: 0; padding: 0; }
+      body { font-family: monospace; font-size: 12px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .center { text-align: center; }
+      .hdr { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
+      .logo-container { display: flex; justify-content: center; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .logo { max-width: 25mm; max-height: 20mm; object-fit: contain; }
+      .hospital-name { font-weight: bold; font-size: 14px; margin: 6px 0; }
+      .dept-name { font-weight: bold; font-size: 13px; margin-bottom: 6px; }
+      .sec { margin: 6px 0; }
+      .lbl { display: inline-block; min-width: 30mm; }
+      .val { float: right; max-width: 30mm; text-align: right; }
+      .clearfix { clear: both; }
+      .item { border-top: 1px dashed #000; padding: 4px 0; }
+      .i1 { font-weight: bold; }
+      .i4 { color: #333; }
+      .grand-total { font-weight: bold; font-size: 13px; }
+      .footer { border-top: 1px dashed #000; margin-top: 6px; padding-top: 6px; }
+      @media screen { body { background: #f5f5f5; } .preview-wrap { width: 70mm; margin: 12px auto; background: #fff; padding: 2mm; box-shadow: 0 0 4px rgba(0,0,0,0.2); } }
+      @media print { .preview-wrap { box-shadow: none; padding: 0; } }
+    </style>
+  </head>
+  <body>
+    <div class="preview-wrap">
+      <div class="logo-container">
+        <img src="/logos/ministry-of-health-logo.png" alt="Ministry of Health" class="logo" onerror="this.style.display='none'">
+        <img src="/logos/ghana-health-service-logo.png" alt="Ghana Health Service" class="logo" onerror="this.style.display='none'">
+      </div>
+      <div class="center hospital-name">${facilityName}</div>
+      <div class="hdr center">
+        <div class="dept-name">COMPANION PAID RECEIPT</div>
+        <div>${escapeHtml(title)}</div>
+        <div>${escapeHtml(now.toLocaleString())}</div>
+      </div>
+      <div class="sec">
+        ${formatReceiptLine('Visit', visit.external_visit_number || '')}
+        ${formatReceiptLine('Card', visit.external_card_number || '')}
+        ${formatReceiptLine('Patient', visit.client_name || '')}
+        <div class="clearfix"></div>
+      </div>
+      <div class="sec">
+        <div class="center"><strong>Paid Items</strong></div>
+        ${itemsHtml || '<div class="center">No paid items</div>'}
+      </div>
+      <div class="sec">
+        ${formatReceiptLine('Grand Total', `GH¢ ${total.toFixed(2)}`)}
+        <div class="clearfix"></div>
+      </div>
+      <div class="footer">
+        <div class="center">Thank you</div>
+      </div>
+    </div>
+  </body>
+  </html>`;
+}
+
+function openAndPrintReceiptHtml(receiptHtml) {
+  const w = window.open('', '_blank');
+  if (!w) {
+    $q.notify({ type: 'negative', message: 'Popup blocked. Please allow popups and try again.', position: 'top' });
+    return;
+  }
+  w.document.open();
+  w.document.write(receiptHtml);
+  w.document.close();
+  setTimeout(() => {
+    try {
+      w.focus();
+      w.print();
+    } catch {}
+  }, 300);
+}
+
 async function submitCreateFromExport() {
   if (!createFromExportFile.value) return;
+  const submitImport = async (ignoreOutstanding = false) => {
+    let file = createFromExportFile.value;
+    if (Array.isArray(file)) file = file[0];
+    if (!file || !(file instanceof File)) {
+      $q.notify({ type: 'warning', message: 'Choose a file to upload', position: 'top' });
+      return null;
+    }
+    return companionVisitsAPI.createFromGovernmentExport(file, { ignore_outstanding: ignoreOutstanding });
+  };
+
   let file = createFromExportFile.value;
   if (Array.isArray(file)) file = file[0];
   if (!file || !(file instanceof File)) {
@@ -2034,7 +2258,8 @@ async function submitCreateFromExport() {
   }
   creatingFromExport.value = true;
   try {
-    const res = await companionVisitsAPI.createFromGovernmentExport(file);
+    const res = await submitImport(false);
+    if (!res) return;
     const v = res.data?.visit;
     const kind = res.data?.export_kind;
     const n = res.data?.added_count ?? 0;
@@ -2049,6 +2274,47 @@ async function submitCreateFromExport() {
     if (failed.length) msg += ` ${failed.length} line(s) could not be matched — add them manually if needed.`;
     $q.notify({ type: 'positive', message: msg, position: 'top', timeout: 6000 });
   } catch (e) {
+    const outstanding = parseOutstandingPayload(e);
+    if (outstanding) {
+      const proceed = await askOutstandingOverride(outstanding);
+      if (proceed) {
+        try {
+          const retryRes = await submitImport(true);
+          if (!retryRes) return;
+          const v = retryRes.data?.visit;
+          const kind = retryRes.data?.export_kind;
+          const n = retryRes.data?.added_count ?? 0;
+          const failed = retryRes.data?.failed || [];
+          createFromExportFile.value = null;
+          if (v?.external_card_number != null) filters.card_number = v.external_card_number;
+          if (v?.external_visit_number != null) filters.visit_number = v.external_visit_number;
+          await loadVisits();
+          const row = visits.value.find((x) => x.id === v.id) || v;
+          if (row?.id) await selectVisit(row);
+          let msg = `Created ${String(kind || '').toUpperCase()} visit with ${n} line(s).`;
+          if (failed.length) msg += ` ${failed.length} line(s) could not be matched — add them manually if needed.`;
+          msg = `${msg} (Override used: previous outstanding bill exists.)`;
+          $q.notify({ type: 'positive', message: msg, position: 'top', timeout: 7000 });
+          return;
+        } catch (e2) {
+          const d2 = e2.response?.data?.detail;
+          let msg2 = 'Import failed';
+          if (typeof d2 === 'string') msg2 = d2;
+          else if (d2 && typeof d2 === 'object') msg2 = d2.message || msg2;
+          $q.notify({ type: 'negative', message: msg2, position: 'top', timeout: 8000 });
+          return;
+        }
+      }
+      createFromExportFile.value = null;
+      await openOutstandingForBilling(outstanding);
+      $q.notify({
+        type: 'warning',
+        message: 'Import cancelled. Previous bill opened for payment before creating a new service.',
+        position: 'top',
+        timeout: 7000,
+      });
+      return;
+    }
     const d = e.response?.data?.detail;
     let msg = 'Import failed';
     if (typeof d === 'string') msg = d;

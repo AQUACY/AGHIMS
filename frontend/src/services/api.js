@@ -233,14 +233,23 @@ export const encountersAPI = {
 
 // Companion (copayment) visits - external card/visit from government system
 export const companionVisitsAPI = {
-  create: (data) => api.post('/companion-visits/', data),
-  createFromGovernmentExport: (file) => {
+  create: (data, options = {}) =>
+    api.post('/companion-visits/', data, { params: { ignore_outstanding: Boolean(options.ignore_outstanding) } }),
+  createFromGovernmentExport: (file, options = {}) => {
     const formData = new FormData();
     formData.append('file', file);
     return api.post('/companion-visits/create-from-government-export', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      params: { ignore_outstanding: Boolean(options.ignore_outstanding) },
     });
   },
+  checkOutstanding: (cardNumber, excludeVisitNumber = null) =>
+    api.get('/companion-visits/outstanding-check', {
+      params: {
+        card_number: cardNumber,
+        ...(excludeVisitNumber ? { exclude_visit_number: excludeVisitNumber } : {}),
+      },
+    }),
   list: (params = {}) => api.get('/companion-visits/', { params }),
   get: (visitId) => api.get(`/companion-visits/${visitId}`),
   update: (visitId, data) => api.patch(`/companion-visits/${visitId}`, data),

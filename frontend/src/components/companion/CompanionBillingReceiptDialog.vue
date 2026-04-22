@@ -8,7 +8,7 @@
   >
     <q-card class="receipt-dialog-card" style="max-width: 900px; width: 100%; margin: auto">
       <q-toolbar class="bg-primary text-white">
-        <q-toolbar-title class="text-weight-medium">Bill &amp; payment receipt</q-toolbar-title>
+        <q-toolbar-title class="text-weight-medium">{{ titleText }}</q-toolbar-title>
         <q-btn flat round dense icon="close" aria-label="Close" @click="close" />
       </q-toolbar>
 
@@ -197,6 +197,7 @@
       </q-card-section>
 
       <q-card-actions align="right" class="q-pa-md receipt-footer">
+        <q-btn flat icon="print" label="Print" color="primary" @click="printReceipt" />
         <q-btn flat label="Close" color="primary" @click="close" />
       </q-card-actions>
     </q-card>
@@ -211,6 +212,7 @@ const props = defineProps({
   visit: { type: Object, default: null },
   items: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
+  title: { type: String, default: 'Bill & payment receipt' },
   /** Hint which section user clicked: total | paid | deposit | balance */
   focusHint: { type: String, default: 'overview' },
 });
@@ -221,6 +223,10 @@ const tab = ref('overview');
 
 function close() {
   emit('update:modelValue', false);
+}
+
+function printReceipt() {
+  window.print();
 }
 
 watch(
@@ -261,6 +267,7 @@ function isPaidRow(row) {
 }
 
 const activeLines = computed(() => props.items || []);
+const titleText = computed(() => String(props.title || 'Bill & payment receipt'));
 
 const billTotal = computed(() =>
   activeLines.value.reduce((sum, i) => (isCancelledRow(i) ? sum : sum + rowAmount(i)), 0),

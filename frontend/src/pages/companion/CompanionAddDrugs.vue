@@ -26,11 +26,16 @@
           default-opened
         >
           <q-list bordered class="rounded-borders q-mt-sm">
-            <q-item v-for="item in group.items" :key="item.id" class="q-pa-md">
+            <q-item v-for="item in group.items" :key="item.id" class="q-pa-md item-row">
               <q-item-section>
-                <q-item-label class="text-weight-medium">{{ item.item_name }}</q-item-label>
+                <q-item-label class="text-weight-medium" :style="item.cancelled ? 'text-decoration: line-through; opacity: 0.75;' : ''">
+                  {{ item.item_name }}
+                </q-item-label>
                 <q-item-label caption>{{ item.item_code }} · {{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }} = GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
                 <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
+                <q-item-label v-if="item.cancelled" caption class="text-negative q-mt-xs">
+                  Cancelled {{ formatDateTime(item.cancelled_at) }} by {{ item.cancelled_by_name || '—' }} — {{ item.cancel_reason || '—' }}
+                </q-item-label>
                 <div v-if="isCompanionBillItemPaid(item)" class="receipt-badge q-mt-sm">
                   <q-icon name="receipt" size="18px" class="q-mr-xs" />
                   <span class="text-weight-medium">{{ companionBillPaidLabel(item) }}</span>
@@ -44,15 +49,15 @@
               </q-item-section>
               <q-item-section side>
                 <q-btn
-                  v-if="!visitClosed && !isCompanionBillItemPaid(item)"
+                  v-if="!visitClosed && !isCompanionBillItemPaid(item) && !item.cancelled"
                   flat
                   dense
                   round
-                  icon="delete"
+                  icon="cancel"
                   color="negative"
                   @click="removeItem(item)"
                 >
-                  <q-tooltip>Remove from bill</q-tooltip>
+                  <q-tooltip>Cancel service (reason required)</q-tooltip>
                 </q-btn>
                 <q-tooltip v-else-if="isCompanionBillItemPaid(item)" content="Paid — cannot remove">
                   <q-icon name="check_circle" color="positive" size="24px" />
@@ -604,13 +609,26 @@ async function loadProducts() {
 
 async function removeItem(item) {
   if (visitClosed.value) return;
-  try {
-    await companionVisitsAPI.deleteItem(visitId.value, item.id);
-    $q.notify({ type: 'positive', message: 'Removed from bill', position: 'top' });
-    await loadAddedItems();
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to remove', position: 'top' });
-  }
+  $q.dialog({
+    title: 'Cancel service',
+    message: `Cancel "${item.item_name}"? It will be struck through and excluded from billing.`,
+    prompt: {
+      model: '',
+      type: 'text',
+      label: 'Reason for cancellation',
+      isValid: (val) => String(val || '').trim().length >= 3,
+    },
+    cancel: true,
+    persistent: true,
+  }).onOk(async (reason) => {
+    try {
+      await companionVisitsAPI.cancelItem(visitId.value, item.id, String(reason || '').trim());
+      $q.notify({ type: 'positive', message: 'Item cancelled', position: 'top' });
+      await loadAddedItems();
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to cancel', position: 'top' });
+    }
+  });
 }
 
 onMounted(async () => {

@@ -164,6 +164,63 @@ class CreateFromGovernmentExportResponse(BaseModel):
     failed: List[Dict[str, Any]]
 
 
+def _outstanding_visits_for_card(
+    db: Session,
+    card_number: str,
+    exclude_visit_number: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    card = (card_number or "").strip()
+    if not card:
+        return []
+    q = db.query(CompanionVisit).filter(CompanionVisit.external_card_number == card)
+    if exclude_visit_number and exclude_visit_number.strip():
+        q = q.filter(CompanionVisit.external_visit_number != exclude_visit_number.strip())
+    visits = q.order_by(CompanionVisit.created_at.desc()).all()
+    if not visits:
+        return []
+    summaries = _batch_visit_billing_summaries(db, visits)
+    out: List[Dict[str, Any]] = []
+    for v in visits:
+        bill_total, paid_amount, balance_due = summaries.get(v.id, (0.0, 0.0, 0.0))
+        undertaking_status = (getattr(v, "undertaking_status", None) or "").strip().lower() or None
+        has_outstanding = balance_due > 0.005 or undertaking_status in ("pending", "approved")
+        if not has_outstanding:
+            continue
+        out.append({
+            "id": v.id,
+            "external_visit_number": v.external_visit_number,
+            "client_name": v.client_name,
+            "status": v.status,
+            "undertaking_status": undertaking_status,
+            "bill_total": float(bill_total or 0.0),
+            "paid_amount": float(paid_amount or 0.0),
+            "balance_due": float(balance_due or 0.0),
+            "created_at": v.created_at.isoformat() if getattr(v, "created_at", None) else None,
+        })
+    return out
+
+
+def _raise_outstanding_block(
+    db: Session,
+    card_number: str,
+    exclude_visit_number: Optional[str] = None,
+):
+    outstanding = _outstanding_visits_for_card(db, card_number, exclude_visit_number=exclude_visit_number)
+    if not outstanding:
+        return
+    total_due = float(sum(float(v.get("balance_due") or 0.0) for v in outstanding))
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "OUTSTANDING_BALANCE",
+            "message": "Client has unpaid previous companion bill(s) or active undertaking. Clear old bill before creating a new service, or confirm override to continue.",
+            "card_number": (card_number or "").strip(),
+            "total_due": total_due,
+            "outstanding_visits": outstanding,
+        },
+    )
+
+
 def _try_add_visit_item_from_government_line(
     db: Session,
     visit_id: int,
@@ -394,6 +451,7 @@ def _visit_all_items_paid(visit_id: int, db: Session) -> bool:
 @router.post("/", response_model=CompanionVisitResponse, status_code=status.HTTP_201_CREATED)
 def create_companion_visit(
     data: CompanionVisitCreate,
+    ignore_outstanding: bool = Query(False, description="Allow create even when previous companion bills are outstanding"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Records", "Billing", "Admin"])),
 ):
@@ -409,6 +467,8 @@ def create_companion_visit(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="external_card_number and external_visit_number are required",
         )
+    if not ignore_outstanding:
+        _raise_outstanding_block(db, card, exclude_visit_number=visit)
     existing = (
         db.query(CompanionVisit)
         .filter(
@@ -469,6 +529,23 @@ def list_companion_visits(
     return [_visit_to_response(v, db, billing=summaries.get(v.id)) for v in visits]
 
 
+@router.get("/outstanding-check")
+def companion_outstanding_check(
+    card_number: str = Query(..., description="External card number"),
+    exclude_visit_number: Optional[str] = Query(None, description="Visit number to exclude from check"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Records", "Billing", "Admin"])),
+):
+    outstanding = _outstanding_visits_for_card(db, card_number, exclude_visit_number=exclude_visit_number)
+    total_due = float(sum(float(v.get("balance_due") or 0.0) for v in outstanding))
+    return {
+        "card_number": (card_number or "").strip(),
+        "has_outstanding": len(outstanding) > 0,
+        "total_due": total_due,
+        "outstanding_visits": outstanding,
+    }
+
+
 @router.post(
     "/create-from-government-export",
     response_model=CreateFromGovernmentExportResponse,
@@ -476,6 +553,7 @@ def list_companion_visits(
 )
 async def create_companion_visit_from_government_export(
     file: UploadFile = File(...),
+    ignore_outstanding: bool = Query(False, description="Allow import/create even when previous companion bills are outstanding"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Records", "Admin"])),
 ):
@@ -513,6 +591,8 @@ async def create_companion_visit_from_government_export(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Could not read card number and visit/claim number from the export.",
         )
+    if not ignore_outstanding:
+        _raise_outstanding_block(db, card, exclude_visit_number=vn)
 
     existing = (
         db.query(CompanionVisit)
