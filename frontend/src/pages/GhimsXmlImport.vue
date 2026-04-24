@@ -41,6 +41,9 @@
       <q-card class="q-mb-md glass-card" flat bordered>
         <q-card-section class="row items-center q-gutter-md">
           <div class="text-body2 text-grey-8">{{ currentBatch.claims?.length || 0 }} claim(s) in this import</div>
+          <div class="text-body2 text-primary">
+            Showing {{ filteredClaims.length }} filtered claim(s)
+          </div>
           <q-checkbox
             :model-value="allFinalizedSelected"
             label="Select all finalized"
@@ -61,6 +64,16 @@
             clearable
             label="Search client / hospital rec no / claim IDs"
             class="col-12 col-md-4"
+          />
+          <q-select
+            v-model="serviceTypeFilter"
+            :options="serviceTypeFilterOptions"
+            emit-value
+            map-options
+            outlined
+            dense
+            label="Type of service"
+            class="col-12 col-md-3"
           />
           <q-select
             v-model="attendanceFilter"
@@ -93,13 +106,22 @@
             class="col-12 col-md-3"
           />
           <q-space />
+          <q-btn
+            color="secondary"
+            icon="refresh"
+            label="Refresh"
+            :loading="refreshing"
+            @click="refreshCurrentBatch"
+          />
           <q-btn color="primary" icon="download" :label="selectedItemIds.length ? `Export ${selectedItemIds.length} selected` : 'Export selected'" :disable="selectedItemIds.length === 0" :loading="exporting" @click="exportSelected" />
         </q-card-section>
       </q-card>
 
-      <q-card v-for="row in pagedClaims" :key="row.id" class="q-mb-sm glass-card" flat bordered>
+      <q-card v-for="(row, pageIndex) in pagedClaims" :key="row.id" class="q-mb-sm glass-card" flat bordered>
         <q-card-section class="row items-center q-col-gutter-sm">
-          <div class="col-12 col-md-3"><strong>{{ row.claim_claim_id }}</strong></div>
+          <div class="col-12 col-md-3">
+            <strong>#{{ ((currentPage - 1) * rowsPerPage) + pageIndex + 1 }} - {{ row.claim_claim_id }}</strong>
+          </div>
           <div class="col-12 col-md-3 text-body2">
             <div><strong>Client:</strong> {{ claimClientName(row) || '-' }}</div>
             <div><strong>Hosp Rec No:</strong> {{ claimHospitalRecNo(row) || '-' }}</div>
@@ -111,7 +133,20 @@
             <q-badge :color="row.status === 'finalized' ? 'positive' : 'warning'" :label="row.status" />
           </div>
           <div class="col-12 col-md-2 row q-gutter-sm justify-end">
-            <q-btn size="sm" color="primary" label="Edit imported claim" @click="editImportedClaim(row.id)" />
+            <q-btn
+              size="sm"
+              color="primary"
+              label="Edit imported claim"
+              :disable="row.status === 'finalized'"
+              @click="editImportedClaim(row)"
+            />
+            <q-btn
+              size="sm"
+              color="purple"
+              label="View Claim"
+              
+              @click="viewImportedClaim(row)"
+            />
             <q-btn
               v-if="row.status === 'finalized'"
               size="sm"
@@ -162,6 +197,7 @@ const $q = useQuasar();
 const uploadFile = ref(null);
 const uploading = ref(false);
 const exporting = ref(false);
+const refreshing = ref(false);
 const exportingSingleItemId = ref(null);
 const statusLoadingItemId = ref(null);
 const batches = ref([]);
@@ -172,6 +208,7 @@ const filtersLocked = ref(false);
 const searchText = ref('');
 const attendanceFilter = ref('all');
 const specialtyFilter = ref('all');
+const serviceTypeFilter = ref('all');
 const statusFilter = ref('all');
 const currentPage = ref(1);
 const rowsPerPage = ref(20);
@@ -203,11 +240,36 @@ const specialtyFilterOptions = computed(() => {
   return [{ label: 'All', value: 'all' }, ...vals.map((v) => ({ label: v, value: v }))];
 });
 
+function getServiceType(row) {
+  return String(
+    row?.type_of_service
+      || row?.payload?.typeOfService
+      || row?.payload?.type_of_service
+      || ''
+  )
+    .trim()
+    .toUpperCase();
+}
+
+const serviceTypeFilterOptions = computed(() => {
+  const rows = currentBatch.value?.claims || [];
+  const vals = Array.from(
+    new Set(
+      rows
+        .map((r) => getServiceType(r))
+        .filter((v) => v === 'IPD' || v === 'OPD')
+    )
+  );
+  vals.sort((a, b) => a.localeCompare(b));
+  return [{ label: 'All', value: 'all' }, ...vals.map((v) => ({ label: v, value: v }))];
+});
+
 const filteredClaims = computed(() => {
   const rows = currentBatch.value?.claims || [];
   const q = String(searchText.value || '').trim().toLowerCase();
   const out = rows.filter((r) => {
     if (statusFilter.value !== 'all' && (r.status || '').toLowerCase() !== statusFilter.value) return false;
+    if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
     if (attendanceFilter.value !== 'all' && String(r.type_of_attendance || '').trim() !== attendanceFilter.value) return false;
     if (specialtyFilter.value !== 'all' && String(r.specialty_attended || '').trim() !== specialtyFilter.value) return false;
     if (!q) return true;
@@ -216,6 +278,7 @@ const filteredClaims = computed(() => {
       r.hospital_rec_no,
       r.claim_claim_id,
       r.claim_check_code,
+      getServiceType(r),
       r.type_of_attendance,
       r.specialty_attended,
     ]
@@ -296,10 +359,34 @@ async function openBatch(id) {
   syncSelectedExports();
 }
 
-function editImportedClaim(itemId) {
-  const route = $router.resolve({ path: `/claims/ghims-import/item/${itemId}` });
+async function refreshCurrentBatch() {
+  if (!viewingBatchId.value) return;
+  refreshing.value = true;
+  try {
+    await loadBatches();
+    await openBatch(viewingBatchId.value);
+    $q.notify({ type: 'positive', message: 'Imported claims refreshed' });
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to refresh imported claims' });
+  } finally {
+    refreshing.value = false;
+  }
+}
+
+function editImportedClaim(row) {
+  if (!row?.id) return;
+  if (row.status === 'finalized') {
+    $q.notify({ type: 'warning', message: 'Finalized imported claims cannot be edited' });
+    return;
+  }
+  const route = $router.resolve({ path: `/claims/ghims-import/item/${row.id}` });
   window.open(route.href, '_blank');
 }
+function viewImportedClaim(row) {
+ const route = $router.resolve({ path: `/claims/ghims-import/item/${row.id}` });
+ window.open(route.href, '_blank');
+}
+
 
 async function setClaimFinalized(row) {
   statusLoadingItemId.value = row.id;
@@ -386,6 +473,7 @@ function persistFilterState() {
       FILTERS_KEY,
       JSON.stringify({
         searchText: searchText.value,
+        serviceTypeFilter: serviceTypeFilter.value,
         attendanceFilter: attendanceFilter.value,
         specialtyFilter: specialtyFilter.value,
         statusFilter: statusFilter.value,
@@ -403,6 +491,7 @@ function restoreFilterState() {
     if (!raw) return;
     const s = JSON.parse(raw);
     searchText.value = s.searchText || '';
+    serviceTypeFilter.value = s.serviceTypeFilter || 'all';
     attendanceFilter.value = s.attendanceFilter || 'all';
     specialtyFilter.value = s.specialtyFilter || 'all';
     statusFilter.value = s.statusFilter || 'all';
@@ -410,7 +499,7 @@ function restoreFilterState() {
   } catch (_) {}
 }
 
-watch([searchText, attendanceFilter, specialtyFilter, statusFilter, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, attendanceFilter, specialtyFilter, statusFilter, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });

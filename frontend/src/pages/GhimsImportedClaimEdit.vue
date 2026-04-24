@@ -11,7 +11,7 @@
       <q-inner-loading showing color="primary" />
     </q-card>
 
-    <q-form v-else @submit.prevent="save" class="q-gutter-md">
+    <q-form v-else @submit.prevent="saveAndFinalize" class="q-gutter-md">
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider / Claim Header</div>
@@ -83,6 +83,13 @@
             />
             <q-input v-model="d._diagnosisName" label="Diagnosis Name" filled dense class="col-12 col-md-6" />
             <q-input v-model="d.gdrgCode" label="GDRG" filled dense class="col-12 col-md-2" />
+            <q-checkbox
+              :model-value="principalDiagnosisIndex === i"
+              label="Principal diagnosis"
+              dense
+              class="col-12 col-md-3"
+              @update:model-value="(checked) => setPrincipalDiagnosis(i, checked)"
+            />
             <q-select
               v-if="(d._drgOptions || []).length > 1"
               :model-value="d.gdrgCode"
@@ -98,7 +105,7 @@
             />
             <q-input v-model="d.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="d.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-7" />
-            <q-btn flat dense color="negative" icon="delete" @click="payload.diagnoses.splice(i,1)" />
+            <q-btn flat dense color="negative" icon="delete" @click="removeDiagnosis(i)" />
           </div>
           <q-btn flat color="primary" icon="add" label="Add Diagnosis" @click="payload.diagnoses.push({ icd10:'', gdrgCode:'', diagnosis:'' })" />
         </q-card-section>
@@ -221,14 +228,14 @@
       </q-card>
 
       <div class="row q-gutter-md">
-        <q-btn type="submit" color="primary" label="Save" :loading="saving" />
+        <q-btn type="submit" color="primary" label="Save and Finalize" :loading="saving" />
       </div>
     </q-form>
   </q-page>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
@@ -238,6 +245,7 @@ const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
 const status = ref('draft');
+const principalDiagnosisIndex = ref(-1);
 const itemId = Number(route.params.itemId);
 const diagnosisSearchOptions = ref([]);
 const investigationSearchOptions = ref([]);
@@ -255,6 +263,10 @@ function addMedicine() {
     serviceDate: '',
     prescription: { dose: '', frequency: '', duration: '', unparsed: '' },
   });
+}
+
+function syncIncludesPharmacy() {
+  payload.includesPharmacy = (payload.medicines || []).length > 0 ? '1' : '0';
 }
 
 const filterInvestigationSearch = (val, update) => {
@@ -376,7 +388,35 @@ function onDiagnosisSelect(index, val) {
     }
     row._diagnosisName = val.icd10_description || row._diagnosisName || '';
     row._selectedOption = val;
+    if (principalDiagnosisIndex.value === index) {
+      payload.principalGDRG = row.gdrgCode || '';
+    }
     return;
+  }
+}
+
+function setPrincipalDiagnosis(index, checked) {
+  if (!checked) {
+    if (principalDiagnosisIndex.value === index) {
+      principalDiagnosisIndex.value = -1;
+      payload.principalGDRG = '';
+    }
+    return;
+  }
+  principalDiagnosisIndex.value = index;
+  const row = payload.diagnoses[index];
+  payload.principalGDRG = row?.gdrgCode || '';
+}
+
+function removeDiagnosis(index) {
+  payload.diagnoses.splice(index, 1);
+  if (principalDiagnosisIndex.value === index) {
+    principalDiagnosisIndex.value = -1;
+    payload.principalGDRG = '';
+    return;
+  }
+  if (principalDiagnosisIndex.value > index) {
+    principalDiagnosisIndex.value -= 1;
   }
 }
 
@@ -560,6 +600,9 @@ async function load() {
     const res = await claimsAPI.getGhimsImportItem(itemId);
     status.value = res.data.status || 'draft';
     Object.assign(payload, normalize(res.data.payload || {}));
+    principalDiagnosisIndex.value = (payload.diagnoses || []).findIndex(
+      (d) => String(d?.gdrgCode || '').trim() && String(d?.gdrgCode || '').trim() === String(payload.principalGDRG || '').trim()
+    );
     await resolveServiceNames();
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imported claim' });
@@ -568,7 +611,7 @@ async function load() {
   }
 }
 
-async function save() {
+async function saveAndFinalize() {
   saving.value = true;
   try {
     const clean = normalize(payload);
@@ -587,14 +630,35 @@ async function save() {
       },
     }));
     await claimsAPI.updateGhimsImportItem(itemId, clean);
-    $q.notify({ type: 'positive', message: 'Imported claim updated' });
+    if (status.value !== 'finalized') {
+      await claimsAPI.finalizeGhimsImportItem(itemId);
+    }
+    $q.notify({ type: 'positive', message: 'Imported claim saved and finalized' });
     await load();
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to save imported claim' });
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to save and finalize imported claim' });
   } finally {
     saving.value = false;
   }
 }
 
 onMounted(load);
+
+watch(
+  () => payload.medicines.length,
+  () => {
+    syncIncludesPharmacy();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => payload.diagnoses.map((d) => d?.gdrgCode || ''),
+  () => {
+    if (principalDiagnosisIndex.value < 0) return;
+    const row = payload.diagnoses[principalDiagnosisIndex.value];
+    payload.principalGDRG = row?.gdrgCode || '';
+  },
+  { deep: true }
+);
 </script>
