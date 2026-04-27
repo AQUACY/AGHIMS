@@ -3082,6 +3082,7 @@ def get_ghims_import_batch(
             "claim_claim_id": i.claim_claim_id,
             "claim_check_code": p.get("claimCheckCode"),
             "hospital_rec_no": p.get("hospitalRecNo"),
+            "date_of_birth": p.get("dateOfBirth"),
             "client_name": " ".join([x for x in [surname, other_names] if x]).strip() or None,
             "type_of_service": p.get("typeOfService") or p.get("type_of_service"),
             "type_of_attendance": p.get("typeOfAttendance"),

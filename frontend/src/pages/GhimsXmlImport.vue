@@ -105,6 +105,16 @@
             label="Filter by status"
             class="col-12 col-md-3"
           />
+          <q-select
+            v-model="ageGroupFilter"
+            :options="ageGroupFilterOptions"
+            emit-value
+            map-options
+            outlined
+            dense
+            label="Age group"
+            class="col-12 col-md-3"
+          />
           <q-space />
           <q-btn
             color="secondary"
@@ -124,7 +134,10 @@
           </div>
           <div class="col-12 col-md-3 text-body2">
             <div><strong>Client:</strong> {{ claimClientName(row) || '-' }}</div>
-            <div><strong>Hosp Rec No:</strong> {{ claimHospitalRecNo(row) || '-' }}</div>
+            <div>
+              <strong>Hosp Rec No:</strong> {{ claimHospitalRecNo(row) || '-' }}
+              <span class="q-ml-sm"><strong>Age:</strong> {{ claimClientAge(row) }}</span>
+            </div>
           </div>
           <div class="col-12 col-md-2 text-body2">
             <strong>Check Code:</strong> {{ claimCheckCode(row) || '-' }}
@@ -210,6 +223,7 @@ const attendanceFilter = ref('all');
 const specialtyFilter = ref('all');
 const serviceTypeFilter = ref('all');
 const statusFilter = ref('all');
+const ageGroupFilter = ref('all');
 const currentPage = ref(1);
 const rowsPerPage = ref(20);
 const rowsPerPageOptions = [
@@ -224,6 +238,11 @@ const statusFilterOptions = [
   { label: 'All', value: 'all' },
   { label: 'Draft', value: 'draft' },
   { label: 'Finalized', value: 'finalized' },
+];
+const ageGroupFilterOptions = [
+  { label: 'All', value: 'all' },
+  { label: 'Kids (0-11)', value: 'kids' },
+  { label: 'Adults (12+)', value: 'adults' },
 ];
 
 const attendanceFilterOptions = computed(() => {
@@ -270,6 +289,9 @@ const filteredClaims = computed(() => {
   const out = rows.filter((r) => {
     if (statusFilter.value !== 'all' && (r.status || '').toLowerCase() !== statusFilter.value) return false;
     if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
+    const age = claimClientAgeYears(r);
+    if (ageGroupFilter.value === 'kids' && !(age !== null && age <= 11)) return false;
+    if (ageGroupFilter.value === 'adults' && !(age !== null && age >= 12)) return false;
     if (attendanceFilter.value !== 'all' && String(r.type_of_attendance || '').trim() !== attendanceFilter.value) return false;
     if (specialtyFilter.value !== 'all' && String(r.specialty_attended || '').trim() !== specialtyFilter.value) return false;
     if (!q) return true;
@@ -323,6 +345,27 @@ function claimCheckCode(row) {
 
 function claimHospitalRecNo(row) {
   return row?.hospital_rec_no || row?.payload?.hospitalRecNo || null;
+}
+
+function claimClientAge(row) {
+  const age = claimClientAgeYears(row);
+  return age !== null ? String(age) : '-';
+}
+
+function claimClientAgeYears(row) {
+  const dobRaw = row?.date_of_birth || row?.payload?.dateOfBirth || row?.payload?.date_of_birth || '';
+  if (!dobRaw) return null;
+  const dob = new Date(dobRaw);
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const now = new Date();
+  let age = now.getFullYear() - dob.getFullYear();
+  const birthdayNotReachedYet = (
+    now.getMonth() < dob.getMonth()
+    || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate())
+  );
+  if (birthdayNotReachedYet) age -= 1;
+  return age >= 0 ? age : null;
 }
 
 function goBack() {
@@ -474,6 +517,7 @@ function persistFilterState() {
       JSON.stringify({
         searchText: searchText.value,
         serviceTypeFilter: serviceTypeFilter.value,
+        ageGroupFilter: ageGroupFilter.value,
         attendanceFilter: attendanceFilter.value,
         specialtyFilter: specialtyFilter.value,
         statusFilter: statusFilter.value,
@@ -492,6 +536,7 @@ function restoreFilterState() {
     const s = JSON.parse(raw);
     searchText.value = s.searchText || '';
     serviceTypeFilter.value = s.serviceTypeFilter || 'all';
+    ageGroupFilter.value = s.ageGroupFilter || 'all';
     attendanceFilter.value = s.attendanceFilter || 'all';
     specialtyFilter.value = s.specialtyFilter || 'all';
     statusFilter.value = s.statusFilter || 'all';
@@ -499,7 +544,7 @@ function restoreFilterState() {
   } catch (_) {}
 }
 
-watch([searchText, serviceTypeFilter, attendanceFilter, specialtyFilter, statusFilter, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });
