@@ -188,9 +188,6 @@ def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
             ET.SubElement(m, "serviceDate").text = str(med.get("serviceDate", "") or "")
             p = ET.SubElement(m, "prescription")
             pres = med.get("prescription", {}) or {}
-            ET.SubElement(p, "dose").text = str(pres.get("dose", "") or "")
-            ET.SubElement(p, "frequency").text = _normalize_frequency_for_export(pres.get("frequency", ""))
-            ET.SubElement(p, "duration").text = _normalize_duration_for_export(pres.get("duration", ""))
             ET.SubElement(p, "unparsed").text = str(pres.get("unparsed", "") or "")
 
         for proc in payload.get("procedures", []):
