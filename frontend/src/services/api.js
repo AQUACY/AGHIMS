@@ -878,6 +878,7 @@ export const claimsAPI = {
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
+  flagGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/flag`),
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
 };

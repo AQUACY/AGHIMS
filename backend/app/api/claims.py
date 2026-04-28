@@ -3049,6 +3049,7 @@ def list_ghims_import_batches(
             "uploaded_at": b.uploaded_at.isoformat() if b.uploaded_at else None,
             "claim_count": b.claim_count,
             "finalized_count": sum(1 for i in (b.items or []) if i.status == "finalized"),
+            "flagged_count": sum(1 for i in (b.items or []) if i.status == "flagged"),
         }
         for b in batches
     ]
@@ -3077,6 +3078,7 @@ def get_ghims_import_batch(
         p = i.payload or {}
         surname = str(p.get("surname") or "").strip()
         other_names = str(p.get("otherNames") or "").strip()
+        missing_sections = _ghims_missing_sections(p)
         rows.append({
             "id": i.id,
             "row_index": i.row_index,
@@ -3089,6 +3091,9 @@ def get_ghims_import_batch(
             "type_of_attendance": p.get("typeOfAttendance"),
             "specialty_attended": p.get("specialtyAttended"),
             "status": i.status,
+            "missing_sections": missing_sections,
+            "has_missing_sections": len(missing_sections) > 0,
+            "no_clinical_sections": len(missing_sections) == 4,
         })
 
     return {
@@ -3118,6 +3123,20 @@ def _normalize_medicine_dose(raw_dose: str) -> str:
     return compact.upper()
 
 
+def _normalize_medicine_duration(raw_duration: str) -> str:
+    duration = str(raw_duration or "").strip()
+    if not duration:
+        return ""
+    compact = re.sub(r"\s+", " ", duration)
+    number_only = re.match(r"^(\d+(?:\.\d+)?)$", compact)
+    if number_only:
+        return f"{number_only.group(1)} days"
+    day_based = re.match(r"^(\d+(?:\.\d+)?)\s*day(?:s)?$", compact, flags=re.IGNORECASE)
+    if day_based:
+        return f"{day_based.group(1)} days"
+    return compact
+
+
 def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
     normalized_payload = dict(payload or {})
     medicines = normalized_payload.get("medicines")
@@ -3126,27 +3145,38 @@ def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
 
     for idx, med in enumerate(medicines):
         if not isinstance(med, dict):
-            raise HTTPException(status_code=400, detail=f"Invalid medicine entry at row {idx + 1}.")
+            raise HTTPException(status_code=400, detail=f"Invalid medicine entry at section {idx + 1}.")
 
         prescription = med.get("prescription")
         if prescription is None:
             prescription = {}
             med["prescription"] = prescription
         if not isinstance(prescription, dict):
-            raise HTTPException(status_code=400, detail=f"Invalid prescription at medicine row {idx + 1}.")
+            raise HTTPException(status_code=400, detail=f"Invalid prescription at medicine section {idx + 1}.")
 
         normalized_dose = _normalize_medicine_dose(prescription.get("dose", ""))
         if not normalized_dose or not DOSE_FORMAT_REGEX.match(normalized_dose):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Medicine row {idx + 1}: dose is required and must follow "
+                    f"Medicine section {idx + 1}: dose is required and must follow "
                     "value + space + unit format (e.g. 250 MG)."
                 ),
             )
         prescription["dose"] = normalized_dose
+        prescription["duration"] = _normalize_medicine_duration(prescription.get("duration", ""))
 
     return normalized_payload
+
+
+def _ghims_missing_sections(payload: dict) -> List[str]:
+    p = payload or {}
+    missing = []
+    for key in ["diagnoses", "investigations", "medicines", "procedures"]:
+        value = p.get(key)
+        if not isinstance(value, list) or len(value) == 0:
+            missing.append(key)
+    return missing
 
 
 @router.get("/ghims-import/items/{item_id}")
@@ -3221,6 +3251,24 @@ def reopen_ghims_import_item(
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     item.status = "draft"
+    item.finalized_at = None
+    db.commit()
+    return {"id": item.id, "status": item.status}
+
+
+@router.patch("/ghims-import/items/{item_id}/flag")
+def flag_ghims_import_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if item.status == "finalized":
+        raise HTTPException(status_code=400, detail="Cannot flag a finalized imported claim.")
+    item.status = "flagged"
     item.finalized_at = None
     db.commit()
     return {"id": item.id, "status": item.status}

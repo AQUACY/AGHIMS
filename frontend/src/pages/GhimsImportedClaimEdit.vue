@@ -4,7 +4,7 @@
       <q-btn flat round dense icon="arrow_back" @click="$router.back()" />
       <div class="text-h5 q-ml-sm">Edit Imported Claim</div>
       <q-space />
-      <q-badge :color="status === 'finalized' ? 'positive' : 'warning'" :label="status" />
+      <q-badge :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : 'warning')" :label="status" />
     </div>
 
     <q-card v-if="loading" flat bordered class="q-pa-md">
@@ -144,6 +144,7 @@
         <q-card-section>
           <div class="text-h6 q-mb-sm">Medicines</div>
           <div v-for="(m, i) in payload.medicines" :key="`med-${i}`" class="row q-col-gutter-sm q-mb-sm">
+            <div class="col-12 text-caption text-grey-7 text-weight-medium">Medicine Section {{ i + 1 }}</div>
             <q-select
               :model-value="m._selectedOption || m.medicineCode"
               :options="medicineSearchOptions"
@@ -229,6 +230,7 @@
 
       <div class="row q-gutter-md">
         <q-btn type="submit" color="primary" label="Save and Finalize" :loading="saving" />
+        <q-btn v-if="status !== 'finalized'" color="negative" :label="status === 'flagged' ? 'Flagged' : 'Flag claim'" :disable="status === 'flagged'" outline :loading="saving" @click="flagClaim" />
       </div>
     </q-form>
   </q-page>
@@ -513,18 +515,18 @@ function normalizeDuration(value) {
 }
 
 function validateMedicineDoses(medicines) {
-  const invalidIndexes = [];
+  const invalidSectionIndexes = [];
   (medicines || []).forEach((med, index) => {
     const dose = normalizeDose(med?.prescription?.dose);
     if (!dose || !/^\d+(?:\.\d+)?\s+[A-Z][A-Z0-9\/%.-]*$/.test(dose)) {
-      invalidIndexes.push(index + 1);
+      invalidSectionIndexes.push(index + 1);
       return;
     }
     if (med?.prescription && typeof med.prescription === 'object') {
       med.prescription.dose = dose;
     }
   });
-  return invalidIndexes;
+  return invalidSectionIndexes;
 }
 
 function applyUnparsedPrescriptionFields(med) {
@@ -654,9 +656,9 @@ async function saveAndFinalize() {
   saving.value = true;
   try {
     const clean = normalize(payload);
-    const invalidDoseRows = validateMedicineDoses(clean.medicines || []);
-    if (invalidDoseRows.length) {
-      throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine row(s): ${invalidDoseRows.join(', ')}`);
+    const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
+    if (invalidDoseSections.length) {
+      throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine section(s): ${invalidDoseSections.join(', ')}`);
     }
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
@@ -680,6 +682,39 @@ async function saveAndFinalize() {
     await load();
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || e.message || 'Failed to save and finalize imported claim' });
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function flagClaim() {
+  saving.value = true;
+  try {
+    const clean = normalize(payload);
+    const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
+    if (invalidDoseSections.length) {
+      throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine section(s): ${invalidDoseSections.join(', ')}`);
+    }
+    (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
+    clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
+    clean.procedures = (clean.procedures || []).map(({ serviceDate, gdrgCode, description, icd10, diagnosis }) => ({ serviceDate, gdrgCode, description, icd10, diagnosis }));
+    clean.medicines = (clean.medicines || []).map((m) => ({
+      medicineCode: m.medicineCode,
+      dispensedQty: m.dispensedQty,
+      serviceDate: m.serviceDate,
+      prescription: {
+        dose: m.prescription?.dose || '',
+        frequency: m.prescription?.frequency || '',
+        duration: m.prescription?.duration || '',
+        unparsed: m.prescription?.unparsed || '',
+      },
+    }));
+    await claimsAPI.updateGhimsImportItem(itemId, clean);
+    await claimsAPI.flagGhimsImportItem(itemId);
+    $q.notify({ type: 'positive', message: 'Imported claim flagged' });
+    await load();
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || e.message || 'Failed to flag imported claim' });
   } finally {
     saving.value = false;
   }

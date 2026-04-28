@@ -115,6 +115,12 @@
             label="Age group"
             class="col-12 col-md-3"
           />
+          <q-toggle
+            v-model="missingSectionsOnly"
+            color="deep-orange"
+            label="Show only claims with missing sections"
+            class="col-12 col-md-4"
+          />
           <q-space />
           <q-btn
             color="secondary"
@@ -127,51 +133,89 @@
         </q-card-section>
       </q-card>
 
-      <q-card v-for="(row, pageIndex) in pagedClaims" :key="row.id" class="q-mb-sm glass-card" flat bordered>
-        <q-card-section class="row items-center q-col-gutter-sm">
-          <div class="col-12 col-md-3">
-            <strong>#{{ ((currentPage - 1) * rowsPerPage) + pageIndex + 1 }} - {{ row.claim_claim_id }}</strong>
-          </div>
-          <div class="col-12 col-md-3 text-body2">
-            <div><strong>Client:</strong> {{ claimClientName(row) || '-' }}</div>
-            <div>
-              <strong>Hosp Rec No:</strong> {{ claimHospitalRecNo(row) || '-' }}
-              <span class="q-ml-sm"><strong>Age:</strong> {{ claimClientAge(row) }}</span>
-            </div>
-          </div>
-          <div class="col-12 col-md-2 text-body2">
-            <strong>Check Code:</strong> {{ claimCheckCode(row) || '-' }}
-          </div>
-          <div class="col-12 col-md-2">
-            <q-badge :color="row.status === 'finalized' ? 'positive' : 'warning'" :label="row.status" />
-          </div>
-          <div class="col-12 col-md-2 row q-gutter-sm justify-end">
-            <q-btn
-              size="sm"
-              color="primary"
-              label="Edit imported claim"
-              :disable="row.status === 'finalized'"
-              @click="editImportedClaim(row)"
-            />
-            <q-btn
-              size="sm"
-              color="purple"
-              label="View Claim"
-              
-              @click="viewImportedClaim(row)"
-            />
-            <q-btn
-              v-if="row.status === 'finalized'"
-              size="sm"
-              color="teal"
-              label="Export"
-              :loading="exportingSingleItemId === row.id"
-              @click="exportSingleClaim(row)"
-            />
-            <q-btn v-if="row.status !== 'finalized'" size="sm" color="positive" label="Finalize" :loading="statusLoadingItemId === row.id" outline @click="setClaimFinalized(row)" />
-            <q-btn v-if="row.status === 'finalized'" size="sm" color="warning" label="Revert to draft" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
-            <q-checkbox v-if="row.status === 'finalized'" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
-          </div>
+      <q-card class="q-mb-sm glass-card" flat bordered>
+        <q-card-section class="q-pa-none">
+          <q-markup-table flat dense bordered separator="horizontal" wrap-cells>
+            <thead>
+              <tr>
+                <th class="text-left">#</th>
+                <th class="text-left">Claim ID</th>
+                <th class="text-left">Client</th>
+                <th class="text-left">Hosp Rec No</th>
+                <th class="text-left">Age</th>
+                <th class="text-left">Check Code</th>
+                <th class="text-left">Status / Missing</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, pageIndex) in pagedClaims" :key="row.id">
+                <td>{{ ((currentPage - 1) * rowsPerPage) + pageIndex + 1 }}</td>
+                <td>{{ row.claim_claim_id }}</td>
+                <td>{{ claimClientName(row) || '-' }}</td>
+                <td>{{ claimHospitalRecNo(row) || '-' }}</td>
+                <td>{{ claimClientAge(row) }}</td>
+                <td>{{ claimCheckCode(row) || '-' }}</td>
+                <td>
+                  <q-badge :color="claimStatusColor(row.status)" :label="row.status" />
+                  <q-badge
+                    v-if="row.has_missing_sections"
+                    class="q-ml-sm q-mt-xs"
+                    color="deep-orange"
+                    :label="`Missing: ${(row.missing_sections || []).map(prettySectionName).join(', ')}`"
+                  />
+                  <q-badge
+                    v-if="row.no_clinical_sections"
+                    class="q-ml-sm q-mt-xs"
+                    color="red-8"
+                    label="No diagnosis/investigation/medicine/procedure"
+                  />
+                </td>
+                <td class="text-right">
+                  <div class="row q-gutter-xs justify-end">
+                    <q-btn
+                      size="sm"
+                      color="primary"
+                      label="Edit"
+                      :disable="row.status === 'finalized' || row.status === 'flagged'"
+                      @click="editImportedClaim(row)"
+                    />
+                    <q-btn
+                      size="sm"
+                      color="purple"
+                      label="View"
+                      @click="viewImportedClaim(row)"
+                    />
+                    <q-btn
+                      v-if="row.status === 'finalized'"
+                      size="sm"
+                      color="teal"
+                      label="Export"
+                      :loading="exportingSingleItemId === row.id"
+                      @click="exportSingleClaim(row)"
+                    />
+                    <q-btn v-if="row.status !== 'finalized'" size="sm" color="positive" label="Finalize" :disable="row.status === 'flagged'" :loading="statusLoadingItemId === row.id" outline @click="setClaimFinalized(row)" />
+                    <q-btn
+                      v-if="row.status !== 'finalized'"
+                      size="sm"
+                      color="negative"
+                      :label="row.status === 'flagged' ? 'Flagged' : 'Flag claim'"
+                      :disable="row.status === 'flagged'"
+                      :loading="statusLoadingItemId === row.id"
+                      outline
+                      @click="flagClaim(row)"
+                    />
+                    <q-btn v-if="row.status === 'finalized'" size="sm" color="warning" label="Revert" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
+                    <q-btn v-if="row.status === 'flagged'" size="sm" color="warning" label="Mark draft" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
+                    <q-checkbox v-if="row.status === 'finalized'" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="pagedClaims.length === 0">
+                <td colspan="8" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
+              </tr>
+            </tbody>
+          </q-markup-table>
         </q-card-section>
       </q-card>
       <div class="row items-center q-gutter-md q-mt-md">
@@ -224,6 +268,7 @@ const specialtyFilter = ref('all');
 const serviceTypeFilter = ref('all');
 const statusFilter = ref('all');
 const ageGroupFilter = ref('all');
+const missingSectionsOnly = ref(false);
 const currentPage = ref(1);
 const rowsPerPage = ref(20);
 const rowsPerPageOptions = [
@@ -237,6 +282,7 @@ const FILTERS_KEY = 'ghimsImportFiltersState';
 const statusFilterOptions = [
   { label: 'All', value: 'all' },
   { label: 'Draft', value: 'draft' },
+  { label: 'Flagged', value: 'flagged' },
   { label: 'Finalized', value: 'finalized' },
 ];
 const ageGroupFilterOptions = [
@@ -287,6 +333,7 @@ const filteredClaims = computed(() => {
   const rows = currentBatch.value?.claims || [];
   const q = String(searchText.value || '').trim().toLowerCase();
   const out = rows.filter((r) => {
+    if (missingSectionsOnly.value && !r.no_clinical_sections) return false;
     if (statusFilter.value !== 'all' && (r.status || '').toLowerCase() !== statusFilter.value) return false;
     if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
     const age = claimClientAgeYears(r);
@@ -368,6 +415,16 @@ function claimClientAgeYears(row) {
   return age >= 0 ? age : null;
 }
 
+function claimStatusColor(status) {
+  if (status === 'finalized') return 'positive';
+  if (status === 'flagged') return 'negative';
+  return 'warning';
+}
+
+function prettySectionName(key) {
+  return String(key || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function goBack() {
   if (viewingBatchId.value) {
     viewingBatchId.value = null; currentBatch.value = null; selectedItemIds.value = [];
@@ -426,8 +483,8 @@ function editImportedClaim(row) {
   window.open(route.href, '_blank');
 }
 function viewImportedClaim(row) {
- const route = $router.resolve({ path: `/claims/ghims-import/item/${row.id}` });
- window.open(route.href, '_blank');
+  const route = $router.resolve({ path: `/claims/ghims-import/item/${row.id}` });
+  window.open(route.href, '_blank');
 }
 
 
@@ -442,6 +499,13 @@ async function revertClaim(row) {
   statusLoadingItemId.value = row.id;
   try { await claimsAPI.reopenGhimsImportItem(row.id); await openBatch(viewingBatchId.value); }
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to revert imported claim' }); }
+  finally { statusLoadingItemId.value = null; }
+}
+
+async function flagClaim(row) {
+  statusLoadingItemId.value = row.id;
+  try { await claimsAPI.flagGhimsImportItem(row.id); await openBatch(viewingBatchId.value); }
+  catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to flag imported claim' }); }
   finally { statusLoadingItemId.value = null; }
 }
 
@@ -521,6 +585,7 @@ function persistFilterState() {
         attendanceFilter: attendanceFilter.value,
         specialtyFilter: specialtyFilter.value,
         statusFilter: statusFilter.value,
+        missingSectionsOnly: missingSectionsOnly.value,
         rowsPerPage: rowsPerPage.value,
       })
     );
@@ -540,11 +605,12 @@ function restoreFilterState() {
     attendanceFilter.value = s.attendanceFilter || 'all';
     specialtyFilter.value = s.specialtyFilter || 'all';
     statusFilter.value = s.statusFilter || 'all';
+    missingSectionsOnly.value = Boolean(s.missingSectionsOnly);
     rowsPerPage.value = Number(s.rowsPerPage) > 0 ? Number(s.rowsPerPage) : 20;
   } catch (_) {}
 }
 
-watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, missingSectionsOnly, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });

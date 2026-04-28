@@ -2,6 +2,7 @@
 Parse GHIMS-exported claims XML to editable dictionaries and rebuild XML.
 """
 from typing import Dict, Any, List
+import re
 import xml.etree.ElementTree as ET
 
 
@@ -116,6 +117,43 @@ def parse_claims_xml(xml_content: str) -> Dict[str, Any]:
     return {"claims": claims}
 
 
+_FREQUENCY_TIMES_PER_DAY = {
+    "BDS": 2,
+    "BID": 2,
+    "TID": 3,
+    "TDS": 3,
+    "QDS": 4,
+    "QID": 4,
+}
+
+
+def _normalize_frequency_for_export(frequency: str) -> str:
+    raw = str(frequency or "").strip()
+    if not raw:
+        return ""
+
+    # Strip trailing shorthand in brackets, e.g. "8 HOURLY (TDS)" -> "8 HOURLY"
+    stripped = re.sub(r"\s*\((?:TDS|TID|BDS|BID|QID|QDS)\)\s*$", "", raw, flags=re.IGNORECASE).strip()
+    shorthand = stripped.upper()
+    if shorthand in _FREQUENCY_TIMES_PER_DAY:
+        return f"{_FREQUENCY_TIMES_PER_DAY[shorthand]} DAILY"
+    return stripped.upper()
+
+
+def _normalize_duration_for_export(duration: str) -> str:
+    raw = str(duration or "").strip()
+    if not raw:
+        return ""
+    compact = re.sub(r"\s+", " ", raw)
+    num_only = re.match(r"^(\d+(?:\.\d+)?)$", compact)
+    if num_only:
+        return f"{num_only.group(1)} days"
+    day_based = re.match(r"^(\d+(?:\.\d+)?)\s*day(?:s)?$", compact, flags=re.IGNORECASE)
+    if day_based:
+        return f"{day_based.group(1)} days"
+    return compact
+
+
 def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
     root = ET.Element("claims")
     for payload in payloads:
@@ -151,8 +189,8 @@ def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
             p = ET.SubElement(m, "prescription")
             pres = med.get("prescription", {}) or {}
             ET.SubElement(p, "dose").text = str(pres.get("dose", "") or "")
-            ET.SubElement(p, "frequency").text = str(pres.get("frequency", "") or "")
-            ET.SubElement(p, "duration").text = str(pres.get("duration", "") or "")
+            ET.SubElement(p, "frequency").text = _normalize_frequency_for_export(pres.get("frequency", ""))
+            ET.SubElement(p, "duration").text = _normalize_duration_for_export(pres.get("duration", ""))
             ET.SubElement(p, "unparsed").text = str(pres.get("unparsed", "") or "")
 
         for proc in payload.get("procedures", []):
