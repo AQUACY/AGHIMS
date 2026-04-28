@@ -3139,6 +3139,52 @@ def _normalize_medicine_duration(raw_duration: str) -> str:
 
 def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
     normalized_payload = dict(payload or {})
+    diagnoses = normalized_payload.get("diagnoses")
+    if isinstance(diagnoses, list):
+        for idx, diag in enumerate(diagnoses):
+            if not isinstance(diag, dict):
+                raise HTTPException(status_code=400, detail=f"Invalid diagnosis entry at section {idx + 1}.")
+            gdrg_code = str(diag.get("gdrgCode") or "").strip()
+            icd10 = str(diag.get("icd10") or "").strip()
+            diagnosis_text = str(diag.get("diagnosis") or "").strip()
+            has_any_diagnosis_data = bool(gdrg_code or icd10 or diagnosis_text)
+            if has_any_diagnosis_data and not gdrg_code:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Diagnosis section {idx + 1}: missing GDRG. Please enter GDRG before saving.",
+                )
+
+    investigations = normalized_payload.get("investigations")
+    if isinstance(investigations, list):
+        for idx, inv in enumerate(investigations):
+            if not isinstance(inv, dict):
+                raise HTTPException(status_code=400, detail=f"Invalid investigation entry at section {idx + 1}.")
+            gdrg_code = str(inv.get("gdrgCode") or "").strip()
+            service_date = str(inv.get("serviceDate") or "").strip()
+            if gdrg_code and not service_date:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Investigation section {idx + 1}: missing service date. Please enter date before saving.",
+                )
+
+    procedures = normalized_payload.get("procedures")
+    if isinstance(procedures, list):
+        for idx, proc in enumerate(procedures):
+            if not isinstance(proc, dict):
+                raise HTTPException(status_code=400, detail=f"Invalid procedure entry at section {idx + 1}.")
+            service_date = str(proc.get("serviceDate") or "").strip()
+            has_any_procedure_data = bool(
+                str(proc.get("gdrgCode") or "").strip()
+                or str(proc.get("description") or "").strip()
+                or str(proc.get("icd10") or "").strip()
+                or str(proc.get("diagnosis") or "").strip()
+            )
+            if has_any_procedure_data and not service_date:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Procedure section {idx + 1}: missing service date. Please enter date before saving.",
+                )
+
     medicines = normalized_payload.get("medicines")
     if not isinstance(medicines, list):
         return normalized_payload
@@ -3165,6 +3211,20 @@ def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
             )
         prescription["dose"] = normalized_dose
         prescription["duration"] = _normalize_medicine_duration(prescription.get("duration", ""))
+        service_date = str(med.get("serviceDate") or "").strip()
+        has_any_medicine_data = bool(
+            str(med.get("medicineCode") or "").strip()
+            or str(med.get("dispensedQty") or "").strip()
+            or str(prescription.get("dose") or "").strip()
+            or str(prescription.get("frequency") or "").strip()
+            or str(prescription.get("duration") or "").strip()
+            or str(prescription.get("unparsed") or "").strip()
+        )
+        if has_any_medicine_data and not service_date:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Medicine section {idx + 1}: missing service date. Please enter date before saving.",
+            )
 
     return normalized_payload
 

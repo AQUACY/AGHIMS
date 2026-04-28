@@ -65,6 +65,7 @@
         <q-card-section>
           <div class="text-h6 q-mb-sm">Diagnosis(es)</div>
           <div v-for="(d, i) in payload.diagnoses" :key="`diag-${i}`" class="row q-col-gutter-sm q-mb-sm">
+            <div class="col-12 text-caption text-grey-7 text-weight-medium">Diagnosis Section {{ i + 1 }}</div>
             <q-select
               :model-value="d._selectedOption || d.icd10"
               :options="diagnosisSearchOptions"
@@ -529,6 +530,56 @@ function validateMedicineDoses(medicines) {
   return invalidSectionIndexes;
 }
 
+function validateDiagnosisGdrg(diagnoses) {
+  const invalidSectionIndexes = [];
+  (diagnoses || []).forEach((diag, index) => {
+    const gdrgCode = String(diag?.gdrgCode || '').trim();
+    const icd10 = String(diag?.icd10 || '').trim();
+    const diagnosis = String(diag?.diagnosis || '').trim();
+    const hasAnyDiagnosisData = Boolean(icd10 || diagnosis || gdrgCode);
+    if (hasAnyDiagnosisData && !gdrgCode) invalidSectionIndexes.push(index + 1);
+  });
+  return invalidSectionIndexes;
+}
+
+function validateServiceDates(clean) {
+  const missingMedicineDates = [];
+  const missingInvestigationDates = [];
+  const missingProcedureDates = [];
+
+  (clean?.medicines || []).forEach((m, index) => {
+    const serviceDate = String(m?.serviceDate || '').trim();
+    const hasData = Boolean(
+      String(m?.medicineCode || '').trim()
+      || String(m?.dispensedQty || '').trim()
+      || String(m?.prescription?.dose || '').trim()
+      || String(m?.prescription?.frequency || '').trim()
+      || String(m?.prescription?.duration || '').trim()
+      || String(m?.prescription?.unparsed || '').trim()
+    );
+    if (hasData && !serviceDate) missingMedicineDates.push(index + 1);
+  });
+
+  (clean?.investigations || []).forEach((inv, index) => {
+    const serviceDate = String(inv?.serviceDate || '').trim();
+    const hasData = Boolean(String(inv?.gdrgCode || '').trim());
+    if (hasData && !serviceDate) missingInvestigationDates.push(index + 1);
+  });
+
+  (clean?.procedures || []).forEach((proc, index) => {
+    const serviceDate = String(proc?.serviceDate || '').trim();
+    const hasData = Boolean(
+      String(proc?.gdrgCode || '').trim()
+      || String(proc?.description || '').trim()
+      || String(proc?.icd10 || '').trim()
+      || String(proc?.diagnosis || '').trim()
+    );
+    if (hasData && !serviceDate) missingProcedureDates.push(index + 1);
+  });
+
+  return { missingMedicineDates, missingInvestigationDates, missingProcedureDates };
+}
+
 function applyUnparsedPrescriptionFields(med) {
   if (!med) return;
   if (!med.prescription || typeof med.prescription !== 'object') {
@@ -656,6 +707,20 @@ async function saveAndFinalize() {
   saving.value = true;
   try {
     const clean = normalize(payload);
+    const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
+    if (missingMedicineDates.length) {
+      throw new Error(`Medicine section(s) missing service date. Please enter date: medicine section(s): ${missingMedicineDates.join(', ')}`);
+    }
+    if (missingInvestigationDates.length) {
+      throw new Error(`Investigation section(s) missing service date. Please enter date: investigation section(s): ${missingInvestigationDates.join(', ')}`);
+    }
+    if (missingProcedureDates.length) {
+      throw new Error(`Procedure section(s) missing service date. Please enter date: procedure section(s): ${missingProcedureDates.join(', ')}`);
+    }
+    const invalidDiagnosisSections = validateDiagnosisGdrg(clean.diagnoses || []);
+    if (invalidDiagnosisSections.length) {
+      throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
+    }
     const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
     if (invalidDoseSections.length) {
       throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine section(s): ${invalidDoseSections.join(', ')}`);
@@ -691,6 +756,20 @@ async function flagClaim() {
   saving.value = true;
   try {
     const clean = normalize(payload);
+    const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
+    if (missingMedicineDates.length) {
+      throw new Error(`Medicine section(s) missing service date. Please enter date: ${missingMedicineDates.join(', ')}`);
+    }
+    if (missingInvestigationDates.length) {
+      throw new Error(`Investigation section(s) missing service date. Please enter date: ${missingInvestigationDates.join(', ')}`);
+    }
+    if (missingProcedureDates.length) {
+      throw new Error(`Procedure section(s) missing service date. Please enter date: ${missingProcedureDates.join(', ')}`);
+    }
+    const invalidDiagnosisSections = validateDiagnosisGdrg(clean.diagnoses || []);
+    if (invalidDiagnosisSections.length) {
+      throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
+    }
     const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
     if (invalidDoseSections.length) {
       throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine section(s): ${invalidDoseSections.join(', ')}`);
