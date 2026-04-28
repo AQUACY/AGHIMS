@@ -473,7 +473,7 @@ function parsePrescriptionUnparsed(text) {
 function buildUnparsedFromPrescription(prescription) {
   const dose = String(prescription?.dose || '').trim();
   const frequency = String(prescription?.frequency || '').trim();
-  const duration = String(prescription?.duration || '').trim();
+  const duration = normalizeDuration(prescription?.duration);
   if (!dose && !frequency && !duration) return '';
   if (!frequency) return dose;
   if (!duration) return `${dose}, ${frequency}`;
@@ -485,7 +485,46 @@ function syncPrescriptionUnparsed(med) {
   if (!med.prescription || typeof med.prescription !== 'object') {
     med.prescription = { dose: '', frequency: '', duration: '', unparsed: '' };
   }
+  med.prescription.dose = normalizeDose(med.prescription.dose);
+  med.prescription.duration = normalizeDuration(med.prescription.duration);
   med.prescription.unparsed = buildUnparsedFromPrescription(med.prescription);
+}
+
+function normalizeDose(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const compact = raw.replace(/\s+/g, ' ');
+  const match = compact.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z][A-Za-z0-9\/%.-]*)$/);
+  if (!match) return compact.toUpperCase();
+  const amount = match[1];
+  const unit = match[2].toUpperCase();
+  return `${amount} ${unit}`;
+}
+
+function normalizeDuration(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const compact = raw.replace(/\s+/g, ' ');
+  const numberOnly = compact.match(/^(\d+(?:\.\d+)?)$/);
+  if (numberOnly) return `${numberOnly[1]} days`;
+  const dayBased = compact.match(/^(\d+(?:\.\d+)?)\s*day(?:s)?$/i);
+  if (dayBased) return `${dayBased[1]} days`;
+  return compact;
+}
+
+function validateMedicineDoses(medicines) {
+  const invalidIndexes = [];
+  (medicines || []).forEach((med, index) => {
+    const dose = normalizeDose(med?.prescription?.dose);
+    if (!dose || !/^\d+(?:\.\d+)?\s+[A-Z][A-Z0-9\/%.-]*$/.test(dose)) {
+      invalidIndexes.push(index + 1);
+      return;
+    }
+    if (med?.prescription && typeof med.prescription === 'object') {
+      med.prescription.dose = dose;
+    }
+  });
+  return invalidIndexes;
 }
 
 function applyUnparsedPrescriptionFields(med) {
@@ -615,6 +654,10 @@ async function saveAndFinalize() {
   saving.value = true;
   try {
     const clean = normalize(payload);
+    const invalidDoseRows = validateMedicineDoses(clean.medicines || []);
+    if (invalidDoseRows.length) {
+      throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine row(s): ${invalidDoseRows.join(', ')}`);
+    }
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
     clean.procedures = (clean.procedures || []).map(({ serviceDate, gdrgCode, description, icd10, diagnosis }) => ({ serviceDate, gdrgCode, description, icd10, diagnosis }));
@@ -636,7 +679,7 @@ async function saveAndFinalize() {
     $q.notify({ type: 'positive', message: 'Imported claim saved and finalized' });
     await load();
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to save and finalize imported claim' });
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || e.message || 'Failed to save and finalize imported claim' });
   } finally {
     saving.value = false;
   }

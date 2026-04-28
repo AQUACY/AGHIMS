@@ -2,6 +2,7 @@
 Claims management endpoints
 """
 import io
+import re
 import zipfile
 from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File
 from sqlalchemy.orm import Session
@@ -3103,6 +3104,51 @@ class GhimsImportItemUpdateBody(BaseModel):
     payload: dict
 
 
+DOSE_FORMAT_REGEX = re.compile(r"^(\d+(?:\.\d+)?)\s+([A-Z][A-Z0-9/%.\-]*)$")
+
+
+def _normalize_medicine_dose(raw_dose: str) -> str:
+    dose = str(raw_dose or "").strip()
+    if not dose:
+        return ""
+    compact = re.sub(r"\s+", " ", dose)
+    split_match = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Za-z][A-Za-z0-9/%.\-]*)$", compact)
+    if split_match:
+        return f"{split_match.group(1)} {split_match.group(2).upper()}"
+    return compact.upper()
+
+
+def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
+    normalized_payload = dict(payload or {})
+    medicines = normalized_payload.get("medicines")
+    if not isinstance(medicines, list):
+        return normalized_payload
+
+    for idx, med in enumerate(medicines):
+        if not isinstance(med, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid medicine entry at row {idx + 1}.")
+
+        prescription = med.get("prescription")
+        if prescription is None:
+            prescription = {}
+            med["prescription"] = prescription
+        if not isinstance(prescription, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid prescription at medicine row {idx + 1}.")
+
+        normalized_dose = _normalize_medicine_dose(prescription.get("dose", ""))
+        if not normalized_dose or not DOSE_FORMAT_REGEX.match(normalized_dose):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Medicine row {idx + 1}: dose is required and must follow "
+                    "value + space + unit format (e.g. 250 MG)."
+                ),
+            )
+        prescription["dose"] = normalized_dose
+
+    return normalized_payload
+
+
 @router.get("/ghims-import/items/{item_id}")
 def get_ghims_import_item(
     item_id: int,
@@ -3135,6 +3181,7 @@ def update_ghims_import_item(
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     payload = body.payload or {}
+    payload = _validate_and_normalize_ghims_payload(payload)
     claim_id = str(payload.get("claimID") or "").strip()
     if not claim_id:
         raise HTTPException(status_code=400, detail="claimID is required.")
@@ -3154,6 +3201,8 @@ def finalize_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    payload = _validate_and_normalize_ghims_payload(item.payload or {})
+    item.payload = payload
     from app.core.datetime_utils import utcnow
     item.status = "finalized"
     item.finalized_at = utcnow()
