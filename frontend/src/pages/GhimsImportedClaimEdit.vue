@@ -519,7 +519,7 @@ function validateMedicineDoses(medicines) {
   const invalidSectionIndexes = [];
   (medicines || []).forEach((med, index) => {
     const dose = normalizeDose(med?.prescription?.dose);
-    if (!dose || !/^\d+(?:\.\d+)?\s+[A-Z][A-Z0-9\/%.-]*$/.test(dose)) {
+    if (!dose) {
       invalidSectionIndexes.push(index + 1);
       return;
     }
@@ -723,7 +723,7 @@ async function saveAndFinalize() {
     }
     const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
     if (invalidDoseSections.length) {
-      throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine section(s): ${invalidDoseSections.join(', ')}`);
+      throw new Error(`Medicine section(s) missing dose. Please enter dose: ${invalidDoseSections.join(', ')}`);
     }
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
@@ -772,7 +772,7 @@ async function flagClaim() {
     }
     const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
     if (invalidDoseSections.length) {
-      throw new Error(`Dose must be in this format: value + space + unit (e.g. 250 MG). Fix medicine section(s): ${invalidDoseSections.join(', ')}`);
+      throw new Error(`Medicine section(s) missing dose. Please enter dose: ${invalidDoseSections.join(', ')}`);
     }
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));

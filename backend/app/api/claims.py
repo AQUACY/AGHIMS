@@ -3109,9 +3109,6 @@ class GhimsImportItemUpdateBody(BaseModel):
     payload: dict
 
 
-DOSE_FORMAT_REGEX = re.compile(r"^(\d+(?:\.\d+)?)\s+([A-Z][A-Z0-9/%.\-]*)$")
-
-
 def _normalize_medicine_dose(raw_dose: str) -> str:
     dose = str(raw_dose or "").strip()
     if not dose:
@@ -3201,12 +3198,11 @@ def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
             raise HTTPException(status_code=400, detail=f"Invalid prescription at medicine section {idx + 1}.")
 
         normalized_dose = _normalize_medicine_dose(prescription.get("dose", ""))
-        if not normalized_dose or not DOSE_FORMAT_REGEX.match(normalized_dose):
+        if not normalized_dose:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Medicine section {idx + 1}: dose is required and must follow "
-                    "value + space + unit format (e.g. 250 MG)."
+                    f"Medicine section {idx + 1}: missing dose. Please enter dose before saving."
                 ),
             )
         prescription["dose"] = normalized_dose
