@@ -451,12 +451,18 @@ function syncSelectedExports() {
   selectedItemIds.value = (currentBatch.value?.claims || []).filter((r) => r.status === 'finalized').map((r) => r.id);
 }
 
+/** Reload batch claims from the server without resetting filters or pagination. */
+async function loadBatchClaims(id) {
+  if (!id) return;
+  currentBatch.value = (await claimsAPI.getGhimsImportBatch(id)).data;
+  syncSelectedExports();
+}
+
 async function openBatch(id) {
   viewingBatchId.value = id;
   currentPage.value = 1;
   $router.replace({ path: `/claims/ghims-import/batch/${id}` }).catch(() => {});
-  currentBatch.value = (await claimsAPI.getGhimsImportBatch(id)).data;
-  syncSelectedExports();
+  await loadBatchClaims(id);
 }
 
 async function refreshCurrentBatch() {
@@ -464,7 +470,7 @@ async function refreshCurrentBatch() {
   refreshing.value = true;
   try {
     await loadBatches();
-    await openBatch(viewingBatchId.value);
+    await loadBatchClaims(viewingBatchId.value);
     $q.notify({ type: 'positive', message: 'Imported claims refreshed' });
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to refresh imported claims' });
@@ -490,21 +496,21 @@ function viewImportedClaim(row) {
 
 async function setClaimFinalized(row) {
   statusLoadingItemId.value = row.id;
-  try { await claimsAPI.finalizeGhimsImportItem(row.id); await openBatch(viewingBatchId.value); }
+  try { await claimsAPI.finalizeGhimsImportItem(row.id); await loadBatchClaims(viewingBatchId.value); }
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to finalize imported claim' }); }
   finally { statusLoadingItemId.value = null; }
 }
 
 async function revertClaim(row) {
   statusLoadingItemId.value = row.id;
-  try { await claimsAPI.reopenGhimsImportItem(row.id); await openBatch(viewingBatchId.value); }
+  try { await claimsAPI.reopenGhimsImportItem(row.id); await loadBatchClaims(viewingBatchId.value); }
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to revert imported claim' }); }
   finally { statusLoadingItemId.value = null; }
 }
 
 async function flagClaim(row) {
   statusLoadingItemId.value = row.id;
-  try { await claimsAPI.flagGhimsImportItem(row.id); await openBatch(viewingBatchId.value); }
+  try { await claimsAPI.flagGhimsImportItem(row.id); await loadBatchClaims(viewingBatchId.value); }
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to flag imported claim' }); }
   finally { statusLoadingItemId.value = null; }
 }
