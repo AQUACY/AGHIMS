@@ -1,8 +1,10 @@
 """
 Parse ClaimIT import report HTML to extract claims with errors/warnings and their messages.
-Supports: table#outcome-rows with tr class ERROR/WARNING. Handles nested <table> inside rows
+Supports: table#outcome-rows with tr class ERROR/WARNING. Claim IDs may be CLA-… (GHIMS XML)
+or ClaimIT-native forms such as VE-0032-2601230003. Handles nested <table> inside rows
 (so we use depth counting to get the full outcome-rows table and to split rows).
 """
+
 import re
 from typing import List, Dict, Any, Optional
 
@@ -55,6 +57,10 @@ def _find_tr_end(html: str, start: int) -> int:
 
 
 def _extract_overview(html_content: str) -> Dict[str, Any]:
+    """
+    ClaimIT overview table: either a Totals row, or one or more Claim Month rows
+    (e.g. <td>Dec 2025</td><td><b>39</b> passed ...).
+    """
     overview: Dict[str, Any] = {}
     overview_match = re.search(
         r"<table[^>]*class=['\"]overview['\"][^>]*>.*?<tr>\s*<td>Totals</td>.*?"
@@ -71,15 +77,103 @@ def _extract_overview(html_content: str) -> Dict[str, Any]:
     title_match = re.search(r"<title>ClaimIt Import Report\s*(.+?)</title>", html_content, re.IGNORECASE | re.DOTALL)
     if title_match:
         overview["report_date"] = title_match.group(1).strip()
+
+    # Per–claim-month rows (common standalone export; no "Totals" row)
+    if overview.get("passed") is None and overview.get("total") is None:
+        tab_m = re.search(
+            r"<table[^>]*class=['\"]overview['\"][^>]*>(.*?)</table>",
+            html_content,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if tab_m:
+            inner = tab_m.group(1)
+            by_month: List[Dict[str, Any]] = []
+            tp = tw = tf = 0
+            for tr_m in re.finditer(r"<tr[^>]*>(.*?)</tr>", inner, re.DOTALL | re.IGNORECASE):
+                tds = re.findall(r"<td[^>]*>([\s\S]*?)</td>", tr_m.group(1), re.IGNORECASE)
+                if len(tds) < 4:
+                    continue
+                month_raw = re.sub(r"<[^>]+>", "", tds[0]).strip()
+                if not month_raw or month_raw.lower() in ("report date", "claim month"):
+                    continue
+                if month_raw.lower() == "totals":
+                    continue
+                nums: List[int] = []
+                for i in range(1, min(5, len(tds))):
+                    cell = tds[i]
+                    b_m = re.search(r"<b>\s*([\d,\.]+)\s*</b>", cell, re.IGNORECASE)
+                    if b_m:
+                        raw = b_m.group(1).replace(",", "")
+                    else:
+                        raw = re.sub(r"<[^>]+>", " ", cell)
+                        raw = re.sub(r"\s+", " ", raw).strip().replace(",", "")
+                        mnum = re.search(r"([\d.]+)", raw)
+                        raw = mnum.group(1) if mnum else ""
+                    if not raw:
+                        nums = []
+                        break
+                    if "." in raw:
+                        try:
+                            nums.append(int(float(raw)))
+                        except ValueError:
+                            nums.append(0)
+                    else:
+                        try:
+                            nums.append(int(raw))
+                        except ValueError:
+                            nums = []
+                            break
+                if len(nums) >= 3:
+                    p, w, f = nums[0], nums[1], nums[2]
+                    entry = {"month": month_raw, "passed": p, "warning": w, "failed": f}
+                    if len(nums) > 3:
+                        entry["total_volume"] = nums[3]
+                    by_month.append(entry)
+                    tp += p
+                    tw += w
+                    tf += f
+            if by_month:
+                overview["by_month"] = by_month
+                overview["passed"] = tp
+                overview["warning"] = tw
+                overview["failed"] = tf
+                overview["total"] = tp + tw + tf
+
     return overview
+
+
+def _extract_claim_id_from_row(row_html: str) -> Optional[str]:
+    """
+    ClaimIT reports may use CLA-… (GHIMS export) or institutional IDs such as VE-0032-2601230003.
+    Prefer explicit CLA-, else the Claim ID column (second <td> in the main outcome row).
+    """
+    m = re.search(r"\b(CLA-\d+)\b", row_html, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    tds = re.findall(r"<td[^>]*>([\s\S]*?)</td>", row_html, re.IGNORECASE)
+    if len(tds) >= 2:
+        candidate = re.sub(r"<[^>]+>", "", tds[1]).strip()
+        if candidate and re.match(r"^[A-Za-z0-9][A-Za-z0-9.\-]{3,}$", candidate) and "-" in candidate:
+            low = candidate.lower()
+            if low not in ("outcome", "error", "warning", "saved", "updated"):
+                return candidate
+
+    m = re.search(r"\b([A-Z]{2,}-\d{4}-\d{6,})\b", row_html)
+    if m:
+        return m.group(1).strip()
+
+    m = re.search(r"\b(CLA-[A-Z0-9.\-]+)\b", row_html, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def _extract_claim_row(row_html: str, outcome: str, row_index: int) -> Optional[Dict[str, Any]]:
     """From a single <tr>...</tr> string, extract claim_id and error_messages if present."""
-    claim_id_match = re.search(r"CLA-\d+", row_html)
-    if not claim_id_match:
+    claim_id = _extract_claim_id_from_row(row_html)
+    if not claim_id:
         return None
-    claim_id = claim_id_match.group(0).strip()
 
     messages: List[str] = []
     details_match = re.search(
@@ -156,7 +250,7 @@ def parse_claimit_report_html(html_content: str) -> Dict[str, Any]:
                 errors.append(row)
             pos = end + 5  # past </tr>
 
-    # Strategy 2: if no table or no rows, scan all <tr> for CLA- + ERROR/WARNING/Failed
+    # Strategy 2: if no table or no rows, scan all <tr> for claim id + ERROR/WARNING/Failed
     if not errors:
         row_candidates = re.finditer(
             r"<tr[^>]*>(.*?)</tr>",
@@ -171,7 +265,7 @@ def parse_claimit_report_html(html_content: str) -> Dict[str, Any]:
         for m in row_candidates:
             row_html = m.group(0)
             row_inner = m.group(1)
-            if not re.search(r"CLA-\d+", row_inner):
+            if not _extract_claim_id_from_row(row_inner):
                 continue
             if not outcome_in_row.search(row_html):
                 continue

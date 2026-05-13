@@ -21,6 +21,8 @@ class ClaimItReportBatch(Base):
     summary = Column(JSON, nullable=True)
     # Count of claims with errors/warnings in this batch (for display)
     error_count = Column(Integer, default=0)
+    # Optional link to the GHIMS XML import batch this ClaimIT report refers to (same claim IDs / export).
+    ghims_import_batch_id = Column(Integer, ForeignKey("claim_xml_import_batches.id"), nullable=True, index=True)
 
     errors = relationship("ClaimItReportError", back_populates="batch", cascade="all, delete-orphan")
 
@@ -38,5 +40,7 @@ class ClaimItReportError(Base):
     row_index = Column(Integer, nullable=True)  # Row number in report table
     completed_at = Column(DateTime, nullable=True)
     completed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Matched row in Import GHIMS XML (same claim_claim_id as in the report).
+    ghims_import_item_id = Column(Integer, ForeignKey("claim_xml_import_items.id"), nullable=True, index=True)
 
     batch = relationship("ClaimItReportBatch", back_populates="errors")

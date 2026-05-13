@@ -12,8 +12,29 @@
       <q-card-section>
         <div class="text-h6 q-mb-md">Upload ClaimIT Import Report</div>
         <p class="text-caption text-grey-7 q-mb-md">
-          Upload the HTML report from ClaimIT after importing your XML. The system will extract claims with errors or warnings so you can fix them and re-export.
+          Use <strong>Import GHIMS XML</strong> when the XML came from that screen; use <strong>main HMS claims only</strong> when the XML was exported from the normal claim registry (encounters) and ClaimIT errors should open <strong>Edit claim</strong>, not GHIMS import rows.
         </p>
+        <q-checkbox
+          v-model="uploadMainHmsOnly"
+          dense
+          color="primary"
+          class="q-mb-sm"
+          label="Main HMS claims only — do not link this report to Import GHIMS XML"
+        />
+        <q-select
+          v-model="uploadGhimsBatchId"
+          :options="ghimsBatchSelectOptions"
+          emit-value
+          map-options
+          clearable
+          outlined
+          dense
+          label="GHIMS import this report belongs to (optional)"
+          :hint="uploadMainHmsOnly ? 'Disabled: this upload is treated as main HMS claims.' : 'Leave empty to auto-detect from claim IDs in the report.'"
+          class="q-mb-md col-12 col-md-8"
+          :loading="ghimsBatchesLoading"
+          :disable="uploadMainHmsOnly"
+        />
         <div class="row q-gutter-md items-center">
           <q-file
             v-model="uploadFile"
@@ -53,7 +74,13 @@
             <q-item-section>
               <q-item-label>{{ b.file_name }}</q-item-label>
               <q-item-label caption>
-                {{ formatDate(b.uploaded_at) }} · {{ b.error_count }} claim(s) with errors/warnings
+                {{ formatDate(b.uploaded_at) }} · {{ b.error_count }} claim(s) with errors/warnings in this HTML
+                <template v-if="claimItVolumeCaption(b.summary)">
+                  · {{ claimItVolumeCaption(b.summary) }}
+                </template>
+                <template v-if="b.ghims_import_batch_file_name">
+                  · GHIMS: {{ b.ghims_import_batch_file_name }}<template v-if="b.ghims_import_claim_count != null"> ({{ b.ghims_import_claim_count }} claims in HMS)</template>
+                </template>
               </q-item-label>
             </q-item-section>
             <q-item-section side>
@@ -67,6 +94,53 @@
 
     <!-- Batch detail: claims with errors -->
     <template v-if="viewingBatchId && currentBatch">
+      <q-banner
+        v-if="batchErrors.length === 0 && claimItVolumeCaption(currentBatch.summary)"
+        rounded
+        class="bg-cyan-1 text-dark q-mb-md"
+      >
+        <template #avatar>
+          <q-icon name="check_circle" color="cyan-9" />
+        </template>
+        ClaimIT did not list any ERROR or WARNING rows in this file, so there is nothing to fix here. Overview for <strong>this</strong> ClaimIT import:
+        {{ claimItVolumeCaption(currentBatch.summary) }}.
+        That count is only what ClaimIT processed in that import, not necessarily every row in a large GHIMS XML batch.
+      </q-banner>
+      <q-banner v-if="claimitGhimsMismatchWarn" rounded class="bg-orange-2 text-dark q-mb-md">
+        <template #avatar>
+          <q-icon name="warning" color="deep-orange" />
+        </template>
+        {{ claimitGhimsMismatchWarn }}
+      </q-banner>
+      <q-banner v-if="currentBatch?.ghims_import_batch_id" rounded class="bg-teal-1 text-dark q-mb-md">
+        <template #avatar>
+          <q-icon name="link" color="teal" />
+        </template>
+        This report is linked to GHIMS import <strong>{{ currentBatch.ghims_import_batch_file_name || ('batch #' + currentBatch.ghims_import_batch_id) }}</strong>.
+        Use <strong>Fix in GHIMS import</strong> on each row to edit that claim in Import GHIMS XML.
+        <q-btn
+          flat
+          dense
+          no-caps
+          color="primary"
+          class="q-ml-sm"
+          label="Open batch"
+          :to="{ path: `/claims/ghims-import/batch/${currentBatch.ghims_import_batch_id}` }"
+        />
+      </q-banner>
+      <q-banner v-else-if="currentBatch?.summary?.ghims_resolution === 'skipped_main_hms'" rounded class="bg-indigo-1 text-dark q-mb-md">
+        <template #avatar>
+          <q-icon name="badge" color="indigo" />
+        </template>
+        This upload was marked as <strong>main HMS claims only</strong>. Rows use <strong>Edit claim</strong> for claims in this system; nothing is linked to Import GHIMS XML.
+      </q-banner>
+      <q-banner v-else rounded class="bg-blue-1 text-dark q-mb-md">
+        <template #avatar>
+          <q-icon name="info" color="primary" />
+        </template>
+        No GHIMS import batch was matched for this report. Use <strong>Edit claim</strong> if the claim exists in this system, or open
+        <router-link to="/claims/ghims-import" class="text-primary">Import GHIMS XML</router-link> manually.
+      </q-banner>
       <q-card class="q-mb-md glass-card" flat bordered>
         <q-card-section>
           <div class="row items-center justify-between q-mb-md">
@@ -172,6 +246,14 @@
             </div>
             <div class="q-gutter-sm">
               <q-btn
+                v-if="err.ghims_import_item_id"
+                size="sm"
+                color="secondary"
+                icon="edit"
+                label="Fix in GHIMS import"
+                @click="editGhimsImportItem(err.ghims_import_item_id)"
+              />
+              <q-btn
                 v-if="err.claim_id"
                 size="sm"
                 color="primary"
@@ -179,10 +261,10 @@
                 @click="editClaim(err.claim_id)"
               />
               <q-btn
-                v-else
+                v-if="!err.claim_id && !err.ghims_import_item_id"
                 size="sm"
                 color="grey"
-                label="Claim not found in system"
+                label="Claim not found"
                 disable
               />
               <q-checkbox
@@ -192,7 +274,6 @@
                 @update:model-value="toggleExport(err.claim_id, $event)"
               />
               <q-btn
-                v-if="err.claim_id"
                 size="sm"
                 :color="err.completed_at ? 'grey' : 'positive'"
                 :label="err.completed_at ? 'Mark not completed' : 'Mark as completed'"
@@ -247,6 +328,35 @@ const hideCompleted = ref(false);
 const rowsPerPage = ref(25);
 const paginationPage = ref(1);
 const completingErrorId = ref(null);
+const uploadGhimsBatchId = ref(null);
+const uploadMainHmsOnly = ref(false);
+
+const ghimsBatches = ref([]);
+const ghimsBatchesLoading = ref(false);
+
+const ghimsBatchSelectOptions = computed(() =>
+  (ghimsBatches.value || []).map((b) => ({
+    label: `${b.file_name} — ${formatDate(b.uploaded_at)} (${b.claim_count} claims)`,
+    value: b.id,
+  })),
+);
+
+async function loadGhimsBatches() {
+  ghimsBatchesLoading.value = true;
+  try {
+    const res = await claimsAPI.getGhimsImportBatches();
+    ghimsBatches.value = res.data || [];
+  } catch (e) {
+    ghimsBatches.value = [];
+    $q.notify({ type: 'warning', message: e.response?.data?.detail || 'Could not load GHIMS import batches' });
+  } finally {
+    ghimsBatchesLoading.value = false;
+  }
+}
+
+watch(uploadMainHmsOnly, (on) => {
+  if (on) uploadGhimsBatchId.value = null;
+});
 
 function getStoredSelections() {
   try {
@@ -318,6 +428,32 @@ const paginatedErrors = computed(() => {
   return list.slice(start, start + per);
 });
 
+/** ClaimIT overview row(s) parsed from HTML — scope of this import, not the whole GHIMS batch. */
+function claimItVolumeCaption(summary) {
+  const s = summary || {};
+  if (s.total != null && typeof s.passed === 'number') {
+    const w = s.warning ?? 0;
+    const f = s.failed ?? 0;
+    return `ClaimIT import: ${s.total} claim(s) (${s.passed} passed, ${w} warnings, ${f} failed)`;
+  }
+  return '';
+}
+
+const claimitGhimsMismatchWarn = computed(() => {
+  const c = currentBatch.value;
+  if (!c?.ghims_import_batch_id || c.ghims_import_claim_count == null || c.summary?.total == null) {
+    return '';
+  }
+  const g = Number(c.ghims_import_claim_count);
+  const t = Number(c.summary.total);
+  if (Number.isNaN(g) || Number.isNaN(t) || g === t) return '';
+  const fname = c.ghims_import_batch_file_name || 'GHIMS batch';
+  return (
+    `This ClaimIT report reflects ${t} claim(s) in that import, but "${fname}" in HMS has ${g} claim(s). `
+    + 'Pick the GHIMS batch that matches the XML you imported into ClaimIT, or use "Main HMS only" if this report is not from GHIMS export.'
+  );
+});
+
 watch(paginationMaxPages, (max) => {
   if (paginationPage.value > max) paginationPage.value = Math.max(1, max);
 });
@@ -338,6 +474,7 @@ function goBack() {
     batchErrors.value = [];
     selectedClaimIds.value = [];
     $router.replace('/claims/correct-errors').catch(() => {});
+    loadGhimsBatches();
   } else {
     $router.push('/claims');
   }
@@ -358,12 +495,26 @@ async function uploadReport() {
   try {
     const formData = new FormData();
     formData.append('file', uploadFile.value);
+    if (uploadMainHmsOnly.value) {
+      formData.append('main_hms_only', 'true');
+    } else if (uploadGhimsBatchId.value != null && uploadGhimsBatchId.value !== '') {
+      formData.append('ghims_import_batch_id', String(uploadGhimsBatchId.value));
+    }
     const res = await claimsAPI.uploadClaimitReport(formData);
     const data = res.data;
     uploadFile.value = null;
+    uploadMainHmsOnly.value = false;
+    let extra = '';
+    if (data.ghims_match_reason === 'skipped_main_hms') {
+      extra = ' Main HMS only — not linked to Import GHIMS XML.';
+    } else if (data.ghims_import_batch_file_name) {
+      extra = ` Linked to GHIMS: ${data.ghims_import_batch_file_name}.`;
+    } else if (data.ghims_match_reason === 'none' && (data.error_count || 0) > 0) {
+      extra = ' No GHIMS batch matched; pick the batch next time or check claim IDs.';
+    }
     $q.notify({
       type: 'positive',
-      message: `Report uploaded. ${data.error_count} claim(s) with errors/warnings.`,
+      message: `Report uploaded. ${data.error_count} claim(s) with errors/warnings.${extra}`,
     });
     await loadBatches();
     viewingBatchId.value = data.batch_id;
@@ -395,6 +546,12 @@ async function openBatch(id) {
 
 function editClaim(claimId) {
   const route = $router.resolve({ path: `/claims/edit/${claimId}` });
+  window.open(route.href, '_blank');
+}
+
+function editGhimsImportItem(itemId) {
+  if (!itemId) return;
+  const route = $router.resolve({ path: `/claims/ghims-import/item/${itemId}` });
   window.open(route.href, '_blank');
 }
 
@@ -472,6 +629,7 @@ async function exportBatchClaims() {
 
 onMounted(async () => {
   await loadBatches();
+  await loadGhimsBatches();
   const batchId = $route.params.batchId;
   if (batchId) {
     const id = parseInt(batchId, 10);

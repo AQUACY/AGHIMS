@@ -4,11 +4,11 @@ Claims management endpoints
 import io
 import re
 import zipfile
-from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, func
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from datetime import datetime, date
 from app.core.database import get_db
 from app.core.dependencies import require_role, require_module_permission
@@ -31,45 +31,107 @@ router = APIRouter(prefix="/claims", tags=["claims"])
 CLAIMIT_SECTION_ORDER = ["client", "provider", "services", "procedures", "diagnosis", "investigations", "medicines", "other"]
 
 
-def _categorize_claimit_errors(messages: list) -> dict:
-    """Map ClaimIT error message strings to form sections for Edit Claim. Returns by_section dict."""
+def _categorize_claimit_error_pairs(pairs: List[Tuple[Optional[str], str]]) -> dict:
+    """
+    Map ClaimIT messages to form sections. Each pair is (outcome_or_None, message).
+    When outcome is set, the stored string is prefixed [ERROR] / [WARNING] for display.
+    """
     by_section = {s: [] for s in CLAIMIT_SECTION_ORDER}
-    for msg in messages:
+    for outcome, msg in pairs:
         if not msg or not isinstance(msg, str):
             continue
         lower = msg.lower()
+        labeled = f"[{(outcome or 'ERROR').strip().upper()}] {msg}" if outcome else msg
+
+        # OPD/IPD combined procedure+diagnosis validation → show under both sections
+        if (
+            ("procedures/diagnoses" in lower.replace(" ", ""))
+            or ("procedure" in lower and "diagnosis" in lower and ("opd" in lower or "ipd" in lower))
+        ):
+            by_section["procedures"].append(labeled)
+            by_section["diagnosis"].append(labeled)
+            continue
+
         if any(k in lower for k in ("member", "card serial", "hospital record", "insurance id", "patient", "surname", "other name", "date of birth", "age", "gender", "nhis number")):
-            by_section["client"].append(msg)
+            by_section["client"].append(labeled)
         elif any(k in lower for k in ("provider", "scheme code", "month of claim")):
-            by_section["provider"].append(msg)
-        elif any(k in lower for k in ("type of service", "opd", "ipd", "pharmacy", "attendance", "specialty", "outcome", "principal gdrg", "service outcome")):
-            by_section["services"].append(msg)
+            by_section["provider"].append(labeled)
+        elif any(k in lower for k in ("type of service", "opd", "ipd", "pharmacy", "attendance", "specialty", "specialties", "outcome", "principal gdrg", "service outcome")):
+            by_section["services"].append(labeled)
         elif any(k in lower for k in ("procedure", "surgery", "surgical")) and "diagnosis" not in lower:
-            by_section["procedures"].append(msg)
+            by_section["procedures"].append(labeled)
         elif any(k in lower for k in ("diagnosis", "icd-10", "icd10", "chief complaint", "gdrg")) and "procedure" not in lower and "surgery" not in lower:
-            by_section["diagnosis"].append(msg)
+            by_section["diagnosis"].append(labeled)
         elif any(k in lower for k in ("investigation", "lab", "x-ray", "xray", "scan")):
-            by_section["investigations"].append(msg)
+            by_section["investigations"].append(labeled)
         elif any(k in lower for k in ("drug", "medicine", "prescription", "frequency", "duration", "dose", "quantity", "pharmacy", "medication")):
-            by_section["medicines"].append(msg)
+            by_section["medicines"].append(labeled)
         else:
-            by_section["other"].append(msg)
+            by_section["other"].append(labeled)
     return by_section
 
 
+def _categorize_claimit_errors(messages: list) -> dict:
+    """Map ClaimIT error message strings to form sections (no outcome prefix)."""
+    pairs = [(None, m) for m in messages if m and isinstance(m, str)]
+    return _categorize_claimit_error_pairs(pairs)
+
+
 def _get_claimit_errors_for_claim(db: Session, claim_id_str: str) -> dict:
-    """Fetch ClaimIT report errors for this claim (by CLA-XXXXX) and return messages + by_section."""
-    errors = (
+    """Fetch ClaimIT report errors for this claim (by claim id string) and return messages + by_section."""
+    rows = (
         db.query(ClaimItReportError)
         .filter(ClaimItReportError.claim_claim_id == claim_id_str)
+        .order_by(ClaimItReportError.id.desc())
         .all()
     )
-    messages = []
-    for e in errors:
-        if e.error_messages:
-            messages.extend([m for m in e.error_messages if m])
-    messages = list(dict.fromkeys(messages))  # dedupe order-preserving
-    by_section = _categorize_claimit_errors(messages)
+    pairs: List[Tuple[str, str]] = []
+    seen = set()
+    for e in rows:
+        oc = (e.outcome or "ERROR").strip().upper()
+        for m in (e.error_messages or []):
+            if not isinstance(m, str) or not m.strip():
+                continue
+            key = (oc, m.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append(key)
+    by_section = _categorize_claimit_error_pairs(pairs)
+    messages = list(dict.fromkeys(f"[{o}] {t}" for o, t in pairs))
+    return {"messages": messages, "by_section": by_section}
+
+
+def _get_claimit_errors_for_import_item(db: Session, item: ClaimXmlImportItem) -> dict:
+    """ClaimIT errors for a GHIMS import row — match report rows by DB claim_claim_id or payload claimID."""
+    ids = {str(item.claim_claim_id or "").strip()}
+    p = item.payload or {}
+    cid = str(p.get("claimID") or p.get("claimId") or "").strip()
+    if cid:
+        ids.add(cid)
+    ids.discard("")
+    if not ids:
+        return {"messages": [], "by_section": {s: [] for s in CLAIMIT_SECTION_ORDER}}
+    rows = (
+        db.query(ClaimItReportError)
+        .filter(ClaimItReportError.claim_claim_id.in_(list(ids)))
+        .order_by(ClaimItReportError.id.desc())
+        .all()
+    )
+    pairs: List[Tuple[str, str]] = []
+    seen = set()
+    for e in rows:
+        oc = (e.outcome or "ERROR").strip().upper()
+        for m in (e.error_messages or []):
+            if not isinstance(m, str) or not m.strip():
+                continue
+            key = (oc, m.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append(key)
+    by_section = _categorize_claimit_error_pairs(pairs)
+    messages = list(dict.fromkeys(f"[{o}] {t}" for o, t in pairs))
     return {"messages": messages, "by_section": by_section}
 
 
@@ -2805,19 +2867,81 @@ def update_claim_detailed(
 
 # ---------- ClaimIT report upload & error batches ----------
 
+
+def _resolve_ghims_batch_for_claimit_report(
+    db: Session,
+    explicit_batch_id: Optional[int],
+    report_claim_ids: set,
+) -> Tuple[Optional[int], str]:
+    """
+    Pick the GHIMS import batch this ClaimIT report belongs to.
+    Returns (batch_id or None, reason: explicit | auto_subset | auto_overlap | none).
+    """
+    if explicit_batch_id is not None:
+        b = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == explicit_batch_id).first()
+        if not b:
+            raise HTTPException(status_code=400, detail="Invalid GHIMS import batch id.")
+        return explicit_batch_id, "explicit"
+
+    if not report_claim_ids:
+        return None, "none"
+
+    batches = (
+        db.query(ClaimXmlImportBatch)
+        .order_by(ClaimXmlImportBatch.uploaded_at.desc())
+        .limit(50)
+        .all()
+    )
+    for b in batches:
+        in_batch = {
+            row[0]
+            for row in db.query(ClaimXmlImportItem.claim_claim_id)
+            .filter(ClaimXmlImportItem.batch_id == b.id)
+            .all()
+        }
+        if report_claim_ids <= in_batch:
+            return b.id, "auto_subset"
+
+    best_id = None
+    best_n = 0
+    for b in batches:
+        n = (
+            db.query(func.count(ClaimXmlImportItem.id))
+            .filter(
+                ClaimXmlImportItem.batch_id == b.id,
+                ClaimXmlImportItem.claim_claim_id.in_(list(report_claim_ids)),
+            )
+            .scalar()
+        ) or 0
+        if n > best_n:
+            best_n = n
+            best_id = b.id
+    if best_id is not None and best_n > 0:
+        return best_id, "auto_overlap"
+    return None, "none"
+
+
 @router.post("/claimit-report/upload")
 async def upload_claimit_report(
     file: UploadFile = File(...),
+    ghims_import_batch_id: Optional[int] = Form(None),
+    main_hms_only: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "create")),
 ):
     """Upload a ClaimIT import report (HTML). Creates a batch and extracts claims with errors/warnings."""
+    def _truthy_form(v: Optional[str]) -> bool:
+        if v is None:
+            return False
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+    skip_ghims = _truthy_form(main_hms_only)
     if not file.filename or not file.filename.lower().endswith((".html", ".htm")):
         raise HTTPException(status_code=400, detail="Please upload an HTML file (ClaimIT import report).")
     try:
         content = await file.read()
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=400, detail="Could not read file.")
     # Try common encodings (ClaimIT reports may be UTF-8 or Windows CP1252)
     html_str = None
@@ -2832,22 +2956,51 @@ async def upload_claimit_report(
     parsed = parse_claimit_report_html(html_str)
     errors_list = parsed.get("errors") or []
     overview = parsed.get("overview") or {}
+    report_claim_ids = {e["claim_id"] for e in errors_list if e.get("claim_id")}
+    if skip_ghims:
+        ghims_batch_id, ghims_match_reason = None, "skipped_main_hms"
+    else:
+        ghims_batch_id, ghims_match_reason = _resolve_ghims_batch_for_claimit_report(
+            db, ghims_import_batch_id, report_claim_ids
+        )
+    ghims_file_name = None
+    if ghims_batch_id is not None:
+        gb = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == ghims_batch_id).first()
+        ghims_file_name = gb.file_name if gb else None
+
+    summary_out = dict(overview) if isinstance(overview, dict) else {}
+    summary_out["ghims_resolution"] = ghims_match_reason
+
     batch = ClaimItReportBatch(
         name=None,
         file_name=file.filename or "report.html",
         uploaded_by_id=get_effective_creator_id(db, current_user),
-        summary=overview,
+        summary=summary_out,
         error_count=len(errors_list),
+        ghims_import_batch_id=ghims_batch_id,
     )
     db.add(batch)
     db.flush()
     for err in errors_list:
+        item_id = None
+        if ghims_batch_id is not None:
+            item = (
+                db.query(ClaimXmlImportItem)
+                .filter(
+                    ClaimXmlImportItem.batch_id == ghims_batch_id,
+                    ClaimXmlImportItem.claim_claim_id == err["claim_id"],
+                )
+                .first()
+            )
+            if item:
+                item_id = item.id
         db.add(ClaimItReportError(
             batch_id=batch.id,
             claim_claim_id=err["claim_id"],
             outcome=err["outcome"],
             error_messages=err["error_messages"],
             row_index=err.get("row_index"),
+            ghims_import_item_id=item_id,
         ))
     db.commit()
     db.refresh(batch)
@@ -2857,6 +3010,9 @@ async def upload_claimit_report(
         "error_count": batch.error_count,
         "summary": batch.summary,
         "claim_ids": [e["claim_id"] for e in errors_list],
+        "ghims_import_batch_id": ghims_batch_id,
+        "ghims_import_batch_file_name": ghims_file_name,
+        "ghims_match_reason": ghims_match_reason,
     }
 
 
@@ -2873,6 +3029,11 @@ def list_claimit_report_batches(
         .limit(100)
         .all()
     )
+    ghims_ids = {b.ghims_import_batch_id for b in batches if b.ghims_import_batch_id}
+    ghims_meta = {}
+    if ghims_ids:
+        for gb in db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id.in_(ghims_ids)).all():
+            ghims_meta[gb.id] = {"file_name": gb.file_name, "claim_count": gb.claim_count}
     return [
         {
             "id": b.id,
@@ -2881,6 +3042,9 @@ def list_claimit_report_batches(
             "uploaded_at": b.uploaded_at.isoformat() if b.uploaded_at else None,
             "error_count": b.error_count,
             "summary": b.summary,
+            "ghims_import_batch_id": b.ghims_import_batch_id,
+            "ghims_import_batch_file_name": (ghims_meta.get(b.ghims_import_batch_id) or {}).get("file_name"),
+            "ghims_import_claim_count": (ghims_meta.get(b.ghims_import_batch_id) or {}).get("claim_count"),
         }
         for b in batches
     ]
@@ -2913,6 +3077,13 @@ def get_claimit_report_batch(
     if completed_by_ids:
         users = db.query(User).filter(User.id.in_(completed_by_ids)).all()
         users_by_id = {u.id: u for u in users}
+    ghims_batch_file = None
+    ghims_import_claim_count = None
+    if batch.ghims_import_batch_id:
+        gb = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch.ghims_import_batch_id).first()
+        if gb:
+            ghims_batch_file = gb.file_name
+            ghims_import_claim_count = gb.claim_count
     error_rows = []
     for e in errors:
         claim_in_db = claims_by_claim_id.get(e.claim_claim_id)
@@ -2925,6 +3096,7 @@ def get_claimit_report_batch(
             "row_index": e.row_index,
             "claim_id": claim_in_db.id if claim_in_db else None,
             "claim_status": claim_in_db.status if claim_in_db else None,
+            "ghims_import_item_id": e.ghims_import_item_id,
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,
             "completed_by_id": e.completed_by_id,
             "completed_by_name": (completed_by_user.username or completed_by_user.email or str(completed_by_user.id)) if completed_by_user else None,
@@ -2936,6 +3108,9 @@ def get_claimit_report_batch(
         "uploaded_at": batch.uploaded_at.isoformat() if batch.uploaded_at else None,
         "error_count": batch.error_count,
         "summary": batch.summary,
+        "ghims_import_batch_id": batch.ghims_import_batch_id,
+        "ghims_import_batch_file_name": ghims_batch_file,
+        "ghims_import_claim_count": ghims_import_claim_count,
         "errors": error_rows,
     }
 
@@ -3252,6 +3427,7 @@ def get_ghims_import_item(
         "row_index": item.row_index,
         "status": item.status,
         "payload": item.payload or {},
+        "claimit_errors": _get_claimit_errors_for_import_item(db, item),
     }
 
 

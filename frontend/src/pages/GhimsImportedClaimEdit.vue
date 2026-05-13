@@ -12,9 +12,24 @@
     </q-card>
 
     <q-form v-else @submit.prevent="saveAndFinalize" class="q-gutter-md">
+      <q-banner v-if="claimitErrors.by_section?.other?.length" class="bg-orange-1 q-mb-md" rounded dense>
+        <template #avatar><q-icon name="warning" color="orange" /></template>
+        <div class="text-subtitle2">ClaimIT reported (fix in the section below if applicable):</div>
+        <ul class="q-mt-xs q-mb-none q-pl-md">
+          <li v-for="(msg, i) in claimitErrors.by_section.other" :key="i" class="text-body2">{{ msg }}</li>
+        </ul>
+      </q-banner>
+
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider / Claim Header</div>
+          <q-banner v-if="claimitErrors.by_section?.provider?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.provider" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row q-col-gutter-md">
             <q-input v-model="payload.claimID" label="Claim ID" filled class="col-12 col-md-3" />
             <q-input v-model="payload.claimCheckCode" label="Claim Check Code" filled class="col-12 col-md-3" />
@@ -27,6 +42,13 @@
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Client Information</div>
+          <q-banner v-if="claimitErrors.by_section?.client?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.client" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row q-col-gutter-md">
             <q-input v-model="payload.memberNo" label="Member No" filled class="col-12 col-md-3" />
             <q-input v-model="payload.cardSerialNo" label="Card Serial No" filled class="col-12 col-md-3" />
@@ -42,6 +64,13 @@
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Services</div>
+          <q-banner v-if="claimitErrors.by_section?.services?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.services" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div class="row q-col-gutter-md q-mb-md">
             <q-input v-model="payload.typeOfService" label="Type of Service" filled class="col-12 col-md-3" />
             <q-input v-model="payload.typeOfAttendance" label="Type of Attendance" filled class="col-12 col-md-3" />
@@ -64,6 +93,13 @@
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-sm">Diagnosis(es)</div>
+          <q-banner v-if="claimitErrors.by_section?.diagnosis?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.diagnosis" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div v-for="(d, i) in payload.diagnoses" :key="`diag-${i}`" class="row q-col-gutter-sm q-mb-sm">
             <div class="col-12 text-caption text-grey-7 text-weight-medium">Diagnosis Section {{ i + 1 }}</div>
             <q-select
@@ -115,6 +151,13 @@
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-sm">Investigations</div>
+          <q-banner v-if="claimitErrors.by_section?.investigations?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.investigations" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div v-for="(inv, i) in payload.investigations" :key="`inv-${i}`" class="row q-col-gutter-sm q-mb-sm">
             <q-input v-model="inv.serviceDate" type="date" label="Date" filled dense class="col-12 col-md-4" />
             <q-select
@@ -144,6 +187,13 @@
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-sm">Medicines</div>
+          <q-banner v-if="claimitErrors.by_section?.medicines?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.medicines" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div v-for="(m, i) in payload.medicines" :key="`med-${i}`" class="row q-col-gutter-sm q-mb-sm">
             <div class="col-12 text-caption text-grey-7 text-weight-medium">Medicine Section {{ i + 1 }}</div>
             <q-select
@@ -200,6 +250,13 @@
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-sm">Procedures</div>
+          <q-banner v-if="claimitErrors.by_section?.procedures?.length" class="bg-orange-1 q-mb-md" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <div class="text-subtitle2">ClaimIT reported:</div>
+            <ul class="q-mt-xs q-mb-none q-pl-md">
+              <li v-for="(msg, i) in claimitErrors.by_section.procedures" :key="i" class="text-body2">{{ msg }}</li>
+            </ul>
+          </q-banner>
           <div v-for="(p, i) in payload.procedures" :key="`proc-${i}`" class="row q-col-gutter-sm q-mb-sm">
             <q-input v-model="p.serviceDate" type="date" label="Date" filled dense class="col-12 col-md-2" />
             <q-select
@@ -258,6 +315,21 @@ const payload = reactive({
   claimID: '', claimCheckCode: '', memberNo: '', surname: '', otherNames: '', dateOfBirth: '',
   typeOfService: '', typeOfAttendance: '', specialtyAttended: '', diagnoses: [], medicines: [],
 });
+
+function emptyClaimitBySection() {
+  return {
+    client: [],
+    provider: [],
+    services: [],
+    procedures: [],
+    diagnosis: [],
+    investigations: [],
+    medicines: [],
+    other: [],
+  };
+}
+
+const claimitErrors = ref({ messages: [], by_section: emptyClaimitBySection() });
 
 function addMedicine() {
   payload.medicines.push({
@@ -692,6 +764,11 @@ async function load() {
     const res = await claimsAPI.getGhimsImportItem(itemId);
     status.value = res.data.status || 'draft';
     Object.assign(payload, normalize(res.data.payload || {}));
+    const ce = res.data.claimit_errors || {};
+    claimitErrors.value = {
+      messages: Array.isArray(ce.messages) ? ce.messages : [],
+      by_section: { ...emptyClaimitBySection(), ...(ce.by_section || {}) },
+    };
     principalDiagnosisIndex.value = (payload.diagnoses || []).findIndex(
       (d) => String(d?.gdrgCode || '').trim() && String(d?.gdrgCode || '').trim() === String(payload.principalGDRG || '').trim()
     );
