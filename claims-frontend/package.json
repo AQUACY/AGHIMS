@@ -1,19 +1,15 @@
 {
-  "name": "hms-frontend",
+  "name": "hms-claims-frontend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "quasar dev",
     "build": "quasar build",
-    "preview:frontend-path": "quasar build && node scripts/preview-nested-frontend.cjs",
-    "lint": "eslint --ext .js,.ts,.vue src"
+    "lint": "eslint --ext .js,.vue src"
   },
   "dependencies": {
     "@quasar/extras": "^1.16.9",
     "axios": "^1.6.2",
-    "exceljs": "^4.4.0",
-    "jspdf": "^4.2.1",
-    "jspdf-autotable": "^5.0.7",
     "pinia": "^2.1.7",
     "quasar": "^2.14.2",
     "vue": "^3.4.3",

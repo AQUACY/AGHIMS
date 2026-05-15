@@ -654,11 +654,9 @@ const routes = [
   },
 ];
 
-// Use /frontend/ as base path in production
-const base = process.env.NODE_ENV === 'production' ? '/frontend/' : '/';
-
+// Must match quasar.config.js build.publicPath (Vite injects import.meta.env.BASE_URL, e.g. /frontend/)
 const router = createRouter({
-  history: createWebHistory(base),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 });
 
