@@ -9,6 +9,16 @@ export const usePatientsStore = defineStore('patients', {
   }),
 
   actions: {
+    async fetchRegistrationConfig() {
+      const response = await patientsAPI.getRegistrationConfig();
+      return response.data;
+    },
+
+    async validateRegistration(patientData) {
+      const response = await patientsAPI.validateRegistration(patientData);
+      return response.data;
+    },
+
     async createPatient(patientData) {
       try {
         const response = await patientsAPI.create(patientData);
@@ -19,9 +29,15 @@ export const usePatientsStore = defineStore('patients', {
         });
         return response.data;
       } catch (error) {
+        const detail = error.response?.data?.detail;
+        if (error.response?.status === 409 && detail && typeof detail === 'object') {
+          const err = new Error(detail.message || 'Registration blocked');
+          err.validation = detail;
+          throw err;
+        }
         Notify.create({
           type: 'negative',
-          message: error.response?.data?.detail || 'Failed to register patient',
+          message: typeof detail === 'string' ? detail : 'Failed to register patient',
           position: 'top',
         });
         throw error;
@@ -77,6 +93,39 @@ export const usePatientsStore = defineStore('patients', {
         Notify.create({
           type: 'negative',
           message: error.response?.data?.detail || 'Failed to update patient',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async lookupNhia(insuranceId) {
+      try {
+        const response = await patientsAPI.lookupNhia(insuranceId);
+        return response.data;
+      } catch (error) {
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to fetch NHIA member data',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async generateCcc(patientId) {
+      try {
+        const response = await patientsAPI.generateCcc(patientId);
+        Notify.create({
+          type: 'positive',
+          message: response.data?.message || 'CCC generated successfully',
+          position: 'top',
+        });
+        return response.data;
+      } catch (error) {
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to generate CCC',
           position: 'top',
         });
         throw error;

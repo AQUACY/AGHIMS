@@ -502,8 +502,8 @@ def create_bill(
     db.refresh(bill)
     
     from app.core.audit import set_audit_summary
-    patient_name = patient.name or "patient"
-    set_audit_summary(request, f"Saved a bill of {total_amount:.2f} cedis for client {patient_name} (encounter).")
+    from app.core.audit_patient import summarize_bill_for_patient
+    set_audit_summary(request, summarize_bill_for_patient(patient, total_amount))
     
     return bill
 
@@ -709,9 +709,13 @@ def create_receipt(
     db.commit()
     
     encounter = db.query(Encounter).filter(Encounter.id == bill.encounter_id).first()
-    patient_name = encounter.patient.name if encounter and encounter.patient else "client"
+    patient = encounter.patient if encounter else None
     from app.core.audit import set_audit_summary
-    set_audit_summary(request, f"Recorded payment of {total_paid:.2f} cedis for {patient_name} (receipt).")
+    from app.core.audit_patient import summarize_receipt_for_patient
+    if patient:
+        set_audit_summary(request, summarize_receipt_for_patient(patient, total_paid))
+    else:
+        set_audit_summary(request, f"Recorded payment of {total_paid:.2f} cedis (receipt).")
     
     return {
         "receipts": receipts_created,

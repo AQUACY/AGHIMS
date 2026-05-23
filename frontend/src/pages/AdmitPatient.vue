@@ -284,27 +284,43 @@
                         </div>
                       </div>
                       <div class="col-12 col-md-6">
-                        <q-input
-                          v-model="admissionForm.ccc_number"
-                          filled
-                          label="CCC Number"
-                          hint="Enter if patient has active insurance, otherwise leave blank (cash and carry)"
-                          :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
-                          :class="selectedPatient.insured && !isInsuranceExpired(selectedPatient) ? 'bg-positive-1' : ''"
-                        >
-                          <template v-slot:append>
-                            <q-btn
-                              v-if="admissionForm.ccc_number"
-                              flat
-                              dense
-                              icon="clear"
-                              @click="admissionForm.ccc_number = ''"
-                            />
-                          </template>
-                        </q-input>
+                        <div class="row q-col-gutter-sm items-start">
+                          <q-input
+                            v-model="admissionForm.ccc_number"
+                            filled
+                            class="col"
+                            label="CCC Number"
+                            hint="Use Get CCC for active NHIS, or leave blank (cash and carry)"
+                            :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
+                            :class="selectedPatient.insured && selectedPatient.nhis_active && !isInsuranceExpired(selectedPatient) ? 'bg-positive-1' : ''"
+                          >
+                            <template v-slot:append>
+                              <q-btn
+                                v-if="admissionForm.ccc_number"
+                                flat
+                                dense
+                                icon="clear"
+                                @click="admissionForm.ccc_number = ''"
+                              />
+                            </template>
+                          </q-input>
+                          <q-btn
+                            class="col-auto q-mt-xs"
+                            color="secondary"
+                            icon="cloud_download"
+                            label="Get CCC"
+                            :loading="generatingCcc"
+                            :disable="!canGetDirectAdmissionCcc"
+                            @click="fetchDirectAdmissionCcc"
+                          >
+                            <q-tooltip v-if="!canGetDirectAdmissionCcc">
+                              Requires insured patient with active NHIS and member number
+                            </q-tooltip>
+                          </q-btn>
+                        </div>
                         <div class="text-caption text-secondary q-mt-xs">
                           <q-icon name="info" size="16px" class="q-mr-xs" />
-                          For direct admissions, enter CCC number if patient has active insurance.
+                          For direct admissions with active NHIS, use Get CCC or enter manually.
                         </div>
                       </div>
                     </div>
@@ -530,9 +546,33 @@ import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { patientsAPI } from '../services/api';
 import { consultationAPI, wardsAPI } from '../services/api';
+import { usePatientsStore } from '../stores/patients';
+import { canGenerateNhiaCcc } from '../utils/nhiaForm';
 
 const $q = useQuasar();
 const router = useRouter();
+const patientsStore = usePatientsStore();
+const generatingCcc = ref(false);
+
+const canGetDirectAdmissionCcc = computed(() => canGenerateNhiaCcc(selectedPatient.value));
+
+const fetchDirectAdmissionCcc = async () => {
+  const patient = selectedPatient.value;
+  if (!patient?.id || !canGenerateNhiaCcc(patient)) return;
+
+  generatingCcc.value = true;
+  try {
+    const result = await patientsStore.generateCcc(patient.id);
+    if (result?.data?.ccc) {
+      admissionForm.value.ccc_number = result.data.ccc;
+    }
+    if (result?.patient) {
+      selectedPatient.value = result.patient;
+    }
+  } finally {
+    generatingCcc.value = false;
+  }
+};
 
 const searching = ref(false);
 const searchCardNumber = ref('');

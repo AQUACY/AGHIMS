@@ -5743,6 +5743,12 @@ class AdmissionRecommendationResponse(BaseModel):
     patient_emergency_contact_name: Optional[str] = None
     patient_emergency_contact_relationship: Optional[str] = None
     patient_emergency_contact_number: Optional[str] = None
+    patient_id: Optional[int] = None
+    patient_insured: Optional[bool] = None
+    patient_nhis_active: Optional[bool] = None
+    patient_insurance_id: Optional[str] = None
+    patient_insurance_start_date: Optional[str] = None
+    patient_insurance_end_date: Optional[str] = None
     encounter_created_at: Optional[datetime] = None
     encounter_service_type: Optional[str] = None
     encounter_ccc_number: Optional[str] = None
@@ -5814,7 +5820,9 @@ def get_admission_recommendations(
                     "patient_card_number": patient.card_number,
                     "patient_gender": patient.gender,
                     "patient_date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
+                    "patient_id": patient.id,
                     "patient_insured": patient.insured,
+                    "patient_nhis_active": bool(patient.nhis_active),
                     "patient_insurance_id": patient.insurance_id if patient.insurance_id else None,
                     "patient_insurance_start_date": patient.insurance_start_date.isoformat() if patient.insurance_start_date else None,
                     "patient_insurance_end_date": patient.insurance_end_date.isoformat() if patient.insurance_end_date else None,

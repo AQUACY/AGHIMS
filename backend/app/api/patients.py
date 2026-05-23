@@ -12,13 +12,41 @@ import io
 from app.core.database import get_db
 from app.core.dependencies import require_role, get_current_user, require_module_permission
 from app.core.audit import get_effective_creator_id
+from app.core.audit_patient import (
+    summarize_nhia_ccc_generation,
+    summarize_patient_encounter,
+    summarize_patient_registration,
+    summarize_patient_update,
+)
 from app.core.datetime_utils import today
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.encounter import Encounter, EncounterStatus
+from app.services.nhia_integration import (
+    NhiaIntegrationError,
+    apply_nhia_data_to_patient,
+    generate_patient_ccc,
+    lookup_member_by_hin,
+)
+from app.services.ghims_settings import (
+    apply_patient_card_number_update,
+    is_ghims_card_mode,
+    validate_ghims_card_number,
+)
+from app.services.patient_registration_validation import validate_new_patient_registration
 from app.utils.card_number import generate_card_number, generate_ccc_number
 
 router = APIRouter(prefix="/patients", tags=["patients"])
+
+
+def patient_eligible_for_nhia_ccc(patient: Patient) -> bool:
+    """Insured with active NHIS card and a member number."""
+    return bool(
+        patient.insured
+        and patient.nhis_active
+        and patient.insurance_id
+        and patient.insurance_id.strip()
+    )
 
 
 class PatientCreate(BaseModel):
@@ -30,9 +58,12 @@ class PatientCreate(BaseModel):
     age: Optional[int] = None
     date_of_birth: Optional[date] = None
     insured: bool = False
+    nhis_active: bool = False
     insurance_id: Optional[str] = None
     insurance_start_date: Optional[date] = None
     insurance_end_date: Optional[date] = None
+    ccc_number: Optional[str] = None
+    ccc_status: Optional[str] = None
     contact: Optional[str] = None
     address: Optional[str] = None
     # Emergency contact details
@@ -43,6 +74,31 @@ class PatientCreate(BaseModel):
     marital_status: Optional[str] = None
     educational_level: Optional[str] = None
     occupation: Optional[str] = None
+    card_number: Optional[str] = None  # GHIMS / manual card when ghims module active
+    force_register: bool = False  # Bypass profile duplicate warning only
+
+
+class PatientRegistrationConfig(BaseModel):
+    ghims_card_mode: bool
+
+
+class PatientRegistrationValidateRequest(BaseModel):
+    name: str
+    surname: Optional[str] = None
+    gender: str
+    date_of_birth: Optional[date] = None
+    insurance_id: Optional[str] = None
+    card_number: Optional[str] = None
+    force_register: bool = False
+
+
+class PatientRegistrationValidateResponse(BaseModel):
+    status: str
+    message: str
+    existing_patient: Optional[dict] = None
+    similar_patients: Optional[List[dict]] = None
+    suggested_name: Optional[str] = None
+    suggested_surname: Optional[str] = None
 
 
 class PatientResponse(BaseModel):
@@ -55,11 +111,14 @@ class PatientResponse(BaseModel):
     age: Optional[int]
     date_of_birth: Optional[date]
     card_number: str
+    legacy_card_number: Optional[str] = None
     insured: bool
+    nhis_active: bool = False
     insurance_id: Optional[str]
     insurance_start_date: Optional[date] = None
     insurance_end_date: Optional[date] = None
     ccc_number: Optional[str] = None  # CCC number for NHIA
+    ccc_status: Optional[str] = None
     contact: Optional[str]
     address: Optional[str] = None
     # Emergency contact details
@@ -75,6 +134,37 @@ class PatientResponse(BaseModel):
         from_attributes = True
 
 
+@router.get("/registration-config", response_model=PatientRegistrationConfig)
+def get_patient_registration_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Whether GHIMS manual card entry is enabled for new patient registration."""
+    return PatientRegistrationConfig(ghims_card_mode=is_ghims_card_mode(db))
+
+
+@router.post("/validate-registration", response_model=PatientRegistrationValidateResponse)
+def validate_patient_registration(
+    body: PatientRegistrationValidateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("patients", "create")),
+):
+    """Check duplicates before registering a new patient."""
+    result = validate_new_patient_registration(
+        db,
+        name=body.name,
+        surname=body.surname,
+        gender=body.gender,
+        date_of_birth=body.date_of_birth,
+        insurance_id=body.insurance_id,
+        card_number=body.card_number,
+        ghims_mode=is_ghims_card_mode(db),
+        force_register=body.force_register,
+    )
+    return PatientRegistrationValidateResponse(**result)
+
+
 @router.post("/", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
 def create_patient(
     request: Request,
@@ -84,20 +174,41 @@ def create_patient(
     _module_check: User = Depends(require_module_permission("patients", "create"))
 ):
     """Register a new patient"""
-    # Generate card number
-    card_number = generate_card_number(db)
-    
-    # Create patient
-    patient = Patient(
-        **patient_data.dict(),
-        card_number=card_number
+    ghims_mode = is_ghims_card_mode(db)
+
+    validation = validate_new_patient_registration(
+        db,
+        name=patient_data.name,
+        surname=patient_data.surname,
+        gender=patient_data.gender,
+        date_of_birth=patient_data.date_of_birth,
+        insurance_id=patient_data.insurance_id,
+        card_number=patient_data.card_number,
+        ghims_mode=ghims_mode,
+        force_register=patient_data.force_register,
     )
+    if validation["status"] not in ("ok", "insurance_baby_allowed"):
+        raise HTTPException(status_code=409, detail=validation)
+
+    if ghims_mode:
+        card_number = validate_ghims_card_number(patient_data.card_number or "")
+    else:
+        card_number = generate_card_number(db)
+
+    payload = patient_data.dict(exclude={"card_number", "force_register"})
+    if validation["status"] == "insurance_baby_allowed":
+        # Staff-entered baby name and DOB from the form (not NHIA parent values)
+        payload["name"] = patient_data.name
+        payload["surname"] = patient_data.surname
+        payload["date_of_birth"] = patient_data.date_of_birth
+
+    patient = Patient(**payload, card_number=card_number)
     db.add(patient)
     db.commit()
     db.refresh(patient)
     
     from app.core.audit import set_audit_summary
-    set_audit_summary(request, f"Registered new patient {patient.name} with card number {card_number}.")
+    set_audit_summary(request, summarize_patient_registration(patient, card_number))
     
     return patient
 
@@ -114,8 +225,8 @@ async def import_patients_from_csv(
     
     CSV should have the following columns:
     name, surname, other_names, gender, age, date_of_birth, card_number, 
-    insured, insurance_id, insurance_start_date, insurance_end_date, 
-    ccc_number, contact, address
+    insured, nhis_active, insurance_id, insurance_start_date, insurance_end_date, 
+    ccc_number, ccc_status, contact, address
     
     Required fields: name, gender
     Optional fields: all others
@@ -197,6 +308,11 @@ async def import_patients_from_csv(
             insured_str = row.get('insured', '').strip().upper()
             if insured_str in ['TRUE', '1', 'YES', 'Y']:
                 insured = True
+
+            nhis_active = False
+            nhis_active_str = row.get('nhis_active', '').strip().upper()
+            if nhis_active_str in ['TRUE', '1', 'YES', 'Y']:
+                nhis_active = True
             
             # Insurance fields
             insurance_id = row.get('insurance_id', '').strip() or None
@@ -229,6 +345,7 @@ async def import_patients_from_csv(
             
             # CCC number
             ccc_number = row.get('ccc_number', '').strip() or None
+            ccc_status = row.get('ccc_status', '').strip() or None
             
             # Contact and address
             contact = row.get('contact', '').strip() or None
@@ -253,10 +370,12 @@ async def import_patients_from_csv(
                 date_of_birth=date_of_birth,
                 card_number=card_number,
                 insured=insured,
+                nhis_active=nhis_active,
                 insurance_id=insurance_id,
                 insurance_start_date=insurance_start_date,
                 insurance_end_date=insurance_end_date,
                 ccc_number=ccc_number,
+                ccc_status=ccc_status,
                 contact=contact,
                 address=address
             )
@@ -323,7 +442,10 @@ def get_patient_by_card(
         # For SQLite, use func.upper() for case-insensitive comparison
         # Limit to 1 for exact match (fastest query)
         patients = db.query(Patient).filter(
-            func.upper(Patient.card_number) == search_term_upper
+            or_(
+                func.upper(Patient.card_number) == search_term_upper,
+                func.upper(Patient.legacy_card_number) == search_term_upper,
+            )
         ).limit(1).all()
         
         # If exact match found, return immediately (no need for partial match)
@@ -333,7 +455,10 @@ def get_patient_by_card(
         # Only do partial match if exact match fails (slower but needed for partial searches)
         # Limit results to improve performance
         patients = db.query(Patient).filter(
-            func.upper(Patient.card_number).like(f"%{search_term_upper}%")
+            or_(
+                func.upper(Patient.card_number).like(f"%{search_term_upper}%"),
+                func.upper(Patient.legacy_card_number).like(f"%{search_term_upper}%"),
+            )
         ).limit(10).all()
         
         # Ensure we always return a list, even if it's empty
@@ -504,6 +629,98 @@ def get_patient(
     return patient
 
 
+class NhiaLookupRequest(BaseModel):
+    insurance_id: str
+
+
+class NhiaCccDataResponse(BaseModel):
+    ccc: Optional[str] = None
+    status: Optional[str] = None
+    name: Optional[str] = None
+    hin: Optional[str] = None
+    dob: Optional[str] = None
+    gender: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
+class NhiaLookupResponse(BaseModel):
+    success: bool
+    message: str
+    data: NhiaCccDataResponse
+
+
+class GenerateCccResponse(BaseModel):
+    success: bool
+    message: str
+    data: NhiaCccDataResponse
+    patient: PatientResponse
+
+
+@router.post("/nhia/lookup", response_model=NhiaLookupResponse)
+def lookup_nhia_member(
+    request: Request,
+    body: NhiaLookupRequest,
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("patients", "read")),
+):
+    """Fetch member/CCC data from NHIA portal without saving a patient record."""
+    try:
+        data = lookup_member_by_hin(body.insurance_id.strip())
+        from app.core.audit import set_audit_summary
+        hin = body.insurance_id.strip()
+        set_audit_summary(
+            request,
+            f"Imported NHIA member data for insurance number {hin} (registration lookup, not saved).",
+        )
+        return NhiaLookupResponse(
+            success=True,
+            message="NHIA member data retrieved successfully",
+            data=NhiaCccDataResponse(**data.to_dict()),
+        )
+    except NhiaIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/{patient_id}/generate-ccc", response_model=GenerateCccResponse)
+def generate_ccc_for_patient(
+    request: Request,
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    _module_check: User = Depends(require_module_permission("patients", "update")),
+):
+    """Generate/fetch CCC from NHIA portal and update the patient record."""
+    try:
+        result = generate_patient_ccc(db, patient_id)
+    except NhiaIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    from app.core.audit import set_audit_summary
+
+    patient = result.get("patient")
+    nhia_data = result.get("data") or {}
+    if patient:
+        set_audit_summary(
+            request,
+            summarize_nhia_ccc_generation(
+                patient,
+                ccc=nhia_data.get("ccc"),
+                insurance_start=nhia_data.get("start"),
+                insurance_end=nhia_data.get("end"),
+            ),
+        )
+    else:
+        set_audit_summary(request, "Generated NHIA CCC from NHIA portal.")
+
+    return GenerateCccResponse(
+        success=result["success"],
+        message=result["message"],
+        data=NhiaCccDataResponse(**result["data"]),
+        patient=result["patient"],
+    )
+
+
 @router.put("/{patient_id}", response_model=PatientResponse)
 def update_patient(
     request: Request,
@@ -517,24 +734,39 @@ def update_patient(
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    
-    # Store old values for audit log
-    old_card_number = patient.card_number
-    
-    for key, value in patient_data.dict().items():
+
+    ghims_mode = is_ghims_card_mode(db)
+    payload = patient_data.dict(exclude={"card_number", "force_register"})
+    new_card_number = patient_data.card_number
+
+    for key, value in payload.items():
         setattr(patient, key, value)
-    
+
+    if new_card_number is not None and new_card_number.strip():
+        if not ghims_mode:
+            raise HTTPException(
+                status_code=400,
+                detail="Card number can only be changed when GHIMS mode is enabled.",
+            )
+        try:
+            apply_patient_card_number_update(
+                patient, new_card_number, db, ghims_mode=ghims_mode
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     db.commit()
     db.refresh(patient)
     
     from app.core.audit import set_audit_summary
-    set_audit_summary(request, f"Updated patient {patient.name} (card number {patient.card_number}).")
+    set_audit_summary(request, summarize_patient_update(patient))
     
     return patient
 
 
 @router.post("/{patient_id}/encounter", status_code=status.HTTP_201_CREATED)
 def create_encounter(
+    request: Request,
     patient_id: int,
     service_type: str,  # Service Type (Department/Clinic)
     ccc_number: Optional[str] = None,
@@ -553,7 +785,12 @@ def create_encounter(
     # in the same clinic (department) today, any subsequent encounter today
     # must be cash-and-carry (no CCC allowed for the new encounter).
     forced_cash = False
-    if patient.insured:
+    nhia_eligible = patient_eligible_for_nhia_ccc(patient)
+    if patient.insured and not patient.nhis_active:
+        # Insured on file but inactive NHIS card → cash and carry for this encounter
+        ccc_number = None
+        forced_cash = True
+    elif nhia_eligible:
         # If any insured encounter exists today for this patient, force cash for this new encounter
         existing_insured_today = db.query(Encounter).filter(
             Encounter.patient_id == patient_id,
@@ -567,13 +804,13 @@ def create_encounter(
             ccc_number = None
             forced_cash = True
         elif not ccc_number:
-            # First insured encounter today requires CCC
+            # First NHIS-active insured encounter today requires CCC
             raise HTTPException(
                 status_code=400,
-                detail="CCC number is required for insured patients"
+                detail="CCC number is required for patients with active NHIS"
             )
     else:
-        # Not insured: ensure CCC is not set even if provided mistakenly
+        # Not eligible for NHIA billing: ensure CCC is not set even if provided mistakenly
         ccc_number = None
     
     # Use provided CCC number or leave as None (don't auto-generate)
@@ -674,7 +911,18 @@ def create_encounter(
     
     db.commit()
     db.refresh(encounter)
-    
+
+    from app.core.audit import set_audit_summary
+    set_audit_summary(
+        request,
+        summarize_patient_encounter(
+            patient,
+            encounter_id=encounter.id,
+            service_type=service_type,
+            ccc_number=ccc_number,
+            forced_cash=forced_cash,
+        ),
+    )
     return {
         "encounter_id": encounter.id,
         "ccc_number": ccc_number,

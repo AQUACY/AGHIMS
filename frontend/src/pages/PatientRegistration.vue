@@ -50,6 +50,12 @@
           <div class="text-body1 glass-text">
             <strong>Card Number:</strong> {{ patientsStore.currentPatient.card_number }}
           </div>
+          <div
+            v-if="patientsStore.currentPatient.legacy_card_number"
+            class="text-body1 glass-text"
+          >
+            <strong>Previous HMS Card:</strong> {{ patientsStore.currentPatient.legacy_card_number }}
+          </div>
           <div class="text-body1 glass-text">
             <strong>Gender:</strong> {{ patientsStore.currentPatient.gender }}
           </div>
@@ -124,15 +130,31 @@
                </template>
              </q-select>
 
-             <q-input
-               v-model="encounterCccNumber"
-               filled
-               :label="patientsStore.currentPatient?.insured ? 'CCC Number *' : 'CCC Number (Optional)'"
-               :hint="patientsStore.currentPatient?.insured ? 'Required for insured patients' : 'Optional - leave empty if not needed'"
-               lazy-rules
-               :rules="patientsStore.currentPatient?.insured ? [(val) => !!val || 'CCC number is required for insured patients'] : []"
-               maxlength="20"
-             />
+             <div class="row q-col-gutter-sm items-start">
+               <q-input
+                 v-model="encounterCccNumber"
+                 filled
+                 class="col"
+                 :label="encounterRequiresCcc ? 'CCC Number *' : 'CCC Number (Optional)'"
+                 :hint="encounterCccHint"
+                 lazy-rules
+                 :rules="encounterRequiresCcc ? [(val) => !!val || 'CCC number is required for active NHIS patients'] : []"
+                 maxlength="20"
+               />
+               <q-btn
+                 class="col-auto q-mt-xs"
+                 color="secondary"
+                 icon="cloud_download"
+                 label="Get CCC"
+                 :loading="generatingEncounterCcc"
+                 :disable="!canGetEncounterCcc"
+                 @click="fetchEncounterCcc"
+               >
+                 <q-tooltip v-if="!canGetEncounterCcc">
+                   Requires active NHIS with a member number
+                 </q-tooltip>
+               </q-btn>
+             </div>
 
              <div>
               <q-btn
@@ -158,6 +180,24 @@
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">New Patient Registration</div>
         <q-form @submit="onSubmit" class="q-gutter-md">
+          <q-banner v-if="ghimsCardMode" rounded class="bg-blue-1 q-mb-sm">
+            <template v-slot:avatar>
+              <q-icon name="badge" color="primary" />
+            </template>
+            GHIMS mode is on — enter the client's GHIMS card number (e.g. E-0032-26xxxxxx). HMS will not auto-generate a card number.
+          </q-banner>
+
+          <q-input
+            v-if="ghimsCardMode"
+            v-model="form.card_number"
+            filled
+            label="GHIMS Card Number *"
+            hint="Format: E-0032-26xxxxxx"
+            lazy-rules
+            :rules="[(val) => !!val?.trim() || 'GHIMS card number is required']"
+            class="q-mb-sm"
+          />
+
           <div class="row q-gutter-md">
             <q-input
               v-model="form.name"
@@ -212,27 +252,64 @@
             label="Insured (NHIS)"
           />
 
-          <div v-if="form.insured" class="row q-gutter-md">
-            <q-input
-              v-model="form.insurance_id"
-              filled
-              label="Insurance ID / Member Number"
-              class="col-12 col-md-6"
+          <div v-if="form.insured">
+            <q-toggle
+              v-model="form.nhis_active"
+              label="NHIS card is active"
+              class="q-mb-sm"
             />
-            <q-input
-              v-model="form.insurance_start_date"
-              filled
-              type="date"
-              label="Insurance Start Date"
-              class="col-12 col-md-3"
-            />
-            <q-input
-              v-model="form.insurance_end_date"
-              filled
-              type="date"
-              label="Insurance End Date"
-              class="col-12 col-md-3"
-            />
+            <q-banner v-if="form.insured && !form.nhis_active" rounded class="bg-orange-1 q-mb-md">
+              Inactive NHIS card — patient will be treated as cash and carry (Get CCC disabled).
+            </q-banner>
+
+            <div class="row q-gutter-md items-start">
+              <q-input
+                v-model="form.insurance_id"
+                filled
+                label="Insurance ID / Member Number"
+                class="col-12 col-md-6"
+              />
+              <q-btn
+                color="secondary"
+                icon="cloud_download"
+                label="Import from NHIA"
+                class="col-12 col-md-auto q-mt-xs"
+                :loading="importingNhia"
+                :disable="!form.insurance_id || !form.insurance_id.trim()"
+                @click="importFromNhia"
+              />
+            </div>
+
+            <div class="row q-gutter-md q-mt-sm">
+              <q-input
+                v-model="form.ccc_number"
+                filled
+                label="CCC Number"
+                class="col-12 col-md-3"
+                maxlength="20"
+              />
+              <q-input
+                v-model="form.ccc_status"
+                filled
+                label="NHIS Status"
+                class="col-12 col-md-3"
+                readonly
+              />
+              <q-input
+                v-model="form.insurance_start_date"
+                filled
+                type="date"
+                label="Insurance Start Date"
+                class="col-12 col-md-3"
+              />
+              <q-input
+                v-model="form.insurance_end_date"
+                filled
+                type="date"
+                label="Insurance End Date"
+                class="col-12 col-md-3"
+              />
+            </div>
           </div>
 
           <q-input
@@ -329,6 +406,31 @@
 
         <q-card-section>
           <q-form @submit="savePatientEdit" class="q-gutter-md">
+            <q-banner v-if="ghimsCardMode" rounded class="bg-blue-1 q-mb-sm">
+              <template v-slot:avatar>
+                <q-icon name="badge" color="primary" />
+              </template>
+              Enter the client's GHIMS card number to replace the HMS card. The previous HMS card will be kept on the profile.
+            </q-banner>
+
+            <div v-if="ghimsCardMode" class="row q-gutter-md">
+              <q-input
+                v-model="editForm.card_number"
+                filled
+                label="GHIMS Card Number"
+                hint="Format: E-0032-26xxxxxx. Leave unchanged to find patient by old card."
+                class="col-12 col-md-6"
+              />
+              <q-input
+                v-if="patientsStore.currentPatient?.legacy_card_number"
+                :model-value="patientsStore.currentPatient.legacy_card_number"
+                filled
+                label="Previous HMS Card"
+                readonly
+                class="col-12 col-md-6"
+              />
+            </div>
+
             <div class="row q-gutter-md">
               <q-input
                 v-model="editForm.name"
@@ -383,27 +485,58 @@
               label="Insured (NHIS)"
             />
 
-            <div v-if="editForm.insured" class="row q-gutter-md">
-              <q-input
-                v-model="editForm.insurance_id"
-                filled
-                label="Insurance ID / Member Number"
-                class="col-12 col-md-6"
+            <div v-if="editForm.insured">
+              <q-toggle
+                v-model="editForm.nhis_active"
+                label="NHIS card is active"
+                class="q-mb-sm"
               />
-              <q-input
-                v-model="editForm.insurance_start_date"
-                filled
-                type="date"
-                label="Insurance Start Date"
-                class="col-12 col-md-3"
-              />
-              <q-input
-                v-model="editForm.insurance_end_date"
-                filled
-                type="date"
-                label="Insurance End Date"
-                class="col-12 col-md-3"
-              />
+              <div class="row q-gutter-md items-start">
+                <q-input
+                  v-model="editForm.insurance_id"
+                  filled
+                  label="Insurance ID / Member Number"
+                  class="col-12 col-md-6"
+                />
+                <q-btn
+                  color="secondary"
+                  icon="cloud_download"
+                  label="Import from NHIA"
+                  class="col-12 col-md-auto q-mt-xs"
+                  :loading="importingNhiaEdit"
+                  :disable="!editForm.insurance_id || !editForm.insurance_id.trim()"
+                  @click="importFromNhiaEdit"
+                />
+              </div>
+              <div class="row q-gutter-md q-mt-sm">
+                <q-input
+                  v-model="editForm.ccc_number"
+                  filled
+                  label="CCC Number"
+                  class="col-12 col-md-3"
+                />
+                <q-input
+                  v-model="editForm.ccc_status"
+                  filled
+                  label="NHIS Status"
+                  class="col-12 col-md-3"
+                  readonly
+                />
+                <q-input
+                  v-model="editForm.insurance_start_date"
+                  filled
+                  type="date"
+                  label="Insurance Start Date"
+                  class="col-12 col-md-3"
+                />
+                <q-input
+                  v-model="editForm.insurance_end_date"
+                  filled
+                  type="date"
+                  label="Insurance End Date"
+                  class="col-12 col-md-3"
+                />
+              </div>
             </div>
 
             <q-input
@@ -502,15 +635,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch } from 'vue';
+import { ref, reactive, watch, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePatientsStore } from '../stores/patients';
 import { useQuasar } from 'quasar';
 import { priceListAPI } from '../services/api';
+import { applyNhiaDataToForm, canFetchNhiaCcc, isWithinBabyWindow, firstNameFromFullName, babyNameFromFirstName } from '../utils/nhiaForm';
+import { useModuleSettingsStore } from '../stores/moduleSettings';
 
 const $q = useQuasar();
 const router = useRouter();
 const patientsStore = usePatientsStore();
+const moduleSettingsStore = useModuleSettingsStore();
+
+const ghimsCardMode = ref(false);
+/** Parent first name from last NHIA import — used when DOB is changed to newborn range */
+const nhiaParentFirstName = ref('');
+const nhiaParentSurname = ref('');
 
 const cardNumber = ref('');
 const searching = ref(false);
@@ -531,7 +672,10 @@ const editPatient = () => {
     age: patient.age || null,
     date_of_birth: patient.date_of_birth ? patient.date_of_birth.split('T')[0] : '',
     insured: patient.insured || false,
+    nhis_active: patient.nhis_active || false,
     insurance_id: patient.insurance_id || '',
+    ccc_number: patient.ccc_number || '',
+    ccc_status: patient.ccc_status || '',
     insurance_start_date: patient.insurance_start_date 
       ? patient.insurance_start_date.split('T')[0] : '',
     insurance_end_date: patient.insurance_end_date 
@@ -544,6 +688,7 @@ const editPatient = () => {
     marital_status: patient.marital_status || '',
     educational_level: patient.educational_level || '',
     occupation: patient.occupation || '',
+    card_number: patient.card_number || '',
   });
   
   showEditDialog.value = true;
@@ -566,6 +711,15 @@ const savePatientEdit = async () => {
     }
     if (patientData.insurance_id === '') {
       patientData.insurance_id = null;
+    }
+    if (patientData.ccc_number === '') {
+      patientData.ccc_number = null;
+    }
+    if (patientData.ccc_status === '') {
+      patientData.ccc_status = null;
+    }
+    if (!patientData.insured) {
+      patientData.nhis_active = false;
     }
     if (patientData.surname === '') {
       patientData.surname = null;
@@ -597,11 +751,19 @@ const savePatientEdit = async () => {
     if (patientData.occupation === '') {
       patientData.occupation = null;
     }
+
+    const currentCard = patientsStore.currentPatient?.card_number;
+    if (!ghimsCardMode.value || patientData.card_number === currentCard) {
+      delete patientData.card_number;
+    } else if (patientData.card_number === '') {
+      delete patientData.card_number;
+    }
     
-    await patientsStore.updatePatient(patientsStore.currentPatient.id, patientData);
+    const updated = await patientsStore.updatePatient(patientsStore.currentPatient.id, patientData);
     showEditDialog.value = false;
-    // Reload patient data
-    await patientsStore.getPatientByCard(patientsStore.currentPatient.card_number);
+    // Reload patient data (card may have changed after GHIMS migration)
+    const reloadCard = updated?.card_number || patientsStore.currentPatient.card_number;
+    await patientsStore.getPatientByCard(reloadCard);
   } catch (error) {
     // Error handled in store
   } finally {
@@ -664,8 +826,27 @@ const encounterProcedureOptions = ref([]);
 const selectedEncounterServiceType = ref(null);
 const selectedEncounterProcedure = ref(null);
 const encounterCccNumber = ref('');
+const importingNhia = ref(false);
+const importingNhiaEdit = ref(false);
+const generatingEncounterCcc = ref(false);
+
+const encounterRequiresCcc = computed(() =>
+  canFetchNhiaCcc(patientsStore.currentPatient)
+);
+
+const encounterCccHint = computed(() => {
+  const p = patientsStore.currentPatient;
+  if (!p?.insured) return 'Optional — cash patient';
+  if (!p?.nhis_active) return 'Inactive NHIS — cash and carry for this visit';
+  return 'Required for patients with active NHIS';
+});
+
+const canGetEncounterCcc = computed(() =>
+  canFetchNhiaCcc(patientsStore.currentPatient)
+);
 
 const form = reactive({
+  card_number: '',
   name: '',
   surname: '',
   other_names: '',
@@ -673,9 +854,12 @@ const form = reactive({
   age: null,
   date_of_birth: '',
   insured: false,
+  nhis_active: false,
   insurance_id: '',
   insurance_start_date: '',
   insurance_end_date: '',
+  ccc_number: '',
+  ccc_status: '',
   contact: '',
   address: '',
   emergency_contact_name: '',
@@ -704,13 +888,12 @@ const calculateAgeFromDateOfBirth = (dateOfBirth) => {
   return age >= 0 ? age : null;
 };
 
-// Watch date_of_birth and auto-calculate age
+// When DOB changes, update age (never derive DOB from age — that overwrote NHIA import dates)
 watch(() => form.date_of_birth, (newDateOfBirth) => {
-  if (newDateOfBirth) {
-    const calculatedAge = calculateAgeFromDateOfBirth(newDateOfBirth);
-    if (calculatedAge !== null) {
-      form.age = calculatedAge;
-    }
+  if (!newDateOfBirth) return;
+  const calculatedAge = calculateAgeFromDateOfBirth(newDateOfBirth);
+  if (calculatedAge !== null) {
+    form.age = calculatedAge;
   }
 });
 
@@ -801,10 +984,57 @@ const createEncounterForExisting = async () => {
   showEncounterDialog.value = true;
 };
 
+const importFromNhia = async () => {
+  if (!form.insurance_id?.trim()) return;
+  importingNhia.value = true;
+  try {
+    const result = await patientsStore.lookupNhia(form.insurance_id.trim());
+    if (result.data?.name) {
+      nhiaParentFirstName.value = firstNameFromFullName(result.data.name);
+      const parts = result.data.name.trim().split(/\s+/);
+      nhiaParentSurname.value = parts.length > 1 ? parts.slice(1).join(' ') : '';
+    }
+    applyNhiaDataToForm(form, result.data);
+    await applyBabyNameWhenEligible();
+    $q.notify({ type: 'positive', message: 'Patient details imported from NHIA' });
+  } finally {
+    importingNhia.value = false;
+  }
+};
+
+const importFromNhiaEdit = async () => {
+  if (!editForm.insurance_id?.trim()) return;
+  importingNhiaEdit.value = true;
+  try {
+    const result = await patientsStore.lookupNhia(editForm.insurance_id.trim());
+    applyNhiaDataToForm(editForm, result.data);
+    $q.notify({ type: 'positive', message: 'Patient details imported from NHIA' });
+  } finally {
+    importingNhiaEdit.value = false;
+  }
+};
+
+const fetchEncounterCcc = async () => {
+  const patient = patientsStore.currentPatient;
+  if (!patient?.id || !canGetEncounterCcc.value) return;
+  generatingEncounterCcc.value = true;
+  try {
+    const result = await patientsStore.generateCcc(patient.id);
+    if (result?.data?.ccc) {
+      encounterCccNumber.value = result.data.ccc;
+    }
+    if (result?.patient) {
+      patientsStore.currentPatient = result.patient;
+    }
+  } finally {
+    generatingEncounterCcc.value = false;
+  }
+};
+
 const submitEncounterCreation = async () => {
   if (!patientsStore.currentPatient) return;
   
-  const isInsured = patientsStore.currentPatient.insured;
+  const isInsured = encounterRequiresCcc.value;
   
   // Validate service type
   if (!selectedEncounterServiceType.value) {
@@ -824,11 +1054,11 @@ const submitEncounterCreation = async () => {
     return;
   }
   
-  // Validate CCC for insured patients
+  // Validate CCC for NHIS-active insured patients
   if (isInsured && !encounterCccNumber.value) {
     $q.notify({
       type: 'warning',
-      message: 'CCC number is required for insured patients',
+      message: 'CCC number is required for patients with active NHIS',
     });
     return;
   }
@@ -873,55 +1103,47 @@ const submitEncounterCreation = async () => {
 };
 
 const onSubmit = async () => {
+  if (babyNameTimer) clearTimeout(babyNameTimer);
   loading.value = true;
   try {
-    const patientData = { ...form };
+    const patientData = buildPatientPayload();
 
-    // Clean up empty date and string fields - send null instead of empty strings
-    if (patientData.date_of_birth === '') {
-      patientData.date_of_birth = null;
-    }
-    if (patientData.insurance_start_date === '') {
-      patientData.insurance_start_date = null;
-    }
-    if (patientData.insurance_end_date === '') {
-      patientData.insurance_end_date = null;
-    }
-    if (patientData.insurance_id === '') {
-      patientData.insurance_id = null;
-    }
-    if (patientData.surname === '') {
-      patientData.surname = null;
-    }
-    if (patientData.other_names === '') {
-      patientData.other_names = null;
-    }
-    if (patientData.contact === '') {
-      patientData.contact = null;
-    }
-    if (patientData.address === '') {
-      patientData.address = null;
-    }
-    if (patientData.emergency_contact_name === '') {
-      patientData.emergency_contact_name = null;
-    }
-    if (patientData.emergency_contact_relationship === '') {
-      patientData.emergency_contact_relationship = null;
-    }
-    if (patientData.emergency_contact_number === '') {
-      patientData.emergency_contact_number = null;
-    }
-    if (patientData.marital_status === '') {
-      patientData.marital_status = null;
-    }
-    if (patientData.educational_level === '') {
-      patientData.educational_level = null;
-    }
-    if (patientData.occupation === '') {
-      patientData.occupation = null;
+    const validation = await patientsStore.validateRegistration({
+      ...patientData,
+      force_register: false,
+    });
+
+    let babyRegistrationSnapshot = null;
+    if (validation?.status === 'insurance_baby_allowed') {
+      babyRegistrationSnapshot = {
+        name: patientData.name,
+        surname: patientData.surname,
+        date_of_birth: patientData.date_of_birth,
+      };
     }
 
-    const patient = await patientsStore.createPatient(patientData);
+    const proceed = await handleRegistrationValidation(
+      validation,
+      patientData,
+      babyRegistrationSnapshot,
+    );
+    if (!proceed?.continue) {
+      loading.value = false;
+      return;
+    }
+
+    const createPayload = {
+      ...buildPatientPayload(),
+      force_register: proceed.force_register || false,
+    };
+    if (proceed.isBabyRegistration || babyRegistrationSnapshot) {
+      const fresh = buildPatientPayload();
+      createPayload.name = fresh.name;
+      createPayload.surname = fresh.surname;
+      createPayload.date_of_birth = fresh.date_of_birth;
+    }
+
+    const patient = await patientsStore.createPatient(createPayload);
     
     // Set current patient so the encounter dialog can use it
     patientsStore.currentPatient = patient;
@@ -943,5 +1165,156 @@ const onSubmit = async () => {
   }
   // Note: Loading will be set to false after encounter dialog is submitted or closed
 };
+
+const buildPatientPayload = () => {
+  const patientData = { ...form };
+  if (patientData.date_of_birth === '') patientData.date_of_birth = null;
+  if (patientData.insurance_start_date === '') patientData.insurance_start_date = null;
+  if (patientData.insurance_end_date === '') patientData.insurance_end_date = null;
+  if (patientData.insurance_id === '') patientData.insurance_id = null;
+  if (patientData.ccc_number === '') patientData.ccc_number = null;
+  if (patientData.ccc_status === '') patientData.ccc_status = null;
+  if (!patientData.insured) patientData.nhis_active = false;
+  if (patientData.surname === '') patientData.surname = null;
+  if (patientData.other_names === '') patientData.other_names = null;
+  if (patientData.contact === '') patientData.contact = null;
+  if (patientData.address === '') patientData.address = null;
+  if (patientData.emergency_contact_name === '') patientData.emergency_contact_name = null;
+  if (patientData.emergency_contact_relationship === '') patientData.emergency_contact_relationship = null;
+  if (patientData.emergency_contact_number === '') patientData.emergency_contact_number = null;
+  if (patientData.marital_status === '') patientData.marital_status = null;
+  if (patientData.educational_level === '') patientData.educational_level = null;
+  if (patientData.occupation === '') patientData.occupation = null;
+  if (!ghimsCardMode.value) patientData.card_number = null;
+  else if (patientData.card_number === '') patientData.card_number = null;
+  return patientData;
+};
+
+let babyNameTimer = null;
+const applyBabyNameWhenEligible = async () => {
+  if (!form.insured || !form.date_of_birth || !form.insurance_id?.trim()) return;
+  if (!isWithinBabyWindow(form.date_of_birth)) return;
+
+  try {
+    const response = await patientsStore.validateRegistration({
+      ...buildPatientPayload(),
+      force_register: false,
+    });
+    if (response?.status !== 'insurance_baby_allowed') return;
+
+    const parentFirst = nhiaParentFirstName.value
+      || firstNameFromFullName(response.existing_patient?.name);
+    if (parentFirst) {
+      form.name = babyNameFromFirstName(parentFirst);
+    }
+    if (response.suggested_surname) {
+      form.surname = response.suggested_surname;
+    } else if (nhiaParentSurname.value) {
+      form.surname = nhiaParentSurname.value;
+    }
+  } catch {
+    // Best-effort; submit validates again
+  }
+};
+
+watch(
+  () => [form.date_of_birth, form.insurance_id, form.insured],
+  () => {
+    if (babyNameTimer) clearTimeout(babyNameTimer);
+    babyNameTimer = setTimeout(() => {
+      applyBabyNameWhenEligible();
+    }, 400);
+  },
+);
+
+const openExistingPatientForService = async (existingPatient) => {
+  if (!existingPatient?.card_number) return;
+  await patientsStore.getPatientByCard(existingPatient.card_number);
+  await createEncounterForExisting();
+};
+
+const handleRegistrationValidation = async (validation, patientData, babyRegistrationSnapshot = null) => {
+  const status = validation?.status || 'ok';
+
+  if (status === 'ok') {
+    return { continue: true, force_register: false };
+  }
+
+  if (status === 'insurance_duplicate' || status === 'card_duplicate' || status === 'insurance_rejected') {
+    const existing = validation.existing_patient;
+    return new Promise((resolve) => {
+      $q.dialog({
+        title: 'Patient already registered',
+        message: `${validation.message}\n\n${existing?.name || ''} ${existing?.surname || ''} — Card: ${existing?.card_number || 'N/A'}`,
+        cancel: { label: 'Cancel', flat: true, color: 'grey' },
+        ok: { label: 'Create service instead', color: 'primary' },
+        persistent: true,
+      })
+        .onOk(() => {
+          openExistingPatientForService(existing);
+          resolve({ continue: false });
+        })
+        .onCancel(() => resolve({ continue: false }));
+    });
+  }
+
+  if (status === 'insurance_rejected' || status === 'invalid_card') {
+    $q.notify({ type: 'negative', message: validation.message });
+    return { continue: false };
+  }
+
+  if (status === 'insurance_baby_allowed') {
+    const existing = validation.existing_patient;
+    const snapshot = babyRegistrationSnapshot || {
+      name: patientData.name,
+      surname: patientData.surname,
+      date_of_birth: patientData.date_of_birth,
+    };
+    return new Promise((resolve) => {
+      $q.dialog({
+        title: 'Register as baby on existing insurance',
+        message: `${validation.message}\n\nName will be registered as: ${snapshot.name || ''} ${snapshot.surname || ''}\nParent: ${existing?.name || ''} ${existing?.surname || ''} (${existing?.card_number})\nDate of birth: ${snapshot.date_of_birth || 'N/A'}`,
+        cancel: { label: 'Cancel', flat: true, color: 'grey' },
+        ok: { label: 'Register baby', color: 'primary' },
+        persistent: true,
+      })
+        .onOk(() => {
+          resolve({ continue: true, force_register: false, isBabyRegistration: true });
+        })
+        .onCancel(() => resolve({ continue: false }));
+    });
+  }
+
+  if (status === 'profile_duplicate') {
+    const existing = validation.existing_patient;
+    return new Promise((resolve) => {
+      $q.dialog({
+        title: 'Similar patient found',
+        message: `${validation.message}\n\nExisting: ${existing?.name || ''} ${existing?.surname || ''} — Card: ${existing?.card_number || 'N/A'}`,
+        ok: { label: 'Register as new person', color: 'warning' },
+        cancel: { label: 'Create service for existing', color: 'primary' },
+        persistent: true,
+      })
+        .onOk(() => resolve({ continue: true, force_register: true }))
+        .onCancel(() => {
+          openExistingPatientForService(existing);
+          resolve({ continue: false });
+        });
+    });
+  }
+
+  return { continue: true, force_register: false };
+};
+
+onMounted(async () => {
+  try {
+    const config = await patientsStore.fetchRegistrationConfig();
+    ghimsCardMode.value = !!config?.ghims_card_mode;
+    await moduleSettingsStore.fetchModuleStatus('ghims');
+    ghimsCardMode.value = moduleSettingsStore.isModuleActive('ghims');
+  } catch (e) {
+    console.warn('Could not load GHIMS registration config', e);
+  }
+});
 </script>
 

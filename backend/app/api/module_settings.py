@@ -32,6 +32,12 @@ MODE_MODULE_DEFAULTS = {
         "category": "core",
         "display_order": 1003,
     },
+    "ghims": {
+        "module_name": "GHIMS Card Numbers",
+        "description": "Manual GHIMS card numbers for new patients instead of HMS auto-generated cards",
+        "category": "core",
+        "display_order": 1004,
+    },
 }
 
 
@@ -164,8 +170,9 @@ def get_module_status_batch(
             }
         else:
             # Default to active if module not found (backward compatibility)
+            default_active = False if module_key == "ghims" else True
             result[key] = {
-                "is_active": True,
+                "is_active": default_active,
                 "allow_read": True,
                 "allow_create": True,
                 "allow_update": True,
@@ -183,10 +190,10 @@ def get_module_status(
     """Get module status (public endpoint - no auth required for checking status)"""
     module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
     if not module:
-        # If module doesn't exist, assume it's active (backward compatibility)
+        default_active = False if module_key == "ghims" else True
         return ModuleStatusResponse(
             module_key=module_key,
-            is_active=True,
+            is_active=default_active,
             allow_read=True,
             allow_create=True,
             allow_update=True,
@@ -220,7 +227,7 @@ def update_module_setting(
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=True,
+                is_active=False if module_key == "ghims" else True,
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,
@@ -283,7 +290,7 @@ def toggle_module(
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=True,
+                is_active=False if module_key == "ghims" else True,
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,

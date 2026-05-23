@@ -19,12 +19,15 @@ class Patient(Base):
     gender = Column(String(10), nullable=False)  # M, F
     age = Column(Integer)
     date_of_birth = Column(Date)
-    card_number = Column(String(50), unique=True, index=True, nullable=False)  # Format: ER-A25-AAA0001
+    card_number = Column(String(50), unique=True, index=True, nullable=False)  # Current card (GHIMS or HMS)
+    legacy_card_number = Column(String(50), nullable=True, index=True)  # Previous HMS card after GHIMS migration
     insured = Column(Boolean, default=False)
+    nhis_active = Column(Boolean, default=False)  # NHIS card active (staff-verified / NHIA lookup)
     insurance_id = Column(String(100), nullable=True)  # NHIS member number
     insurance_start_date = Column(Date, nullable=True)
     insurance_end_date = Column(Date, nullable=True)
     ccc_number = Column(String(50), nullable=True)  # 5-digit CCC number
+    ccc_status = Column(String(50), nullable=True)  # ACTIVE / INACTIVE from NHIA portal
     contact = Column(String(100))
     address = Column(String(500))
     # Emergency contact details

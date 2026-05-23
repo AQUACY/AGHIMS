@@ -191,6 +191,8 @@ export const authAPI = {
 // Patient endpoints
 export const patientsAPI = {
   create: (data) => api.post('/patients/', data),
+  getRegistrationConfig: () => api.get('/patients/registration-config'),
+  validateRegistration: (data) => api.post('/patients/validate-registration', data),
   get: (patientId) => api.get(`/patients/${patientId}`),
   getByCard: (cardNumber) => api.get(`/patients/card/${encodeURIComponent(cardNumber)}`),
   searchByName: (name) => api.get(`/patients/search/name?name=${encodeURIComponent(name)}`),
@@ -204,6 +206,8 @@ export const patientsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  lookupNhia: (insuranceId) => api.post('/patients/nhia/lookup', { insurance_id: insuranceId }),
+  generateCcc: (patientId) => api.post(`/patients/${patientId}/generate-ccc`),
   createEncounter: (patientId, serviceType, cccNumber = null, procedureGDrgCode = null, procedureName = null) => {
     const params = new URLSearchParams({ service_type: serviceType });
     if (cccNumber) {

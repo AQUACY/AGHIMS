@@ -34,8 +34,12 @@
           </div>
           <div class="row q-gutter-md">
             <div class="col-12 col-md-3">
-              <div class="text-grey-7 text-caption">Card Number</div>
+              <div class="text-grey-7 text-caption">{{ patient.legacy_card_number ? 'GHIMS Card Number' : 'Card Number' }}</div>
               <div class="text-h6 text-primary">{{ patient.card_number }}</div>
+            </div>
+            <div v-if="patient.legacy_card_number" class="col-12 col-md-3">
+              <div class="text-grey-7 text-caption">Previous HMS Card</div>
+              <div class="text-body1 text-grey-8">{{ patient.legacy_card_number }}</div>
             </div>
             <div class="col-12 col-md-3">
               <div class="text-grey-7 text-caption">Gender</div>
@@ -63,7 +67,15 @@
               />
               <div v-if="patient.insured" class="q-mt-sm">
                 <div class="text-body2">
+                  <strong>NHIS Active:</strong>
+                  {{ patient.nhis_active ? 'Yes' : 'No (cash & carry)' }}
+                </div>
+                <div class="text-body2">
                   <strong>Insurance ID:</strong> {{ patient.insurance_id || 'N/A' }}
+                </div>
+                <div v-if="patient.ccc_number" class="text-body2">
+                  <strong>CCC:</strong> {{ patient.ccc_number }}
+                  <span v-if="patient.ccc_status"> ({{ patient.ccc_status }})</span>
                 </div>
                 <div class="text-body2">
                   <strong>Valid From:</strong> {{ formatDate(patient.insurance_start_date) }}
@@ -392,6 +404,31 @@
 
         <q-card-section>
           <q-form @submit="savePatientEdit" class="q-gutter-md">
+            <q-banner v-if="ghimsCardMode" rounded class="bg-blue-1 q-mb-sm">
+              <template v-slot:avatar>
+                <q-icon name="badge" color="primary" />
+              </template>
+              Enter the client's GHIMS card number to replace the HMS card. The previous HMS card will be kept on the profile.
+            </q-banner>
+
+            <div v-if="ghimsCardMode" class="row q-gutter-md">
+              <q-input
+                v-model="editForm.card_number"
+                filled
+                label="GHIMS Card Number"
+                hint="Format: E-0032-26050735. Leave unchanged to keep current card."
+                class="col-12 col-md-6"
+              />
+              <q-input
+                v-if="patient?.legacy_card_number"
+                :model-value="patient.legacy_card_number"
+                filled
+                label="Previous HMS Card"
+                readonly
+                class="col-12 col-md-6"
+              />
+            </div>
+
             <div class="row q-gutter-md">
               <q-input
                 v-model="editForm.name"
@@ -446,27 +483,68 @@
               label="Insured (NHIS)"
             />
 
-            <div v-if="editForm.insured" class="row q-gutter-md">
-              <q-input
-                v-model="editForm.insurance_id"
-                filled
-                label="Insurance ID / Member Number"
-                class="col-12 col-md-6"
+            <div v-if="editForm.insured">
+              <q-toggle
+                v-model="editForm.nhis_active"
+                label="NHIS card is active"
+                class="q-mb-sm"
               />
-              <q-input
-                v-model="editForm.insurance_start_date"
-                filled
-                type="date"
-                label="Insurance Start Date"
-                class="col-12 col-md-3"
-              />
-              <q-input
-                v-model="editForm.insurance_end_date"
-                filled
-                type="date"
-                label="Insurance End Date"
-                class="col-12 col-md-3"
-              />
+              <div class="row q-gutter-md items-start">
+                <q-input
+                  v-model="editForm.insurance_id"
+                  filled
+                  label="Insurance ID / Member Number"
+                  class="col-12 col-md-6"
+                />
+                <q-btn
+                  color="secondary"
+                  icon="cloud_download"
+                  label="Import from NHIA"
+                  class="col-12 col-md-auto q-mt-xs"
+                  :loading="importingNhia"
+                  :disable="!editForm.insurance_id || !editForm.insurance_id.trim()"
+                  @click="importFromNhia"
+                />
+                <q-btn
+                  v-if="patient?.id"
+                  color="primary"
+                  icon="verified"
+                  label="Generate CCC"
+                  class="col-12 col-md-auto q-mt-xs"
+                  :loading="generatingCcc"
+                  :disable="!canGenerateCcc"
+                  @click="generateCccForPatient"
+                />
+              </div>
+              <div class="row q-gutter-md q-mt-sm">
+                <q-input
+                  v-model="editForm.ccc_number"
+                  filled
+                  label="CCC Number"
+                  class="col-12 col-md-3"
+                />
+                <q-input
+                  v-model="editForm.ccc_status"
+                  filled
+                  label="NHIS Status"
+                  class="col-12 col-md-3"
+                  readonly
+                />
+                <q-input
+                  v-model="editForm.insurance_start_date"
+                  filled
+                  type="date"
+                  label="Insurance Start Date"
+                  class="col-12 col-md-3"
+                />
+                <q-input
+                  v-model="editForm.insurance_end_date"
+                  filled
+                  type="date"
+                  label="Insurance End Date"
+                  class="col-12 col-md-3"
+                />
+              </div>
             </div>
 
             <q-input
@@ -594,11 +672,23 @@
               @update:model-value="val => { const sel = (procedureOptions||[]).find(p=>p.g_drg_code===val); encounterEditForm.procedure_name = sel?.service_name || '' }"
               :disable="!encounterEditForm.department"
             />
-            <q-input
-              v-model="encounterEditForm.ccc_number"
-              filled
-              label="CCC Number"
-            />
+            <div class="row q-col-gutter-sm items-start">
+              <q-input
+                v-model="encounterEditForm.ccc_number"
+                filled
+                class="col"
+                label="CCC Number"
+              />
+              <q-btn
+                class="col-auto q-mt-xs"
+                color="secondary"
+                icon="cloud_download"
+                label="Get CCC"
+                :loading="generatingEncounterCcc"
+                :disable="!canGetEncounterCcc"
+                @click="fetchEncounterCcc"
+              />
+            </div>
             <q-select
               v-model="encounterEditForm.status"
               filled
@@ -684,6 +774,7 @@ import { useAuthStore } from '../stores/auth';
 import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
 import { priceListAPI } from '../services/api';
+import { applyNhiaDataToForm, applyNhiaCccToForm, canFetchNhiaCcc } from '../utils/nhiaForm';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -691,6 +782,7 @@ const router = useRouter();
 const patientsStore = usePatientsStore();
 const encountersStore = useEncountersStore();
 const authStore = useAuthStore();
+const facilityStore = useFacilityStore();
 
 const patient = ref(null);
 const patientEncounters = ref([]);
@@ -718,6 +810,10 @@ const billItemsColumns = [
 ];
 const unpaidEncounters = ref([]);
 const saving = ref(false);
+const importingNhia = ref(false);
+const generatingCcc = ref(false);
+const generatingEncounterCcc = ref(false);
+const ghimsCardMode = ref(false);
 const showEditDialog = ref(false);
 const showEditEncounterDialog = ref(false);
 const currentEncounter = ref(null);
@@ -779,9 +875,12 @@ const editForm = reactive({
   age: null,
   date_of_birth: '',
   insured: false,
+  nhis_active: false,
   insurance_id: '',
   insurance_start_date: '',
   insurance_end_date: '',
+  ccc_number: '',
+  ccc_status: '',
   contact: '',
   address: '',
   emergency_contact_name: '',
@@ -790,6 +889,7 @@ const editForm = reactive({
   marital_status: '',
   educational_level: '',
   occupation: '',
+  card_number: '',
 });
 
 // Helper function to calculate age from date of birth
@@ -1189,6 +1289,57 @@ const viewIPDDetails = (wardAdmissionId) => {
 
 const canAccess = (roles) => authStore.canAccess(roles);
 
+const canGenerateCcc = computed(() => canFetchNhiaCcc(editForm));
+
+const canGetEncounterCcc = computed(() => canFetchNhiaCcc(patient.value));
+
+const importFromNhia = async () => {
+  if (!editForm.insurance_id?.trim()) return;
+  importingNhia.value = true;
+  try {
+    const result = await patientsStore.lookupNhia(editForm.insurance_id.trim());
+    applyNhiaDataToForm(editForm, result.data);
+    $q.notify({ type: 'positive', message: 'Patient details imported from NHIA' });
+  } finally {
+    importingNhia.value = false;
+  }
+};
+
+const generateCccForPatient = async () => {
+  if (!patient.value?.id || !canGenerateCcc.value) return;
+  generatingCcc.value = true;
+  try {
+    const result = await patientsStore.generateCcc(patient.value.id);
+    if (result?.data?.ccc) {
+      editForm.ccc_number = result.data.ccc;
+    }
+    if (result?.data) {
+      applyNhiaCccToForm(editForm, result.data);
+    }
+    if (result?.patient) {
+      patient.value = result.patient;
+    }
+  } finally {
+    generatingCcc.value = false;
+  }
+};
+
+const fetchEncounterCcc = async () => {
+  if (!patient.value?.id || !canGetEncounterCcc.value) return;
+  generatingEncounterCcc.value = true;
+  try {
+    const result = await patientsStore.generateCcc(patient.value.id);
+    if (result?.data?.ccc) {
+      encounterEditForm.ccc_number = result.data.ccc;
+    }
+    if (result?.patient) {
+      patient.value = result.patient;
+    }
+  } finally {
+    generatingEncounterCcc.value = false;
+  }
+};
+
 const editPatient = () => {
   if (!patient.value) return;
   
@@ -1200,11 +1351,14 @@ const editPatient = () => {
     age: patient.value.age || null,
     date_of_birth: patient.value.date_of_birth ? patient.value.date_of_birth.split('T')[0] : '',
     insured: patient.value.insured || false,
+    nhis_active: patient.value.nhis_active || false,
     insurance_id: patient.value.insurance_id || '',
     insurance_start_date: patient.value.insurance_start_date 
       ? patient.value.insurance_start_date.split('T')[0] : '',
     insurance_end_date: patient.value.insurance_end_date 
       ? patient.value.insurance_end_date.split('T')[0] : '',
+    ccc_number: patient.value.ccc_number || '',
+    ccc_status: patient.value.ccc_status || '',
     contact: patient.value.contact || '',
     address: patient.value.address || '',
     emergency_contact_name: patient.value.emergency_contact_name || '',
@@ -1213,6 +1367,7 @@ const editPatient = () => {
     marital_status: patient.value.marital_status || '',
     educational_level: patient.value.educational_level || '',
     occupation: patient.value.occupation || '',
+    card_number: patient.value.card_number || '',
   });
   
   showEditDialog.value = true;
@@ -1226,7 +1381,7 @@ const savePatientEdit = async () => {
     // Clean up empty fields - send null instead of empty strings
     const fieldsToClean = [
       'date_of_birth', 'insurance_start_date', 'insurance_end_date',
-      'insurance_id', 'surname', 'other_names', 'contact', 'address',
+      'insurance_id', 'ccc_number', 'ccc_status', 'surname', 'other_names', 'contact', 'address',
       'emergency_contact_name', 'emergency_contact_relationship', 'emergency_contact_number',
       'marital_status', 'educational_level', 'occupation'
     ];
@@ -1236,6 +1391,15 @@ const savePatientEdit = async () => {
         patientData[field] = null;
       }
     });
+    if (!patientData.insured) {
+      patientData.nhis_active = false;
+    }
+
+    if (!ghimsCardMode.value || patientData.card_number === patient.value.card_number) {
+      delete patientData.card_number;
+    } else if (patientData.card_number === '') {
+      delete patientData.card_number;
+    }
     
     await patientsStore.updatePatient(patient.value.id, patientData);
     await loadPatient(); // Reload patient data
@@ -1599,6 +1763,7 @@ const buildPatientRecordsHtml = (patient, encounterData, ipdData = []) => {
       <h3 class="section-title">PATIENT BIOSTATISTICS</h3>
       <div class="two-column">
         <div><strong>Card Number:</strong> ${patient.card_number || 'N/A'}</div>
+        ${patient.legacy_card_number ? `<div><strong>Previous HMS Card:</strong> ${patient.legacy_card_number}</div>` : ''}
         <div><strong>Name:</strong> ${patient.name || ''} ${patient.surname || ''} ${patient.other_names || ''}</div>
         <div><strong>Gender:</strong> ${patient.gender || 'N/A'}</div>
         <div><strong>Age:</strong> ${patient.age || 'N/A'}</div>
@@ -2104,7 +2269,13 @@ const buildPatientRecordsHtml = (patient, encounterData, ipdData = []) => {
   </html>`;
 };
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const config = await patientsStore.fetchRegistrationConfig();
+    ghimsCardMode.value = !!config?.ghims_card_mode;
+  } catch {
+    ghimsCardMode.value = false;
+  }
   loadPatient();
   loadServiceTypes();
 });

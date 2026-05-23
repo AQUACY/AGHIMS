@@ -30,7 +30,7 @@
             <strong>CSV Template Format:</strong>
             <ul class="q-mt-sm q-ml-md">
               <li><strong>Required fields:</strong> name, gender (M or F)</li>
-              <li><strong>Optional fields:</strong> surname, other_names, age, date_of_birth, card_number, insured, insurance_id, insurance_start_date, insurance_end_date, ccc_number, contact, address</li>
+              <li><strong>Optional fields:</strong> surname, other_names, age, date_of_birth, card_number, insured, nhis_active, insurance_id, insurance_start_date, insurance_end_date, ccc_number, ccc_status, contact, address</li>
               <li><strong>Date formats:</strong> YYYY-MM-DD, DD/MM/YYYY, MM/DD/YYYY</li>
               <li><strong>Boolean values:</strong> TRUE, 1, YES, Y for true; FALSE, 0, NO, N for false</li>
               <li><strong>Card Number:</strong> Leave empty to auto-generate, or provide existing card number (must be unique)</li>

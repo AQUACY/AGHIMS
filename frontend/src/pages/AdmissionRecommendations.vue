@@ -434,27 +434,43 @@
                         </div>
                       </div>
                       <div class="col-12 col-md-6">
-                        <q-input
-                          v-model="admissionForm.ccc_number"
-                          filled
-                          label="CCC Number"
-                          hint="Auto-populated from OPD encounter if available. For direct admissions, enter if patient has active insurance, otherwise leave blank (cash and carry)."
-                          :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
-                          :class="selectedAdmissionForConfirm && selectedAdmissionForConfirm.patient_insured && !isInsuranceExpired(selectedAdmissionForConfirm) ? 'bg-positive-1' : ''"
-                        >
-                          <template v-slot:append>
-                            <q-btn
-                              v-if="admissionForm.ccc_number"
-                              flat
-                              dense
-                              icon="clear"
-                              @click="admissionForm.ccc_number = ''"
-                            />
-                          </template>
-                        </q-input>
+                        <div class="row q-col-gutter-sm items-start">
+                          <q-input
+                            v-model="admissionForm.ccc_number"
+                            filled
+                            class="col"
+                            label="CCC Number"
+                            hint="Auto-populated from OPD if available. Use Get CCC for active NHIS."
+                            :rules="[val => !val || val.length === 5 || 'CCC number must be 5 digits']"
+                            :class="selectedAdmissionForConfirm && selectedAdmissionForConfirm.patient_insured && selectedAdmissionForConfirm.patient_nhis_active && !isInsuranceExpired(selectedAdmissionForConfirm) ? 'bg-positive-1' : ''"
+                          >
+                            <template v-slot:append>
+                              <q-btn
+                                v-if="admissionForm.ccc_number"
+                                flat
+                                dense
+                                icon="clear"
+                                @click="admissionForm.ccc_number = ''"
+                              />
+                            </template>
+                          </q-input>
+                          <q-btn
+                            class="col-auto q-mt-xs"
+                            color="secondary"
+                            icon="cloud_download"
+                            label="Get CCC"
+                            :loading="generatingCcc"
+                            :disable="!canGetAdmissionCcc"
+                            @click="fetchAdmissionCcc"
+                          >
+                            <q-tooltip v-if="!canGetAdmissionCcc">
+                              Requires insured patient with active NHIS and member number
+                            </q-tooltip>
+                          </q-btn>
+                        </div>
                         <div class="text-caption text-secondary q-mt-xs">
                           <q-icon name="info" size="16px" class="q-mr-xs" />
-                          If empty from OPD and patient has active insurance, enter CCC number here.
+                          If empty from OPD and patient has active NHIS, use Get CCC or enter manually.
                         </div>
                       </div>
                     </div>
@@ -692,10 +708,14 @@ import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, patientsAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
+import { usePatientsStore } from '../stores/patients';
+import { canGenerateNhiaCcc, nhiaPatientFromAdmission } from '../utils/nhiaForm';
 
 const $q = useQuasar();
 const router = useRouter();
 const authStore = useAuthStore();
+const patientsStore = usePatientsStore();
+const generatingCcc = ref(false);
 
 const isAdmin = computed(() => {
   return authStore.user?.role === 'Admin';
@@ -721,6 +741,36 @@ const doctors = ref([]);
 const loadingBeds = ref(false);
 const loadingDoctors = ref(false);
 const loadingPatientInsurance = ref(false);
+
+const canGetAdmissionCcc = computed(() =>
+  canGenerateNhiaCcc(nhiaPatientFromAdmission(selectedAdmissionForConfirm.value))
+);
+
+const fetchAdmissionCcc = async () => {
+  const admission = selectedAdmissionForConfirm.value;
+  const nhiaPatient = nhiaPatientFromAdmission(admission);
+  if (!nhiaPatient?.id || !canGenerateNhiaCcc(nhiaPatient)) return;
+
+  generatingCcc.value = true;
+  try {
+    const result = await patientsStore.generateCcc(nhiaPatient.id);
+    if (result?.data?.ccc) {
+      admissionForm.value.ccc_number = result.data.ccc;
+    }
+    if (result?.patient) {
+      selectedAdmissionForConfirm.value = {
+        ...admission,
+        patient_insured: result.patient.insured,
+        patient_nhis_active: result.patient.nhis_active,
+        patient_insurance_id: result.patient.insurance_id,
+        patient_insurance_start_date: result.patient.insurance_start_date,
+        patient_insurance_end_date: result.patient.insurance_end_date,
+      };
+    }
+  } finally {
+    generatingCcc.value = false;
+  }
+};
 
 const admissionForm = ref({
   ccc_number: '',
@@ -881,7 +931,9 @@ const confirmAdmission = async (admission) => {
           // Merge insurance information into admission object
           admissionWithInsurance = {
             ...admission,
+            patient_id: patient.id,
             patient_insured: patient.insured || false,
+            patient_nhis_active: patient.nhis_active || false,
             patient_insurance_id: patient.insurance_id || null,
             patient_insurance_start_date: patient.insurance_start_date || null,
             patient_insurance_end_date: patient.insurance_end_date || null,

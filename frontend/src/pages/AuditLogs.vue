@@ -120,7 +120,7 @@
               filled
               clearable
               class="col-12 col-md-3"
-              @update:model-value="loadLogs"
+              @update:model-value="() => { pagination.page = 1; loadLogs(); }"
             >
               <template v-slot:prepend>
                 <q-icon name="event" />
@@ -134,7 +134,7 @@
               filled
               clearable
               class="col-12 col-md-3"
-              @update:model-value="loadLogs"
+              @update:model-value="() => { pagination.page = 1; loadLogs(); }"
             >
               <template v-slot:prepend>
                 <q-icon name="event" />
@@ -145,7 +145,7 @@
               <q-btn
                 color="primary"
                 label="Apply Filters"
-                @click="loadLogs"
+                @click="() => { pagination.page = 1; loadLogs(); }"
                 icon="filter_list"
                 class="full-width"
               />
@@ -174,6 +174,9 @@
               Audit Logs
               <q-badge color="primary" class="q-ml-sm">{{ totalLogs }}</q-badge>
             </div>
+            <div class="text-caption text-grey-7 q-mt-xs">
+              Showing {{ paginationLabel }} · Page {{ pagination.page }} of {{ totalPages }}
+            </div>
           </div>
           <div class="col-auto">
             <q-btn
@@ -189,14 +192,15 @@
         </div>
 
         <q-table
+          v-model:pagination="pagination"
           :rows="logs"
           :columns="columns"
           :loading="loading"
-          :pagination="pagination"
-          @request="onRequest"
           row-key="id"
           flat
           class="audit-logs-table"
+          :rows-per-page-options="[25, 50, 100, 200]"
+          @request="onRequest"
         >
           <template v-slot:body-cell-timestamp="props">
             <q-td :props="props">
@@ -254,6 +258,18 @@
             </div>
           </template>
         </q-table>
+
+        <div v-if="totalPages > 1" class="row justify-center q-mt-md">
+          <q-pagination
+            v-model="pagination.page"
+            :max="totalPages"
+            :max-pages="7"
+            direction-links
+            boundary-links
+            color="primary"
+            @update:model-value="loadLogs"
+          />
+        </div>
       </q-card-section>
     </q-card>
 
@@ -279,7 +295,6 @@
             </div>
             <div v-if="selectedLog?.resource_type">
               <strong>Resource:</strong> {{ selectedLog.resource_type }}
-              <span v-if="selectedLog.resource_id"> (ID: {{ selectedLog.resource_id }})</span>
             </div>
             <div v-if="selectedLog?.endpoint_path">
               <strong>Endpoint:</strong> {{ selectedLog.endpoint_path }}
@@ -310,9 +325,17 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Notify } from 'quasar';
 import { auditLogsAPI } from '../services/api';
+
+function todayIsoDate() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default {
   name: 'AuditLogs',
@@ -340,9 +363,27 @@ export default {
     });
 
     const pagination = ref({
+      sortBy: 'timestamp',
+      descending: true,
       page: 1,
       rowsPerPage: 50,
       rowsNumber: 0,
+    });
+
+    const totalPages = computed(() => {
+      const perPage = pagination.value.rowsPerPage || 50;
+      return Math.max(1, Math.ceil((totalLogs.value || 0) / perPage));
+    });
+
+    const paginationLabel = computed(() => {
+      const start = totalLogs.value === 0
+        ? 0
+        : (pagination.value.page - 1) * pagination.value.rowsPerPage + 1;
+      const end = Math.min(
+        pagination.value.page * pagination.value.rowsPerPage,
+        totalLogs.value,
+      );
+      return `${start}-${end} of ${totalLogs.value}`;
     });
 
     const columns = [
@@ -477,6 +518,7 @@ export default {
     };
 
     const clearFilters = () => {
+      const today = todayIsoDate();
       filters.value = {
         role: null,
         full_name: null,
@@ -485,15 +527,20 @@ export default {
         resource_type: null,
         endpoint_path: null,
         http_method: null,
-        start_date: null,
-        end_date: null,
+        start_date: today,
+        end_date: today,
       };
       pagination.value.page = 1;
       loadLogs();
     };
 
     const onRequest = (props) => {
-      pagination.value = props.pagination;
+      if (props?.pagination) {
+        pagination.value = {
+          ...pagination.value,
+          ...props.pagination,
+        };
+      }
       loadLogs();
     };
 
@@ -541,6 +588,9 @@ export default {
     };
 
     onMounted(() => {
+      const today = todayIsoDate();
+      filters.value.start_date = today;
+      filters.value.end_date = today;
       loadFilterOptions();
       loadLogs();
     });
@@ -549,6 +599,8 @@ export default {
       logs,
       loading,
       totalLogs,
+      totalPages,
+      paginationLabel,
       filters,
       pagination,
       columns,

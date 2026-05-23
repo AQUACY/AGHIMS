@@ -173,6 +173,13 @@ DEFAULT_MODULES = [
         "category": "administrative",
         "display_order": 22
     },
+    {
+        "module_key": "ghims",
+        "module_name": "GHIMS Card Numbers",
+        "description": "When enabled, new patients use manual GHIMS card numbers (e.g. E-0032-26050735) instead of auto-generated HMS cards. When disabled, HMS auto-generates card numbers as usual.",
+        "category": "core",
+        "display_order": 23
+    },
 ]
 
 
@@ -210,7 +217,7 @@ def init_module_settings():
                             module_key=module_data["module_key"],
                             module_name=module_data["module_name"],
                             description=module_data.get("description", ""),
-                            is_active=True,
+                            is_active=module_data["module_key"] != "ghims",
                             allow_read=True,
                             allow_create=True,
                             allow_update=True,
@@ -271,7 +278,7 @@ def init_module_settings():
                 existing = cursor.fetchone()
                 
                 if not existing:
-                    # Insert new module
+                    ghims_active = module_data["module_key"] != "ghims"
                     cursor.execute("""
                         INSERT INTO module_settings 
                         (module_key, module_name, description, is_active, allow_read, 
@@ -281,7 +288,7 @@ def init_module_settings():
                         module_data["module_key"],
                         module_data["module_name"],
                         module_data.get("description", ""),
-                        True,  # is_active
+                        ghims_active,
                         True,  # allow_read
                         True,  # allow_create
                         True,  # allow_update
