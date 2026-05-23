@@ -8,6 +8,23 @@
       Control which modules are active in the system. When a module is inactive, users can still view data they created but cannot create, edit, or delete records.
     </q-banner>
 
+    <q-card class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-sm glass-text">Patient registration</div>
+        <div class="text-caption q-mb-md">
+          When enabled, new patients use manual GHIMS card numbers (e.g. E-0032-26050735) instead of HMS auto-generated cards.
+          Previous HMS cards are kept as legacy numbers on the profile.
+        </div>
+        <q-toggle
+          :model-value="ghimsCardMode"
+          label="GHIMS card numbers"
+          color="primary"
+          :loading="togglingGhims"
+          @update:model-value="updateGhimsToggle"
+        />
+      </q-card-section>
+    </q-card>
+
     <q-card v-if="isSuperAdmin" class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-sm glass-text">Facility Mode Setup</div>
@@ -214,8 +231,13 @@ const moduleSettingsStore = useModuleSettingsStore();
 
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 /** Mode toggles are super-admin only; hide these module rows from the table for everyone else. */
+const GHIMS_MODULE_KEY = 'ghims';
 const APP_MODE_MODULE_KEY_SET = new Set(Object.values(APP_MODE_MODULE_KEYS));
+/** Shown in dedicated toggles above, not the modules table */
+const DEDICATED_TOGGLE_MODULE_KEYS = new Set([...APP_MODE_MODULE_KEY_SET, GHIMS_MODULE_KEY]);
 const togglingMode = ref(null);
+const togglingGhims = ref(false);
+const ghimsCardMode = ref(false);
 const modeToggles = ref({
   hms: true,
   companion: true,
@@ -295,6 +317,7 @@ const loadModules = async () => {
     loading.value = true;
     const response = await moduleSettingsAPI.getAll(selectedCategory.value);
     let list = response.data || [];
+    list = list.filter((m) => !DEDICATED_TOGGLE_MODULE_KEYS.has(m.module_key));
     if (!isSuperAdmin.value) {
       list = list.filter((m) => !APP_MODE_MODULE_KEY_SET.has(m.module_key));
     }
@@ -311,6 +334,43 @@ const loadModules = async () => {
     });
   } finally {
     loading.value = false;
+  }
+};
+
+const loadGhimsToggle = async () => {
+  try {
+    await moduleSettingsStore.fetchModuleStatus(GHIMS_MODULE_KEY);
+    ghimsCardMode.value = moduleSettingsStore.isModuleActive(GHIMS_MODULE_KEY);
+  } catch (error) {
+    console.error('Error loading GHIMS module status:', error);
+  }
+};
+
+const updateGhimsToggle = async (value) => {
+  const previousValue = ghimsCardMode.value;
+  ghimsCardMode.value = value;
+  try {
+    togglingGhims.value = true;
+    await moduleSettingsAPI.update(GHIMS_MODULE_KEY, { is_active: value });
+    moduleSettingsStore.clearCache();
+    await moduleSettingsStore.fetchModuleStatus(GHIMS_MODULE_KEY);
+    $q.notify({
+      type: 'positive',
+      message: value
+        ? 'GHIMS card numbers enabled for patient registration'
+        : 'HMS auto-generated card numbers restored',
+      position: 'top',
+    });
+  } catch (error) {
+    ghimsCardMode.value = previousValue;
+    console.error('Error updating GHIMS toggle:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to update GHIMS card setting',
+      position: 'top',
+    });
+  } finally {
+    togglingGhims.value = false;
   }
 };
 
@@ -433,6 +493,7 @@ const saveModule = async () => {
 
 onMounted(() => {
   loadModules();
+  loadGhimsToggle();
   loadModeSetup();
 });
 </script>

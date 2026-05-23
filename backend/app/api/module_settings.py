@@ -34,11 +34,38 @@ MODE_MODULE_DEFAULTS = {
     },
     "ghims": {
         "module_name": "GHIMS Card Numbers",
-        "description": "Manual GHIMS card numbers for new patients instead of HMS auto-generated cards",
+        "description": "When enabled, new patients use manual GHIMS card numbers (e.g. E-0032-26050735) instead of auto-generated HMS cards.",
         "category": "core",
         "display_order": 1004,
     },
 }
+
+
+def ensure_bootstrap_modules(db: Session) -> None:
+    """Create facility-mode and GHIMS module rows if missing (e.g. after deploy without init script)."""
+    for module_key, defaults in MODE_MODULE_DEFAULTS.items():
+        existing = (
+            db.query(ModuleSettings)
+            .filter(ModuleSettings.module_key == module_key)
+            .first()
+        )
+        if existing:
+            continue
+        db.add(
+            ModuleSettings(
+                module_key=module_key,
+                module_name=defaults["module_name"],
+                description=defaults["description"],
+                is_active=False if module_key == "ghims" else True,
+                allow_read=True,
+                allow_create=True,
+                allow_update=True,
+                allow_delete=True,
+                category=defaults["category"],
+                display_order=defaults["display_order"],
+            )
+        )
+    db.commit()
 
 
 class ModuleSettingsResponse(BaseModel):
@@ -88,6 +115,7 @@ def get_all_module_settings(
     current_user: User = Depends(require_role(["Admin"]))
 ):
     """Get all module settings, optionally filtered by category"""
+    ensure_bootstrap_modules(db)
     query = db.query(ModuleSettings)
     
     if category:
@@ -170,7 +198,7 @@ def get_module_status_batch(
             }
         else:
             # Default to active if module not found (backward compatibility)
-            default_active = False if module_key == "ghims" else True
+            default_active = False if key == "ghims" else True
             result[key] = {
                 "is_active": default_active,
                 "allow_read": True,
