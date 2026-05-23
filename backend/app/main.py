@@ -87,8 +87,10 @@ if not cors_origins:
         "http://10.10.16.10:9000/",  # Production (with trailing slash)
         "http://localhost:9001",  # Production (Network IP dev server)
         "http://localhost:9001/",  # Production (with trailing slash)
-        "https://claims.aquacy.me/"
-        "https://claims.aquacy.me"
+        "http://10.10.16.50:9000/",
+        "http://10.10.16.50:9000",
+        "https://claims.aquacy.me/",
+        "https://claims.aquacy.me",
     ]
 
 app.add_middleware(
