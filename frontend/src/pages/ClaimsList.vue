@@ -112,6 +112,15 @@
             hint="e.g., CLA-XXXXX"
           />
           <q-input
+            v-model="filterClaimCheckCode"
+            filled
+            label="CCC / Claim Check Code"
+            class="col-12 col-md-2"
+            clearable
+            @keyup.enter="loadFinalizedEncounters"
+            hint="Partial match supported"
+          />
+          <q-input
             v-model="filterStartDate"
             filled
             type="date"
@@ -307,6 +316,7 @@ const filterEndDate = ref(getTodayDate()); // Default to today
 const filterClaimStatus = ref(null);
 const filterCardNumber = ref('');
 const filterClaimId = ref('');
+const filterClaimCheckCode = ref('');
 const filterSpecialty = ref(null);
 const specialtyOptions = ref([]);
 const filtersLocked = ref(false);
@@ -506,6 +516,7 @@ const saveFiltersToStorage = () => {
     claimType: claimType.value,
     filterCardNumber: filterCardNumber.value,
     filterClaimId: filterClaimId.value,
+    filterClaimCheckCode: filterClaimCheckCode.value,
     filterStartDate: filterStartDate.value,
     filterEndDate: filterEndDate.value,
     filterClaimStatus: filterClaimStatus.value,
@@ -523,6 +534,7 @@ const loadFiltersFromStorage = () => {
       claimType.value = filters.claimType ?? null;
       filterCardNumber.value = filters.filterCardNumber || '';
       filterClaimId.value = filters.filterClaimId || '';
+      filterClaimCheckCode.value = filters.filterClaimCheckCode || '';
       filterSpecialty.value = filters.filterSpecialty ?? null;
       // Only load saved dates if they exist, otherwise default to today
       filterStartDate.value = filters.filterStartDate || getTodayDate();
@@ -691,6 +703,7 @@ const loadFinalizedEncounters = async (page = 1) => {
       filterClaimStatus.value || null,
       filterCardNumber.value || null,
       filterClaimId.value || null,
+      filterClaimCheckCode.value || null,
       filterSpecialty.value || null,
       skip,
       pagination.value.rowsPerPage
@@ -770,7 +783,7 @@ watch(claimType, () => {
   loadSpecialties(); // Refresh specialty options (OPD = departments, IPD = wards)
 });
 
-watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterSpecialty, claimType], () => {
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterClaimCheckCode, filterSpecialty, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
     pagination.value.page = 1; // Reset to first page when filters change

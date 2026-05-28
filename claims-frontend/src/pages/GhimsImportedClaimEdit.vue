@@ -33,6 +33,23 @@
           <div class="row q-col-gutter-md">
             <q-input v-model="payload.claimID" label="Claim ID" filled class="col-12 col-md-3" />
             <q-input v-model="payload.claimCheckCode" label="Claim Check Code" filled class="col-12 col-md-3" />
+            <div class="col-12 col-md-6 row items-center q-gutter-sm">
+              <q-btn
+                color="secondary"
+                icon="cloud_download"
+                label="Get CCC"
+                :loading="fetchingClaimCcc"
+                :disable="!canGetGhimsCcc || loading"
+                @click="onGetGhimsClaimCcc"
+              >
+                <q-tooltip v-if="!canGetGhimsCcc">
+                  Enter a member number to fetch CCC from NHIA
+                </q-tooltip>
+              </q-btn>
+              <span class="text-caption text-grey-7">
+                Preview only until Save and Finalize — refresh the page to undo.
+              </span>
+            </div>
             <q-input v-model="payload.preAuthorizationCodes" label="Pre-Authorization Codes" filled class="col-12 col-md-3" />
             <q-input v-model="payload.physicianID" label="Physician ID" filled class="col-12 col-md-3" />
           </div>
@@ -158,7 +175,22 @@
               <li v-for="(msg, i) in claimitErrors.by_section.investigations" :key="i" class="text-body2">{{ msg }}</li>
             </ul>
           </q-banner>
-          <div v-for="(inv, i) in payload.investigations" :key="`inv-${i}`" class="row q-col-gutter-sm q-mb-sm">
+          <div
+            v-for="(inv, i) in payload.investigations"
+            :key="`inv-${i}`"
+            class="row q-col-gutter-sm q-mb-sm"
+            :class="claimLineSectionClass(inv) || undefined"
+          >
+            <div v-if="isOutsideServiceSpan(inv)" class="col-12">
+              <q-chip
+                dense
+                size="sm"
+                color="amber-2"
+                text-color="amber-10"
+                icon="event_busy"
+                label="Outside service span (after Get CCC)"
+              />
+            </div>
             <q-input v-model="inv.serviceDate" type="date" label="Date" filled dense class="col-12 col-md-4" />
             <q-select
               :model-value="inv._selectedOption || inv.gdrgCode"
@@ -194,8 +226,24 @@
               <li v-for="(msg, i) in claimitErrors.by_section.medicines" :key="i" class="text-body2">{{ msg }}</li>
             </ul>
           </q-banner>
-          <div v-for="(m, i) in payload.medicines" :key="`med-${i}`" class="row q-col-gutter-sm q-mb-sm">
-            <div class="col-12 text-caption text-grey-7 text-weight-medium">Medicine Section {{ i + 1 }}</div>
+          <div
+            v-for="(m, i) in payload.medicines"
+            :key="`med-${i}`"
+            class="row q-col-gutter-sm q-mb-sm"
+            :class="claimLineSectionClass(m) || undefined"
+          >
+            <div class="col-12 row items-center q-gutter-xs">
+              <div class="text-caption text-grey-7 text-weight-medium">Medicine Section {{ i + 1 }}</div>
+              <q-chip
+                v-if="isOutsideServiceSpan(m)"
+                dense
+                size="sm"
+                color="amber-2"
+                text-color="amber-10"
+                icon="event_busy"
+                label="Outside service span (after Get CCC)"
+              />
+            </div>
             <q-select
               :model-value="m._selectedOption || m.medicineCode"
               :options="medicineSearchOptions"
@@ -257,7 +305,22 @@
               <li v-for="(msg, i) in claimitErrors.by_section.procedures" :key="i" class="text-body2">{{ msg }}</li>
             </ul>
           </q-banner>
-          <div v-for="(p, i) in payload.procedures" :key="`proc-${i}`" class="row q-col-gutter-sm q-mb-sm">
+          <div
+            v-for="(p, i) in payload.procedures"
+            :key="`proc-${i}`"
+            class="row q-col-gutter-sm q-mb-sm"
+            :class="claimLineSectionClass(p) || undefined"
+          >
+            <div v-if="isOutsideServiceSpan(p)" class="col-12">
+              <q-chip
+                dense
+                size="sm"
+                color="amber-2"
+                text-color="amber-10"
+                icon="event_busy"
+                label="Outside service span (after Get CCC)"
+              />
+            </div>
             <q-input v-model="p.serviceDate" type="date" label="Date" filled dense class="col-12 col-md-2" />
             <q-select
               :model-value="p._selectedOption || p.gdrgCode"
@@ -295,15 +358,25 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
+import {
+  confirmClaimGetCcc,
+  canFetchClaimCcc,
+  applyGhimsFetchCccToPayload,
+} from '../utils/claimGetCcc';
+import {
+  isOutsideServiceSpan,
+  claimLineSectionClass,
+} from '../utils/claimMedicineCoverage';
 
 const route = useRoute();
 const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
+const fetchingClaimCcc = ref(false);
 const status = ref('draft');
 const principalDiagnosisIndex = ref(-1);
 const itemId = Number(route.params.itemId);
@@ -315,6 +388,8 @@ const payload = reactive({
   claimID: '', claimCheckCode: '', memberNo: '', surname: '', otherNames: '', dateOfBirth: '',
   typeOfService: '', typeOfAttendance: '', specialtyAttended: '', diagnoses: [], medicines: [],
 });
+
+const canGetGhimsCcc = computed(() => canFetchClaimCcc({ memberNo: payload.memberNo }));
 
 function emptyClaimitBySection() {
   return {
@@ -758,6 +833,32 @@ function normalize(p) {
   };
 }
 
+async function onGetGhimsClaimCcc() {
+  if (!canGetGhimsCcc.value) return;
+  const confirmed = await confirmClaimGetCcc($q);
+  if (!confirmed) return;
+
+  fetchingClaimCcc.value = true;
+  try {
+    const memberNo = (payload.memberNo || '').trim();
+    const res = await claimsAPI.fetchGhimsImportCcc(itemId, memberNo || null);
+    applyGhimsFetchCccToPayload(payload, res.data);
+    $q.notify({
+      type: 'positive',
+      message: `Claim check code updated to ${res.data.claim_check_code || res.data.ccc}. Save and finalize to keep changes.`,
+      position: 'top',
+    });
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || error.message || 'Failed to fetch CCC',
+      position: 'top',
+    });
+  } finally {
+    fetchingClaimCcc.value = false;
+  }
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -896,3 +997,13 @@ watch(
   { deep: true }
 );
 </script>
+
+<style scoped>
+.service-outside-span-section {
+  margin: 0 -4px;
+  padding: 8px 8px 4px;
+  border-radius: 6px;
+  background-color: rgba(255, 193, 7, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 193, 7, 0.28);
+}
+</style>

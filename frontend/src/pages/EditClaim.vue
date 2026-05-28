@@ -100,6 +100,30 @@
               label="Month of Claim"
               class="col-12 col-md-6"
             />
+            <q-input
+              v-model="claimMeta.claim_check_code"
+              filled
+              label="Claim Check Code"
+              class="col-12 col-md-4"
+              readonly
+            />
+            <div class="col-12 col-md-8 row items-center q-gutter-sm">
+              <q-btn
+                color="secondary"
+                icon="cloud_download"
+                label="Get CCC"
+                :loading="fetchingClaimCcc"
+                :disable="!canGetClaimCcc || loading"
+                @click="onGetClaimCcc"
+              >
+                <q-tooltip v-if="!canGetClaimCcc">
+                  Requires active NHIS with a member number
+                </q-tooltip>
+              </q-btn>
+              <span class="text-caption text-grey-7">
+                Preview only until Save and Finalize — refresh the page to undo.
+              </span>
+            </div>
           </div>
         </q-card-section>
       </q-card>
@@ -356,6 +380,7 @@
             flat
             dense
             class="q-mt-md"
+            :table-row-class-fn="claimLineRowClass"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -567,6 +592,7 @@
             row-key="index"
             flat
             dense
+            :table-row-class-fn="claimLineRowClass"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -662,6 +688,7 @@
             row-key="index"
             flat
             dense
+            :table-row-class-fn="claimLineRowClass"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -1049,6 +1076,16 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
 import { useFacilityStore, DEFAULT_FACILITY_DISPLAY_NAME } from '../stores/facility';
+import {
+  confirmClaimGetCcc,
+  canFetchClaimCcc,
+  applyClaimFetchCccToEditForm,
+} from '../utils/claimGetCcc';
+import {
+  isMedicineNotCovered,
+  normalizeInsuranceCovered,
+  claimLineRowClass,
+} from '../utils/claimMedicineCoverage';
 
 const facilityStore = useFacilityStore();
 const $route = useRoute();
@@ -1058,6 +1095,8 @@ const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
 const reopening = ref(false);
+const fetchingClaimCcc = ref(false);
+const patientNhiaMeta = ref({ insured: false, nhis_active: false });
 const claimId = ref(null);
 const claimStatus = ref('draft');
 const isViewMode = ref(false);
@@ -1096,6 +1135,17 @@ const providerInfo = reactive({
   scheme_code: '',
   month_of_claim: new Date().toISOString().split('T')[0],
 });
+
+const claimMeta = reactive({
+  claim_check_code: '',
+});
+
+const canGetClaimCcc = computed(() =>
+  canFetchClaimCcc({
+    ...patientNhiaMeta.value,
+    insurance_id: patientInfo.member_number,
+  })
+);
 
 // Patient Information
 const patientInfo = reactive({
@@ -1532,6 +1582,7 @@ const onPrescriptionProductSelect = (index, val) => {
   if (val == null || val === '') {
     row.description = '';
     row.code = '';
+    row.insurance_covered = null;
     row.price = 0;
     updatePrescriptionTotal(index);
     return;
@@ -1539,6 +1590,15 @@ const onPrescriptionProductSelect = (index, val) => {
   if (typeof val === 'object' && val !== null && (val.product_name != null || val.service_name != null || val.medication_code != null)) {
     row.description = val.product_name || val.service_name || val.item_name || '';
     row.code = val.medication_code || val.item_code || '';
+    row.insurance_covered = val.insurance_covered || 'yes';
+    row._selectedOption = val;
+    if (normalizeInsuranceCovered(row.insurance_covered) === 'no') {
+      $q.notify({
+        type: 'warning',
+        message: 'This drug is not covered by insurance. It is highlighted in red and must be changed or removed before you can save.',
+        position: 'top',
+      });
+    }
     const price = val.claim_amount ?? val.nhia_app ?? val.base_rate ?? val.insured_price ?? 0;
     row.price = Number(price) || 0;
     if (row.quantity == null || row.quantity === '') row.quantity = 0;
@@ -1548,6 +1608,49 @@ const onPrescriptionProductSelect = (index, val) => {
   }
   row.description = typeof val === 'string' ? val : '';
 };
+
+async function resolvePrescriptionCoverage() {
+  const lookups = [];
+  for (const row of prescriptionsList.value) {
+    const code = String(row.code || '').trim();
+    if (!code) {
+      row.insurance_covered = null;
+      continue;
+    }
+    lookups.push(
+      priceListAPI.search(code, undefined, 'product')
+        .then((res) => {
+          const items = res.data || [];
+          const match = items.find(
+            (p) => String(p.medication_code || p.item_code || '').trim() === code
+          ) || items[0];
+          if (match) {
+            row.insurance_covered = match.insurance_covered || 'yes';
+            if (!row._selectedOption) row._selectedOption = match;
+          } else {
+            row.insurance_covered = 'yes';
+          }
+        })
+        .catch(() => {
+          row.insurance_covered = row.insurance_covered || 'yes';
+        })
+    );
+  }
+  if (lookups.length) await Promise.all(lookups);
+}
+
+async function validateCoveredMedicinesOrThrow() {
+  await resolvePrescriptionCoverage();
+  const bad = [];
+  for (let i = 0; i < prescriptionsList.value.length; i += 1) {
+    const row = prescriptionsList.value[i];
+    if (!row?.description?.trim() || !row?.code?.trim()) continue;
+    if (normalizeInsuranceCovered(row.insurance_covered) === 'no') bad.push(i + 1);
+  }
+  if (bad.length) {
+    throw new Error(`Medicine not covered by insurance. Change or remove medicine row(s): ${bad.join(', ')}`);
+  }
+}
 
 const deleteInvestigation = (index) => {
   $q.dialog({
@@ -1880,6 +1983,7 @@ const saveAndFinalize = async (e) => {
   }
   saving.value = true;
   try {
+    await validateCoveredMedicinesOrThrow();
     // Save claim data directly (do not reload after save to avoid overwriting with stale data)
     const claimData = buildClaimPayload();
     await claimsAPI.updateDetailed(claimId.value, claimData);
@@ -1949,6 +2053,11 @@ const loadClaimData = async () => {
     
     // Set claim status
     claimStatus.value = data.claim.status;
+    claimMeta.claim_check_code = data.claim.claim_check_code || '';
+    patientNhiaMeta.value = {
+      insured: !!data.patient?.insured,
+      nhis_active: !!data.patient?.nhis_active,
+    };
 
     // ClaimIT errors for this claim (from Correct Errors report uploads), grouped by section
     claimitErrors.value = data.claimit_errors || { messages: [], by_section: {} };
@@ -2057,6 +2166,7 @@ const loadClaimData = async () => {
         id: presc?.id || null,
         description: presc?.description || '',
         code: presc?.code || '',
+        insurance_covered: null,
         price: presc?.price || 0,
         quantity: presc?.quantity || 0,
         total_cost: presc?.total_cost || 0,
@@ -2067,6 +2177,8 @@ const loadClaimData = async () => {
         unparsed: presc?.unparsed || '',
       };
     });
+
+    await resolvePrescriptionCoverage();
     
     // Populate claim summary
     if (data.claim_summary) {
@@ -2087,6 +2199,42 @@ const loadClaimData = async () => {
     loading.value = false;
   }
 };
+
+async function onGetClaimCcc() {
+  if (!claimId.value || !canGetClaimCcc.value) return;
+  const confirmed = await confirmClaimGetCcc($q);
+  if (!confirmed) return;
+
+  fetchingClaimCcc.value = true;
+  try {
+    const memberNo = (patientInfo.member_number || '').trim();
+    const res = await claimsAPI.fetchCcc(claimId.value, memberNo || null);
+    applyClaimFetchCccToEditForm(
+      {
+        patientInfo,
+        claimMeta,
+        services,
+        investigationsList,
+        prescriptionsList,
+        proceduresList,
+      },
+      res.data
+    );
+    $q.notify({
+      type: 'positive',
+      message: `Claim check code updated to ${res.data.claim_check_code || res.data.ccc}. Save and finalize to keep changes.`,
+      position: 'top',
+    });
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || error.message || 'Failed to fetch CCC',
+      position: 'top',
+    });
+  } finally {
+    fetchingClaimCcc.value = false;
+  }
+}
 
 /** Reopen a finalized claim so the user can edit (from view mode or Correct Errors) and save again */
 async function reopenClaim() {
@@ -2134,6 +2282,7 @@ function buildClaimPayload() {
     service_outcome: services.outcome,
     is_unbundled: !services.all_inclusive,
     principal_gdrg: services.principal_gdrg || '',
+    claim_check_code: (claimMeta.claim_check_code || '').trim() || null,
     first_visit: services.first_visit || null,
     second_visit: services.second_visit || null,
     third_visit: services.third_visit || null,
@@ -2193,6 +2342,7 @@ const onSaveChangesInViewMode = async () => {
   }).onOk(async () => {
     saving.value = true;
     try {
+      await validateCoveredMedicinesOrThrow();
       const claimData = buildClaimPayload();
       await claimsAPI.updateDetailed(claimId.value, claimData);
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -2219,6 +2369,7 @@ const saveClaim = async (e) => {
   }
   saving.value = true;
   try {
+    await validateCoveredMedicinesOrThrow();
     const claimData = buildClaimPayload();
     await claimsAPI.updateDetailed(claimId.value, claimData);
     $q.notify({
@@ -2270,5 +2421,21 @@ onMounted(async () => {
 }
 .q-page.reopen-bar-visible {
   padding-bottom: 64px;
+}
+
+:deep(tr.medicine-not-covered-row) {
+  background-color: rgba(244, 67, 54, 0.09);
+}
+
+:deep(tr.medicine-not-covered-row td) {
+  box-shadow: inset 0 1px 0 rgba(244, 67, 54, 0.22), inset 0 -1px 0 rgba(244, 67, 54, 0.22);
+}
+
+:deep(tr.service-outside-span-row) {
+  background-color: rgba(255, 193, 7, 0.12);
+}
+
+:deep(tr.service-outside-span-row td) {
+  box-shadow: inset 0 1px 0 rgba(255, 193, 7, 0.28), inset 0 -1px 0 rgba(255, 193, 7, 0.28);
 }
 </style>

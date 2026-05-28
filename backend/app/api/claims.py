@@ -24,6 +24,9 @@ from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.services.claimit_report_parser import parse_claimit_report_html
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.services.claim_xml_import_parser import parse_claims_xml, build_claims_xml_from_payloads
+from app.services.claim_nhia_ccc import fetch_ccc_preview_for_claim, fetch_ccc_preview_for_ghims_payload
+from app.services.nhia_integration import NhiaIntegrationError
+from app.models.product_price import ProductPrice
 
 router = APIRouter(prefix="/claims", tags=["claims"])
 
@@ -287,6 +290,7 @@ class ClaimDetailedUpdate(BaseModel):
     service_outcome: Optional[str] = "DISC"
     is_unbundled: bool = False
     principal_gdrg: Optional[str] = ""
+    claim_check_code: Optional[str] = None
     first_visit: Optional[str] = None
     second_visit: Optional[str] = None
     third_visit: Optional[str] = None
@@ -1485,6 +1489,7 @@ def get_eligible_encounters_for_claims(
     claim_status: Optional[str] = None,  # Filter by claim status: 'draft', 'finalized', 'reopened', or None for all
     card_number: Optional[str] = None,  # Filter by patient card number
     claim_id: Optional[str] = None,  # Filter by claim ID (e.g., "CLA-XXXXX")
+    ccc: Optional[str] = None,  # Filter by claim check code / CCC (partial match)
     specialty: Optional[str] = None,  # Filter by specialty: OPD = encounter.department, IPD = ward (all wards if not set)
     skip: int = 0,  # Pagination offset
     limit: int = 50,  # Pagination limit
@@ -1518,6 +1523,7 @@ def get_eligible_encounters_for_claims(
             claim_status=claim_status,
             card_number=card_number,
             claim_id=claim_id,
+            ccc=ccc,
             specialty=specialty,
             skip=skip,
             limit=limit,
@@ -1616,6 +1622,12 @@ def get_eligible_encounters_for_claims(
         else:
             # Specific status: claim must exist and have matching status
             query = query.filter(Claim.status == claim_status)
+
+    # Apply CCC / claim check code filter (partial match)
+    if ccc:
+        ccc_clean = str(ccc).strip()
+        if ccc_clean:
+            query = query.filter(func.lower(Claim.claim_check_code).like(f"%{ccc_clean.lower()}%"))
     
     # Get total count efficiently using COUNT query
     total_count = query.count()
@@ -1787,6 +1799,7 @@ def get_eligible_ipd_ward_admissions_for_claims(
     claim_status: Optional[str] = None,
     card_number: Optional[str] = None,
     claim_id: Optional[str] = None,
+    ccc: Optional[str] = None,  # Filter by claim check code / CCC (partial match)
     specialty: Optional[str] = None,  # Filter by ward (IPD covers all wards; this narrows by ward/specialty)
     skip: int = 0,
     limit: int = 50,
@@ -1842,6 +1855,16 @@ def get_eligible_ipd_ward_admissions_for_claims(
             # Filter by claim_id - find ward admissions that have a claim with matching claim_id
             query = query.join(Claim, Claim.encounter_id == WardAdmission.encounter_id).filter(
                 Claim.claim_id == claim_id_clean
+            )
+
+    # Apply CCC / claim check code filter (partial match)
+    if ccc:
+        ccc_clean = str(ccc).strip()
+        if ccc_clean:
+            # Outer join claims so we can search claim_check_code while still allowing ward admissions with no claim yet
+            query = query.outerjoin(Claim, Claim.encounter_id == WardAdmission.encounter_id).filter(
+                Claim.claim_check_code.isnot(None),
+                func.lower(Claim.claim_check_code).like(f"%{ccc_clean.lower()}%")
             )
     
     # Apply date filters (filter by discharge date)
@@ -2605,6 +2628,7 @@ def get_claim_edit_details(
         "claim": {
             "id": claim.id,
             "claim_id": claim.claim_id,
+            "claim_check_code": claim.claim_check_code or "",
             "physician_id": claim.physician_id,
             "type_of_service": claim.type_of_service,
             "includes_pharmacy": claim.includes_pharmacy,
@@ -2634,6 +2658,8 @@ def get_claim_edit_details(
             "gender": encounter.patient.gender,
             "card_number": encounter.patient.card_number,
             "insurance_id": encounter.patient.insurance_id or "",
+            "insured": bool(encounter.patient.insured),
+            "nhis_active": bool(encounter.patient.nhis_active),
         },
         "diagnoses": diagnoses_list,
         "investigations": investigations_list,
@@ -2648,6 +2674,63 @@ def get_claim_edit_details(
         "claimit_errors": _get_claimit_errors_for_claim(db, claim.claim_id),
         "debug": debug_info,  # Temporary debug info to diagnose OPD data issue
     }
+
+
+class ClaimFetchCccRequest(BaseModel):
+    member_no: Optional[str] = None
+
+
+class GhimsFetchCccRequest(BaseModel):
+    member_no: Optional[str] = None
+
+
+@router.post("/{claim_id}/fetch-ccc")
+def fetch_claim_ccc(
+    claim_id: int,
+    body: ClaimFetchCccRequest = ClaimFetchCccRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Fetch NHIA CCC preview for this claim (not saved until save/finalize)."""
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.status == ClaimStatus.FINALIZED.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot fetch CCC on a finalized claim. Reopen the claim first.",
+        )
+    try:
+        return fetch_ccc_preview_for_claim(claim, member_no=body.member_no)
+    except NhiaIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ghims-import/items/{item_id}/fetch-ccc")
+def fetch_ghims_import_item_ccc(
+    item_id: int,
+    body: GhimsFetchCccRequest = GhimsFetchCccRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Fetch NHIA CCC preview for an imported GHIMS claim (not saved until save/finalize)."""
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if item.status == "finalized":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot fetch CCC on a finalized imported claim. Reopen it first.",
+        )
+    try:
+        return fetch_ccc_preview_for_ghims_payload(
+            item.payload or {},
+            member_no=body.member_no,
+        )
+    except NhiaIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.put("/{claim_id}", response_model=ClaimResponse)
@@ -2707,6 +2790,31 @@ def update_claim_detailed(
     claim.service_outcome = claim_data.service_outcome or "DISC"
     claim.is_unbundled = claim_data.is_unbundled
     claim.principal_gdrg = claim_data.principal_gdrg or None
+    if claim_data.claim_check_code is not None and str(claim_data.claim_check_code).strip():
+        claim.claim_check_code = str(claim_data.claim_check_code).strip()
+
+    # Block non-covered medicines (insurance_covered == "no").
+    uncovered_sections = []
+    for idx, presc_update in enumerate(claim_data.prescriptions or []):
+        code = str(getattr(presc_update, "code", "") or "").strip()
+        desc = str(getattr(presc_update, "description", "") or "").strip()
+        if not (code or desc):
+            continue
+        if not code:
+            # Free-text medicine without a code can't be validated here.
+            continue
+        product = db.query(ProductPrice).filter(ProductPrice.medication_code == code).first()
+        covered = (getattr(product, "insurance_covered", None) or "yes").strip().lower() if product else "yes"
+        if covered == "no":
+            uncovered_sections.append(idx + 1)
+    if uncovered_sections:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Medicine not covered by insurance. "
+                f"Change or remove medicine section(s): {', '.join(map(str, uncovered_sections))}."
+            ),
+        )
     # If claim has any prescriptions (drugs), ensure includes_pharmacy is true so export records it.
     # Only count lines with code/description and quantity > 0 (exclude empty placeholder rows).
     has_prescriptions = claim_data.prescriptions and len([p for p in claim_data.prescriptions if ((p.code and p.code.strip()) or (p.description and p.description.strip())) and (p.quantity or 0) > 0]) > 0
@@ -3309,7 +3417,7 @@ def _normalize_medicine_duration(raw_duration: str) -> str:
     return compact
 
 
-def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
+def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
     normalized_payload = dict(payload or {})
     diagnoses = normalized_payload.get("diagnoses")
     if isinstance(diagnoses, list):
@@ -3364,6 +3472,23 @@ def _validate_and_normalize_ghims_payload(payload: dict) -> dict:
     for idx, med in enumerate(medicines):
         if not isinstance(med, dict):
             raise HTTPException(status_code=400, detail=f"Invalid medicine entry at section {idx + 1}.")
+
+        medicine_code = str(med.get("medicineCode") or "").strip()
+        if medicine_code:
+            product = (
+                db.query(ProductPrice)
+                .filter(ProductPrice.medication_code == medicine_code)
+                .first()
+            )
+            covered = (getattr(product, "insurance_covered", None) or "yes").strip().lower() if product else "yes"
+            if covered == "no":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Medicine not covered by insurance. "
+                        f"Change or remove medicine section {idx + 1}."
+                    ),
+                )
 
         prescription = med.get("prescription")
         if prescription is None:
@@ -3443,7 +3568,7 @@ def update_ghims_import_item(
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     payload = body.payload or {}
-    payload = _validate_and_normalize_ghims_payload(payload)
+    payload = _validate_and_normalize_ghims_payload(db, payload)
     claim_id = str(payload.get("claimID") or "").strip()
     if not claim_id:
         raise HTTPException(status_code=400, detail="claimID is required.")
@@ -3463,7 +3588,7 @@ def finalize_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
-    payload = _validate_and_normalize_ghims_payload(item.payload or {})
+    payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
     item.payload = payload
     from app.core.datetime_utils import utcnow
     item.status = "finalized"
@@ -3523,6 +3648,63 @@ def delete_ghims_import_batch(
 
 class GhimsExportBatchBody(BaseModel):
     item_ids: List[int]
+
+
+class GhimsBulkStatusBody(BaseModel):
+    item_ids: List[int]
+    action: str  # 'flag' | 'reopen' | 'finalize'
+
+
+@router.patch("/ghims-import/items/bulk-status")
+def bulk_update_ghims_import_items_status(
+    body: GhimsBulkStatusBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    if not body.item_ids:
+        raise HTTPException(status_code=400, detail="No imported claim IDs selected.")
+    action = str(body.action or "").strip().lower()
+    if action not in ("flag", "reopen", "finalize"):
+        raise HTTPException(status_code=400, detail="Invalid action. Use flag, reopen, or finalize.")
+
+    items = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.id.in_(body.item_ids))
+        .all()
+    )
+    missing = sorted(set(body.item_ids) - set([i.id for i in items]))
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Some imported claims were not found: {missing}")
+
+    # Validate first to avoid partial updates
+    if action == "flag":
+        bad = [i.id for i in items if i.status == "finalized"]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"Cannot flag finalized imported claim(s): {bad}")
+    if action == "finalize":
+        # allow finalizing draft; block flagged (must be marked draft/reopened first)
+        bad = [i.id for i in items if i.status == "flagged"]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"Cannot finalize flagged imported claim(s): {bad}")
+
+    from app.core.datetime_utils import utcnow
+
+    for item in items:
+        if action == "reopen":
+            item.status = "draft"
+            item.finalized_at = None
+        elif action == "flag":
+            item.status = "flagged"
+            item.finalized_at = None
+        elif action == "finalize":
+            payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
+            item.payload = payload
+            item.status = "finalized"
+            item.finalized_at = utcnow()
+
+    db.commit()
+    return {"updated": len(items), "action": action, "item_ids": sorted([i.id for i in items])}
 
 
 @router.post("/ghims-import/export")

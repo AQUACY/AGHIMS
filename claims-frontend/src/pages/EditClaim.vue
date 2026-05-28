@@ -100,6 +100,30 @@
               label="Month of Claim"
               class="col-12 col-md-6"
             />
+            <q-input
+              v-model="claimMeta.claim_check_code"
+              filled
+              label="Claim Check Code"
+              class="col-12 col-md-4"
+              readonly
+            />
+            <div class="col-12 col-md-8 row items-center q-gutter-sm">
+              <q-btn
+                color="secondary"
+                icon="cloud_download"
+                label="Get CCC"
+                :loading="fetchingClaimCcc"
+                :disable="!canGetClaimCcc || loading"
+                @click="onGetClaimCcc"
+              >
+                <q-tooltip v-if="!canGetClaimCcc">
+                  Requires active NHIS with a member number
+                </q-tooltip>
+              </q-btn>
+              <span class="text-caption text-grey-7">
+                Preview only until Save and Finalize — refresh the page to undo.
+              </span>
+            </div>
           </div>
         </q-card-section>
       </q-card>
@@ -356,6 +380,7 @@
             flat
             dense
             class="q-mt-md"
+            :table-row-class-fn="claimLineRowClass"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -567,6 +592,7 @@
             row-key="index"
             flat
             dense
+            :table-row-class-fn="claimLineRowClass"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -662,6 +688,7 @@
             row-key="index"
             flat
             dense
+            :table-row-class-fn="claimLineRowClass"
           >
             <template v-slot:body-cell-description="props">
               <q-td :props="props">
@@ -1048,6 +1075,12 @@ import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
+import {
+  confirmClaimGetCcc,
+  canFetchClaimCcc,
+  applyClaimFetchCccToEditForm,
+} from '../utils/claimGetCcc';
+import { claimLineRowClass } from '../utils/claimMedicineCoverage';
 import { useFacilityStore, DEFAULT_FACILITY_DISPLAY_NAME } from '../stores/facility';
 
 const facilityStore = useFacilityStore();
@@ -1058,6 +1091,8 @@ const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
 const reopening = ref(false);
+const fetchingClaimCcc = ref(false);
+const patientNhiaMeta = ref({ insured: false, nhis_active: false });
 const claimId = ref(null);
 const claimStatus = ref('draft');
 const isViewMode = ref(false);
@@ -1096,6 +1131,17 @@ const providerInfo = reactive({
   scheme_code: '',
   month_of_claim: new Date().toISOString().split('T')[0],
 });
+
+const claimMeta = reactive({
+  claim_check_code: '',
+});
+
+const canGetClaimCcc = computed(() =>
+  canFetchClaimCcc({
+    ...patientNhiaMeta.value,
+    insurance_id: patientInfo.member_number,
+  })
+);
 
 // Patient Information
 const patientInfo = reactive({
@@ -1949,6 +1995,11 @@ const loadClaimData = async () => {
     
     // Set claim status
     claimStatus.value = data.claim.status;
+    claimMeta.claim_check_code = data.claim.claim_check_code || '';
+    patientNhiaMeta.value = {
+      insured: !!data.patient?.insured,
+      nhis_active: !!data.patient?.nhis_active,
+    };
 
     // ClaimIT errors for this claim (from Correct Errors report uploads), grouped by section
     claimitErrors.value = data.claimit_errors || { messages: [], by_section: {} };
@@ -2088,6 +2139,42 @@ const loadClaimData = async () => {
   }
 };
 
+async function onGetClaimCcc() {
+  if (!claimId.value || !canGetClaimCcc.value) return;
+  const confirmed = await confirmClaimGetCcc($q);
+  if (!confirmed) return;
+
+  fetchingClaimCcc.value = true;
+  try {
+    const memberNo = (patientInfo.member_number || '').trim();
+    const res = await claimsAPI.fetchCcc(claimId.value, memberNo || null);
+    applyClaimFetchCccToEditForm(
+      {
+        patientInfo,
+        claimMeta,
+        services,
+        investigationsList,
+        prescriptionsList,
+        proceduresList,
+      },
+      res.data
+    );
+    $q.notify({
+      type: 'positive',
+      message: `Claim check code updated to ${res.data.claim_check_code || res.data.ccc}. Save and finalize to keep changes.`,
+      position: 'top',
+    });
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || error.message || 'Failed to fetch CCC',
+      position: 'top',
+    });
+  } finally {
+    fetchingClaimCcc.value = false;
+  }
+}
+
 /** Reopen a finalized claim so the user can edit (from view mode or Correct Errors) and save again */
 async function reopenClaim() {
   if (!claimId.value || claimStatus.value !== 'finalized') return;
@@ -2134,6 +2221,7 @@ function buildClaimPayload() {
     service_outcome: services.outcome,
     is_unbundled: !services.all_inclusive,
     principal_gdrg: services.principal_gdrg || '',
+    claim_check_code: (claimMeta.claim_check_code || '').trim() || null,
     first_visit: services.first_visit || null,
     second_visit: services.second_visit || null,
     third_visit: services.third_visit || null,
@@ -2270,5 +2358,13 @@ onMounted(async () => {
 }
 .q-page.reopen-bar-visible {
   padding-bottom: 64px;
+}
+
+:deep(tr.service-outside-span-row) {
+  background-color: rgba(255, 193, 7, 0.12);
+}
+
+:deep(tr.service-outside-span-row td) {
+  box-shadow: inset 0 1px 0 rgba(255, 193, 7, 0.28), inset 0 -1px 0 rgba(255, 193, 7, 0.28);
 }
 </style>

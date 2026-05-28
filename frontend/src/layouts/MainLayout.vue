@@ -27,7 +27,7 @@
           </q-badge>
         </q-toolbar-title>
         <q-badge color="blue-8" text-color="white" class="q-mr-md">
-          Current Mode: HMS
+          Current Mode: {{ currentModeLabel }}
         </q-badge>
         <LicenseTitleLink />
         <q-space />
@@ -129,6 +129,7 @@
     >
       <!-- Patient Search Section - Collapsible -->
       <q-expansion-item
+        v-if="!appModeStore.isClaims"
         v-model="searchExpanded"
         icon="search"
         label="Search Patient"
@@ -220,13 +221,32 @@
         </q-card>
       </q-expansion-item>
 
-      <q-separator class="q-my-sm" />
+      <q-separator v-if="!appModeStore.isClaims" class="q-my-sm" />
 
       <q-list class="glass-nav-list">
         <q-item-label header class="text-weight-bold q-py-md" style="opacity: 0.9;">
           Navigation
         </q-item-label>
 
+        <template v-if="appModeStore.isClaims">
+          <q-item
+            clickable
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'Claims' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="description" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Claims</q-item-label>
+            </q-item-section>
+          </q-item>
+        </template>
+
+        <template v-else>
         <q-item
           clickable
           v-ripple
@@ -618,6 +638,7 @@
             <q-item-label>Audit Trail Logs</q-item-label>
           </q-item-section>
         </q-item>
+        </template>
       </q-list>
     </q-drawer>
 
@@ -654,7 +675,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { useAppModeStore } from '../stores/appMode';
+import { useAppModeStore, APP_MODES } from '../stores/appMode';
 import { useThemeStore } from '../stores/theme';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
 import { useFacilityStore } from '../stores/facility';
@@ -671,6 +692,16 @@ const themeStore = useThemeStore();
 const moduleSettingsStore = useModuleSettingsStore();
 const facilityStore = useFacilityStore();
 const drawerOpen = ref(true);
+
+const currentModeLabel = computed(() => {
+  const labels = {
+    [APP_MODES.HMS]: 'HMS',
+    [APP_MODES.COMPANION]: 'Copayment',
+    [APP_MODES.INVENTORY]: 'Inventory',
+    [APP_MODES.CLAIMS]: 'Claims',
+  };
+  return labels[appModeStore.currentMode] || 'HMS';
+});
 
 // Session timer
 const sessionTimeLeft = ref(null);

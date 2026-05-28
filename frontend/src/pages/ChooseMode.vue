@@ -92,6 +92,34 @@
             </div>
           </q-card-section>
         </q-card>
+        <q-card
+          class="mode-card glass-card col-12 col-sm-6 col-md-4"
+          flat
+          :clickable="canSelectMode(APP_MODES.CLAIMS)"
+          :class="{ 'mode-disabled': !canSelectMode(APP_MODES.CLAIMS) }"
+          @click="selectMode('claims')"
+        >
+          <q-card-section class="text-center">
+            <q-icon name="description" size="64px" class="q-mb-md" />
+            <div class="text-h6 q-mb-sm glass-text">Claims Mode</div>
+            <div class="text-body2 glass-text-muted">
+              NHIA claims — generate and edit claims, correct ClaimIT errors, and import GHIMS XML without the full HMS menus.
+            </div>
+            <q-btn
+              unelevated
+              label="Enter Claims"
+              class="glass-button q-mt-lg"
+              :disable="!canSelectMode(APP_MODES.CLAIMS)"
+              no-caps
+            />
+            <div v-if="!canSelectClaimsRole" class="text-caption text-negative q-mt-sm">
+              Your role does not have Claims access
+            </div>
+            <div v-else-if="!canSelectMode(APP_MODES.CLAIMS)" class="text-caption text-negative q-mt-sm">
+              Claims module inactive - contact support
+            </div>
+          </q-card-section>
+        </q-card>
       </div>
     </div>
   </div>
@@ -122,11 +150,16 @@ const isModeActive = (mode) => {
   return moduleSettingsStore.isModuleActive(moduleKey);
 };
 
+const CLAIMS_ROLES = ['Claims', 'Admin', 'Doctor', 'PA'];
+
+const canSelectClaimsRole = computed(() => isSuperAdmin.value || authStore.canAccess(CLAIMS_ROLES));
+
 const canSelectMode = (mode) => {
   if (isSuperAdmin.value) return true;
   if (!modeStatusLoaded.value) return false;
   if (!isModeActive(mode)) return false;
   if (mode === APP_MODES.INVENTORY && !authStore.canAccessInventoryMode) return false;
+  if (mode === APP_MODES.CLAIMS && !canSelectClaimsRole.value) return false;
   return true;
 };
 const allModesInactiveForRegularUser = computed(() => {
@@ -157,6 +190,8 @@ const selectMode = (mode) => {
     router.push('/');
   } else if (mode === APP_MODES.INVENTORY) {
     router.push('/inventory-mode');
+  } else if (mode === APP_MODES.CLAIMS) {
+    router.push('/claims');
   } else {
     router.push('/companion');
   }
@@ -172,7 +207,9 @@ onMounted(async () => {
       }
     }
     modeStatusLoaded.value = false;
-    await moduleSettingsStore.fetchModuleStatus(Object.values(APP_MODE_MODULE_KEYS));
+    await moduleSettingsStore.fetchModuleStatus([
+      ...Object.values(APP_MODE_MODULE_KEYS),
+    ]);
   } catch (error) {
     console.error('Failed to load app mode status:', error);
   } finally {

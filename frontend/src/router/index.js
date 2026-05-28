@@ -769,6 +769,8 @@ router.beforeEach(async (to, from, next) => {
         next('/companion');
       } else if (appModeStore.currentMode === APP_MODES.INVENTORY) {
         next('/inventory-mode');
+      } else if (appModeStore.currentMode === APP_MODES.CLAIMS) {
+        next('/claims');
       } else {
         next();
       }
@@ -795,6 +797,7 @@ router.beforeEach(async (to, from, next) => {
       // Restrict navigation based on currently selected application mode.
       const isCompanionRoute = to.path.startsWith('/companion');
       const isInventoryRoute = to.path.startsWith('/inventory-mode');
+      const isClaimsRoute = to.path.startsWith('/claims');
 
       if (
         !isSuperAdmin &&
@@ -803,6 +806,17 @@ router.beforeEach(async (to, from, next) => {
         to.path !== '/license-setup'
       ) {
         next('/companion');
+        return;
+      }
+      if (
+        !isSuperAdmin &&
+        appModeStore.currentMode === APP_MODES.CLAIMS &&
+        !isClaimsRoute &&
+        to.path !== '/license-setup' &&
+        to.path !== '/choose-mode' &&
+        to.path !== '/profile'
+      ) {
+        next('/claims');
         return;
       }
       if (
@@ -824,8 +838,20 @@ router.beforeEach(async (to, from, next) => {
         next(inventoryPathRedirects[to.path] || '/inventory-mode');
         return;
       }
-      if (!isSuperAdmin && appModeStore.currentMode === APP_MODES.HMS && (isCompanionRoute || isInventoryRoute)) {
+      if (
+        !isSuperAdmin &&
+        appModeStore.currentMode === APP_MODES.HMS &&
+        (isCompanionRoute || isInventoryRoute)
+      ) {
         next('/');
+        return;
+      }
+      if (
+        !isSuperAdmin &&
+        (appModeStore.currentMode === APP_MODES.COMPANION || appModeStore.currentMode === APP_MODES.INVENTORY) &&
+        isClaimsRoute
+      ) {
+        next(appModeStore.currentMode === APP_MODES.COMPANION ? '/companion' : '/inventory-mode');
         return;
       }
 

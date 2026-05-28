@@ -826,7 +826,7 @@ export const priceListAPI = {
 // Claims endpoints
 export const claimsAPI = {
   create: (data) => api.post('/claims/', data),
-  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, specialty = null, skip = 0, limit = 50) => {
+  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, ccc = null, specialty = null, skip = 0, limit = 50) => {
     const params = { skip, limit };
     if (type) params.claim_type = type;
     if (startDate) params.start_date = startDate;
@@ -834,6 +834,7 @@ export const claimsAPI = {
     if (claimStatus) params.claim_status = claimStatus;
     if (cardNumber) params.card_number = cardNumber;
     if (claimId) params.claim_id = claimId;
+    if (ccc) params.ccc = ccc;
     if (specialty) params.specialty = specialty;
     return api.get('/claims/eligible-encounters', { params });
   },
@@ -847,6 +848,10 @@ export const claimsAPI = {
   update: (claimId, data) => api.put(`/claims/${claimId}`, data),
   updateDetailed: (claimId, data) => api.put(`/claims/${claimId}/detailed`, data),
   getEditDetails: (claimId) => api.get(`/claims/${claimId}/edit-details`),
+  fetchCcc: (claimId, memberNo = null) =>
+    api.post(`/claims/${claimId}/fetch-ccc`, memberNo ? { member_no: memberNo } : {}),
+  fetchGhimsImportCcc: (itemId, memberNo = null) =>
+    api.post(`/claims/ghims-import/items/${itemId}/fetch-ccc`, memberNo ? { member_no: memberNo } : {}),
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),
   reopen: (claimId) => api.put(`/claims/${claimId}/reopen`),
   regenerate: (claimId, data) => api.put(`/claims/${claimId}/regenerate`, data),
@@ -884,6 +889,8 @@ export const claimsAPI = {
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
   flagGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/flag`),
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
+  bulkUpdateGhimsImportItemsStatus: (itemIds, action) =>
+    api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action }),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
 };
 

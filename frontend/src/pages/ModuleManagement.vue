@@ -25,6 +25,22 @@
       </q-card-section>
     </q-card>
 
+    <q-card class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-sm glass-text">Claims module</div>
+        <div class="text-caption q-mb-md">
+          When enabled, Claims appears on the application mode screen and in HMS navigation. When disabled, claims routes and the Claims mode card are unavailable.
+        </div>
+        <q-toggle
+          :model-value="claimsModuleActive"
+          label="Claims module active"
+          color="primary"
+          :loading="togglingClaims"
+          @update:model-value="updateClaimsToggle"
+        />
+      </q-card-section>
+    </q-card>
+
     <q-card v-if="isSuperAdmin" class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-sm glass-text">Facility Mode Setup</div>
@@ -232,11 +248,14 @@ const moduleSettingsStore = useModuleSettingsStore();
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 /** Mode toggles are super-admin only; hide these module rows from the table for everyone else. */
 const GHIMS_MODULE_KEY = 'ghims';
+const CLAIMS_MODULE_KEY = 'claims';
 const APP_MODE_MODULE_KEY_SET = new Set(Object.values(APP_MODE_MODULE_KEYS));
 /** Shown in dedicated toggles above, not the modules table */
-const DEDICATED_TOGGLE_MODULE_KEYS = new Set([...APP_MODE_MODULE_KEY_SET, GHIMS_MODULE_KEY]);
+const DEDICATED_TOGGLE_MODULE_KEYS = new Set([...APP_MODE_MODULE_KEY_SET, GHIMS_MODULE_KEY, CLAIMS_MODULE_KEY]);
 const togglingMode = ref(null);
 const togglingGhims = ref(false);
+const togglingClaims = ref(false);
+const claimsModuleActive = ref(false);
 const ghimsCardMode = ref(false);
 const modeToggles = ref({
   hms: true,
@@ -334,6 +353,41 @@ const loadModules = async () => {
     });
   } finally {
     loading.value = false;
+  }
+};
+
+const loadClaimsToggle = async () => {
+  try {
+    await moduleSettingsStore.fetchModuleStatus(CLAIMS_MODULE_KEY);
+    claimsModuleActive.value = moduleSettingsStore.isModuleActive(CLAIMS_MODULE_KEY);
+  } catch (error) {
+    console.error('Error loading Claims module status:', error);
+  }
+};
+
+const updateClaimsToggle = async (value) => {
+  const previousValue = claimsModuleActive.value;
+  claimsModuleActive.value = value;
+  try {
+    togglingClaims.value = true;
+    await moduleSettingsAPI.update(CLAIMS_MODULE_KEY, { is_active: value });
+    moduleSettingsStore.clearCache();
+    await moduleSettingsStore.fetchModuleStatus(CLAIMS_MODULE_KEY);
+    $q.notify({
+      type: 'positive',
+      message: value ? 'Claims module activated' : 'Claims module deactivated',
+      position: 'top',
+    });
+  } catch (error) {
+    claimsModuleActive.value = previousValue;
+    console.error('Error updating Claims toggle:', error);
+    $q.notify({
+      type: 'negative',
+      message: 'Failed to update Claims module setting',
+      position: 'top',
+    });
+  } finally {
+    togglingClaims.value = false;
   }
 };
 
@@ -494,6 +548,7 @@ const saveModule = async () => {
 onMounted(() => {
   loadModules();
   loadGhimsToggle();
+  loadClaimsToggle();
   loadModeSetup();
 });
 </script>
