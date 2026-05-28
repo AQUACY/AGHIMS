@@ -166,7 +166,17 @@
             <thead>
               <tr>
                 <th class="text-left">#</th>
-                <th class="text-left">Select</th>
+                <th class="text-left">
+                  <div class="row items-center q-gutter-xs no-wrap">
+                    <span>Select</span>
+                    <q-checkbox
+                      :model-value="allFilteredSelected"
+                      :indeterminate="someFilteredSelected"
+                      dense
+                      @update:model-value="toggleSelectAllFiltered"
+                    />
+                  </div>
+                </th>
                 <th class="text-left">Claim ID</th>
                 <th class="text-left">Client</th>
                 <th class="text-left">Hosp Rec No</th>
@@ -193,6 +203,16 @@
                 <td>{{ claimCheckCode(row) || '-' }}</td>
                 <td>
                   <q-badge :color="claimStatusColor(row.status)" :label="row.status" />
+                  <q-chip
+                    v-if="row.status === 'flagged' && row.flag_comment"
+                    class="q-ml-sm q-mt-xs"
+                    dense
+                    size="sm"
+                    color="grey-3"
+                    text-color="dark"
+                    icon="comment"
+                    :label="row.flag_comment"
+                  />
                   <q-badge
                     v-if="row.has_missing_sections"
                     class="q-ml-sm q-mt-xs"
@@ -403,6 +423,21 @@ const allFinalizedSelected = computed(() => {
   return finalizedIds.every((id) => selectedItemIds.value.includes(id));
 });
 
+const allFilteredSelected = computed(() => {
+  const ids = filteredClaims.value.map((r) => Number(r.id));
+  if (!ids.length) return false;
+  const selected = new Set((selectedBulkItemIds.value || []).map((x) => Number(x)));
+  return ids.every((id) => selected.has(id));
+});
+
+const someFilteredSelected = computed(() => {
+  const ids = filteredClaims.value.map((r) => Number(r.id));
+  if (!ids.length) return false;
+  const selected = new Set((selectedBulkItemIds.value || []).map((x) => Number(x)));
+  const selectedCount = ids.reduce((acc, id) => acc + (selected.has(id) ? 1 : 0), 0);
+  return selectedCount > 0 && selectedCount < ids.length;
+});
+
 const maxPages = computed(() => {
   const total = filteredClaims.value.length;
   const per = Number(rowsPerPage.value) || 20;
@@ -494,6 +529,39 @@ function toggleBulkSelected(itemId, checked) {
   if (!checked) selectedBulkItemIds.value = selectedBulkItemIds.value.filter((x) => x !== id);
 }
 
+function toggleSelectAllFiltered(checked) {
+  const ids = filteredClaims.value.map((r) => Number(r.id));
+  if (!ids.length) return;
+  if (checked) {
+    const merged = new Set([...(selectedBulkItemIds.value || []).map((x) => Number(x)), ...ids]);
+    selectedBulkItemIds.value = Array.from(merged);
+  } else {
+    const remove = new Set(ids);
+    selectedBulkItemIds.value = (selectedBulkItemIds.value || []).filter((id) => !remove.has(Number(id)));
+  }
+}
+
+async function promptFlagComment(title) {
+  return new Promise((resolve) => {
+    $q.dialog({
+      title: title || 'Flag imported claim',
+      message: 'Enter a short reason (required). This helps other staff understand why it was flagged.',
+      prompt: {
+        model: '',
+        type: 'textarea',
+        isValid: (val) => Boolean(String(val || '').trim()),
+        autogrow: true,
+      },
+      cancel: true,
+      persistent: true,
+      ok: { label: 'Flag', color: 'negative' },
+    })
+      .onOk((val) => resolve(String(val || '').trim()))
+      .onCancel(() => resolve(null))
+      .onDismiss(() => resolve(null));
+  });
+}
+
 async function bulkSetStatus(action) {
   if (!selectedBulkItemIds.value.length || !viewingBatchId.value) return;
   const label = action === 'flag' ? 'Flag' : (action === 'finalize' ? 'Finalize' : 'Revert/Mark draft');
@@ -509,7 +577,12 @@ async function bulkSetStatus(action) {
 
   bulkUpdating.value = true;
   try {
-    await claimsAPI.bulkUpdateGhimsImportItemsStatus(selectedBulkItemIds.value, action);
+    let comment = null;
+    if (action === 'flag') {
+      comment = await promptFlagComment(`Flag ${selectedBulkItemIds.value.length} imported claim(s)`);
+      if (!comment) return;
+    }
+    await claimsAPI.bulkUpdateGhimsImportItemsStatus(selectedBulkItemIds.value, action, comment);
     await loadBatchClaims(viewingBatchId.value);
     $q.notify({ type: 'positive', message: `${label} complete` });
   } catch (e) {
@@ -578,7 +651,12 @@ async function revertClaim(row) {
 
 async function flagClaim(row) {
   statusLoadingItemId.value = row.id;
-  try { await claimsAPI.flagGhimsImportItem(row.id); await loadBatchClaims(viewingBatchId.value); }
+  try {
+    const comment = await promptFlagComment('Flag imported claim');
+    if (!comment) return;
+    await claimsAPI.flagGhimsImportItem(row.id, comment);
+    await loadBatchClaims(viewingBatchId.value);
+  }
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to flag imported claim' }); }
   finally { statusLoadingItemId.value = null; }
 }

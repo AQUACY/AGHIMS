@@ -3374,6 +3374,7 @@ def get_ghims_import_batch(
             "type_of_attendance": p.get("typeOfAttendance"),
             "specialty_attended": p.get("specialtyAttended"),
             "status": i.status,
+            "flag_comment": i.flag_comment,
             "missing_sections": missing_sections,
             "has_missing_sections": len(missing_sections) > 0,
             "no_clinical_sections": len(missing_sections) == 4,
@@ -3551,6 +3552,7 @@ def get_ghims_import_item(
         "claim_claim_id": item.claim_claim_id,
         "row_index": item.row_index,
         "status": item.status,
+        "flag_comment": item.flag_comment,
         "payload": item.payload or {},
         "claimit_errors": _get_claimit_errors_for_import_item(db, item),
     }
@@ -3616,6 +3618,7 @@ def reopen_ghims_import_item(
 @router.patch("/ghims-import/items/{item_id}/flag")
 def flag_ghims_import_item(
     item_id: int,
+    body: dict = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "update")),
@@ -3625,10 +3628,16 @@ def flag_ghims_import_item(
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     if item.status == "finalized":
         raise HTTPException(status_code=400, detail="Cannot flag a finalized imported claim.")
+    comment = ""
+    if isinstance(body, dict):
+        comment = str(body.get("comment") or "").strip()
+    if not comment:
+        raise HTTPException(status_code=400, detail="Flag comment is required.")
     item.status = "flagged"
     item.finalized_at = None
+    item.flag_comment = comment
     db.commit()
-    return {"id": item.id, "status": item.status}
+    return {"id": item.id, "status": item.status, "flag_comment": item.flag_comment}
 
 
 @router.delete("/ghims-import/batches/{batch_id}")
@@ -3653,6 +3662,7 @@ class GhimsExportBatchBody(BaseModel):
 class GhimsBulkStatusBody(BaseModel):
     item_ids: List[int]
     action: str  # 'flag' | 'reopen' | 'finalize'
+    comment: Optional[str] = None
 
 
 @router.patch("/ghims-import/items/bulk-status")
@@ -3667,6 +3677,7 @@ def bulk_update_ghims_import_items_status(
     action = str(body.action or "").strip().lower()
     if action not in ("flag", "reopen", "finalize"):
         raise HTTPException(status_code=400, detail="Invalid action. Use flag, reopen, or finalize.")
+    comment = str(body.comment or "").strip()
 
     items = (
         db.query(ClaimXmlImportItem)
@@ -3682,6 +3693,8 @@ def bulk_update_ghims_import_items_status(
         bad = [i.id for i in items if i.status == "finalized"]
         if bad:
             raise HTTPException(status_code=400, detail=f"Cannot flag finalized imported claim(s): {bad}")
+        if not comment:
+            raise HTTPException(status_code=400, detail="Flag comment is required for bulk flag.")
     if action == "finalize":
         # allow finalizing draft; block flagged (must be marked draft/reopened first)
         bad = [i.id for i in items if i.status == "flagged"]
@@ -3694,14 +3707,17 @@ def bulk_update_ghims_import_items_status(
         if action == "reopen":
             item.status = "draft"
             item.finalized_at = None
+            item.flag_comment = None
         elif action == "flag":
             item.status = "flagged"
             item.finalized_at = None
+            item.flag_comment = comment
         elif action == "finalize":
             payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
             item.payload = payload
             item.status = "finalized"
             item.finalized_at = utcnow()
+            item.flag_comment = None
 
     db.commit()
     return {"updated": len(items), "action": action, "item_ids": sorted([i.id for i in items])}

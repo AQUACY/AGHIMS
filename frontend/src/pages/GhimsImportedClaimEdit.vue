@@ -20,6 +20,17 @@
         </ul>
       </q-banner>
 
+      <q-banner
+        v-if="status === 'flagged' && flagComment"
+        class="bg-grey-2 q-mb-md"
+        rounded
+        dense
+      >
+        <template #avatar><q-icon name="comment" color="dark" /></template>
+        <div class="text-subtitle2">Flag reason</div>
+        <div class="text-body2">{{ flagComment }}</div>
+      </q-banner>
+
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider / Claim Header</div>
@@ -390,6 +401,7 @@ const loading = ref(true);
 const saving = ref(false);
 const fetchingClaimCcc = ref(false);
 const status = ref('draft');
+const flagComment = ref('');
 const principalDiagnosisIndex = ref(-1);
 const itemId = Number(route.params.itemId);
 const diagnosisSearchOptions = ref([]);
@@ -909,6 +921,7 @@ async function load() {
   try {
     const res = await claimsAPI.getGhimsImportItem(itemId);
     status.value = res.data.status || 'draft';
+    flagComment.value = String(res.data.flag_comment || '').trim();
     Object.assign(payload, normalize(res.data.payload || {}));
     const ce = res.data.claimit_errors || {};
     claimitErrors.value = {
@@ -1014,7 +1027,26 @@ async function flagClaim() {
       },
     }));
     await claimsAPI.updateGhimsImportItem(itemId, clean);
-    await claimsAPI.flagGhimsImportItem(itemId);
+    const comment = await new Promise((resolve) => {
+      $q.dialog({
+        title: 'Flag imported claim',
+        message: 'Enter a short reason (required). This helps other staff understand why it was flagged.',
+        prompt: {
+          model: '',
+          type: 'textarea',
+          isValid: (val) => Boolean(String(val || '').trim()),
+          autogrow: true,
+        },
+        cancel: true,
+        persistent: true,
+        ok: { label: 'Flag', color: 'negative' },
+      })
+        .onOk((val) => resolve(String(val || '').trim()))
+        .onCancel(() => resolve(null))
+        .onDismiss(() => resolve(null));
+    });
+    if (!comment) return;
+    await claimsAPI.flagGhimsImportItem(itemId, comment);
     $q.notify({ type: 'positive', message: 'Imported claim flagged' });
     await load();
   } catch (e) {

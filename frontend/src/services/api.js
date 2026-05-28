@@ -887,10 +887,11 @@ export const claimsAPI = {
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
-  flagGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/flag`),
+  flagGhimsImportItem: (itemId, comment) =>
+    api.patch(`/claims/ghims-import/items/${itemId}/flag`, { comment }),
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
-  bulkUpdateGhimsImportItemsStatus: (itemIds, action) =>
-    api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action }),
+  bulkUpdateGhimsImportItemsStatus: (itemIds, action, comment = null) =>
+    api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action, comment }),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
 };
 

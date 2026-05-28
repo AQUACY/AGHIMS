@@ -32,5 +32,6 @@ class ClaimXmlImportItem(Base):
     status = Column(String(20), nullable=False, default="draft")  # draft | finalized
     payload = Column(JSON, nullable=False)  # editable claim payload parsed from XML
     finalized_at = Column(DateTime, nullable=True)
+    flag_comment = Column(String(800), nullable=True)
 
     batch = relationship("ClaimXmlImportBatch", back_populates="items")

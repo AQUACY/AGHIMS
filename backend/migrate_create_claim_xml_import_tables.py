@@ -22,6 +22,7 @@ if __name__ == "__main__":
             "ALTER TABLE claim_xml_import_items ADD COLUMN status VARCHAR(20) DEFAULT 'draft'",
             "ALTER TABLE claim_xml_import_items ADD COLUMN payload JSON",
             "ALTER TABLE claim_xml_import_items ADD COLUMN finalized_at DATETIME",
+            "ALTER TABLE claim_xml_import_items ADD COLUMN flag_comment VARCHAR(800) NULL",
         ]:
             try:
                 conn.exec_driver_sql(stmt)
