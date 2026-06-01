@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from pydantic import BaseModel
 from typing import Optional, List, Tuple
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from app.core.database import get_db
 from app.core.dependencies import require_role, require_module_permission
 from app.core.audit import get_effective_creator_id
@@ -1426,6 +1426,551 @@ class EligibleEncountersResponse(BaseModel):
 class SpecialtiesResponse(BaseModel):
     """List of specialty names for filtering (OPD = departments, IPD = wards)"""
     specialties: List[str]
+
+class ClaimsDashboardTrendPoint(BaseModel):
+    month: str  # YYYY-MM
+    volume: int
+    cost: float
+
+
+class ClaimsDashboardTopItem(BaseModel):
+    name: str
+    count: int
+
+
+class ClaimsDashboardMultipleAttendanceItem(BaseModel):
+    member_no: str
+    patient_card_number: Optional[str] = None
+    patient_name: Optional[str] = None
+    attendance_count: int
+    claim_ids: List[str] = []
+    suggested_specialty_attended: str = "OPDC"
+
+
+class ClaimsDashboardDuplicateGroup(BaseModel):
+    key: str
+    member_no: str
+    patient_card_number: Optional[str] = None
+    patient_name: Optional[str] = None
+    count: int
+    claim_ids: List[str] = []
+
+
+class ClaimsDashboardAdvice(BaseModel):
+    multiple_attendance: List[ClaimsDashboardMultipleAttendanceItem]
+    potential_duplicates: List[ClaimsDashboardDuplicateGroup]
+
+
+class ClaimsDashboardKPIs(BaseModel):
+    total_volume: int
+    total_cost: float
+    avg_cost_per_claim: float
+
+
+class ClaimsDashboardResponse(BaseModel):
+    source: str  # main | import
+    month: str  # YYYY-MM
+    kpis: ClaimsDashboardKPIs
+    trend: List[ClaimsDashboardTrendPoint]
+    top_diagnoses: List[ClaimsDashboardTopItem]
+    top_medicines: List[ClaimsDashboardTopItem]
+    advice: ClaimsDashboardAdvice
+
+
+def _month_range(month_yyyy_mm: str) -> tuple[datetime, datetime]:
+    """
+    Return [start, end) datetimes for month in local time.
+    month_yyyy_mm: "YYYY-MM"
+    """
+    try:
+        y, m = month_yyyy_mm.split("-")
+        year = int(y)
+        month = int(m)
+        start = datetime(year, month, 1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid month format. Use YYYY-MM.")
+    if month == 12:
+        end = datetime(year + 1, 1, 1)
+    else:
+        end = datetime(year, month + 1, 1)
+    return start, end
+
+
+def _prev_month_yyyy_mm(now: Optional[datetime] = None) -> str:
+    d = (now or datetime.now()).date().replace(day=1)
+    prev_end = datetime.combine(d, datetime.min.time()) - timedelta(days=1)
+    return f"{prev_end.year:04d}-{prev_end.month:02d}"
+
+def _month_add(yyyy_mm: str, delta_months: int) -> str:
+    y, m = yyyy_mm.split("-")
+    year = int(y)
+    month = int(m)
+    idx = (year * 12 + (month - 1)) + int(delta_months)
+    ny = idx // 12
+    nm = (idx % 12) + 1
+    return f"{ny:04d}-{nm:02d}"
+
+
+def _months_between_inclusive(start_yyyy_mm: str, end_yyyy_mm: str) -> List[str]:
+    """Inclusive month list from start to end. Both YYYY-MM."""
+    # Compare by year*12+month index
+    sy, sm = start_yyyy_mm.split("-")
+    ey, em = end_yyyy_mm.split("-")
+    s_idx = int(sy) * 12 + (int(sm) - 1)
+    e_idx = int(ey) * 12 + (int(em) - 1)
+    if e_idx < s_idx:
+        s_idx, e_idx = e_idx, s_idx
+        start_yyyy_mm, end_yyyy_mm = end_yyyy_mm, start_yyyy_mm
+    months = []
+    cur = start_yyyy_mm
+    while True:
+        months.append(cur)
+        if cur == end_yyyy_mm:
+            break
+        cur = _month_add(cur, 1)
+        if len(months) > 120:
+            break
+    return months
+
+
+def _parse_month_yyyy_mm(raw: Optional[str]) -> Optional[str]:
+    """
+    Parse month-of-claim strings into YYYY-MM.
+    Supports: YYYY-MM, YYYY/MM, MM/YYYY, MM-YYYY, YYYYMM, YYYY MM.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    s = s.replace("\\", "/").replace("-", "/").replace(" ", "/")
+    parts = [p for p in s.split("/") if p]
+    try:
+        if len(parts) == 2:
+            a, b = parts[0], parts[1]
+            # YYYY/MM
+            if len(a) == 4:
+                y = int(a)
+                m = int(b)
+            # MM/YYYY
+            elif len(b) == 4:
+                y = int(b)
+                m = int(a)
+            else:
+                return None
+            if 1 <= m <= 12:
+                return f"{y:04d}-{m:02d}"
+            return None
+        # YYYYMM
+        digits = re.sub(r"[^0-9]", "", s)
+        if len(digits) == 6:
+            y = int(digits[:4])
+            m = int(digits[4:])
+            if 1 <= m <= 12:
+                return f"{y:04d}-{m:02d}"
+    except Exception:
+        return None
+    return None
+
+
+def _month_range_for_column(db: Session, col, month_yyyy_mm: str):
+    """
+    Return (start_dt, end_dt) bounds for the given SQLAlchemy datetime column.
+    Use local naive datetimes; callers decide which column to filter.
+    """
+    return _month_range(month_yyyy_mm)
+
+
+@router.get("/dashboard", response_model=ClaimsDashboardResponse)
+def get_claims_dashboard(
+    month: Optional[str] = None,  # YYYY-MM
+    source: str = "main",  # main | import
+    trend_start: Optional[str] = None,  # YYYY-MM (optional; controls trend only)
+    trend_end: Optional[str] = None,  # YYYY-MM (optional; controls trend only)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read"))
+):
+    """
+    Claims dashboard aggregates for a given month.
+
+    - month defaults to previous month (YYYY-MM).
+    - source:
+      - main: uses finalized claims in `claims` table
+      - import: uses finalized imported claims in `claim_xml_import_items`
+    """
+    from sqlalchemy import and_, or_
+    from sqlalchemy.orm import aliased
+    from app.models.patient import Patient
+    from app.models.claim_detail import ClaimDiagnosis, ClaimPrescription
+    from app.models.claim_xml_import import ClaimXmlImportItem
+
+    # Month selection controls ONLY month-specific panels (KPIs + top lists + advice).
+    if month is None or not str(month).strip():
+        month = _prev_month_yyyy_mm()
+    month = str(month).strip()
+    source = (source or "main").strip().lower()
+    if source not in ("main", "import"):
+        raise HTTPException(status_code=400, detail="Invalid source. Use main or import.")
+
+    # HMS "main claims" month should represent when the claim was generated in HMS (created_at),
+    # not when it was finalized for export.
+    # Imported claims month should come from the payload's provider.monthOfClaim when available.
+    start_dt, end_dt = _month_range(month)
+
+    # Trend defaults to a rolling 6 months ending at previous month,
+    # and can be overridden by an explicit month range (trend_start/trend_end).
+    if trend_start and str(trend_start).strip():
+        trend_start = str(trend_start).strip()
+    else:
+        trend_start = None
+    if trend_end and str(trend_end).strip():
+        trend_end = str(trend_end).strip()
+    else:
+        trend_end = None
+
+    if trend_start or trend_end:
+        # If only one side is provided, infer the other to preserve a usable range.
+        if trend_start and not trend_end:
+            trend_end = trend_start
+        if trend_end and not trend_start:
+            trend_start = _month_add(trend_end, -5)
+        trend_months = _months_between_inclusive(trend_start, trend_end)
+        # Cap for safety
+        trend_months = trend_months[:24]
+    else:
+        anchor = _prev_month_yyyy_mm()
+        trend_months = [_month_add(anchor, -5 + i) for i in range(6)]
+
+    trend: List[ClaimsDashboardTrendPoint] = []
+    top_diagnoses: List[ClaimsDashboardTopItem] = []
+    top_medicines: List[ClaimsDashboardTopItem] = []
+    multiple_attendance: List[ClaimsDashboardMultipleAttendanceItem] = []
+    potential_duplicates: List[ClaimsDashboardDuplicateGroup] = []
+
+    total_volume = 0
+    total_cost = 0.0
+
+    if source == "main":
+        # Base query: finalized claims within month.
+        base = (
+            db.query(Claim)
+            .join(Encounter, Claim.encounter_id == Encounter.id)
+            .join(Patient, Encounter.patient_id == Patient.id)
+            .filter(
+                Claim.status == ClaimStatus.FINALIZED.value,
+                Claim.created_at.isnot(None),
+                Claim.created_at >= start_dt,
+                Claim.created_at < end_dt,
+            )
+        )
+
+        total_volume = int(base.count())
+
+        # Total cost from prescriptions (pharmacy cost is usually the largest signal).
+        # Some claims may have no prescriptions.
+        cost_rows = (
+            db.query(func.coalesce(func.sum(ClaimPrescription.total_cost), 0.0))
+            .select_from(Claim)
+            .join(ClaimPrescription, ClaimPrescription.claim_id == Claim.id, isouter=True)
+            .filter(
+                Claim.status == ClaimStatus.FINALIZED.value,
+                Claim.created_at.isnot(None),
+                Claim.created_at >= start_dt,
+                Claim.created_at < end_dt,
+            )
+            .one()
+        )
+        total_cost = float(cost_rows[0] or 0.0)
+
+        # Trend months are independent of selected `month`.
+        for m_yyyy_mm in trend_months:
+            m_start, m_end = _month_range(m_yyyy_mm)
+            vol = (
+                db.query(func.count(Claim.id))
+                .filter(
+                    Claim.status == ClaimStatus.FINALIZED.value,
+                    Claim.created_at.isnot(None),
+                    Claim.created_at >= m_start,
+                    Claim.created_at < m_end,
+                )
+                .scalar()
+            ) or 0
+            c = (
+                db.query(func.coalesce(func.sum(ClaimPrescription.total_cost), 0.0))
+                .select_from(Claim)
+                .join(ClaimPrescription, ClaimPrescription.claim_id == Claim.id, isouter=True)
+                .filter(
+                    Claim.status == ClaimStatus.FINALIZED.value,
+                    Claim.created_at.isnot(None),
+                    Claim.created_at >= m_start,
+                    Claim.created_at < m_end,
+                )
+                .scalar()
+            ) or 0.0
+            trend.append(ClaimsDashboardTrendPoint(month=m_yyyy_mm, volume=int(vol), cost=float(c)))
+
+        # Top diagnoses by count.
+        dx_rows = (
+            db.query(ClaimDiagnosis.description, func.count(ClaimDiagnosis.id))
+            .join(Claim, ClaimDiagnosis.claim_id == Claim.id)
+            .filter(
+                Claim.status == ClaimStatus.FINALIZED.value,
+                Claim.created_at.isnot(None),
+                Claim.created_at >= start_dt,
+                Claim.created_at < end_dt,
+                ClaimDiagnosis.description.isnot(None),
+                ClaimDiagnosis.description != "",
+            )
+            .group_by(ClaimDiagnosis.description)
+            .order_by(func.count(ClaimDiagnosis.id).desc())
+            .limit(10)
+            .all()
+        )
+        top_diagnoses = [ClaimsDashboardTopItem(name=str(name), count=int(cnt)) for name, cnt in dx_rows]
+
+        # Top medicines by count (frequency of prescription lines).
+        med_rows = (
+            db.query(ClaimPrescription.description, func.count(ClaimPrescription.id))
+            .join(Claim, ClaimPrescription.claim_id == Claim.id)
+            .filter(
+                Claim.status == ClaimStatus.FINALIZED.value,
+                Claim.created_at.isnot(None),
+                Claim.created_at >= start_dt,
+                Claim.created_at < end_dt,
+                ClaimPrescription.description.isnot(None),
+                ClaimPrescription.description != "",
+            )
+            .group_by(ClaimPrescription.description)
+            .order_by(func.count(ClaimPrescription.id).desc())
+            .limit(10)
+            .all()
+        )
+        top_medicines = [ClaimsDashboardTopItem(name=str(name), count=int(cnt)) for name, cnt in med_rows]
+
+        # Multiple attendance advice: same member_no with ANC/PNC attendance multiple times in month.
+        # Patient name columns: stored as (name, surname, other_names) in this codebase.
+        patient_name_expr = func.trim(
+            func.concat(
+                func.coalesce(Patient.surname, ""),
+                " ",
+                func.coalesce(Patient.other_names, ""),
+                " ",
+                func.coalesce(Patient.name, ""),
+            )
+        )
+
+        ma_rows = (
+            db.query(
+                Claim.member_no,
+                func.max(Patient.card_number),
+                func.max(patient_name_expr),
+                func.count(Claim.id),
+                func.group_concat(Claim.claim_id) if db.get_bind().dialect.name == "mysql" else func.max(Claim.claim_id),
+            )
+            .select_from(Claim)
+            .join(Encounter, Claim.encounter_id == Encounter.id)
+            .join(Patient, Encounter.patient_id == Patient.id)
+            .filter(
+                Claim.status == ClaimStatus.FINALIZED.value,
+                Claim.created_at.isnot(None),
+                Claim.created_at >= start_dt,
+                Claim.created_at < end_dt,
+                Claim.type_of_attendance.isnot(None),
+                func.upper(func.trim(Claim.type_of_attendance)).in_(["ANC", "PNC"]),
+            )
+            .group_by(Claim.member_no)
+            .having(func.count(Claim.id) > 1)
+            .order_by(func.count(Claim.id).desc())
+            .limit(50)
+            .all()
+        )
+        for member_no, card_no, full_name, cnt, ids in ma_rows:
+            if db.get_bind().dialect.name == "mysql":
+                claim_ids = [x for x in str(ids or "").split(",") if x]
+            else:
+                claim_ids = [str(ids)] if ids else []
+            multiple_attendance.append(
+                ClaimsDashboardMultipleAttendanceItem(
+                    member_no=str(member_no),
+                    patient_card_number=str(card_no) if card_no else None,
+                    patient_name=str(full_name) if full_name else None,
+                    attendance_count=int(cnt),
+                    claim_ids=claim_ids,
+                    suggested_specialty_attended="OPDC",
+                )
+            )
+
+        # Potential duplicates: same member_no + same date (finalized day) + same principal_gdrg (if set).
+        # This is only a heuristic; officer reviews and decides.
+        finalized_date = func.date(Claim.created_at)
+        dup_rows = (
+            db.query(
+                Claim.member_no,
+                func.max(Patient.card_number),
+                func.max(patient_name_expr),
+                finalized_date,
+                func.coalesce(func.nullif(func.trim(Claim.principal_gdrg), ""), "_"),
+                func.count(Claim.id),
+                func.group_concat(Claim.claim_id) if db.get_bind().dialect.name == "mysql" else func.max(Claim.claim_id),
+            )
+            .select_from(Claim)
+            .join(Encounter, Claim.encounter_id == Encounter.id)
+            .join(Patient, Encounter.patient_id == Patient.id)
+            .filter(
+                Claim.status == ClaimStatus.FINALIZED.value,
+                Claim.created_at.isnot(None),
+                Claim.created_at >= start_dt,
+                Claim.created_at < end_dt,
+            )
+            .group_by(
+                Claim.member_no,
+                finalized_date,
+                func.coalesce(func.nullif(func.trim(Claim.principal_gdrg), ""), "_"),
+            )
+            .having(func.count(Claim.id) > 1)
+            .order_by(func.count(Claim.id).desc())
+            .limit(50)
+            .all()
+        )
+        for member_no, card_no, full_name, fdate, pgdrg, cnt, ids in dup_rows:
+            if db.get_bind().dialect.name == "mysql":
+                claim_ids = [x for x in str(ids or "").split(",") if x]
+            else:
+                claim_ids = [str(ids)] if ids else []
+            key = f"{member_no}|{fdate}|{pgdrg}"
+            potential_duplicates.append(
+                ClaimsDashboardDuplicateGroup(
+                    key=key,
+                    member_no=str(member_no),
+                    patient_card_number=str(card_no) if card_no else None,
+                    patient_name=str(full_name) if full_name else None,
+                    count=int(cnt),
+                    claim_ids=claim_ids,
+                )
+            )
+
+    else:
+        # Imported claims: treat finalized import items as "claims". Costs and top items
+        # depend on payload structure; for now provide volumes and advice based on payload fields if present.
+        # Month selection for imported claims should respect payload provider.monthOfClaim when possible.
+        # Fallback: finalized_at month.
+        items = (
+            db.query(ClaimXmlImportItem)
+            .filter(ClaimXmlImportItem.status == "finalized")
+            .all()
+        )
+        filtered_items: List[ClaimXmlImportItem] = []
+        for it in items:
+            p = it.payload or {}
+            provider = p.get("provider") or {}
+            moc = _parse_month_yyyy_mm(provider.get("monthOfClaim") or provider.get("month_of_claim"))
+            if moc is None and it.finalized_at:
+                moc = f"{it.finalized_at.year:04d}-{it.finalized_at.month:02d}"
+            if moc == month:
+                filtered_items.append(it)
+        items = filtered_items
+        total_volume = len(items)
+        total_cost = 0.0
+
+        # Trend months are independent of selected `month`.
+        for m_yyyy_mm in trend_months:
+            # Count imported items by monthOfClaim where possible (fallback to finalized_at month).
+            vol = 0
+            rows = (
+                db.query(ClaimXmlImportItem)
+                .filter(ClaimXmlImportItem.status == "finalized")
+                .all()
+            )
+            for it in rows:
+                p = it.payload or {}
+                provider = p.get("provider") or {}
+                moc = _parse_month_yyyy_mm(provider.get("monthOfClaim") or provider.get("month_of_claim"))
+                if moc is None and it.finalized_at:
+                    moc = f"{it.finalized_at.year:04d}-{it.finalized_at.month:02d}"
+                if moc == m_yyyy_mm:
+                    vol += 1
+            trend.append(ClaimsDashboardTrendPoint(month=m_yyyy_mm, volume=int(vol), cost=0.0))
+
+        # Advice from payload keys if present.
+        # Multiple attendance: payload.client.memberNumber + payload.services.typeOfAttendance (heuristic)
+        by_member = {}
+        for it in items:
+            p = it.payload or {}
+            client = p.get("client") or {}
+            services = p.get("services") or {}
+            member_no = str(client.get("memberNumber") or client.get("member_no") or "").strip()
+            if not member_no:
+                continue
+            toa = str(services.get("typeOfAttendance") or services.get("type_of_attendance") or "").strip().upper()
+            if toa not in ("ANC", "PNC"):
+                continue
+            by_member.setdefault(member_no, []).append(str(p.get("claimID") or p.get("claimId") or it.claim_claim_id))
+        for member_no, ids in sorted(by_member.items(), key=lambda kv: len(kv[1]), reverse=True):
+            if len(ids) <= 1:
+                continue
+            multiple_attendance.append(
+                ClaimsDashboardMultipleAttendanceItem(
+                    member_no=member_no,
+                    attendance_count=len(ids),
+                    claim_ids=ids[:50],
+                    suggested_specialty_attended="OPDC",
+                )
+            )
+            if len(multiple_attendance) >= 50:
+                break
+
+        # Potential duplicates: payload.client.memberNumber + payload.provider.monthOfClaim + payload.services.principalGdrg
+        groups = {}
+        for it in items:
+            p = it.payload or {}
+            client = p.get("client") or {}
+            provider = p.get("provider") or {}
+            services = p.get("services") or {}
+            member_no = str(client.get("memberNumber") or client.get("member_no") or "").strip()
+            if not member_no:
+                continue
+            moc = str(provider.get("monthOfClaim") or provider.get("month_of_claim") or "").strip()
+            pg = str(services.get("principalGdrg") or services.get("principal_gdrg") or "").strip() or "_"
+            key = f"{member_no}|{moc}|{pg}"
+            groups.setdefault(key, {"member_no": member_no, "ids": []})
+            groups[key]["ids"].append(str(p.get("claimID") or p.get("claimId") or it.claim_claim_id))
+        for key, info in sorted(groups.items(), key=lambda kv: len(kv[1]["ids"]), reverse=True):
+            ids = info["ids"]
+            if len(ids) <= 1:
+                continue
+            potential_duplicates.append(
+                ClaimsDashboardDuplicateGroup(
+                    key=key,
+                    member_no=info["member_no"],
+                    count=len(ids),
+                    claim_ids=ids[:50],
+                )
+            )
+            if len(potential_duplicates) >= 50:
+                break
+
+        top_diagnoses = []
+        top_medicines = []
+
+    avg_cost = float(total_cost / total_volume) if total_volume else 0.0
+    return ClaimsDashboardResponse(
+        source=source,
+        month=month,
+        kpis=ClaimsDashboardKPIs(
+            total_volume=int(total_volume),
+            total_cost=float(total_cost),
+            avg_cost_per_claim=float(avg_cost),
+        ),
+        trend=trend,
+        top_diagnoses=top_diagnoses,
+        top_medicines=top_medicines,
+        advice=ClaimsDashboardAdvice(
+            multiple_attendance=multiple_attendance,
+            potential_duplicates=potential_duplicates,
+        ),
+    )
+
 
 
 @router.get("/specialties", response_model=SpecialtiesResponse)
@@ -3418,6 +3963,26 @@ def _normalize_medicine_duration(raw_duration: str) -> str:
     return compact
 
 
+def _reorder_ghims_diagnoses_principal_first(payload: dict) -> None:
+    """Put the diagnosis matching principalGDRG first (export and UI section order)."""
+    diagnoses = payload.get("diagnoses")
+    if not isinstance(diagnoses, list) or len(diagnoses) <= 1:
+        return
+    principal_gdrg = str(payload.get("principalGDRG") or "").strip()
+    if not principal_gdrg:
+        return
+    idx = next(
+        (
+            i
+            for i, diag in enumerate(diagnoses)
+            if isinstance(diag, dict) and str(diag.get("gdrgCode") or "").strip() == principal_gdrg
+        ),
+        -1,
+    )
+    if idx > 0:
+        diagnoses.insert(0, diagnoses.pop(idx))
+
+
 def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
     normalized_payload = dict(payload or {})
     diagnoses = normalized_payload.get("diagnoses")
@@ -3434,6 +3999,7 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
                     status_code=400,
                     detail=f"Diagnosis section {idx + 1}: missing GDRG. Please enter GDRG before saving.",
                 )
+        _reorder_ghims_diagnoses_principal_first(normalized_payload)
 
     investigations = normalized_payload.get("investigations")
     if isinstance(investigations, list):
@@ -3742,7 +4308,11 @@ def export_ghims_import_items(
     not_finalized = [i.id for i in items if i.status != "finalized"]
     if not_finalized:
         raise HTTPException(status_code=400, detail="Only finalized imported claims can be exported.")
-    payloads = [i.payload or {} for i in sorted(items, key=lambda x: x.row_index or 0)]
+    payloads = []
+    for i in sorted(items, key=lambda x: x.row_index or 0):
+        p = dict(i.payload or {})
+        _reorder_ghims_diagnoses_principal_first(p)
+        payloads.append(p)
     xml_content = build_claims_xml_from_payloads(payloads)
     filename = f"NHIS_CLA_imported_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
     return Response(

@@ -238,10 +238,90 @@
             @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
           >
             <q-item-section avatar>
-              <q-icon name="description" />
+              <q-icon name="apps" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Claims home</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
+            :clickable="isModuleActive('claims')"
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'ClaimsDashboard' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="dashboard" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Dashboard</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
+            :clickable="isModuleActive('claims')"
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'ClaimsList' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="description" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
             </q-item-section>
             <q-item-section>
               <q-item-label>Claims</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
+            :clickable="isModuleActive('claims')"
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'ClaimsReports' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="assessment" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Reports</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
+            :clickable="isModuleActive('claims')"
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'ClaimItCorrectErrors' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="error_outline" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Correct errors</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
+            :clickable="isModuleActive('claims')"
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'GhimsXmlImport' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="upload_file" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Import GHIMS XML</q-item-label>
             </q-item-section>
           </q-item>
         </template>

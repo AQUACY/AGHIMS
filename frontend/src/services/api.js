@@ -895,6 +895,11 @@ export const claimsAPI = {
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
 };
 
+/** Claims analytics: dashboard aggregates + advice */
+export const claimsAnalyticsAPI = {
+  getDashboard: (params = {}) => api.get('/claims/dashboard', { params }),
+};
+
 // Staff endpoints
 export const staffAPI = {
   getAll: () => api.get('/staff/'),

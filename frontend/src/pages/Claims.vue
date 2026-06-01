@@ -11,6 +11,23 @@
           class="claims-module-tile cursor-pointer glass-card"
           flat
           bordered
+          @click="$router.push('/claims/dashboard')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="dashboard" size="64px" color="primary" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Dashboard</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Monthly overview, submission advice, and duplicate checks.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
           @click="$router.push('/claims/list')"
         >
           <q-card-section class="text-center q-pa-xl">
@@ -18,6 +35,23 @@
             <div class="text-h6 text-weight-medium">Claims</div>
             <div class="text-caption text-grey-7 q-mt-sm">
               View finalized encounters, generate and edit claims, export XML for ClaimIT.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
+          @click="$router.push('/claims/reports')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="assessment" size="64px" color="indigo" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Reports</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Structured reports for claims analysis and auditing.
             </div>
           </q-card-section>
         </q-card>

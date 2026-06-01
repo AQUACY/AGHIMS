@@ -181,6 +181,18 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/dashboard',
+        name: 'ClaimsDashboard',
+        component: () => import('../pages/ClaimsDashboard.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/reports',
+        name: 'ClaimsReports',
+        component: () => import('../pages/ClaimsReports.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/list',
         name: 'ClaimsList',
         component: () => import('../pages/ClaimsList.vue'),
@@ -683,6 +695,8 @@ const routeModuleMap = {
   'Xray': 'xray',
   'XrayResult': 'xray',
   'Claims': 'claims',
+  'ClaimsDashboard': 'claims',
+  'ClaimsReports': 'claims',
   'EditClaim': 'claims',
   'GenerateClaim': 'claims',
   'IPD': 'ipd',

@@ -545,6 +545,29 @@ function onDiagnosisSelect(index, val) {
   }
 }
 
+function moveDiagnosisToFirst(index) {
+  const list = payload.diagnoses || [];
+  if (index <= 0 || index >= list.length) return;
+  const [row] = list.splice(index, 1);
+  list.unshift(row);
+}
+
+function reorderDiagnosesWithPrincipalFirst() {
+  const list = payload.diagnoses || [];
+  if (!list.length) {
+    principalDiagnosisIndex.value = -1;
+    return;
+  }
+  const principalGdrg = String(payload.principalGDRG || '').trim();
+  if (!principalGdrg) {
+    principalDiagnosisIndex.value = -1;
+    return;
+  }
+  const idx = list.findIndex((d) => String(d?.gdrgCode || '').trim() === principalGdrg);
+  if (idx > 0) moveDiagnosisToFirst(idx);
+  principalDiagnosisIndex.value = idx >= 0 ? 0 : -1;
+}
+
 function setPrincipalDiagnosis(index, checked) {
   if (!checked) {
     if (principalDiagnosisIndex.value === index) {
@@ -553,8 +576,9 @@ function setPrincipalDiagnosis(index, checked) {
     }
     return;
   }
-  principalDiagnosisIndex.value = index;
-  const row = payload.diagnoses[index];
+  moveDiagnosisToFirst(index);
+  principalDiagnosisIndex.value = 0;
+  const row = payload.diagnoses[0];
   payload.principalGDRG = row?.gdrgCode || '';
 }
 
@@ -870,9 +894,7 @@ async function load() {
       messages: Array.isArray(ce.messages) ? ce.messages : [],
       by_section: { ...emptyClaimitBySection(), ...(ce.by_section || {}) },
     };
-    principalDiagnosisIndex.value = (payload.diagnoses || []).findIndex(
-      (d) => String(d?.gdrgCode || '').trim() && String(d?.gdrgCode || '').trim() === String(payload.principalGDRG || '').trim()
-    );
+    reorderDiagnosesWithPrincipalFirst();
     await resolveServiceNames();
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imported claim' });
@@ -884,6 +906,7 @@ async function load() {
 async function saveAndFinalize() {
   saving.value = true;
   try {
+    reorderDiagnosesWithPrincipalFirst();
     const clean = normalize(payload);
     const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
     if (missingMedicineDates.length) {
@@ -933,6 +956,7 @@ async function saveAndFinalize() {
 async function flagClaim() {
   saving.value = true;
   try {
+    reorderDiagnosesWithPrincipalFirst();
     const clean = normalize(payload);
     const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
     if (missingMedicineDates.length) {
