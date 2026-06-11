@@ -3223,10 +3223,12 @@ def get_claim_edit_details(
 
 class ClaimFetchCccRequest(BaseModel):
     member_no: Optional[str] = None
+    otac: Optional[str] = None
 
 
 class GhimsFetchCccRequest(BaseModel):
     member_no: Optional[str] = None
+    otac: Optional[str] = None
 
 
 @router.post("/{claim_id}/fetch-ccc")
@@ -3247,7 +3249,7 @@ def fetch_claim_ccc(
             detail="Cannot fetch CCC on a finalized claim. Reopen the claim first.",
         )
     try:
-        return fetch_ccc_preview_for_claim(claim, member_no=body.member_no)
+        return fetch_ccc_preview_for_claim(claim, member_no=body.member_no, otac=body.otac)
     except NhiaIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -3273,6 +3275,7 @@ def fetch_ghims_import_item_ccc(
         return fetch_ccc_preview_for_ghims_payload(
             item.payload or {},
             member_no=body.member_no,
+            otac=body.otac,
         )
     except NhiaIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

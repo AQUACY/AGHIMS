@@ -267,7 +267,15 @@
                 v-model="form.insurance_id"
                 filled
                 label="Insurance ID / Member Number"
-                class="col-12 col-md-6"
+                class="col-12 col-md-4"
+              />
+              <q-input
+                v-model="nhiaOtac"
+                filled
+                label="OTAC (if required)"
+                hint="4-digit code from patient (*929# or NHIA portal)"
+                class="col-12 col-md-3"
+                maxlength="4"
               />
               <q-btn
                 color="secondary"
@@ -496,7 +504,15 @@
                   v-model="editForm.insurance_id"
                   filled
                   label="Insurance ID / Member Number"
-                  class="col-12 col-md-6"
+                  class="col-12 col-md-4"
+                />
+                <q-input
+                  v-model="nhiaOtacEdit"
+                  filled
+                  label="OTAC (if required)"
+                  hint="4-digit code from patient"
+                  class="col-12 col-md-3"
+                  maxlength="4"
                 />
                 <q-btn
                   color="secondary"
@@ -828,6 +844,8 @@ const selectedEncounterProcedure = ref(null);
 const encounterCccNumber = ref('');
 const importingNhia = ref(false);
 const importingNhiaEdit = ref(false);
+const nhiaOtac = ref('');
+const nhiaOtacEdit = ref('');
 const generatingEncounterCcc = ref(false);
 
 const encounterRequiresCcc = computed(() =>
@@ -988,7 +1006,7 @@ const importFromNhia = async () => {
   if (!form.insurance_id?.trim()) return;
   importingNhia.value = true;
   try {
-    const result = await patientsStore.lookupNhia(form.insurance_id.trim());
+    const result = await patientsStore.lookupNhia(form.insurance_id.trim(), nhiaOtac.value?.trim() || null);
     if (result.data?.name) {
       nhiaParentFirstName.value = firstNameFromFullName(result.data.name);
       const parts = result.data.name.trim().split(/\s+/);
@@ -1006,7 +1024,7 @@ const importFromNhiaEdit = async () => {
   if (!editForm.insurance_id?.trim()) return;
   importingNhiaEdit.value = true;
   try {
-    const result = await patientsStore.lookupNhia(editForm.insurance_id.trim());
+    const result = await patientsStore.lookupNhia(editForm.insurance_id.trim(), nhiaOtacEdit.value?.trim() || null);
     applyNhiaDataToForm(editForm, result.data);
     $q.notify({ type: 'positive', message: 'Patient details imported from NHIA' });
   } finally {
@@ -1019,7 +1037,7 @@ const fetchEncounterCcc = async () => {
   if (!patient?.id || !canGetEncounterCcc.value) return;
   generatingEncounterCcc.value = true;
   try {
-    const result = await patientsStore.generateCcc(patient.id);
+    const result = await patientsStore.generateCcc(patient.id, nhiaOtac.value?.trim() || null);
     if (result?.data?.ccc) {
       encounterCccNumber.value = result.data.ccc;
     }

@@ -1,6 +1,5 @@
 """
-Temporary NHIA CCC portal integration (scraper layer).
-Replace with official NHIA API when endpoints are published.
+NHIA CCC integration — NeHFAMS OTAC REST API (otac.nhia.gov.gh) or legacy CCC portal scraper.
 """
 from __future__ import annotations
 
@@ -14,20 +13,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.patient import Patient
+from app.services.nhia_exceptions import NhiaIntegrationError  # noqa: F401 — re-exported for API modules
 from app.services.nhia_html_parser import NhiaClaimCodeData, parse_claim_code_html
 
 logger = logging.getLogger(__name__)
 
 _SESSION: Optional[httpx.Client] = None
 _SESSION_EXPIRES_AT: float = 0.0
-
-
-class NhiaIntegrationError(Exception):
-    """Raised when NHIA CCC lookup or generation fails."""
-
-    def __init__(self, message: str, *, retryable: bool = False):
-        super().__init__(message)
-        self.retryable = retryable
 
 
 def _mask_hin(hin: Optional[str]) -> str:
@@ -40,7 +32,13 @@ def _mask_hin(hin: Optional[str]) -> str:
 
 
 def _base_url() -> str:
-    return (settings.NHIA_CCC_BASE_URL or "https://ccc.nhia.gov.gh").rstrip("/")
+    return (settings.NHIA_CCC_BASE_URL or "https://otac.nhia.gov.gh").rstrip("/")
+
+
+def _uses_otac_api() -> bool:
+    """True when configured to use the NHIA NeHFAMS OTAC REST API."""
+    url = _base_url().lower()
+    return "otac.nhia.gov.gh" in url
 
 
 def _session_ttl_seconds() -> int:
@@ -249,11 +247,40 @@ def _fetch_claim_code_html(client: httpx.Client, hin: str) -> str:
     return html
 
 
-def lookup_member_by_hin(hin: str, *, force_refresh: bool = False) -> NhiaClaimCodeData:
-    """Fetch CCC / membership data from NHIA portal for a member number (HIN)."""
+def lookup_member_by_hin(
+    hin: str,
+    *,
+    otac: Optional[str] = None,
+    force_refresh: bool = False,
+) -> NhiaClaimCodeData:
+    """Fetch CCC / membership data from NHIA for a member number (HIN)."""
     hin = (hin or "").strip()
     if not hin:
         raise NhiaIntegrationError("Insurance / NHIS member number is required.", retryable=False)
+
+    if _uses_otac_api():
+        from app.services.nhia_otac_api import lookup_member_by_hin_otac
+
+        started = time.perf_counter()
+        masked = _mask_hin(hin)
+        logger.info("NHIA OTAC API lookup started for HIN %s", masked)
+        try:
+            data = lookup_member_by_hin_otac(hin, otac=otac, force_refresh=force_refresh)
+        except NhiaIntegrationError:
+            logger.warning("NHIA OTAC API lookup failed for HIN %s", masked)
+            raise
+        except httpx.TimeoutException as exc:
+            raise NhiaIntegrationError("NHIA API request timed out.", retryable=True) from exc
+        except httpx.HTTPError as exc:
+            raise NhiaIntegrationError("Unable to reach NHIA API.", retryable=True) from exc
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "NHIA OTAC API lookup succeeded for HIN %s in %dms (status=%s)",
+            masked,
+            elapsed_ms,
+            (data.status or "unknown").upper(),
+        )
+        return data
 
     started = time.perf_counter()
     masked = _mask_hin(hin)
@@ -395,7 +422,12 @@ def apply_nhia_data_to_patient(
         patient.insurance_end_date = end
 
 
-def generate_patient_ccc(db: Session, patient_id: int) -> Dict[str, Any]:
+def generate_patient_ccc(
+    db: Session,
+    patient_id: int,
+    *,
+    otac: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Load patient, verify eligibility, fetch CCC from NHIA, persist, return payload.
     """
@@ -419,11 +451,11 @@ def generate_patient_ccc(db: Session, patient_id: int) -> Dict[str, Any]:
     started = time.perf_counter()
 
     try:
-        data = lookup_member_by_hin(hin)
+        data = lookup_member_by_hin(hin, otac=otac)
     except NhiaIntegrationError as exc:
         if exc.retryable:
             try:
-                data = lookup_member_by_hin(hin, force_refresh=True)
+                data = lookup_member_by_hin(hin, otac=otac, force_refresh=True)
             except NhiaIntegrationError:
                 raise
         else:

@@ -631,6 +631,11 @@ def get_patient(
 
 class NhiaLookupRequest(BaseModel):
     insurance_id: str
+    otac: Optional[str] = None
+
+
+class GenerateCccRequest(BaseModel):
+    otac: Optional[str] = None
 
 
 class NhiaCccDataResponse(BaseModel):
@@ -666,7 +671,7 @@ def lookup_nhia_member(
 ):
     """Fetch member/CCC data from NHIA portal without saving a patient record."""
     try:
-        data = lookup_member_by_hin(body.insurance_id.strip())
+        data = lookup_member_by_hin(body.insurance_id.strip(), otac=body.otac)
         from app.core.audit import set_audit_summary
         hin = body.insurance_id.strip()
         set_audit_summary(
@@ -686,13 +691,14 @@ def lookup_nhia_member(
 def generate_ccc_for_patient(
     request: Request,
     patient_id: int,
+    body: GenerateCccRequest = GenerateCccRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor", "Nurse"])),
     _module_check: User = Depends(require_module_permission("patients", "update")),
 ):
     """Generate/fetch CCC from NHIA portal and update the patient record."""
     try:
-        result = generate_patient_ccc(db, patient_id)
+        result = generate_patient_ccc(db, patient_id, otac=body.otac)
     except NhiaIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

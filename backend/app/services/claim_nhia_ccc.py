@@ -47,6 +47,7 @@ def fetch_ccc_preview_for_claim(
     claim: Claim,
     *,
     member_no: Optional[str] = None,
+    otac: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Fetch CCC from NHIA for a HMS claim. Does not write to the database;
@@ -59,7 +60,7 @@ def fetch_ccc_preview_for_claim(
             retryable=False,
         )
 
-    data = lookup_member_by_hin(hin)
+    data = lookup_member_by_hin(hin, otac=otac)
     ccc = (data.ccc or "").strip()
     if not ccc:
         raise NhiaIntegrationError("NHIA did not return a CCC.", retryable=False)
@@ -82,6 +83,7 @@ def fetch_ccc_preview_for_ghims_payload(
     payload: Dict[str, Any],
     *,
     member_no: Optional[str] = None,
+    otac: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Fetch CCC from NHIA and return a GHIMS payload preview (no database writes)."""
     hin = (member_no or (payload or {}).get("memberNo") or "").strip()
@@ -91,7 +93,7 @@ def fetch_ccc_preview_for_ghims_payload(
             retryable=False,
         )
 
-    data = lookup_member_by_hin(hin)
+    data = lookup_member_by_hin(hin, otac=otac)
     ccc = (data.ccc or "").strip()
     if not ccc:
         raise NhiaIntegrationError("NHIA did not return a CCC.", retryable=False)

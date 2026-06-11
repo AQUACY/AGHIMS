@@ -187,8 +187,11 @@ export const claimsAPI = {
   get: (claimId) => api.get(`/claims/${claimId}`),
   updateDetailed: (claimId, data) => api.put(`/claims/${claimId}/detailed`, data),
   getEditDetails: (claimId) => api.get(`/claims/${claimId}/edit-details`),
-  fetchCcc: (claimId, memberNo = null) =>
-    api.post(`/claims/${claimId}/fetch-ccc`, memberNo ? { member_no: memberNo } : {}),
+  fetchCcc: (claimId, memberNo = null, otac = null) =>
+    api.post(`/claims/${claimId}/fetch-ccc`, {
+      ...(memberNo ? { member_no: memberNo } : {}),
+      ...(otac ? { otac } : {}),
+    }),
   fetchGhimsImportCcc: (itemId, memberNo = null) =>
     api.post(`/claims/ghims-import/items/${itemId}/fetch-ccc`, memberNo ? { member_no: memberNo } : {}),
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),

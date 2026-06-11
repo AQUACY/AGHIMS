@@ -80,12 +80,14 @@ class Settings(BaseSettings):
     LICENSE_ONLINE_BOOTSTRAP_MAX_DAYS: int = 7
     LICENSE_SETUP_TOKEN: str = ""  # One-time style secret required to POST /license/activate (unauthenticated)
 
-    # NHIA CCC portal integration (temporary scraper until official API is available)
+    # NHIA integration — NeHFAMS OTAC API (https://otac.nhia.gov.gh) or legacy CCC portal scraper
     NHIA_INTEGRATION_ENABLED: bool = True
-    NHIA_CCC_BASE_URL: str = "https://ccc.nhia.gov.gh"
+    NHIA_CCC_BASE_URL: str = "https://otac.nhia.gov.gh"
     NHIA_USERNAME: str = ""
     NHIA_PASSWORD: str = ""
-    NHIA_API_KEY: str = ""  # Reserved for future official API
+    NHIA_DEFAULT_OTAC: str = ""  # Optional 4-digit OTAC when NHIA requires patient attendance code
+    NHIA_API_KEY: str = ""  # NeHFAMS facility API Key (from NHIA portal API access settings)
+    NHIA_API_SECRET: str = ""  # NeHFAMS facility API Secret paired with NHIA_API_KEY
     NHIA_SESSION_TTL_SECONDS: int = 1800
     NHIA_REQUEST_TIMEOUT_SECONDS: float = 30.0
     # SSL: on Windows, certifi bundle is used automatically. Set NHIA_SSL_VERIFY=false only if needed.

@@ -494,7 +494,15 @@
                   v-model="editForm.insurance_id"
                   filled
                   label="Insurance ID / Member Number"
-                  class="col-12 col-md-6"
+                  class="col-12 col-md-4"
+                />
+                <q-input
+                  v-model="nhiaOtac"
+                  filled
+                  label="OTAC (if required)"
+                  hint="4-digit code from patient"
+                  class="col-12 col-md-3"
+                  maxlength="4"
                 />
                 <q-btn
                   color="secondary"
@@ -811,6 +819,7 @@ const billItemsColumns = [
 const unpaidEncounters = ref([]);
 const saving = ref(false);
 const importingNhia = ref(false);
+const nhiaOtac = ref('');
 const generatingCcc = ref(false);
 const generatingEncounterCcc = ref(false);
 const ghimsCardMode = ref(false);
@@ -1297,7 +1306,7 @@ const importFromNhia = async () => {
   if (!editForm.insurance_id?.trim()) return;
   importingNhia.value = true;
   try {
-    const result = await patientsStore.lookupNhia(editForm.insurance_id.trim());
+    const result = await patientsStore.lookupNhia(editForm.insurance_id.trim(), nhiaOtac.value?.trim() || null);
     applyNhiaDataToForm(editForm, result.data);
     $q.notify({ type: 'positive', message: 'Patient details imported from NHIA' });
   } finally {
@@ -1309,7 +1318,7 @@ const generateCccForPatient = async () => {
   if (!patient.value?.id || !canGenerateCcc.value) return;
   generatingCcc.value = true;
   try {
-    const result = await patientsStore.generateCcc(patient.value.id);
+    const result = await patientsStore.generateCcc(patient.value.id, nhiaOtac.value?.trim() || null);
     if (result?.data?.ccc) {
       editForm.ccc_number = result.data.ccc;
     }
@@ -1328,7 +1337,7 @@ const fetchEncounterCcc = async () => {
   if (!patient.value?.id || !canGetEncounterCcc.value) return;
   generatingEncounterCcc.value = true;
   try {
-    const result = await patientsStore.generateCcc(patient.value.id);
+    const result = await patientsStore.generateCcc(patient.value.id, nhiaOtac.value?.trim() || null);
     if (result?.data?.ccc) {
       encounterEditForm.ccc_number = result.data.ccc;
     }

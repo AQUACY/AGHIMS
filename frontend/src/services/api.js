@@ -206,8 +206,10 @@ export const patientsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  lookupNhia: (insuranceId) => api.post('/patients/nhia/lookup', { insurance_id: insuranceId }),
-  generateCcc: (patientId) => api.post(`/patients/${patientId}/generate-ccc`),
+  lookupNhia: (insuranceId, otac = null) =>
+    api.post('/patients/nhia/lookup', { insurance_id: insuranceId, otac: otac || null }),
+  generateCcc: (patientId, otac = null) =>
+    api.post(`/patients/${patientId}/generate-ccc`, { otac: otac || null }),
   createEncounter: (patientId, serviceType, cccNumber = null, procedureGDrgCode = null, procedureName = null) => {
     const params = new URLSearchParams({ service_type: serviceType });
     if (cccNumber) {
@@ -848,10 +850,16 @@ export const claimsAPI = {
   update: (claimId, data) => api.put(`/claims/${claimId}`, data),
   updateDetailed: (claimId, data) => api.put(`/claims/${claimId}/detailed`, data),
   getEditDetails: (claimId) => api.get(`/claims/${claimId}/edit-details`),
-  fetchCcc: (claimId, memberNo = null) =>
-    api.post(`/claims/${claimId}/fetch-ccc`, memberNo ? { member_no: memberNo } : {}),
-  fetchGhimsImportCcc: (itemId, memberNo = null) =>
-    api.post(`/claims/ghims-import/items/${itemId}/fetch-ccc`, memberNo ? { member_no: memberNo } : {}),
+  fetchCcc: (claimId, memberNo = null, otac = null) =>
+    api.post(`/claims/${claimId}/fetch-ccc`, {
+      ...(memberNo ? { member_no: memberNo } : {}),
+      ...(otac ? { otac } : {}),
+    }),
+  fetchGhimsImportCcc: (itemId, memberNo = null, otac = null) =>
+    api.post(`/claims/ghims-import/items/${itemId}/fetch-ccc`, {
+      ...(memberNo ? { member_no: memberNo } : {}),
+      ...(otac ? { otac } : {}),
+    }),
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),
   reopen: (claimId) => api.put(`/claims/${claimId}/reopen`),
   regenerate: (claimId, data) => api.put(`/claims/${claimId}/regenerate`, data),

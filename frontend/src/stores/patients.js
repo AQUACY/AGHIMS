@@ -99,9 +99,9 @@ export const usePatientsStore = defineStore('patients', {
       }
     },
 
-    async lookupNhia(insuranceId) {
+    async lookupNhia(insuranceId, otac = null) {
       try {
-        const response = await patientsAPI.lookupNhia(insuranceId);
+        const response = await patientsAPI.lookupNhia(insuranceId, otac);
         return response.data;
       } catch (error) {
         Notify.create({
@@ -113,9 +113,9 @@ export const usePatientsStore = defineStore('patients', {
       }
     },
 
-    async generateCcc(patientId) {
+    async generateCcc(patientId, otac = null) {
       try {
-        const response = await patientsAPI.generateCcc(patientId);
+        const response = await patientsAPI.generateCcc(patientId, otac);
         Notify.create({
           type: 'positive',
           message: response.data?.message || 'CCC generated successfully',
