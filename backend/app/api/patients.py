@@ -687,7 +687,7 @@ def generate_ccc_for_patient(
     request: Request,
     patient_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor", "Nurse"])),
     _module_check: User = Depends(require_module_permission("patients", "update")),
 ):
     """Generate/fetch CCC from NHIA portal and update the patient record."""

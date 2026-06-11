@@ -46,6 +46,92 @@
       </q-card-section>
     </q-card>
 
+    <!-- Ward Stock -->
+    <q-card v-if="patientInfo?.ward" class="glass-card q-mb-md" flat bordered>
+      <q-card-section>
+        <div class="row items-center q-mb-md">
+          <div class="text-h6 glass-text">
+            <q-icon name="inventory_2" color="primary" class="q-mr-sm" />
+            Ward Stock — {{ patientInfo.ward }}
+          </div>
+          <q-space />
+          <q-btn
+            flat
+            icon="refresh"
+            label="Refresh"
+            color="primary"
+            @click="loadWardStock"
+            :loading="stockLoading"
+          />
+        </div>
+        <div class="text-caption text-grey-7 q-mb-md">
+          Available items in this ward. Select an item to pre-fill the form below, or search by name or code.
+        </div>
+
+        <q-banner
+          v-if="!stockLoading && stockRows.length === 0"
+          rounded
+          class="bg-grey-8 text-white q-mb-md"
+        >
+          No stock is recorded for this ward yet. Request items from pharmacy via a requisition.
+        </q-banner>
+
+        <template v-else>
+          <q-input
+            v-model="stockFilter"
+            dense
+            filled
+            clearable
+            label="Search by name or code"
+            class="q-mb-sm"
+          >
+            <template v-slot:prepend>
+              <q-icon name="search" />
+            </template>
+          </q-input>
+          <q-linear-progress v-if="stockLoading" indeterminate class="q-mb-sm" />
+          <q-table
+            v-else
+            flat
+            bordered
+            dense
+            :rows="filteredStockRows"
+            :columns="stockColumns"
+            row-key="product_code"
+            :rows-per-page-options="[10, 15, 25]"
+            :pagination="{ rowsPerPage: 10 }"
+            class="stock-table"
+          >
+            <template v-slot:body-cell-quantity="props">
+              <q-td :props="props">
+                <span :class="props.row.quantity <= 0 ? 'text-negative text-weight-bold' : ''">
+                  {{ formatQty(props.row.quantity) }}
+                </span>
+                <q-badge
+                  v-if="props.row.quantity <= 0"
+                  color="negative"
+                  label="Out of stock"
+                  class="q-ml-sm"
+                />
+              </q-td>
+            </template>
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  flat
+                  dense
+                  no-caps
+                  color="primary"
+                  label="Use"
+                  @click="selectStockRow(props.row)"
+                />
+              </q-td>
+            </template>
+          </q-table>
+        </template>
+      </q-card-section>
+    </q-card>
+
     <!-- Add Product Form -->
     <q-card class="glass-card q-mb-md" flat bordered>
       <q-card-section>
@@ -228,7 +314,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, priceListAPI } from '../services/api';
+import { consultationAPI, priceListAPI, companionVisitsAPI } from '../services/api';
 
 const route = useRoute();
 const router = useRouter();
@@ -255,6 +341,28 @@ const productForm = ref({
   unit_price: null,
   notes: ''
 });
+
+const stockRows = ref([]);
+const stockLoading = ref(false);
+const stockFilter = ref('');
+const pickedAvailability = ref(null);
+
+const filteredStockRows = computed(() => {
+  const q = (stockFilter.value || '').trim().toLowerCase();
+  if (!q) return stockRows.value;
+  return stockRows.value.filter(
+    (r) =>
+      (r.product_name || '').toLowerCase().includes(q) ||
+      (r.product_code || '').toLowerCase().includes(q)
+  );
+});
+
+const stockColumns = [
+  { name: 'product_name', label: 'Product Name', field: 'product_name', align: 'left', sortable: true },
+  { name: 'product_code', label: 'Code', field: 'product_code', align: 'left', sortable: true },
+  { name: 'quantity', label: 'Available Stock', field: 'quantity', align: 'right', sortable: true },
+  { name: 'actions', label: '', field: 'product_code', align: 'right' }
+];
 
 const columns = [
   {
@@ -316,6 +424,62 @@ const columns = [
   }
 ];
 
+const formatQty = (q) => {
+  if (q == null || !Number.isFinite(Number(q))) return '—';
+  const n = Number(q);
+  return n % 1 === 0 ? String(n) : n.toFixed(2);
+};
+
+const loadWardStock = async () => {
+  const ward = patientInfo.value?.ward;
+  if (!ward || ward === 'N/A') {
+    stockRows.value = [];
+    return;
+  }
+
+  stockLoading.value = true;
+  try {
+    const res = await companionVisitsAPI.getDepartmentStock(ward);
+    stockRows.value = res.data || [];
+  } catch (error) {
+    console.error('Error loading ward stock:', error);
+    stockRows.value = [];
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to load ward stock',
+      position: 'top'
+    });
+  } finally {
+    stockLoading.value = false;
+  }
+};
+
+const selectStockRow = (row) => {
+  if (!row) return;
+  productForm.value.product_code = row.product_code || '';
+  productForm.value.product_name = row.product_name || '';
+  pickedAvailability.value = row.quantity != null ? Number(row.quantity) : null;
+
+  const match = allProducts.value.find((p) => p.value.code === row.product_code);
+  if (match) {
+    selectedProduct.value = match.value;
+    if (match.value.price && match.value.price > 0) {
+      productForm.value.unit_price = match.value.price;
+    }
+  } else {
+    selectedProduct.value = null;
+  }
+
+  if (pickedAvailability.value != null && pickedAvailability.value <= 0) {
+    $q.notify({
+      type: 'warning',
+      message: 'This item is out of stock. Request stock via a Pharmacy/Main Stores requisition before debiting.',
+      position: 'top',
+      timeout: 5000
+    });
+  }
+};
+
 const loadPatientInfo = async () => {
   if (!wardAdmissionId.value) return;
   
@@ -334,6 +498,7 @@ const loadPatientInfo = async () => {
         card_number: res.data.patient_card_number || res.data.card_number || 'N/A',
         ward: res.data.ward || 'N/A'
       };
+      await loadWardStock();
     }
   } catch (error) {
     console.error('Error loading patient info:', error);
@@ -508,7 +673,7 @@ const addProduct = async () => {
     });
 
     clearForm();
-    loadInventoryDebits();
+    await Promise.all([loadInventoryDebits(), loadWardStock()]);
   } catch (error) {
     console.error('Error adding product:', error);
     $q.notify({
@@ -552,7 +717,7 @@ const deleteDebit = async (debit) => {
           : 'Product deleted successfully',
         position: 'top'
       });
-      loadInventoryDebits();
+      await Promise.all([loadInventoryDebits(), loadWardStock()]);
     } catch (error) {
       console.error('Error deleting product:', error);
       $q.notify({
@@ -577,6 +742,7 @@ const clearForm = () => {
   selectedProduct.value = null;
   productSearchQuery.value = '';
   filteredProductOptions.value = allProducts.value.slice(0, 50);
+  pickedAvailability.value = null;
 };
 
 onMounted(async () => {
