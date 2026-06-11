@@ -71,7 +71,10 @@
                   {{ patient.nhis_active ? 'Yes' : 'No (cash & carry)' }}
                 </div>
                 <div class="text-body2">
-                  <strong>Insurance ID:</strong> {{ patient.insurance_id || 'N/A' }}
+                  <strong>NHIS Member Number:</strong> {{ patient.insurance_id || 'N/A' }}
+                </div>
+                <div class="text-body2">
+                  <strong>HIN:</strong> {{ patient.hin || 'N/A' }}
                 </div>
                 <div v-if="patient.ccc_number" class="text-body2">
                   <strong>CCC:</strong> {{ patient.ccc_number }}
@@ -493,15 +496,23 @@
                 <q-input
                   v-model="editForm.insurance_id"
                   filled
-                  label="Insurance ID / Member Number"
+                  label="NHIS Member Number"
+                  hint="Used to fetch CCC from NHIA (not the HIN)"
                   class="col-12 col-md-4"
+                />
+                <q-input
+                  v-model="editForm.hin"
+                  filled
+                  label="HIN"
+                  hint="From NHIA import or manual entry"
+                  class="col-12 col-md-3"
                 />
                 <q-input
                   v-model="nhiaOtac"
                   filled
                   label="OTAC (if required)"
                   hint="4-digit code from patient"
-                  class="col-12 col-md-3"
+                  class="col-12 col-md-2"
                   maxlength="4"
                 />
                 <q-btn
@@ -886,6 +897,7 @@ const editForm = reactive({
   insured: false,
   nhis_active: false,
   insurance_id: '',
+  hin: '',
   insurance_start_date: '',
   insurance_end_date: '',
   ccc_number: '',
@@ -1362,6 +1374,7 @@ const editPatient = () => {
     insured: patient.value.insured || false,
     nhis_active: patient.value.nhis_active || false,
     insurance_id: patient.value.insurance_id || '',
+    hin: patient.value.hin || '',
     insurance_start_date: patient.value.insurance_start_date 
       ? patient.value.insurance_start_date.split('T')[0] : '',
     insurance_end_date: patient.value.insurance_end_date 
@@ -1390,7 +1403,7 @@ const savePatientEdit = async () => {
     // Clean up empty fields - send null instead of empty strings
     const fieldsToClean = [
       'date_of_birth', 'insurance_start_date', 'insurance_end_date',
-      'insurance_id', 'ccc_number', 'ccc_status', 'surname', 'other_names', 'contact', 'address',
+      'insurance_id', 'hin', 'ccc_number', 'ccc_status', 'surname', 'other_names', 'contact', 'address',
       'emergency_contact_name', 'emergency_contact_relationship', 'emergency_contact_number',
       'marital_status', 'educational_level', 'occupation'
     ];
@@ -1781,7 +1794,8 @@ const buildPatientRecordsHtml = (patient, encounterData, ipdData = []) => {
         <div><strong>Address:</strong> ${patient.address || 'N/A'}</div>
         <div><strong>Insurance Status:</strong> ${patient.insured ? 'Insured' : 'Cash Patient'}</div>
         ${patient.insured ? `
-          <div><strong>Insurance ID:</strong> ${patient.insurance_id || 'N/A'}</div>
+          <div><strong>NHIS Member Number:</strong> ${patient.insurance_id || 'N/A'}</div>
+          <div><strong>HIN:</strong> ${patient.hin || 'N/A'}</div>
           <div><strong>Insurance Start:</strong> ${formatDate(patient.insurance_start_date)}</div>
           <div><strong>Insurance End:</strong> ${formatDate(patient.insurance_end_date)}</div>
         ` : ''}

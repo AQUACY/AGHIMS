@@ -350,7 +350,7 @@ def lookup_member_by_hin_otac(
         else:
             raise
 
-    data = parse_otac_api_response(payload, fallback_hin=hin)
+    data = parse_otac_api_response(payload)
 
     if not data.ccc:
         otac_msg = _otac_required_message(payload)
@@ -365,6 +365,4 @@ def lookup_member_by_hin_otac(
             retryable=False,
         )
 
-    if not data.hin:
-        data.hin = hin
     return data

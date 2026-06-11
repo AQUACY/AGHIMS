@@ -305,11 +305,6 @@ def lookup_member_by_hin(
                 detail or "NHIA did not return a CCC for this member. Verify the NHIS number.",
                 retryable=False,
             )
-        if data.hin and data.hin.strip() != hin:
-            # Portal may return normalized HIN; keep request HIN if parser mismatch
-            pass
-        elif not data.hin:
-            data.hin = hin
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "NHIA lookup succeeded for HIN %s in %dms (status=%s)",
@@ -396,8 +391,9 @@ def apply_nhia_data_to_patient(
         return
 
     if data.hin:
-        patient.insurance_id = data.hin.strip()
-        patient.insured = True
+        patient.hin = data.hin.strip()
+        if not ccc_only:
+            patient.insured = True
 
     if data.name:
         first, rest = _split_nhia_name(data.name)

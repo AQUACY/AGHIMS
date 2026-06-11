@@ -202,9 +202,9 @@ def parse_otac_api_response(payload: Dict[str, Any], *, fallback_hin: Optional[s
         "claimCheckCode",
     )
     name = _pick_dict_value(source, "memberName", "MemberName", "FullName", "fullName", "ForeNames", "foreNames")
-    hin = _pick_dict_value(source, "hin", "HIN", "cardNo", "CardNo", "NHISNumber", "nhisNumber", "MemberNumber", "memberNumber")
-    if not hin:
-        hin = (fallback_hin or "").strip() or None
+    hin = _pick_dict_value(source, "hin", "HIN")
+    if not hin and fallback_hin:
+        hin = fallback_hin.strip() or None
 
     dob = _parse_api_date(
         _pick_dict_value(source, "dob", "DOB", "DateOfBirth", "dateOfBirth")

@@ -38,7 +38,7 @@ export function applyNhiaDataToForm(form, data) {
   if (!data) return;
 
   if (data.hin) {
-    form.insurance_id = data.hin;
+    form.hin = data.hin;
     form.insured = true;
   }
 
@@ -86,6 +86,9 @@ export function applyNhiaDataToForm(form, data) {
 /** Apply only CCC fields from NHIA (Get CCC) — do not overwrite name/DOB from registration. */
 export function applyNhiaCccToForm(form, data) {
   if (!data) return;
+  if (data.hin) {
+    form.hin = data.hin;
+  }
   if (data.ccc) {
     form.ccc_number = data.ccc;
   }

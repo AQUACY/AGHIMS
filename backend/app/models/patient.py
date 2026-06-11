@@ -23,7 +23,8 @@ class Patient(Base):
     legacy_card_number = Column(String(50), nullable=True, index=True)  # Previous HMS card after GHIMS migration
     insured = Column(Boolean, default=False)
     nhis_active = Column(Boolean, default=False)  # NHIS card active (staff-verified / NHIA lookup)
-    insurance_id = Column(String(100), nullable=True)  # NHIS member number
+    insurance_id = Column(String(100), nullable=True)  # NHIS member / card number (used for CCC lookup)
+    hin = Column(String(100), nullable=True)  # NHIA HIN returned from attendance — not used for CCC lookup
     insurance_start_date = Column(Date, nullable=True)
     insurance_end_date = Column(Date, nullable=True)
     ccc_number = Column(String(50), nullable=True)  # 5-digit CCC number

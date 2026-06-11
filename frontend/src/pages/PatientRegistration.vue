@@ -266,15 +266,23 @@
               <q-input
                 v-model="form.insurance_id"
                 filled
-                label="Insurance ID / Member Number"
+                label="NHIS Member Number"
+                hint="Used to fetch CCC from NHIA (not the HIN)"
                 class="col-12 col-md-4"
+              />
+              <q-input
+                v-model="form.hin"
+                filled
+                label="HIN"
+                hint="From NHIA import or manual entry — not used for CCC lookup"
+                class="col-12 col-md-3"
               />
               <q-input
                 v-model="nhiaOtac"
                 filled
                 label="OTAC (if required)"
                 hint="4-digit code from patient (*929# or NHIA portal)"
-                class="col-12 col-md-3"
+                class="col-12 col-md-2"
                 maxlength="4"
               />
               <q-btn
@@ -503,15 +511,23 @@
                 <q-input
                   v-model="editForm.insurance_id"
                   filled
-                  label="Insurance ID / Member Number"
+                  label="NHIS Member Number"
+                  hint="Used to fetch CCC from NHIA (not the HIN)"
                   class="col-12 col-md-4"
+                />
+                <q-input
+                  v-model="editForm.hin"
+                  filled
+                  label="HIN"
+                  hint="From NHIA import or manual entry"
+                  class="col-12 col-md-3"
                 />
                 <q-input
                   v-model="nhiaOtacEdit"
                   filled
                   label="OTAC (if required)"
                   hint="4-digit code from patient"
-                  class="col-12 col-md-3"
+                  class="col-12 col-md-2"
                   maxlength="4"
                 />
                 <q-btn
@@ -690,6 +706,7 @@ const editPatient = () => {
     insured: patient.insured || false,
     nhis_active: patient.nhis_active || false,
     insurance_id: patient.insurance_id || '',
+    hin: patient.hin || '',
     ccc_number: patient.ccc_number || '',
     ccc_status: patient.ccc_status || '',
     insurance_start_date: patient.insurance_start_date 
@@ -727,6 +744,9 @@ const savePatientEdit = async () => {
     }
     if (patientData.insurance_id === '') {
       patientData.insurance_id = null;
+    }
+    if (patientData.hin === '') {
+      patientData.hin = null;
     }
     if (patientData.ccc_number === '') {
       patientData.ccc_number = null;
@@ -874,6 +894,7 @@ const form = reactive({
   insured: false,
   nhis_active: false,
   insurance_id: '',
+  hin: '',
   insurance_start_date: '',
   insurance_end_date: '',
   ccc_number: '',
@@ -1190,6 +1211,7 @@ const buildPatientPayload = () => {
   if (patientData.insurance_start_date === '') patientData.insurance_start_date = null;
   if (patientData.insurance_end_date === '') patientData.insurance_end_date = null;
   if (patientData.insurance_id === '') patientData.insurance_id = null;
+  if (patientData.hin === '') patientData.hin = null;
   if (patientData.ccc_number === '') patientData.ccc_number = null;
   if (patientData.ccc_status === '') patientData.ccc_status = null;
   if (!patientData.insured) patientData.nhis_active = false;

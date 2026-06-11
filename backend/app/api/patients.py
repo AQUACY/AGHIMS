@@ -60,6 +60,7 @@ class PatientCreate(BaseModel):
     insured: bool = False
     nhis_active: bool = False
     insurance_id: Optional[str] = None
+    hin: Optional[str] = None
     insurance_start_date: Optional[date] = None
     insurance_end_date: Optional[date] = None
     ccc_number: Optional[str] = None
@@ -115,6 +116,7 @@ class PatientResponse(BaseModel):
     insured: bool
     nhis_active: bool = False
     insurance_id: Optional[str]
+    hin: Optional[str] = None
     insurance_start_date: Optional[date] = None
     insurance_end_date: Optional[date] = None
     ccc_number: Optional[str] = None  # CCC number for NHIA
@@ -225,7 +227,7 @@ async def import_patients_from_csv(
     
     CSV should have the following columns:
     name, surname, other_names, gender, age, date_of_birth, card_number, 
-    insured, nhis_active, insurance_id, insurance_start_date, insurance_end_date, 
+    insured, nhis_active, insurance_id, hin, insurance_start_date, insurance_end_date, 
     ccc_number, ccc_status, contact, address
     
     Required fields: name, gender
@@ -316,6 +318,7 @@ async def import_patients_from_csv(
             
             # Insurance fields
             insurance_id = row.get('insurance_id', '').strip() or None
+            hin = row.get('hin', '').strip() or None
             insurance_start_date = None
             insurance_end_date = None
             
@@ -372,6 +375,7 @@ async def import_patients_from_csv(
                 insured=insured,
                 nhis_active=nhis_active,
                 insurance_id=insurance_id,
+                hin=hin,
                 insurance_start_date=insurance_start_date,
                 insurance_end_date=insurance_end_date,
                 ccc_number=ccc_number,
