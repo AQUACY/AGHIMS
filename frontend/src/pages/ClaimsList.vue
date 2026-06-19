@@ -69,6 +69,10 @@
           />
         </div>
 
+        <div v-if="totalRevenue != null" class="text-subtitle1 text-primary q-mb-md">
+          Total claim revenue ({{ pagination.rowsNumber }} matching, this page): {{ formatCurrency(totalRevenue) }}
+        </div>
+
         <div class="row q-gutter-md q-mb-sm">
           <q-select
             v-model="filterSpecialty"
@@ -215,6 +219,11 @@
               />
             </q-td>
           </template>
+          <template v-slot:body-cell-total_claim_amount="props">
+            <q-td :props="props">
+              {{ formatCurrency(props.value) }}
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <q-btn
@@ -331,6 +340,12 @@ const pagination = ref({
 // Multi-select for batch export
 const selectedRows = ref([]);
 const exportingSelected = ref(false);
+const totalRevenue = ref(null);
+
+const formatCurrency = (amount) => {
+  if (amount == null) return 'N/A';
+  return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(amount);
+};
 
 // LocalStorage key for locked filters
 const FILTERS_LOCK_KEY = 'claims_filters_locked';
@@ -389,6 +404,7 @@ const columns = [
   { name: 'department', label: 'Department', field: 'department', align: 'left' },
   { name: 'finalized_at', label: 'Finalized At', field: 'finalized_at', align: 'left', format: (val) => val ? new Date(val).toLocaleString() : '-' },
   { name: 'claim_status', label: 'Claim Status', field: 'claim_status', align: 'center' },
+  { name: 'total_claim_amount', label: 'Claim Total', field: 'total_claim_amount', align: 'right', sortable: true },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
@@ -718,6 +734,7 @@ const loadFinalizedEncounters = async (page = 1) => {
       // New paginated format
       items = responseData.items;
       total = responseData.total || 0;
+      totalRevenue.value = responseData.total_revenue ?? null;
     } else if (Array.isArray(responseData)) {
       // Old format (array directly) - fallback for compatibility
       items = responseData;

@@ -1328,6 +1328,47 @@ const totalClaimAmount = computed(() => {
     .reduce((sum, item) => sum + (item.tariff_amount || 0), 0);
 });
 
+const getClaimPrice = (item) => {
+  if (!item) return 0;
+  return Number(item.claim_amount ?? item.nhia_app ?? item.base_rate ?? item.insured_price ?? 0) || 0;
+};
+
+const calculateClaimSummary = () => {
+  const tos = String(services.type_of_service || 'OPD').toUpperCase();
+
+  let procedureTotal = 0;
+  for (const proc of proceduresList.value) {
+    const code = String(proc.gdrg || '').trim();
+    if (!code) continue;
+    if (proc._selectedOption) {
+      procedureTotal += getClaimPrice(proc._selectedOption);
+    }
+  }
+
+  if (procedureTotal > 0) {
+    if (tos === 'IPD') claimSummary.value[0].tariff_amount = procedureTotal;
+    if (tos === 'OPD') claimSummary.value[1].tariff_amount = procedureTotal;
+  }
+
+  let investigationsTotal = 0;
+  for (const inv of investigationsList.value) {
+    const code = String(inv.gdrg || '').trim();
+    if (!code) continue;
+    if (inv._selectedOption) {
+      investigationsTotal += getClaimPrice(inv._selectedOption);
+    }
+  }
+
+  let pharmacyTotal = 0;
+  for (const presc of prescriptionsList.value) {
+    pharmacyTotal += Number(presc.total_cost) || 0;
+  }
+
+  claimSummary.value[2].tariff_amount = investigationsTotal;
+  claimSummary.value[3].tariff_amount = pharmacyTotal;
+  claimSummary.value[4].tariff_amount = totalClaimAmount.value;
+};
+
 const updatePrescriptionTotal = (index) => {
   const presc = prescriptionsList.value[index];
   presc.total_cost = (presc.price || 0) * (presc.quantity || 0);
@@ -1946,39 +1987,6 @@ const saveAndFinalize = async (e) => {
   }
 };
 
-const calculateClaimSummary = async () => {
-  // Calculate amounts from price lists
-  // This will be implemented to fetch prices from backend
-  // For now, we'll sum up from the actual data
-  
-  // Sum investigations
-  let investigationsTotal = 0;
-  for (const inv of investigationsList.value) {
-    if (inv.gdrg && inv.description) {
-      // TODO: Get price from price list
-      // For now, set a placeholder
-      investigationsTotal += 0; // Will be calculated from price list
-    }
-  }
-  
-  // Sum prescriptions
-  let pharmacyTotal = 0;
-  for (const presc of prescriptionsList.value) {
-    if (presc.total_cost) {
-      pharmacyTotal += presc.total_cost;
-    }
-  }
-  
-  // Get procedure/diagnosis totals
-  // TODO: Calculate from price lists based on G-DRG codes
-  
-  claimSummary.value[2].tariff_amount = investigationsTotal; // C Investigations
-  claimSummary.value[3].tariff_amount = pharmacyTotal; // D Pharmacy
-  
-  // Calculate total
-  claimSummary.value[4].tariff_amount = totalClaimAmount.value;
-};
-
 const loadClaimData = async () => {
   loading.value = true;
   try {
@@ -2121,12 +2129,13 @@ const loadClaimData = async () => {
     
     // Populate claim summary
     if (data.claim_summary) {
-      claimSummary.value[0].tariff_amount = data.claim_summary.inpatient_amount || 0; // A In-Patient
-      claimSummary.value[1].tariff_amount = data.claim_summary.outpatient_amount || 0; // B Out-Patient
-      claimSummary.value[2].tariff_amount = data.claim_summary.investigations_amount || 0; // C Investigations
-      claimSummary.value[3].tariff_amount = data.claim_summary.pharmacy_amount || 0; // D Pharmacy
+      claimSummary.value[0].tariff_amount = data.claim_summary.inpatient_amount || 0;
+      claimSummary.value[1].tariff_amount = data.claim_summary.outpatient_amount || 0;
+      claimSummary.value[2].tariff_amount = data.claim_summary.investigations_amount || 0;
+      claimSummary.value[3].tariff_amount = data.claim_summary.pharmacy_amount || 0;
+      claimSummary.value[4].tariff_amount = data.claim_summary.total_amount ?? totalClaimAmount.value;
     } else {
-      await calculateClaimSummary();
+      calculateClaimSummary();
     }
   } catch (error) {
     $q.notify({

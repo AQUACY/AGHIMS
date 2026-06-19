@@ -20,6 +20,17 @@
         </ul>
       </q-banner>
 
+      <q-banner
+        v-if="status === 'flagged' && flagComment"
+        class="bg-grey-2 q-mb-md"
+        rounded
+        dense
+      >
+        <template #avatar><q-icon name="comment" color="dark" /></template>
+        <div class="text-subtitle2">Flag reason</div>
+        <div class="text-body2">{{ flagComment }}</div>
+      </q-banner>
+
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider / Claim Header</div>
@@ -229,13 +240,22 @@
           <div
             v-for="(m, i) in payload.medicines"
             :key="`med-${i}`"
-            class="row q-col-gutter-sm q-mb-sm"
+            class="row q-col-gutter-sm q-mb-sm medicine-section-row"
             :class="claimLineSectionClass(m) || undefined"
           >
             <div class="col-12 row items-center q-gutter-xs">
               <div class="text-caption text-grey-7 text-weight-medium">Medicine Section {{ i + 1 }}</div>
               <q-chip
-                v-if="isOutsideServiceSpan(m)"
+                v-if="isMedicineNotCovered(m)"
+                dense
+                size="sm"
+                color="red-2"
+                text-color="negative"
+                icon="warning"
+                label="Not covered by insurance"
+              />
+              <q-chip
+                v-else-if="isOutsideServiceSpan(m)"
                 dense
                 size="sm"
                 color="amber-2"
@@ -349,6 +369,29 @@
         </q-card-section>
       </q-card>
 
+      <!-- Client Claim Summary -->
+      <q-card flat bordered>
+        <q-card-section>
+          <div class="text-h6 q-mb-md">Client Claim Summary</div>
+          <q-table
+            :rows="claimSummary"
+            :columns="summaryColumns"
+            row-key="type"
+            flat
+            dense
+          >
+            <template v-slot:body-cell-tariff_amount="props">
+              <q-td :props="props" class="text-right">
+                {{ formatCurrency(props.value) }}
+              </q-td>
+            </template>
+          </q-table>
+          <div class="text-h6 q-mt-md text-right">
+            Total: {{ formatCurrency(totalClaimAmount) }}
+          </div>
+        </q-card-section>
+      </q-card>
+
       <div class="row q-gutter-md">
         <q-btn type="submit" color="primary" label="Save and Finalize" :loading="saving" />
         <q-btn v-if="status !== 'finalized'" color="negative" :label="status === 'flagged' ? 'Flagged' : 'Flag claim'" :disable="status === 'flagged'" outline :loading="saving" @click="flagClaim" />
@@ -368,7 +411,10 @@ import {
   applyGhimsFetchCccToPayload,
 } from '../utils/claimGetCcc';
 import {
+  asMedicineList,
+  isMedicineNotCovered,
   isOutsideServiceSpan,
+  normalizeInsuranceCovered,
   claimLineSectionClass,
 } from '../utils/claimMedicineCoverage';
 
@@ -378,6 +424,7 @@ const loading = ref(true);
 const saving = ref(false);
 const fetchingClaimCcc = ref(false);
 const status = ref('draft');
+const flagComment = ref('');
 const principalDiagnosisIndex = ref(-1);
 const itemId = Number(route.params.itemId);
 const diagnosisSearchOptions = ref([]);
@@ -405,6 +452,102 @@ function emptyClaimitBySection() {
 }
 
 const claimitErrors = ref({ messages: [], by_section: emptyClaimitBySection() });
+
+const claimSummary = ref([
+  { index: 0, type: 'A In-Patient', gdrg_code: '', tariff_amount: 0 },
+  { index: 1, type: 'B Out-Patient', gdrg_code: '', tariff_amount: 0 },
+  { index: 2, type: 'C Investigations', gdrg_code: '', tariff_amount: 0 },
+  { index: 3, type: 'D Pharmacy', gdrg_code: '', tariff_amount: 0 },
+  { index: 4, type: 'TOTAL', gdrg_code: '', tariff_amount: 0 },
+]);
+
+const summaryColumns = [
+  { name: 'type', label: 'Type of Service', field: 'type', align: 'left' },
+  { name: 'gdrg_code', label: 'G-DRG/Code', field: 'gdrg_code', align: 'left' },
+  { name: 'tariff_amount', label: 'Tariff Amount', field: 'tariff_amount', align: 'right' },
+];
+
+const totalClaimAmount = computed(() =>
+  claimSummary.value
+    .filter((item) => item.type !== 'TOTAL')
+    .reduce((sum, item) => sum + (Number(item.tariff_amount) || 0), 0)
+);
+
+const getClaimPrice = (item) => {
+  if (!item) return 0;
+  return Number(item.claim_amount ?? item.nhia_app ?? item.base_rate ?? item.insured_price ?? 0) || 0;
+};
+
+function withServiceOptionLabel(item) {
+  if (!item || typeof item !== 'object') return item;
+  if (item.optionLabel) return item;
+  const name = item.service_name || item.item_name || '';
+  const code = item.g_drg_code || item.item_code || '';
+  const optionLabel = (name && code) ? `${name} (${code})` : (name || code);
+  return { ...item, optionLabel };
+}
+
+function withProductOptionLabel(item) {
+  if (!item || typeof item !== 'object') return item;
+  if (item.optionLabel) return item;
+  const name = item.product_name || item.item_name || '';
+  const code = item.medication_code || item.item_code || '';
+  const optionLabel = (name && code) ? `${name} (${code})` : (name || code);
+  return { ...item, optionLabel };
+}
+
+const formatCurrency = (amount) => {
+  if (amount == null || Number.isNaN(Number(amount))) return 'N/A';
+  return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(Number(amount));
+};
+
+function applyClaimSummaryFromApi(summary) {
+  if (!summary) {
+    recalculateClaimSummary();
+    return;
+  }
+  claimSummary.value[0].tariff_amount = summary.inpatient_amount || 0;
+  claimSummary.value[1].tariff_amount = summary.outpatient_amount || 0;
+  claimSummary.value[2].tariff_amount = summary.investigations_amount || 0;
+  claimSummary.value[3].tariff_amount = summary.pharmacy_amount || 0;
+  claimSummary.value[4].tariff_amount = summary.total_amount ?? totalClaimAmount.value;
+}
+
+function recalculateClaimSummary() {
+  const tos = String(payload.typeOfService || 'OPD').toUpperCase();
+
+  let procedureTotal = 0;
+  for (const proc of payload.procedures || []) {
+    const code = String(proc.gdrgCode || '').trim();
+    if (!code) continue;
+    if (proc._selectedOption) procedureTotal += getClaimPrice(proc._selectedOption);
+  }
+
+  let inpatient = tos === 'IPD' ? procedureTotal : 0;
+  let outpatient = tos === 'OPD' ? procedureTotal : 0;
+
+  let investigationsTotal = 0;
+  for (const inv of payload.investigations || []) {
+    const code = String(inv.gdrgCode || '').trim();
+    if (!code) continue;
+    if (inv._selectedOption) investigationsTotal += getClaimPrice(inv._selectedOption);
+  }
+
+  let pharmacyTotal = 0;
+  for (const med of payload.medicines || []) {
+    const code = String(med.medicineCode || '').trim();
+    let qty = Number(med.dispensedQty) || 0;
+    if (code && qty > 0 && med._selectedOption) {
+      pharmacyTotal += getClaimPrice(med._selectedOption) * qty;
+    }
+  }
+
+  claimSummary.value[0].tariff_amount = inpatient;
+  claimSummary.value[1].tariff_amount = outpatient;
+  claimSummary.value[2].tariff_amount = investigationsTotal;
+  claimSummary.value[3].tariff_amount = pharmacyTotal;
+  claimSummary.value[4].tariff_amount = inpatient + outpatient + investigationsTotal + pharmacyTotal;
+}
 
 function addMedicine() {
   payload.medicines.push({
@@ -502,12 +645,14 @@ function onInvestigationSelect(index, val) {
     row.gdrgCode = '';
     row._serviceName = '';
     row._selectedOption = null;
+    recalculateClaimSummary();
     return;
   }
   if (typeof val === 'object') {
     row.gdrgCode = val.g_drg_code || val.item_code || row.gdrgCode || '';
     row._serviceName = val.service_name || val.item_name || row._serviceName || '';
-    row._selectedOption = val;
+    row._selectedOption = withServiceOptionLabel(val);
+    recalculateClaimSummary();
     return;
   }
 }
@@ -600,14 +745,19 @@ function onProcedureSelect(index, val) {
   if (!val) {
     row.gdrgCode = '';
     row._serviceName = '';
+    row.description = '';
+    row.icd10 = '';
+    row.diagnosis = '';
     row._selectedOption = null;
+    recalculateClaimSummary();
     return;
   }
   if (typeof val === 'object') {
     row.gdrgCode = val.g_drg_code || val.item_code || row.gdrgCode || '';
     row._serviceName = val.service_name || val.item_name || row._serviceName || '';
     if (!row.description) row.description = row._serviceName || '';
-    row._selectedOption = val;
+    row._selectedOption = withServiceOptionLabel(val);
+    recalculateClaimSummary();
     return;
   }
 }
@@ -619,13 +769,33 @@ function onMedicineSelect(index, val) {
     row.medicineCode = '';
     row._serviceName = '';
     row._selectedOption = null;
+    recalculateClaimSummary();
     return;
   }
   if (typeof val === 'object') {
     row.medicineCode = val.medication_code || val.item_code || row.medicineCode || '';
     row._serviceName = val.product_name || val.item_name || row._serviceName || '';
-    row._selectedOption = val;
+    row.insurance_covered = val.insurance_covered || 'yes';
+    row._selectedOption = withProductOptionLabel(val);
+    recalculateClaimSummary();
+    if (normalizeInsuranceCovered(row.insurance_covered) === 'no') {
+      $q.notify({
+        type: 'warning',
+        message: `Medicine section ${index + 1} is not covered by insurance. It is highlighted in red and must be changed or removed before saving.`,
+        position: 'top',
+      });
+    }
     return;
+  }
+}
+
+function validateCoveredMedicinesOrThrow(source) {
+  const bad = [];
+  asMedicineList(source).forEach((m, index) => {
+    if (isMedicineNotCovered(m)) bad.push(index + 1);
+  });
+  if (bad.length) {
+    throw new Error(`Medicine not covered by insurance. Change or remove medicine section(s): ${bad.join(', ')}`);
   }
 }
 
@@ -789,24 +959,36 @@ async function resolveServiceNames() {
     }
   }
   for (const inv of payload.investigations || []) {
+    if (inv._selectedOption && typeof inv._selectedOption === 'object') {
+      inv._selectedOption = withServiceOptionLabel(inv._selectedOption);
+    }
     if (inv.gdrgCode && !inv._serviceName) {
       lookups.push(
         priceListAPI.search(inv.gdrgCode, undefined, 'procedure')
           .then((res) => {
             const first = (res.data || [])[0];
-            if (first) inv._serviceName = first.service_name || first.item_name || '';
+            if (first) {
+              inv._serviceName = first.service_name || first.item_name || '';
+              inv._selectedOption = withServiceOptionLabel(first);
+            }
           })
           .catch(() => {})
       );
     }
   }
   for (const proc of payload.procedures || []) {
+    if (proc._selectedOption && typeof proc._selectedOption === 'object') {
+      proc._selectedOption = withServiceOptionLabel(proc._selectedOption);
+    }
     if (proc.gdrgCode && !proc._serviceName) {
       lookups.push(
         priceListAPI.search(proc.gdrgCode, undefined, 'procedure')
           .then((res) => {
             const first = (res.data || [])[0];
-            if (first) proc._serviceName = first.service_name || first.item_name || '';
+            if (first) {
+              proc._serviceName = first.service_name || first.item_name || '';
+              proc._selectedOption = withServiceOptionLabel(first);
+            }
           })
           .catch(() => {})
       );
@@ -814,18 +996,33 @@ async function resolveServiceNames() {
   }
   for (const med of payload.medicines || []) {
     applyUnparsedPrescriptionFields(med);
-    if (med.medicineCode && !med._serviceName) {
+    if (med.medicineCode) {
       lookups.push(
         priceListAPI.search(med.medicineCode, undefined, 'product')
           .then((res) => {
-            const first = (res.data || [])[0];
-            if (first) med._serviceName = first.product_name || first.item_name || '';
+            const items = res.data || [];
+            const code = String(med.medicineCode || '').trim();
+            const match = items.find(
+              (p) => String(p.medication_code || p.item_code || '').trim() === code
+            ) || items[0];
+            if (match) {
+              if (!med._serviceName) med._serviceName = match.product_name || match.item_name || '';
+              med.insurance_covered = match.insurance_covered || 'yes';
+              if (!med._selectedOption) {
+                med._selectedOption = withProductOptionLabel(match);
+              } else {
+                med._selectedOption = withProductOptionLabel(med._selectedOption);
+              }
+            } else {
+              med.insurance_covered = med.insurance_covered || 'yes';
+            }
           })
           .catch(() => {})
       );
     }
   }
   if (lookups.length) await Promise.all(lookups);
+  recalculateClaimSummary();
 }
 
 function normalize(p) {
@@ -888,6 +1085,7 @@ async function load() {
   try {
     const res = await claimsAPI.getGhimsImportItem(itemId);
     status.value = res.data.status || 'draft';
+    flagComment.value = String(res.data.flag_comment || '').trim();
     Object.assign(payload, normalize(res.data.payload || {}));
     const ce = res.data.claimit_errors || {};
     claimitErrors.value = {
@@ -896,6 +1094,11 @@ async function load() {
     };
     reorderDiagnosesWithPrincipalFirst();
     await resolveServiceNames();
+    if (res.data.claim_summary) {
+      applyClaimSummaryFromApi(res.data.claim_summary);
+    } else {
+      recalculateClaimSummary();
+    }
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imported claim' });
   } finally {
@@ -908,6 +1111,7 @@ async function saveAndFinalize() {
   try {
     reorderDiagnosesWithPrincipalFirst();
     const clean = normalize(payload);
+    validateCoveredMedicinesOrThrow(payload.medicines);
     const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
     if (missingMedicineDates.length) {
       throw new Error(`Medicine section(s) missing service date. Please enter date: medicine section(s): ${missingMedicineDates.join(', ')}`);
@@ -958,6 +1162,7 @@ async function flagClaim() {
   try {
     reorderDiagnosesWithPrincipalFirst();
     const clean = normalize(payload);
+    validateCoveredMedicinesOrThrow(payload.medicines);
     const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
     if (missingMedicineDates.length) {
       throw new Error(`Medicine section(s) missing service date. Please enter date: ${missingMedicineDates.join(', ')}`);
@@ -991,7 +1196,26 @@ async function flagClaim() {
       },
     }));
     await claimsAPI.updateGhimsImportItem(itemId, clean);
-    await claimsAPI.flagGhimsImportItem(itemId);
+    const comment = await new Promise((resolve) => {
+      $q.dialog({
+        title: 'Flag imported claim',
+        message: 'Enter a short reason (required). This helps other staff understand why it was flagged.',
+        prompt: {
+          model: '',
+          type: 'textarea',
+          isValid: (val) => Boolean(String(val || '').trim()),
+          autogrow: true,
+        },
+        cancel: true,
+        persistent: true,
+        ok: { label: 'Flag', color: 'negative' },
+      })
+        .onOk((val) => resolve(String(val || '').trim()))
+        .onCancel(() => resolve(null))
+        .onDismiss(() => resolve(null));
+    });
+    if (!comment) return;
+    await claimsAPI.flagGhimsImportItem(itemId, comment);
     $q.notify({ type: 'positive', message: 'Imported claim flagged' });
     await load();
   } catch (e) {
@@ -1023,6 +1247,14 @@ watch(
 </script>
 
 <style scoped>
+.medicine-not-covered-section {
+  margin: 0 -4px;
+  padding: 8px 8px 4px;
+  border-radius: 6px;
+  background-color: rgba(244, 67, 54, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(244, 67, 54, 0.2);
+}
+
 .service-outside-span-section {
   margin: 0 -4px;
   padding: 8px 8px 4px;

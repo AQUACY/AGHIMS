@@ -1,0 +1,11 @@
+/* Ghana Health Service Color Theme for Quasar */
+
+:root {
+  --q-primary: #2E8B57;
+  --q-secondary: #FFD700;
+  --q-accent: #FF6B35;
+  --q-positive: #2E8B57;
+  --q-negative: #DC143C;
+  --q-info: #4A90E2;
+  --q-warning: #FFD700;
+}

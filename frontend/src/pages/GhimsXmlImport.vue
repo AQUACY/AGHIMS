@@ -38,6 +38,15 @@
     </q-card>
 
     <template v-if="viewingBatchId && currentBatch">
+      <div v-if="viewingBatchId && currentBatch" class="text-subtitle1 text-primary q-mb-md">
+        <template v-if="totalsLoading">
+          <q-spinner-dots size="20px" class="q-mr-sm" />
+          Calculating claim revenue…
+        </template>
+        <template v-else-if="filteredRevenue != null">
+          Total claim revenue ({{ filteredClaims.length }} filtered): {{ formatCurrency(filteredRevenue) }}
+        </template>
+      </div>
       <q-card class="q-mb-md glass-card" flat bordered>
         <q-card-section class="row items-center q-gutter-md">
           <div class="text-body2 text-grey-8">{{ currentBatch.claims?.length || 0 }} claim(s) in this import</div>
@@ -182,6 +191,7 @@
                 <th class="text-left">Hosp Rec No</th>
                 <th class="text-left">Age</th>
                 <th class="text-left">Check Code</th>
+                <th class="text-right">Claim Total</th>
                 <th class="text-left">Status / Missing</th>
                 <th class="text-right">Actions</th>
               </tr>
@@ -201,6 +211,14 @@
                 <td>{{ claimHospitalRecNo(row) || '-' }}</td>
                 <td>{{ claimClientAge(row) }}</td>
                 <td>{{ claimCheckCode(row) || '-' }}</td>
+                <td class="text-right">
+                  <template v-if="totalsLoading && row.total_claim_amount == null">
+                    <q-spinner-dots size="16px" color="primary" />
+                  </template>
+                  <template v-else>
+                    {{ formatCurrency(row.total_claim_amount) }}
+                  </template>
+                </td>
                 <td>
                   <q-badge :color="claimStatusColor(row.status)" :label="row.status" />
                   <q-chip
@@ -267,7 +285,7 @@
                 </td>
               </tr>
               <tr v-if="pagedClaims.length === 0">
-                <td colspan="9" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
+                <td colspan="10" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
               </tr>
             </tbody>
           </q-markup-table>
@@ -310,6 +328,7 @@ const uploadFile = ref(null);
 const uploading = ref(false);
 const exporting = ref(false);
 const refreshing = ref(false);
+const totalsLoading = ref(false);
 const exportingSingleItemId = ref(null);
 const statusLoadingItemId = ref(null);
 const bulkUpdating = ref(false);
@@ -414,6 +433,15 @@ const filteredClaims = computed(() => {
   });
   return out;
 });
+
+const filteredRevenue = computed(() => {
+  return filteredClaims.value.reduce((sum, row) => sum + (Number(row.total_claim_amount) || 0), 0);
+});
+
+const formatCurrency = (amount) => {
+  if (amount == null || Number.isNaN(Number(amount))) return 'N/A';
+  return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(Number(amount));
+};
 
 const allFinalizedSelected = computed(() => {
   const finalizedIds = (currentBatch.value?.claims || [])
@@ -595,8 +623,37 @@ async function bulkSetStatus(action) {
 /** Reload batch claims from the server without resetting filters or pagination. */
 async function loadBatchClaims(id) {
   if (!id) return;
-  currentBatch.value = (await claimsAPI.getGhimsImportBatch(id)).data;
+  const res = await claimsAPI.getGhimsImportBatch(id, { include_totals: false });
+  currentBatch.value = res.data;
   syncSelectedExports();
+  loadBatchClaimTotals(id);
+}
+
+async function loadBatchClaimTotals(id) {
+  if (!id || !currentBatch.value) return;
+  totalsLoading.value = true;
+  try {
+    const res = await claimsAPI.getGhimsImportBatchClaimTotals(id);
+    const totalsMap = new Map(
+      (res.data?.totals || []).map((row) => [Number(row.id), Number(row.total_claim_amount) || 0])
+    );
+    if (currentBatch.value?.claims?.length) {
+      currentBatch.value = {
+        ...currentBatch.value,
+        total_revenue: res.data?.total_revenue ?? null,
+        claims: currentBatch.value.claims.map((claim) => ({
+          ...claim,
+          total_claim_amount: totalsMap.has(claim.id)
+            ? totalsMap.get(claim.id)
+            : claim.total_claim_amount,
+        })),
+      };
+    }
+  } catch (e) {
+    console.error('Failed to load batch claim totals', e);
+  } finally {
+    totalsLoading.value = false;
+  }
 }
 
 async function openBatch(id) {

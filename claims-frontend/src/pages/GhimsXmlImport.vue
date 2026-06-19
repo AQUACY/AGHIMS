@@ -38,6 +38,15 @@
     </q-card>
 
     <template v-if="viewingBatchId && currentBatch">
+      <div v-if="viewingBatchId && currentBatch" class="text-subtitle1 text-primary q-mb-md">
+        <template v-if="totalsLoading">
+          <q-spinner-dots size="20px" class="q-mr-sm" />
+          Calculating claim revenue…
+        </template>
+        <template v-else-if="filteredRevenue != null">
+          Total claim revenue ({{ filteredClaims.length }} filtered): {{ formatCurrency(filteredRevenue) }}
+        </template>
+      </div>
       <q-card class="q-mb-md glass-card" flat bordered>
         <q-card-section class="row items-center q-gutter-md">
           <div class="text-body2 text-grey-8">{{ currentBatch.claims?.length || 0 }} claim(s) in this import</div>
@@ -62,7 +71,7 @@
             outlined
             dense
             clearable
-            label="Search client / hospital rec no / claim IDs"
+            label="Search client / hospital rec no / claim IDs / CCC"
             class="col-12 col-md-4"
           />
           <q-select
@@ -129,6 +138,33 @@
             :loading="refreshing"
             @click="refreshCurrentBatch"
           />
+          <q-btn
+            color="negative"
+            icon="flag"
+            :disable="selectedBulkItemIds.length === 0"
+            :label="selectedBulkItemIds.length ? `Flag ${selectedBulkItemIds.length}` : 'Flag selected'"
+            :loading="bulkUpdating"
+            outline
+            @click="bulkSetStatus('flag')"
+          />
+          <q-btn
+            color="warning"
+            icon="undo"
+            :disable="selectedBulkItemIds.length === 0"
+            :label="selectedBulkItemIds.length ? `Revert ${selectedBulkItemIds.length}` : 'Revert selected'"
+            :loading="bulkUpdating"
+            outline
+            @click="bulkSetStatus('reopen')"
+          />
+          <q-btn
+            color="primary"
+            icon="edit"
+            :disable="selectedBulkItemIds.length === 0"
+            :label="selectedBulkItemIds.length ? `Mark draft ${selectedBulkItemIds.length}` : 'Mark draft selected'"
+            :loading="bulkUpdating"
+            outline
+            @click="bulkSetStatus('reopen')"
+          />
           <q-btn color="primary" icon="download" :label="selectedItemIds.length ? `Export ${selectedItemIds.length} selected` : 'Export selected'" :disable="selectedItemIds.length === 0" :loading="exporting" @click="exportSelected" />
         </q-card-section>
       </q-card>
@@ -139,11 +175,23 @@
             <thead>
               <tr>
                 <th class="text-left">#</th>
+                <th class="text-left">
+                  <div class="row items-center q-gutter-xs no-wrap">
+                    <span>Select</span>
+                    <q-checkbox
+                      :model-value="allFilteredSelected"
+                      :indeterminate="someFilteredSelected"
+                      dense
+                      @update:model-value="toggleSelectAllFiltered"
+                    />
+                  </div>
+                </th>
                 <th class="text-left">Claim ID</th>
                 <th class="text-left">Client</th>
                 <th class="text-left">Hosp Rec No</th>
                 <th class="text-left">Age</th>
                 <th class="text-left">Check Code</th>
+                <th class="text-right">Claim Total</th>
                 <th class="text-left">Status / Missing</th>
                 <th class="text-right">Actions</th>
               </tr>
@@ -151,13 +199,38 @@
             <tbody>
               <tr v-for="(row, pageIndex) in pagedClaims" :key="row.id">
                 <td>{{ ((currentPage - 1) * rowsPerPage) + pageIndex + 1 }}</td>
+                <td>
+                  <q-checkbox
+                    :model-value="selectedBulkItemIds.includes(row.id)"
+                    @update:model-value="toggleBulkSelected(row.id, $event)"
+                    dense
+                  />
+                </td>
                 <td>{{ row.claim_claim_id }}</td>
                 <td>{{ claimClientName(row) || '-' }}</td>
                 <td>{{ claimHospitalRecNo(row) || '-' }}</td>
                 <td>{{ claimClientAge(row) }}</td>
                 <td>{{ claimCheckCode(row) || '-' }}</td>
+                <td class="text-right">
+                  <template v-if="totalsLoading && row.total_claim_amount == null">
+                    <q-spinner-dots size="16px" color="primary" />
+                  </template>
+                  <template v-else>
+                    {{ formatCurrency(row.total_claim_amount) }}
+                  </template>
+                </td>
                 <td>
                   <q-badge :color="claimStatusColor(row.status)" :label="row.status" />
+                  <q-chip
+                    v-if="row.status === 'flagged' && row.flag_comment"
+                    class="q-ml-sm q-mt-xs"
+                    dense
+                    size="sm"
+                    color="grey-3"
+                    text-color="dark"
+                    icon="comment"
+                    :label="row.flag_comment"
+                  />
                   <q-badge
                     v-if="row.has_missing_sections"
                     class="q-ml-sm q-mt-xs"
@@ -212,7 +285,7 @@
                 </td>
               </tr>
               <tr v-if="pagedClaims.length === 0">
-                <td colspan="8" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
+                <td colspan="10" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
               </tr>
             </tbody>
           </q-markup-table>
@@ -255,12 +328,15 @@ const uploadFile = ref(null);
 const uploading = ref(false);
 const exporting = ref(false);
 const refreshing = ref(false);
+const totalsLoading = ref(false);
 const exportingSingleItemId = ref(null);
 const statusLoadingItemId = ref(null);
+const bulkUpdating = ref(false);
 const batches = ref([]);
 const viewingBatchId = ref(null);
 const currentBatch = ref(null);
 const selectedItemIds = ref([]);
+const selectedBulkItemIds = ref([]);
 const filtersLocked = ref(false);
 const searchText = ref('');
 const attendanceFilter = ref('all');
@@ -358,12 +434,36 @@ const filteredClaims = computed(() => {
   return out;
 });
 
+const filteredRevenue = computed(() => {
+  return filteredClaims.value.reduce((sum, row) => sum + (Number(row.total_claim_amount) || 0), 0);
+});
+
+const formatCurrency = (amount) => {
+  if (amount == null || Number.isNaN(Number(amount))) return 'N/A';
+  return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(Number(amount));
+};
+
 const allFinalizedSelected = computed(() => {
   const finalizedIds = (currentBatch.value?.claims || [])
     .filter((r) => r.status === 'finalized')
     .map((r) => Number(r.id));
   if (!finalizedIds.length) return false;
   return finalizedIds.every((id) => selectedItemIds.value.includes(id));
+});
+
+const allFilteredSelected = computed(() => {
+  const ids = filteredClaims.value.map((r) => Number(r.id));
+  if (!ids.length) return false;
+  const selected = new Set((selectedBulkItemIds.value || []).map((x) => Number(x)));
+  return ids.every((id) => selected.has(id));
+});
+
+const someFilteredSelected = computed(() => {
+  const ids = filteredClaims.value.map((r) => Number(r.id));
+  if (!ids.length) return false;
+  const selected = new Set((selectedBulkItemIds.value || []).map((x) => Number(x)));
+  const selectedCount = ids.reduce((acc, id) => acc + (selected.has(id) ? 1 : 0), 0);
+  return selectedCount > 0 && selectedCount < ids.length;
 });
 
 const maxPages = computed(() => {
@@ -427,7 +527,7 @@ function prettySectionName(key) {
 
 function goBack() {
   if (viewingBatchId.value) {
-    viewingBatchId.value = null; currentBatch.value = null; selectedItemIds.value = [];
+    viewingBatchId.value = null; currentBatch.value = null; selectedItemIds.value = []; selectedBulkItemIds.value = [];
     $router.replace('/claims/ghims-import').catch(() => {});
   } else $router.push('/claims');
 }
@@ -451,11 +551,109 @@ function syncSelectedExports() {
   selectedItemIds.value = (currentBatch.value?.claims || []).filter((r) => r.status === 'finalized').map((r) => r.id);
 }
 
+function toggleBulkSelected(itemId, checked) {
+  const id = Number(itemId);
+  if (checked && !selectedBulkItemIds.value.includes(id)) selectedBulkItemIds.value.push(id);
+  if (!checked) selectedBulkItemIds.value = selectedBulkItemIds.value.filter((x) => x !== id);
+}
+
+function toggleSelectAllFiltered(checked) {
+  const ids = filteredClaims.value.map((r) => Number(r.id));
+  if (!ids.length) return;
+  if (checked) {
+    const merged = new Set([...(selectedBulkItemIds.value || []).map((x) => Number(x)), ...ids]);
+    selectedBulkItemIds.value = Array.from(merged);
+  } else {
+    const remove = new Set(ids);
+    selectedBulkItemIds.value = (selectedBulkItemIds.value || []).filter((id) => !remove.has(Number(id)));
+  }
+}
+
+async function promptFlagComment(title) {
+  return new Promise((resolve) => {
+    $q.dialog({
+      title: title || 'Flag imported claim',
+      message: 'Enter a short reason (required). This helps other staff understand why it was flagged.',
+      prompt: {
+        model: '',
+        type: 'textarea',
+        isValid: (val) => Boolean(String(val || '').trim()),
+        autogrow: true,
+      },
+      cancel: true,
+      persistent: true,
+      ok: { label: 'Flag', color: 'negative' },
+    })
+      .onOk((val) => resolve(String(val || '').trim()))
+      .onCancel(() => resolve(null))
+      .onDismiss(() => resolve(null));
+  });
+}
+
+async function bulkSetStatus(action) {
+  if (!selectedBulkItemIds.value.length || !viewingBatchId.value) return;
+  const label = action === 'flag' ? 'Flag' : (action === 'finalize' ? 'Finalize' : 'Revert/Mark draft');
+  const ok = await new Promise((resolve) => {
+    $q.dialog({
+      title: `${label} imported claims`,
+      message: `Apply "${label}" to ${selectedBulkItemIds.value.length} selected claim(s)?`,
+      cancel: true,
+      persistent: true,
+    }).onOk(() => resolve(true)).onCancel(() => resolve(false)).onDismiss(() => resolve(false));
+  });
+  if (!ok) return;
+
+  bulkUpdating.value = true;
+  try {
+    let comment = null;
+    if (action === 'flag') {
+      comment = await promptFlagComment(`Flag ${selectedBulkItemIds.value.length} imported claim(s)`);
+      if (!comment) return;
+    }
+    await claimsAPI.bulkUpdateGhimsImportItemsStatus(selectedBulkItemIds.value, action, comment);
+    await loadBatchClaims(viewingBatchId.value);
+    $q.notify({ type: 'positive', message: `${label} complete` });
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || `Failed to ${label.toLowerCase()} selected claims` });
+  } finally {
+    bulkUpdating.value = false;
+  }
+}
+
 /** Reload batch claims from the server without resetting filters or pagination. */
 async function loadBatchClaims(id) {
   if (!id) return;
-  currentBatch.value = (await claimsAPI.getGhimsImportBatch(id)).data;
+  const res = await claimsAPI.getGhimsImportBatch(id, { include_totals: false });
+  currentBatch.value = res.data;
   syncSelectedExports();
+  loadBatchClaimTotals(id);
+}
+
+async function loadBatchClaimTotals(id) {
+  if (!id || !currentBatch.value) return;
+  totalsLoading.value = true;
+  try {
+    const res = await claimsAPI.getGhimsImportBatchClaimTotals(id);
+    const totalsMap = new Map(
+      (res.data?.totals || []).map((row) => [Number(row.id), Number(row.total_claim_amount) || 0])
+    );
+    if (currentBatch.value?.claims?.length) {
+      currentBatch.value = {
+        ...currentBatch.value,
+        total_revenue: res.data?.total_revenue ?? null,
+        claims: currentBatch.value.claims.map((claim) => ({
+          ...claim,
+          total_claim_amount: totalsMap.has(claim.id)
+            ? totalsMap.get(claim.id)
+            : claim.total_claim_amount,
+        })),
+      };
+    }
+  } catch (e) {
+    console.error('Failed to load batch claim totals', e);
+  } finally {
+    totalsLoading.value = false;
+  }
 }
 
 async function openBatch(id) {
@@ -510,7 +708,12 @@ async function revertClaim(row) {
 
 async function flagClaim(row) {
   statusLoadingItemId.value = row.id;
-  try { await claimsAPI.flagGhimsImportItem(row.id); await loadBatchClaims(viewingBatchId.value); }
+  try {
+    const comment = await promptFlagComment('Flag imported claim');
+    if (!comment) return;
+    await claimsAPI.flagGhimsImportItem(row.id, comment);
+    await loadBatchClaims(viewingBatchId.value);
+  }
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to flag imported claim' }); }
   finally { statusLoadingItemId.value = null; }
 }

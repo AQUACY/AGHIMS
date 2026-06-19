@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadF
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from pydantic import BaseModel
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from datetime import datetime, date, timedelta
 from app.core.database import get_db
 from app.core.dependencies import require_role, require_module_permission
@@ -27,11 +27,36 @@ from app.services.claim_xml_import_parser import parse_claims_xml, build_claims_
 from app.services.claim_nhia_ccc import fetch_ccc_preview_for_claim, fetch_ccc_preview_for_ghims_payload
 from app.services.nhia_integration import NhiaIntegrationError
 from app.models.product_price import ProductPrice
+from app.services.claim_amount_service import (
+    get_claim_amount_from_price_list,
+    compute_claim_summary_dict,
+    compute_claim_summary_from_ghims_payload,
+    compute_encounter_claim_summary,
+    compute_ghims_batch_claim_totals,
+    PriceAmountCache,
+)
 
 router = APIRouter(prefix="/claims", tags=["claims"])
 
 # Section keys used for ClaimIT errors on Edit Claim (must match frontend)
 CLAIMIT_SECTION_ORDER = ["client", "provider", "services", "procedures", "diagnosis", "investigations", "medicines", "other"]
+
+
+def _enrich_encounter_row_with_claim_amount(
+    db: Session,
+    row: dict,
+    encounter: Encounter,
+    claim: Optional[Claim] = None,
+    ward_admission=None,
+) -> dict:
+    """Attach total_claim_amount to an eligible-encounters list row."""
+    try:
+        summary = compute_encounter_claim_summary(db, encounter, claim, ward_admission)
+        row["total_claim_amount"] = round(float(summary.get("total_amount") or 0.0), 2)
+    except Exception:
+        row["total_claim_amount"] = 0.0
+    return row
+
 
 
 def _categorize_claimit_error_pairs(pairs: List[Tuple[Optional[str], str]]) -> dict:
@@ -157,58 +182,6 @@ def _ensure_claim_procedures_icd10_column(db: Session) -> None:
             raise
 
 
-def get_claim_amount_from_price_list(db: Session, item_code: str, is_insured: bool = True) -> float:
-    """
-    Get claim amount for an item code from price list
-    For insured patients: returns NHIA Approved price (nhia_app) or claim_amount for products
-    For investigations/procedures: returns nhia_app if available, else base_rate
-    """
-    from app.models.procedure_price import ProcedurePrice
-    from app.models.surgery_price import SurgeryPrice
-    from app.models.product_price import ProductPrice
-    from app.models.unmapped_drg_price import UnmappedDRGPrice
-    
-    if not is_insured:
-        return 0.0
-    
-    if not item_code:
-        return 0.0
-    
-    # Search in procedure, surgery, and unmapped_drg tables (use g_drg_code)
-    tables = [
-        db.query(ProcedurePrice).filter(ProcedurePrice.g_drg_code == item_code, ProcedurePrice.is_active == True),
-        db.query(SurgeryPrice).filter(SurgeryPrice.g_drg_code == item_code, SurgeryPrice.is_active == True),
-        db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.g_drg_code == item_code, UnmappedDRGPrice.is_active == True),
-    ]
-    
-    for query in tables:
-        item = query.first()
-        if item:
-            # For insured: use NHIA Approved price (nhia_app) if available, else base_rate
-            if hasattr(item, 'nhia_app') and item.nhia_app is not None:
-                return float(item.nhia_app)
-            else:
-                return float(item.base_rate) if item.base_rate else 0.0
-    
-    # Search in product table (use medication_code or product_id)
-    product = db.query(ProductPrice).filter(
-        ((ProductPrice.medication_code == item_code) |
-         (ProductPrice.product_id == item_code)),
-        ProductPrice.is_active == True
-    ).first()
-    
-    if product:
-        # For products: use claim_amount if available, else nhia_app
-        if hasattr(product, 'claim_amount') and product.claim_amount is not None:
-            return float(product.claim_amount)
-        elif hasattr(product, 'nhia_app') and product.nhia_app is not None:
-            return float(product.nhia_app)
-        else:
-            return float(product.base_rate) if product.base_rate else 0.0
-    
-    return 0.0
-
-
 class EncounterWithClaimInfo(BaseModel):
     """Encounter with claim information"""
     id: int
@@ -224,6 +197,7 @@ class EncounterWithClaimInfo(BaseModel):
     claim_id: Optional[int] = None
     claim_status: Optional[str] = None
     ward_admission_id: Optional[int] = None  # For IPD claims
+    total_claim_amount: Optional[float] = None
     
     class Config:
         from_attributes = True
@@ -1421,6 +1395,7 @@ class EligibleEncountersResponse(BaseModel):
     total: int
     skip: int
     limit: int
+    total_revenue: float = 0.0
 
 
 class SpecialtiesResponse(BaseModel):
@@ -2078,7 +2053,11 @@ def get_eligible_encounters_for_claims(
     
     # Build base query for OPD encounters
     query = db.query(Encounter)\
-        .options(joinedload(Encounter.patient))\
+        .options(
+            joinedload(Encounter.patient),
+            joinedload(Encounter.investigations),
+            joinedload(Encounter.prescriptions),
+        )\
         .filter(
             Encounter.status == "finalized",
             Encounter.ccc_number.isnot(None),
@@ -2270,7 +2249,7 @@ def get_eligible_encounters_for_claims(
                 "claim_status": claim.status if claim else None,
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
             }
-            result.append(encounter_data)
+            result.append(_enrich_encounter_row_with_claim_amount(db, encounter_data, encounter, claim))
         
         # Get IPD results (load enough to cover the page range); IPD includes all wards, specialty filters by ward
         ipd_response = get_eligible_ipd_ward_admissions_for_claims(
@@ -2328,13 +2307,16 @@ def get_eligible_encounters_for_claims(
                 "claim_status": claim.status if claim else None,
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
             }
-            result.append(encounter_data)
+            result.append(_enrich_encounter_row_with_claim_amount(db, encounter_data, encounter, claim))
+    
+    page_revenue = sum(float(r.get("total_claim_amount") or 0.0) for r in result)
     
     return {
         "items": result,
         "total": total_count,
         "skip": skip,
-        "limit": limit
+        "limit": limit,
+        "total_revenue": round(page_revenue, 2),
     }
 
 
@@ -2484,13 +2466,20 @@ def get_eligible_ipd_ward_admissions_for_claims(
             "claim_id": claim.id if claim else None,
             "claim_status": claim.status if claim else None,
         }
-        result.append(ward_admission_data)
+        result.append(
+            _enrich_encounter_row_with_claim_amount(
+                db, ward_admission_data, encounter, claim, ward_admission
+            )
+        )
+    
+    page_revenue = sum(float(r.get("total_claim_amount") or 0.0) for r in result)
     
     return {
         "items": result,
         "total": total_count,
         "skip": skip,
-        "limit": limit
+        "limit": limit,
+        "total_revenue": round(page_revenue, 2),
     }
 
 
@@ -3210,12 +3199,24 @@ def get_claim_edit_details(
         "investigations": investigations_list,
         "prescriptions": prescriptions_list,
         "procedures": procedures_list,
-        "claim_summary": {
-            "inpatient_amount": get_claim_amount_from_price_list(db, encounter.procedure_g_drg_code or "", is_insured=True) if claim.type_of_service == "IPD" else 0.0,
-            "outpatient_amount": get_claim_amount_from_price_list(db, encounter.procedure_g_drg_code or "", is_insured=True) if claim.type_of_service == "OPD" else 0.0,
-            "investigations_amount": sum([get_claim_amount_from_price_list(db, inv.gdrg_code or "", is_insured=True) for inv in encounter.investigations if inv.status == "completed" and inv.gdrg_code and inv.status != "cancelled"]),
-            "pharmacy_amount": sum([get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True) * presc.quantity for presc in encounter.prescriptions if presc.dispensed_by]),
-        },
+        "claim_summary": compute_claim_summary_dict(
+            db,
+            type_of_service=claim.type_of_service,
+            procedures=[{"gdrg": p.get("gdrg")} for p in procedures_list if p.get("gdrg")],
+            investigations=[{"gdrg": i.get("gdrg")} for i in investigations_list if i.get("gdrg")],
+            prescriptions=[
+                {
+                    "code": p.get("code"),
+                    "quantity": p.get("quantity"),
+                    "total_cost": p.get("total_cost"),
+                    "price": p.get("price"),
+                }
+                for p in prescriptions_list
+                if p.get("code")
+            ],
+            principal_gdrg=claim.principal_gdrg,
+            encounter_procedure_gdrg=encounter.procedure_g_drg_code,
+        ),
         "claimit_errors": _get_claimit_errors_for_claim(db, claim.claim_id),
         "debug": debug_info,  # Temporary debug info to diagnose OPD data issue
     }
@@ -3889,11 +3890,12 @@ def list_ghims_import_batches(
 @router.get("/ghims-import/batches/{batch_id}")
 def get_ghims_import_batch(
     batch_id: int,
+    include_totals: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
-    """Get one imported XML batch with mapped claim records."""
+    """Get one imported XML batch with mapped claim records (fast by default)."""
     batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found.")
@@ -3904,13 +3906,21 @@ def get_ghims_import_batch(
         .order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id)
         .all()
     )
+
+    totals_by_id: Dict[int, float] = {}
+    batch_revenue = None
+    if include_totals:
+        totals_payload = compute_ghims_batch_claim_totals(db, items)
+        totals_by_id = totals_payload["totals"]
+        batch_revenue = totals_payload["total_revenue"]
+
     rows = []
     for i in items:
         p = i.payload or {}
         surname = str(p.get("surname") or "").strip()
         other_names = str(p.get("otherNames") or "").strip()
         missing_sections = _ghims_missing_sections(p)
-        rows.append({
+        row = {
             "id": i.id,
             "row_index": i.row_index,
             "claim_claim_id": i.claim_claim_id,
@@ -3926,14 +3936,49 @@ def get_ghims_import_batch(
             "missing_sections": missing_sections,
             "has_missing_sections": len(missing_sections) > 0,
             "no_clinical_sections": len(missing_sections) == 4,
-        })
+        }
+        if include_totals:
+            row["total_claim_amount"] = totals_by_id.get(i.id, 0.0)
+        rows.append(row)
 
-    return {
+    response = {
         "id": batch.id,
         "file_name": batch.file_name,
         "uploaded_at": batch.uploaded_at.isoformat() if batch.uploaded_at else None,
         "claim_count": batch.claim_count,
         "claims": rows,
+    }
+    if include_totals:
+        response["total_revenue"] = batch_revenue
+    return response
+
+
+@router.get("/ghims-import/batches/{batch_id}/claim-totals")
+def get_ghims_import_batch_claim_totals(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Compute claim revenue totals for a batch using a shared in-memory price cache."""
+    batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+
+    items = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.batch_id == batch_id)
+        .order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id)
+        .all()
+    )
+    totals_payload = compute_ghims_batch_claim_totals(db, items)
+    return {
+        "batch_id": batch_id,
+        "total_revenue": totals_payload["total_revenue"],
+        "totals": [
+            {"id": item_id, "total_claim_amount": amount}
+            for item_id, amount in totals_payload["totals"].items()
+        ],
     }
 
 
@@ -4115,6 +4160,10 @@ def get_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    payload = item.payload or {}
+    claim_summary = compute_claim_summary_from_ghims_payload(
+        db, payload, price_cache=PriceAmountCache.build(db)
+    )
     return {
         "id": item.id,
         "batch_id": item.batch_id,
@@ -4122,7 +4171,8 @@ def get_ghims_import_item(
         "row_index": item.row_index,
         "status": item.status,
         "flag_comment": item.flag_comment,
-        "payload": item.payload or {},
+        "payload": payload,
+        "claim_summary": claim_summary,
         "claimit_errors": _get_claimit_errors_for_import_item(db, item),
     }
 

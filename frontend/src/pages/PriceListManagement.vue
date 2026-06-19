@@ -63,6 +63,7 @@
               • <strong>Service Type:</strong> Department/Clinic (e.g., General, Pediatrics, ENT) - This is used as the category<br/>
               • <strong>Service Name:</strong> Procedure/service name (required)<br/>
               • <strong>Base Rate:</strong> What cash patients pay<br/>
+              • <strong>Claim Amount:</strong> NHIA claim amount for the service<br/>
               • <strong>NHIA App:</strong> Amount NHIA covers/approves<br/>
               • <strong>NHIA Claim Co-Payment:</strong> Top-up amount that insured patients pay (in addition to what NHIA covers)<br/>
               <br/>
@@ -232,6 +233,11 @@
               {{ formatCurrency(props.value) }}
             </q-td>
           </template>
+          <template v-slot:body-cell-claim_amount="props">
+            <q-td :props="props">
+              {{ props.value !== null && props.value !== undefined ? formatCurrency(props.value) : 'N/A' }}
+            </q-td>
+          </template>
           <template v-slot:body-cell-nhia_app="props">
             <q-td :props="props">
               {{ props.value ? formatCurrency(props.value) : 'N/A' }}
@@ -307,6 +313,7 @@
               <q-input v-model="addForm.service_ty" filled label="Service Ty" />
               <q-input v-model="addForm.service_id" filled label="Service ID" />
               <q-input v-model.number="addForm.base_rate" type="number" step="0.01" filled label="Base Rate *" :rules="[(val) => val >= 0 || 'Must be >= 0']" />
+              <q-input v-model.number="addForm.claim_amount" type="number" step="0.01" filled label="Claim Amount" />
               <q-input v-model.number="addForm.nhia_app" type="number" step="0.01" filled label="NHIA App" />
               <q-input v-model.number="addForm.nhia_claim_co_payment" type="number" step="0.01" filled label="Co-Payment" hint="For insured patients. If null, patient pays 0 (free)." />
               <q-input v-model="addForm.clinic_bill_effective" filled label="Clinic Bill Effective" />
@@ -390,9 +397,9 @@
               <q-separator class="q-my-md" />
               <div class="text-subtitle2 q-mb-sm">Pricing</div>
               <q-input v-model.number="editForm.base_rate" type="number" step="0.01" filled label="Base Rate" />
+              <q-input v-model.number="editForm.claim_amount" type="number" step="0.01" filled label="Claim Amount" />
               <q-input v-model.number="editForm.nhia_app" type="number" step="0.01" filled label="NHIA App" />
               <q-input v-model.number="editForm.nhia_claim_co_payment" type="number" step="0.01" filled label="Co-Payment" hint="For insured patients (with CCC). If null, patient pays 0 (free)." />
-              <q-input v-if="editingItem?.file_type === 'product'" v-model.number="editForm.claim_amount" type="number" step="0.01" filled label="Claim Amount (Products)" />
               
               <!-- Status -->
               <q-separator class="q-my-md" />
@@ -449,6 +456,7 @@ const priceColumns = [
   { name: 'service_name', label: 'Name (Service/Product)', field: 'service_name', align: 'left', sortable: true },
   { name: 'service_type', label: 'Category/Dept', field: 'service_type', align: 'left', sortable: true },
   { name: 'base_rate', label: 'Base Rate (Cash)', field: 'base_rate', align: 'right', sortable: true },
+  { name: 'claim_amount', label: 'Claim Amount', field: 'claim_amount', align: 'right', sortable: true },
   { name: 'nhia_app', label: 'NHIA App', field: 'nhia_app', align: 'right', sortable: true },
   { name: 'nhia_claim_co_payment', label: 'Co-Payment', field: 'nhia_claim_co_payment', align: 'right', sortable: true },
   { name: 'insurance_covered', label: 'Insurance Covered', field: 'insurance_covered', align: 'center', sortable: true },
@@ -778,6 +786,7 @@ const openEditItem = (row) => {
       base_rate: row.base_rate || 0.0,
       nhia_app: row.nhia_app || null,
       nhia_claim_co_payment: row.nhia_claim_co_payment !== null && row.nhia_claim_co_payment !== undefined ? row.nhia_claim_co_payment : 0.0,
+      claim_amount: row.claim_amount ?? null,
       // Insurance covered (for procedures)
       insurance_covered: row.insurance_covered || 'yes',
       // Status

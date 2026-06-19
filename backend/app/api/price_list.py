@@ -144,6 +144,7 @@ def create_price_item(
                 service_name=item_data.service_name,
                 base_rate=item_data.base_rate,
                 nhia_app=item_data.nhia_app,
+                claim_amount=item_data.claim_amount,
                 nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 clinic_bill_effective=item_data.clinic_bill_effective,
                 insurance_covered=item_data.insurance_covered if item_data.insurance_covered else "yes",  # Default to "yes" if not provided
@@ -166,6 +167,7 @@ def create_price_item(
                 service_name=item_data.service_name,
                 base_rate=item_data.base_rate,
                 nhia_app=item_data.nhia_app,
+                claim_amount=item_data.claim_amount,
                 nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 clinic_bill_effective=item_data.clinic_bill_effective,
                 is_active=item_data.is_active,
@@ -187,6 +189,7 @@ def create_price_item(
                 service_name=item_data.service_name,
                 base_rate=item_data.base_rate,
                 nhia_app=item_data.nhia_app,
+                claim_amount=item_data.claim_amount,
                 nhia_claim_co_payment=item_data.nhia_claim_co_payment if item_data.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 clinic_bill_effective=item_data.clinic_bill_effective,
                 is_active=item_data.is_active,
@@ -282,6 +285,8 @@ def update_price_item(
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
             item.nhia_app = update.nhia_app
+        if update.claim_amount is not None:
+            item.claim_amount = update.claim_amount
         if update.nhia_claim_co_payment is not None:
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
         if update.clinic_bill_effective is not None:
@@ -312,6 +317,8 @@ def update_price_item(
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
             item.nhia_app = update.nhia_app
+        if update.claim_amount is not None:
+            item.claim_amount = update.claim_amount
         if update.nhia_claim_co_payment is not None:
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
         if update.clinic_bill_effective is not None:
@@ -340,6 +347,8 @@ def update_price_item(
             item.base_rate = update.base_rate
         if update.nhia_app is not None:
             item.nhia_app = update.nhia_app
+        if update.claim_amount is not None:
+            item.claim_amount = update.claim_amount
         if update.nhia_claim_co_payment is not None:
             item.nhia_claim_co_payment = update.nhia_claim_co_payment
         if update.clinic_bill_effective is not None:
@@ -679,6 +688,7 @@ def search_price_items_endpoint(
                 "service_type": item.service_type,
                 "base_rate": cash_price,
                 "nhia_app": nhia_app,
+                "claim_amount": float(item.claim_amount) if getattr(item, 'claim_amount', None) else None,
                 "nhia_claim_co_payment": nhia_claim_co_payment,
                 "insurance_covered": getattr(item, 'insurance_covered', 'yes') if type_name == 'procedure' else None,  # Include insurance_covered for procedures
                 "is_active": item.is_active,
@@ -1387,6 +1397,7 @@ def export_price_list_csv(
             'Service ID',
             'Service Name',
             'Base Rate',
+            'Claim Amount',
             'NHIA App',
             'NHIA Claim Co-Payment',
             'Clinic Bill Effective',
@@ -1403,6 +1414,7 @@ def export_price_list_csv(
                 item.service_id or '',
                 item.service_name or '',
                 item.base_rate or 0.0,
+                item.claim_amount or '',
                 item.nhia_app or '',
                 item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 item.clinic_bill_effective or '',
@@ -1426,6 +1438,7 @@ def export_price_list_csv(
             'Service ID',
             'Service Name',
             'Base Rate',
+            'Claim Amount',
             'NHIA App',
             'NHIA Claim Co-Payment',
             'Clinic Bill Effective',
@@ -1441,6 +1454,7 @@ def export_price_list_csv(
                 item.service_id or '',
                 item.service_name or '',
                 item.base_rate or 0.0,
+                item.claim_amount or '',
                 item.nhia_app or '',
                 item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 item.clinic_bill_effective or '',
@@ -1463,6 +1477,7 @@ def export_price_list_csv(
             'Service ID',
             'Service Name',
             'Base Rate',
+            'Claim Amount',
             'NHIA App',
             'NHIA Claim Co-Payment',
             'Clinic Bill Effective',
@@ -1478,6 +1493,7 @@ def export_price_list_csv(
                 item.service_id or '',
                 item.service_name or '',
                 item.base_rate or 0.0,
+                item.claim_amount or '',
                 item.nhia_app or '',
                 item.nhia_claim_co_payment if item.nhia_claim_co_payment is not None else 0.0,  # Preserve 0.0, default to 0.0 if None
                 item.clinic_bill_effective or '',

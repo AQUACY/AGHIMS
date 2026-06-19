@@ -890,7 +890,10 @@ export const claimsAPI = {
       headers: { 'Content-Type': undefined },
     }),
   getGhimsImportBatches: () => api.get('/claims/ghims-import/batches'),
-  getGhimsImportBatch: (batchId) => api.get(`/claims/ghims-import/batches/${batchId}`),
+  getGhimsImportBatch: (batchId, params = {}) =>
+    api.get(`/claims/ghims-import/batches/${batchId}`, { params }),
+  getGhimsImportBatchClaimTotals: (batchId) =>
+    api.get(`/claims/ghims-import/batches/${batchId}/claim-totals`),
   deleteGhimsImportBatch: (batchId) => api.delete(`/claims/ghims-import/batches/${batchId}`),
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),

@@ -69,6 +69,10 @@
           />
         </div>
 
+        <div v-if="totalRevenue != null" class="text-subtitle1 text-primary q-mb-md">
+          Total claim revenue ({{ pagination.rowsNumber }} matching, this page): {{ formatCurrency(totalRevenue) }}
+        </div>
+
         <div class="row q-gutter-md q-mb-sm">
           <q-select
             v-model="filterSpecialty"
@@ -110,6 +114,15 @@
             clearable
             @keyup.enter="loadFinalizedEncounters"
             hint="e.g., CLA-XXXXX"
+          />
+          <q-input
+            v-model="filterClaimCheckCode"
+            filled
+            label="CCC / Claim Check Code"
+            class="col-12 col-md-2"
+            clearable
+            @keyup.enter="loadFinalizedEncounters"
+            hint="Partial match supported"
           />
           <q-input
             v-model="filterStartDate"
@@ -204,6 +217,11 @@
                 :color="getStatusColor(props.value)"
                 :label="props.value"
               />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-total_claim_amount="props">
+            <q-td :props="props">
+              {{ formatCurrency(props.value) }}
             </q-td>
           </template>
           <template v-slot:body-cell-actions="props">
@@ -307,6 +325,7 @@ const filterEndDate = ref(getTodayDate()); // Default to today
 const filterClaimStatus = ref(null);
 const filterCardNumber = ref('');
 const filterClaimId = ref('');
+const filterClaimCheckCode = ref('');
 const filterSpecialty = ref(null);
 const specialtyOptions = ref([]);
 const filtersLocked = ref(false);
@@ -321,6 +340,12 @@ const pagination = ref({
 // Multi-select for batch export
 const selectedRows = ref([]);
 const exportingSelected = ref(false);
+const totalRevenue = ref(null);
+
+const formatCurrency = (amount) => {
+  if (amount == null) return 'N/A';
+  return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(amount);
+};
 
 // LocalStorage key for locked filters
 const FILTERS_LOCK_KEY = 'claims_filters_locked';
@@ -379,6 +404,7 @@ const columns = [
   { name: 'department', label: 'Department', field: 'department', align: 'left' },
   { name: 'finalized_at', label: 'Finalized At', field: 'finalized_at', align: 'left', format: (val) => val ? new Date(val).toLocaleString() : '-' },
   { name: 'claim_status', label: 'Claim Status', field: 'claim_status', align: 'center' },
+  { name: 'total_claim_amount', label: 'Claim Total', field: 'total_claim_amount', align: 'right', sortable: true },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
@@ -506,6 +532,7 @@ const saveFiltersToStorage = () => {
     claimType: claimType.value,
     filterCardNumber: filterCardNumber.value,
     filterClaimId: filterClaimId.value,
+    filterClaimCheckCode: filterClaimCheckCode.value,
     filterStartDate: filterStartDate.value,
     filterEndDate: filterEndDate.value,
     filterClaimStatus: filterClaimStatus.value,
@@ -523,6 +550,7 @@ const loadFiltersFromStorage = () => {
       claimType.value = filters.claimType ?? null;
       filterCardNumber.value = filters.filterCardNumber || '';
       filterClaimId.value = filters.filterClaimId || '';
+      filterClaimCheckCode.value = filters.filterClaimCheckCode || '';
       filterSpecialty.value = filters.filterSpecialty ?? null;
       // Only load saved dates if they exist, otherwise default to today
       filterStartDate.value = filters.filterStartDate || getTodayDate();
@@ -691,6 +719,7 @@ const loadFinalizedEncounters = async (page = 1) => {
       filterClaimStatus.value || null,
       filterCardNumber.value || null,
       filterClaimId.value || null,
+      filterClaimCheckCode.value || null,
       filterSpecialty.value || null,
       skip,
       pagination.value.rowsPerPage
@@ -705,6 +734,7 @@ const loadFinalizedEncounters = async (page = 1) => {
       // New paginated format
       items = responseData.items;
       total = responseData.total || 0;
+      totalRevenue.value = responseData.total_revenue ?? null;
     } else if (Array.isArray(responseData)) {
       // Old format (array directly) - fallback for compatibility
       items = responseData;
@@ -770,7 +800,7 @@ watch(claimType, () => {
   loadSpecialties(); // Refresh specialty options (OPD = departments, IPD = wards)
 });
 
-watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterSpecialty, claimType], () => {
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterClaimCheckCode, filterSpecialty, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
     pagination.value.page = 1; // Reset to first page when filters change
