@@ -1080,6 +1080,7 @@ import {
   confirmClaimGetCcc,
   canFetchClaimCcc,
   applyClaimFetchCccToEditForm,
+  applyServiceDateChangeToEditForm,
 } from '../utils/claimGetCcc';
 import {
   isMedicineNotCovered,
@@ -1197,6 +1198,51 @@ function onServiceTypeIpdChange(val) {
   if (val) services.type_of_service = 'IPD';
   else services.type_of_service = 'OPD';
 }
+
+const serviceDateSnapshot = ref({ first_visit: '', second_visit: '' });
+let skipServiceDateRebase = false;
+
+function syncServiceDateSnapshot() {
+  serviceDateSnapshot.value = {
+    first_visit: services.first_visit || '',
+    second_visit: services.second_visit || '',
+  };
+}
+
+function onServiceDatesChanged() {
+  if (skipServiceDateRebase || loading.value) return;
+
+  const prev = serviceDateSnapshot.value;
+  const isIpd = String(services.type_of_service || 'OPD').toUpperCase() === 'IPD';
+  const firstChanged = (services.first_visit || '') !== (prev.first_visit || '');
+  const secondChanged = (services.second_visit || '') !== (prev.second_visit || '');
+
+  if (isIpd) {
+    if (!firstChanged && !secondChanged) return;
+    if (!services.first_visit) return;
+  } else {
+    if (!firstChanged) return;
+    if (!services.first_visit) return;
+  }
+
+  skipServiceDateRebase = true;
+  applyServiceDateChangeToEditForm(
+    {
+      services,
+      investigationsList,
+      prescriptionsList,
+      proceduresList,
+    },
+    prev
+  );
+  syncServiceDateSnapshot();
+  skipServiceDateRebase = false;
+}
+
+watch(
+  () => [services.first_visit, services.second_visit, services.type_of_service],
+  onServiceDatesChanged
+);
 
 const outcomeOptions = ['Discharged', 'Died', 'Transferred Out', 'Absconded/Discharged against Medical advice'];
 const attendanceOptions = [
@@ -2213,6 +2259,9 @@ const loadClaimData = async () => {
     });
     $router.back();
   } finally {
+    skipServiceDateRebase = true;
+    syncServiceDateSnapshot();
+    skipServiceDateRebase = false;
     loading.value = false;
   }
 };
@@ -2237,6 +2286,9 @@ async function onGetClaimCcc() {
       },
       res.data
     );
+    skipServiceDateRebase = true;
+    syncServiceDateSnapshot();
+    skipServiceDateRebase = false;
     $q.notify({
       type: 'positive',
       message: `Claim check code updated to ${res.data.claim_check_code || res.data.ccc}. Save and finalize to keep changes.`,

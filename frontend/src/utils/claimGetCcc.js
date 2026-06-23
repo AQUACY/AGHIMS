@@ -2,7 +2,7 @@
  * Shared confirmation and helpers for Get CCC on claim edit screens.
  */
 
-import { rebaseDatesForCccPreview } from './claimCccDateRebase';
+import { rebaseDatesForCccPreview, rebaseDatesForServiceDateChange } from './claimCccDateRebase';
 
 export const CLAIM_GET_CCC_WARNING =
   '<div style="line-height:1.45">'
@@ -75,6 +75,121 @@ export function canFetchClaimCcc(source) {
   );
 }
 
+function applyRebasedLinesToEditForm(ctx, rebased) {
+  if (!rebased) return;
+  if (rebased.duration_of_spell != null && ctx.services) {
+    ctx.services.duration_of_spell = rebased.duration_of_spell;
+  }
+  (rebased.investigations || []).forEach((line, i) => {
+    const row = ctx.investigationsList.value[i];
+    if (!row) return;
+    row.date = line.date;
+    row.outside_service_span = line.outside_span;
+  });
+  (rebased.prescriptions || []).forEach((line, i) => {
+    const row = ctx.prescriptionsList.value[i];
+    if (!row) return;
+    row.date = line.date;
+    row.outside_service_span = line.outside_span;
+  });
+  (rebased.procedures || []).forEach((line, i) => {
+    const row = ctx.proceduresList.value[i];
+    if (!row) return;
+    row.date = line.date;
+    row.outside_service_span = line.outside_span;
+  });
+}
+
+function ghimsLineInputs(payload) {
+  return {
+    investigations: (payload.investigations || []).map((inv) => ({
+      date: inv?.serviceDate,
+      description: inv?._serviceName || inv?.gdrgCode,
+      gdrg: inv?.gdrgCode,
+    })),
+    prescriptions: (payload.medicines || []).map((med) => ({
+      date: med?.serviceDate,
+      description: med?._serviceName,
+      code: med?.medicineCode,
+    })),
+    procedures: (payload.procedures || []).map((proc) => ({
+      date: proc?.serviceDate,
+      description: proc?._serviceName || proc?.description,
+      gdrg: proc?.gdrgCode,
+    })),
+  };
+}
+
+function applyRebasedLinesToGhimsPayload(payload, rebased) {
+  if (!rebased) return;
+  if (Array.isArray(rebased.date_of_service)) {
+    payload.dateOfService = rebased.date_of_service;
+  }
+  (rebased.investigations || []).forEach((line, i) => {
+    const row = payload.investigations?.[i];
+    if (!row) return;
+    row.serviceDate = line.date;
+    row.outside_service_span = line.outside_span;
+  });
+  (rebased.prescriptions || []).forEach((line, i) => {
+    const row = payload.medicines?.[i];
+    if (!row) return;
+    row.serviceDate = line.date;
+    row.outside_service_span = line.outside_span;
+  });
+  (rebased.procedures || []).forEach((line, i) => {
+    const row = payload.procedures?.[i];
+    if (!row) return;
+    row.serviceDate = line.date;
+    row.outside_service_span = line.outside_span;
+  });
+}
+
+/**
+ * Rebase line-item dates when service/visit dates are edited on EditClaim.
+ * @param {object} ctx
+ * @param {{ first_visit?: string, second_visit?: string, dateOfService?: string[] }} previous
+ */
+export function applyServiceDateChangeToEditForm(ctx, previous) {
+  const rebased = rebaseDatesForServiceDateChange({
+    typeOfService: ctx.services.type_of_service,
+    previousFirstVisit: previous?.first_visit,
+    previousSecondVisit: previous?.second_visit,
+    newFirstVisit: ctx.services.first_visit,
+    newSecondVisit: ctx.services.second_visit,
+    investigations: ctx.investigationsList.value,
+    prescriptions: ctx.prescriptionsList.value,
+    procedures: ctx.proceduresList.value,
+  });
+  if (!rebased) return false;
+  applyRebasedLinesToEditForm(ctx, rebased);
+  return true;
+}
+
+/**
+ * Rebase line-item dates when dateOfService is edited on GHIMS imported claim.
+ * @param {object} payload
+ * @param {string[]} previousDateOfService
+ */
+export function applyServiceDateChangeToGhimsPayload(payload, previousDateOfService) {
+  const lines = ghimsLineInputs(payload);
+  const rebased = rebaseDatesForServiceDateChange({
+    typeOfService: payload.typeOfService,
+    previousDateOfService: previousDateOfService || [],
+    previousFirstVisit: previousDateOfService?.[0],
+    previousSecondVisit: previousDateOfService?.[1],
+    newDateOfService: payload.dateOfService,
+    newFirstVisit: payload.dateOfService?.[0],
+    newSecondVisit: payload.dateOfService?.[1],
+    investigations: lines.investigations,
+    prescriptions: lines.prescriptions,
+    procedures: lines.procedures,
+  });
+  if (!rebased) return false;
+  applyRebasedLinesToGhimsPayload(payload, rebased);
+  return true;
+}
+
 /**
  * Apply fetch-ccc API response to EditClaim form state.
  */
@@ -104,24 +219,7 @@ export function applyClaimFetchCccToEditForm(ctx, data) {
   ctx.services.fourth_visit = rebased.fourth_visit;
   ctx.services.duration_of_spell = rebased.duration_of_spell;
 
-  (rebased.investigations || []).forEach((line, i) => {
-    const row = ctx.investigationsList.value[i];
-    if (!row) return;
-    row.date = line.date;
-    row.outside_service_span = line.outside_span;
-  });
-  (rebased.prescriptions || []).forEach((line, i) => {
-    const row = ctx.prescriptionsList.value[i];
-    if (!row) return;
-    row.date = line.date;
-    row.outside_service_span = line.outside_span;
-  });
-  (rebased.procedures || []).forEach((line, i) => {
-    const row = ctx.proceduresList.value[i];
-    if (!row) return;
-    row.date = line.date;
-    row.outside_service_span = line.outside_span;
-  });
+  applyRebasedLinesToEditForm(ctx, rebased);
 }
 
 /**
@@ -138,40 +236,8 @@ export function applyGhimsFetchCccToPayload(payload, data) {
     thirdVisit: payload.dateOfService?.[2],
     fourthVisit: payload.dateOfService?.[3],
     dateOfService: payload.dateOfService,
-    investigations: (payload.investigations || []).map((inv) => ({
-      date: inv?.serviceDate,
-      description: inv?._serviceName || inv?.gdrgCode,
-      gdrg: inv?.gdrgCode,
-    })),
-    prescriptions: (payload.medicines || []).map((med) => ({
-      date: med?.serviceDate,
-      description: med?._serviceName,
-      code: med?.medicineCode,
-    })),
-    procedures: (payload.procedures || []).map((proc) => ({
-      date: proc?.serviceDate,
-      description: proc?._serviceName || proc?.description,
-      gdrg: proc?.gdrgCode,
-    })),
+    ...ghimsLineInputs(payload),
   });
 
-  payload.dateOfService = rebased.date_of_service;
-  (rebased.investigations || []).forEach((line, i) => {
-    const row = payload.investigations?.[i];
-    if (!row) return;
-    row.serviceDate = line.date;
-    row.outside_service_span = line.outside_span;
-  });
-  (rebased.prescriptions || []).forEach((line, i) => {
-    const row = payload.medicines?.[i];
-    if (!row) return;
-    row.serviceDate = line.date;
-    row.outside_service_span = line.outside_span;
-  });
-  (rebased.procedures || []).forEach((line, i) => {
-    const row = payload.procedures?.[i];
-    if (!row) return;
-    row.serviceDate = line.date;
-    row.outside_service_span = line.outside_span;
-  });
+  applyRebasedLinesToGhimsPayload(payload, rebased);
 }

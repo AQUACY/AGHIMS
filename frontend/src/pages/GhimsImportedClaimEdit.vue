@@ -409,6 +409,7 @@ import {
   confirmClaimGetCcc,
   canFetchClaimCcc,
   applyGhimsFetchCccToPayload,
+  applyServiceDateChangeToGhimsPayload,
 } from '../utils/claimGetCcc';
 import {
   asMedicineList,
@@ -437,6 +438,50 @@ const payload = reactive({
 });
 
 const canGetGhimsCcc = computed(() => canFetchClaimCcc({ memberNo: payload.memberNo }));
+
+const serviceDateSnapshot = ref([]);
+let skipServiceDateRebase = false;
+
+function syncGhimsServiceDateSnapshot() {
+  serviceDateSnapshot.value = [...(payload.dateOfService || [])];
+}
+
+function onGhimsServiceDatesChanged() {
+  if (skipServiceDateRebase || loading.value) return;
+
+  const prev = serviceDateSnapshot.value;
+  const curr = payload.dateOfService || [];
+  if (JSON.stringify(prev) === JSON.stringify(curr)) return;
+
+  const type = String(payload.typeOfService || 'OPD').toUpperCase();
+  const newFirst = curr[0] || '';
+  if (!newFirst) {
+    syncGhimsServiceDateSnapshot();
+    return;
+  }
+
+  if (type === 'IPD') {
+    const firstChanged = (prev[0] || '') !== (curr[0] || '');
+    const secondChanged = (prev[1] || '') !== (curr[1] || '');
+    if (!firstChanged && !secondChanged) {
+      syncGhimsServiceDateSnapshot();
+      return;
+    }
+  } else if ((prev[0] || '') === newFirst) {
+    syncGhimsServiceDateSnapshot();
+    return;
+  }
+
+  skipServiceDateRebase = true;
+  applyServiceDateChangeToGhimsPayload(payload, prev);
+  syncGhimsServiceDateSnapshot();
+  skipServiceDateRebase = false;
+}
+
+watch(
+  () => [...(payload.dateOfService || [])],
+  onGhimsServiceDatesChanged
+);
 
 function emptyClaimitBySection() {
   return {
@@ -1064,6 +1109,9 @@ async function onGetGhimsClaimCcc() {
     const memberNo = (payload.memberNo || '').trim();
     const res = await claimsAPI.fetchGhimsImportCcc(itemId, memberNo || null);
     applyGhimsFetchCccToPayload(payload, res.data);
+    skipServiceDateRebase = true;
+    syncGhimsServiceDateSnapshot();
+    skipServiceDateRebase = false;
     $q.notify({
       type: 'positive',
       message: `Claim check code updated to ${res.data.claim_check_code || res.data.ccc}. Save and finalize to keep changes.`,
@@ -1102,6 +1150,9 @@ async function load() {
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imported claim' });
   } finally {
+    skipServiceDateRebase = true;
+    syncGhimsServiceDateSnapshot();
+    skipServiceDateRebase = false;
     loading.value = false;
   }
 }
