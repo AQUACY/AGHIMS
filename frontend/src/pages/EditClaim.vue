@@ -37,17 +37,17 @@
       <strong>Claim is finalized</strong>
       <div class="text-caption q-mt-xs">
         <template v-if="isViewMode">
-          You are viewing this claim. To make changes, click <strong>Reopen claim</strong> below. Then edit and use <strong>Save & Finalize</strong> when done.
+          You are viewing this claim. To make changes, click <strong>Revert to draft</strong> below. Then edit and use <strong>Save & Finalize</strong> when done.
         </template>
         <template v-else>
-          To correct errors and re-export, reopen the claim first. Then make your changes and use <strong>Save & Finalize</strong> before exporting again.
+          To correct errors and re-export, revert the claim to draft first. Then make your changes and use <strong>Save & Finalize</strong> before exporting again.
         </template>
       </div>
       <template v-slot:action>
         <q-btn
           flat
           color="primary"
-          label="Reopen claim"
+          label="Revert to draft"
           :loading="reopening"
           @click="reopenClaim"
         />
@@ -900,9 +900,9 @@
       <span class="q-mr-md text-weight-medium">Claim is finalized.</span>
       <q-btn
         color="primary"
-        label="Reopen claim"
+        label="Revert to draft"
         :loading="reopening"
-        icon="lock_open"
+        icon="undo"
         @click="reopenClaim"
       />
     </div>
@@ -2313,7 +2313,7 @@ async function reopenClaim() {
     await claimsAPI.reopen(claimId.value);
     $q.notify({
       type: 'positive',
-      message: 'Claim reopened. You can now edit and save.',
+      message: 'Claim reverted to draft. You can now edit and save.',
     });
     await loadClaimData();
     // If they were viewing (from main claims list), switch to edit mode so they can make changes and save

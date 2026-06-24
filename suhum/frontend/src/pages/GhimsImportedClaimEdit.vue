@@ -1,8 +1,8 @@
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-md" :class="{ 'revert-bar-visible': !loading && status === 'finalized' }">
     <div class="row items-center q-mb-md">
       <q-btn flat round dense icon="arrow_back" @click="$router.back()" />
-      <div class="text-h5 q-ml-sm">Edit Imported Claim</div>
+      <div class="text-h5 q-ml-sm">{{ status === 'finalized' ? 'View Imported Claim' : 'Edit Imported Claim' }}</div>
       <q-space />
       <q-badge :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : 'warning')" :label="status" />
       <q-btn
@@ -20,7 +20,30 @@
       <q-inner-loading showing color="primary" />
     </q-card>
 
-    <q-form v-else @submit.prevent="saveAndFinalize" class="q-gutter-md">
+    <q-banner
+      v-if="!loading && status === 'finalized'"
+      class="bg-amber-2 q-mb-md"
+      rounded
+    >
+      <template #avatar>
+        <q-icon name="lock_open" color="amber-9" />
+      </template>
+      <strong>Imported claim is finalized</strong>
+      <div class="text-caption q-mt-xs">
+        To make changes, click <strong>Revert to draft</strong> below. Then edit and use <strong>Save and Finalize</strong> when done.
+      </div>
+      <template #action>
+        <q-btn
+          flat
+          color="primary"
+          label="Revert to draft"
+          :loading="reverting"
+          @click="revertToDraft"
+        />
+      </template>
+    </q-banner>
+
+    <q-form v-else @submit.prevent="saveAndFinalize" class="q-gutter-md" :inert="status === 'finalized' || undefined">
       <q-banner v-if="claimitErrors.by_section?.other?.length" class="bg-orange-1 q-mb-md" rounded dense>
         <template #avatar><q-icon name="warning" color="orange" /></template>
         <div class="text-subtitle2">ClaimIT reported (fix in the section below if applicable):</div>
@@ -59,7 +82,7 @@
                 icon="cloud_download"
                 label="Get CCC"
                 :loading="fetchingClaimCcc"
-                :disable="!canGetGhimsCcc || loading"
+                :disable="status === 'finalized' || !canGetGhimsCcc || loading"
                 @click="onGetGhimsClaimCcc"
               >
                 <q-tooltip v-if="!canGetGhimsCcc">
@@ -402,7 +425,7 @@
       </q-card>
 
       <div class="row q-gutter-md">
-        <q-btn type="submit" color="primary" label="Save and Finalize" :loading="saving" />
+        <q-btn v-if="status !== 'finalized'" type="submit" color="primary" label="Save and Finalize" :loading="saving" />
         <q-btn v-if="status !== 'finalized'" color="negative" :label="status === 'flagged' ? 'Flagged' : 'Flag claim'" :disable="status === 'flagged'" outline :loading="saving" @click="flagClaim" />
       </div>
     </q-form>
@@ -412,6 +435,20 @@
       :claim-id="payload.claimID"
       :payload="payload"
     />
+
+    <div
+      v-if="!loading && status === 'finalized'"
+      class="revert-claim-fixed-bar row items-center justify-center q-pa-sm shadow-6"
+    >
+      <span class="q-mr-md text-weight-medium">Imported claim is finalized.</span>
+      <q-btn
+        color="primary"
+        label="Revert to draft"
+        :loading="reverting"
+        icon="undo"
+        @click="revertToDraft"
+      />
+    </div>
   </q-page>
 </template>
 
@@ -440,6 +477,7 @@ const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
 const showRecoveredData = ref(false);
+const reverting = ref(false);
 const fetchingClaimCcc = ref(false);
 const status = ref('draft');
 const flagComment = ref('');
@@ -496,8 +534,9 @@ function onGhimsServiceDatesChanged() {
 }
 
 watch(
-  () => [...(payload.dateOfService || [])],
-  onGhimsServiceDatesChanged
+  () => payload.dateOfService?.map((d) => d || ''),
+  onGhimsServiceDatesChanged,
+  { deep: true }
 );
 
 function emptyClaimitBySection() {
@@ -1116,6 +1155,28 @@ function normalize(p) {
   };
 }
 
+async function revertToDraft() {
+  if (status.value !== 'finalized') return;
+  reverting.value = true;
+  try {
+    await claimsAPI.reopenGhimsImportItem(itemId);
+    $q.notify({
+      type: 'positive',
+      message: 'Imported claim reverted to draft. You can now edit and save.',
+      position: 'top',
+    });
+    await load();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to revert imported claim',
+      position: 'top',
+    });
+  } finally {
+    reverting.value = false;
+  }
+}
+
 async function onGetGhimsClaimCcc() {
   if (!canGetGhimsCcc.value) return;
   const confirmed = await confirmClaimGetCcc($q);
@@ -1329,5 +1390,19 @@ watch(
   border-radius: 6px;
   background-color: rgba(255, 193, 7, 0.1);
   box-shadow: inset 0 0 0 1px rgba(255, 193, 7, 0.28);
+}
+
+.revert-claim-fixed-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--q-color-amber-2);
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  z-index: 2000;
+}
+
+.q-page.revert-bar-visible {
+  padding-bottom: 64px;
 }
 </style>
