@@ -1,9 +1,12 @@
 """
 Parse GHIMS-exported claims XML to editable dictionaries and rebuild XML.
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Set
 import re
 import xml.etree.ElementTree as ET
+
+# Non-NHIS / uninsured medicines from GHIMS often use codes like M000424, M000470.
+_NON_INSURED_MEDICINE_CODE = re.compile(r"^M\d{6}$", re.IGNORECASE)
 
 
 def _text(el: ET.Element, tag: str) -> str:
@@ -154,9 +157,71 @@ def _normalize_duration_for_export(duration: str) -> str:
     return compact
 
 
-def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
+def is_insured_medicine_for_export(
+    med: Dict[str, Any],
+    not_covered_codes: Optional[Set[str]] = None,
+) -> bool:
+    """Return False for medicines that must not appear in NHIS claim XML export."""
+    if not isinstance(med, dict):
+        return False
+
+    code = str(med.get("medicineCode") or "").strip()
+    if not code:
+        return True
+
+    payload_covered = str(med.get("insurance_covered") or "").strip().lower()
+    if payload_covered == "no":
+        return False
+
+    if not_covered_codes and code in not_covered_codes:
+        return False
+
+    if _NON_INSURED_MEDICINE_CODE.match(code):
+        return False
+
+    return True
+
+
+def filter_payload_medicines_for_export(
+    payload: Dict[str, Any],
+    not_covered_codes: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """Drop non-insured medicines and clear pharmacy flag when none remain."""
+    filtered = dict(payload)
+    medicines = filtered.get("medicines") or []
+    if not isinstance(medicines, list):
+        return filtered
+
+    export_medicines = [
+        med for med in medicines
+        if is_insured_medicine_for_export(med, not_covered_codes)
+    ]
+    filtered["medicines"] = export_medicines
+    if not export_medicines:
+        filtered["includesPharmacy"] = "0"
+    return filtered
+
+
+def _export_dates_of_service(payload: Dict[str, Any]) -> List[str]:
+    """OPD exports a single service date; IPD may include up to four."""
+    dates_in = list(payload.get("dateOfService", []) or [])
+    tos = str(payload.get("typeOfService", "") or "").strip().upper()
+    if tos == "OPD":
+        for dt in dates_in:
+            text = str(dt or "").strip()
+            if text:
+                return [text]
+        return [str(dates_in[0] or "")] if dates_in else [""]
+    return [str(dt or "") for dt in dates_in[:4]]
+
+
+def build_claims_xml_from_payloads(
+    payloads: List[Dict[str, Any]],
+    not_covered_medicine_codes: Optional[Set[str]] = None,
+) -> str:
     root = ET.Element("claims")
-    for payload in payloads:
+    for raw_payload in payloads:
+        payload = filter_payload_medicines_for_export(raw_payload, not_covered_medicine_codes)
         claim_el = ET.SubElement(root, "claim")
         simple_tags = [
             "claimID", "claimCheckCode", "preAuthorizationCodes", "physicianID", "memberNo",
@@ -165,9 +230,12 @@ def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
             "serviceOutcome", "specialtyAttended", "principalGDRG",
         ]
         for tag in simple_tags:
-            ET.SubElement(claim_el, tag).text = str(payload.get(tag, "") or "")
+            value = payload.get(tag, "") or ""
+            if tag == "isUnbundled":
+                value = "0"
+            ET.SubElement(claim_el, tag).text = str(value)
 
-        for dt in payload.get("dateOfService", [])[:4]:
+        for dt in _export_dates_of_service(payload):
             ET.SubElement(claim_el, "dateOfService").text = str(dt or "")
 
         for diag in payload.get("diagnoses", []):

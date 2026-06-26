@@ -45,6 +45,16 @@ const routes = [
         component: () => import('../pages/GhimsImportedClaimEdit.vue'),
       },
       {
+        path: 'correct-errors',
+        name: 'ClaimItCorrectErrors',
+        component: () => import('../pages/ClaimItCorrectErrors.vue'),
+      },
+      {
+        path: 'correct-errors/batch/:batchId',
+        name: 'ClaimItCorrectErrorsBatch',
+        component: () => import('../pages/ClaimItCorrectErrors.vue'),
+      },
+      {
         path: 'users',
         name: 'UserManagement',
         component: () => import('../pages/UserManagement.vue'),

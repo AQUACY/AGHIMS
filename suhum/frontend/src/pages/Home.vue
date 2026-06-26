@@ -41,6 +41,19 @@
           </q-card-section>
         </q-card>
       </div>
+      <div class="col-12 col-md-6">
+        <q-card class="glass-card cursor-pointer" flat bordered @click="$router.push({ name: 'ClaimItCorrectErrors' })">
+          <q-card-section>
+            <div class="row items-center q-gutter-md">
+              <q-icon name="rule" size="48px" color="deep-orange" />
+              <div>
+                <div class="text-h6">Correct errors</div>
+                <div class="text-grey-7">Upload ClaimIT reports and fix flagged GHIMS claims</div>
+              </div>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
       <div v-if="authStore.isAdmin" class="col-12 col-md-6">
         <q-card class="glass-card cursor-pointer" flat bordered @click="$router.push({ name: 'UserManagement' })">
           <q-card-section>

@@ -1,4 +1,5 @@
 from app.models.user import User
+from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.models.procedure_price import ProcedurePrice
 from app.models.product_price import ProductPrice
@@ -18,4 +19,6 @@ __all__ = [
     "ICD10DRGMapping",
     "VettingGuideUpload",
     "VettingGuideRecord",
+    "ClaimItReportBatch",
+    "ClaimItReportError",
 ]

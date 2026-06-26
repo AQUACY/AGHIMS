@@ -12,7 +12,7 @@ from app.core.dependencies import hash_password
 from app.database import SessionLocal
 from app.models.user import User
 import app.models  # noqa: F401 — register all tables for create_all
-from app.api import auth, ghims_import, price_list, vetting_guide
+from app.api import auth, ghims_import, price_list, vetting_guide, claimit_report
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api")
 app.include_router(price_list.router, prefix="/api")
 app.include_router(ghims_import.router, prefix="/api")
+app.include_router(claimit_report.router, prefix="/api")
 app.include_router(vetting_guide.router, prefix="/api")
 
 

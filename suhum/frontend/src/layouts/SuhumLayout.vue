@@ -42,6 +42,10 @@
           <q-item-section avatar><q-icon name="upload_file" /></q-item-section>
           <q-item-section><q-item-label>Import GHIMS XML</q-item-label></q-item-section>
         </q-item>
+        <q-item clickable v-ripple :to="{ name: 'ClaimItCorrectErrors' }">
+          <q-item-section avatar><q-icon name="rule" /></q-item-section>
+          <q-item-section><q-item-label>Correct errors</q-item-label></q-item-section>
+        </q-item>
         <q-item v-if="authStore.isAdmin" clickable v-ripple :to="{ name: 'UserManagement' }">
           <q-item-section avatar><q-icon name="group" /></q-item-section>
           <q-item-section><q-item-label>User management</q-item-label></q-item-section>

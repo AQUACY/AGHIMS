@@ -21,14 +21,15 @@ from app.services.claim_amount_service import (
     compute_ghims_batch_claim_totals,
 )
 from app.services.claim_nhia_ccc import fetch_ccc_preview_for_ghims_payload
-from app.services.claim_xml_import_parser import build_claims_xml_from_payloads, parse_claims_xml
+from app.services.claim_xml_import_parser import (
+    build_claims_xml_from_payloads,
+    parse_claims_xml,
+)
 from app.services.nhia_integration import NhiaIntegrationError
 
+from app.services.claimit_errors import get_claimit_errors_for_import_item
+
 router = APIRouter(prefix="/ghims-import", tags=["ghims-import"])
-
-
-def _empty_claimit_errors() -> dict:
-    return {"by_section": {}, "all": []}
 
 
 class GhimsFetchCccRequest(BaseModel):
@@ -401,7 +402,7 @@ def get_ghims_import_item(
         "flag_comment": item.flag_comment,
         "payload": payload,
         "claim_summary": claim_summary,
-        "claimit_errors": _empty_claimit_errors(),
+        "claimit_errors": get_claimit_errors_for_import_item(db, item),
     }
 
 
@@ -574,6 +575,22 @@ def bulk_update_ghims_import_items_status(
     return {"updated": len(items), "action": action, "item_ids": sorted([i.id for i in items])}
 
 
+def _not_covered_medicine_codes(db: Session, medicine_codes: List[str]) -> set[str]:
+    codes = {str(c or "").strip() for c in medicine_codes if str(c or "").strip()}
+    if not codes:
+        return set()
+    rows = (
+        db.query(ProductPrice.medication_code, ProductPrice.insurance_covered)
+        .filter(ProductPrice.medication_code.in_(codes))
+        .all()
+    )
+    return {
+        code
+        for code, covered in rows
+        if (covered or "yes").strip().lower() == "no"
+    }
+
+
 @router.post("/export")
 def export_ghims_import_items(
     body: GhimsExportBatchBody,
@@ -597,7 +614,15 @@ def export_ghims_import_items(
         p = dict(i.payload or {})
         _reorder_ghims_diagnoses_principal_first(p)
         payloads.append(p)
-    xml_content = build_claims_xml_from_payloads(payloads)
+
+    all_medicine_codes: List[str] = []
+    for p in payloads:
+        for med in p.get("medicines") or []:
+            if isinstance(med, dict):
+                all_medicine_codes.append(str(med.get("medicineCode") or ""))
+
+    not_covered_codes = _not_covered_medicine_codes(db, all_medicine_codes)
+    xml_content = build_claims_xml_from_payloads(payloads, not_covered_codes)
     filename = f"NHIS_CLA_imported_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
     return Response(
         content=xml_content,

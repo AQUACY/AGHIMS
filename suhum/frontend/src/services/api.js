@@ -160,6 +160,15 @@ export const claimsAPI = {
   reopenGhimsImportItem: ghimsAPI.reopenItem,
   bulkUpdateGhimsImportItemsStatus: ghimsAPI.bulkUpdateStatus,
   exportGhimsImportItems: ghimsAPI.exportItems,
+  uploadClaimitReport: (formData) =>
+    api.post('/claimit-report/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    }),
+  getClaimitBatches: () => api.get('/claimit-report/batches'),
+  getClaimitBatch: (batchId) => api.get(`/claimit-report/batches/${batchId}`),
+  setClaimitErrorComplete: (batchId, errorId, completed) =>
+    api.patch(`/claimit-report/batches/${batchId}/errors/${errorId}/complete`, { completed }),
 };
 
 export const vettingGuideAPI = {
