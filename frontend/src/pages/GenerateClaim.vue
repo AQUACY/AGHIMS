@@ -100,19 +100,47 @@
       </q-list>
     </q-banner>
 
+    <!-- Undispensed Medicines Alert -->
+    <q-banner
+      v-if="undispensedMedicines.length > 0"
+      class="bg-warning text-dark q-mb-md"
+      rounded
+    >
+      <template v-slot:avatar>
+        <q-icon name="medication" color="dark" />
+      </template>
+      <strong>Some Medicines Have Not Been Dispensed</strong>
+      <div class="text-caption q-mt-xs">
+        The following medicines are not yet dispensed. Dispensed medicines are always included in the claim.
+        When you generate, you can choose to include undispensed medicines as well.
+      </div>
+      <q-list dense class="q-mt-sm">
+        <q-item
+          v-for="med in undispensedMedicines"
+          :key="med.prescriptionKey"
+          dense
+        >
+          <q-item-section>
+            <q-item-label>{{ med.medicine_name || med.medicine_code }}</q-item-label>
+            <q-item-label caption>Status: {{ med.displayStatus }}</q-item-label>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </q-banner>
+
     <!-- Medicines Section -->
     <q-card v-if="encounter && !loading" class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">Medicines (Prescriptions)</div>
         <q-table
-          v-if="medicines.length > 0"
-          :rows="medicines"
+          v-if="medicinesDisplay.length > 0"
+          :rows="medicinesDisplay"
           :columns="medicineColumns"
-          row-key="id"
+          row-key="prescriptionKey"
           flat
           :loading="loadingMedicines"
         >
-          <template v-slot:body-cell-status="props">
+          <template v-slot:body-cell-displayStatus="props">
             <q-td :props="props">
               <q-badge
                 :color="getMedicineStatusColor(props.value)"
@@ -307,6 +335,59 @@
         </q-form>
       </q-card-section>
     </q-card>
+
+    <!-- Undispensed medicine selection dialog -->
+    <q-dialog v-model="medicineSelectDialogOpen" persistent>
+      <q-card style="min-width: 420px; max-width: 640px">
+        <q-card-section>
+          <div class="text-h6">Select Medicines to Include</div>
+          <div class="text-caption text-grey-7 q-mt-xs">
+            Choose which undispensed medicines to add to the claim. Dispensed medicines are already included.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <q-item dense class="q-px-none">
+            <q-item-section side>
+              <q-checkbox v-model="selectAllUndispensed" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label class="text-weight-medium">Select all</q-item-label>
+            </q-item-section>
+          </q-item>
+          <q-separator class="q-mb-sm" />
+          <q-list dense>
+            <q-item
+              v-for="med in undispensedMedicines"
+              :key="med.prescriptionKey"
+              tag="label"
+              dense
+              class="q-px-none"
+            >
+              <q-item-section side>
+                <q-checkbox
+                  :model-value="selectedUndispensedKeys.includes(med.prescriptionKey)"
+                  @update:model-value="(val) => toggleUndispensedKey(med.prescriptionKey, val)"
+                />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label>{{ med.medicine_name || med.medicine_code }}</q-item-label>
+                <q-item-label caption>
+                  {{ med.medicine_code }} · Qty {{ med.quantity }} · {{ med.displayStatus }}
+                </q-item-label>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" @click="cancelMedicineSelection" />
+          <q-btn
+            color="primary"
+            :label="selectedUndispensedKeys.length > 0 ? 'Include selected' : 'Continue without undispensed'"
+            @click="confirmMedicineSelection"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -338,6 +419,42 @@ const medicines = ref([]);
 const investigations = ref([]);
 const diagnoses = ref([]);
 const surgeries = ref([]);
+const medicineSelectDialogOpen = ref(false);
+const selectedUndispensedKeys = ref([]);
+let medicineSelectDeferred = null;
+
+const getMedicineStatus = (med) => {
+  if (med.is_dispensed) return 'Dispensed';
+  if (med.is_confirmed) return 'Confirmed';
+  return 'Pending';
+};
+
+const medicinesDisplay = computed(() =>
+  medicines.value.map((med) => ({
+    ...med,
+    displayStatus: getMedicineStatus(med),
+    prescriptionKey: med.source === 'ipd' ? `ipd-${med.id}` : `opd-${med.id}`,
+  }))
+);
+
+const undispensedMedicines = computed(() =>
+  medicinesDisplay.value.filter((med) => !med.is_dispensed && med.medicine_code)
+);
+
+const selectAllUndispensed = computed({
+  get() {
+    const undispensed = undispensedMedicines.value;
+    return (
+      undispensed.length > 0 &&
+      undispensed.every((med) => selectedUndispensedKeys.value.includes(med.prescriptionKey))
+    );
+  },
+  set(val) {
+    selectedUndispensedKeys.value = val
+      ? undispensedMedicines.value.map((med) => med.prescriptionKey)
+      : [];
+  },
+});
 
 // Check if this is an IPD claim from route query
 if (route.query.ward_admission_id) {
@@ -366,7 +483,7 @@ const medicineColumns = [
   { name: 'unit', label: 'Unit', field: 'unit', align: 'left' },
   { name: 'frequency', label: 'Frequency', field: 'frequency', align: 'left' },
   { name: 'quantity', label: 'Quantity', field: 'quantity', align: 'left' },
-  { name: 'status', label: 'Status', field: 'status', align: 'center' },
+  { name: 'displayStatus', label: 'Status', field: 'displayStatus', align: 'center' },
 ];
 
 const investigationColumns = [
@@ -403,9 +520,9 @@ const formatDate = (dateString) => {
 
 const getMedicineStatusColor = (status) => {
   const colors = {
-    'pending': 'orange',
-    'dispensed': 'green',
-    'returned': 'red',
+    Pending: 'orange',
+    Confirmed: 'blue',
+    Dispensed: 'green',
   };
   return colors[status] || 'grey';
 };
@@ -635,7 +752,22 @@ const loadMedicines = async (encounterId) => {
   loadingMedicines.value = true;
   try {
     const response = await consultationAPI.getPrescriptions(encounterId);
-    medicines.value = response.data || [];
+    const opdMeds = (response.data || []).map((med) => ({ ...med, source: 'opd' }));
+
+    if (isIPD.value && wardAdmissionId.value) {
+      try {
+        const ipdResponse = await consultationAPI.getInpatientPrescriptionsByWardAdmission(
+          wardAdmissionId.value
+        );
+        const ipdMeds = (ipdResponse.data || []).map((med) => ({ ...med, source: 'ipd' }));
+        medicines.value = [...opdMeds, ...ipdMeds];
+      } catch (ipdErr) {
+        console.error('Failed to load IPD medicines:', ipdErr);
+        medicines.value = opdMeds;
+      }
+    } else {
+      medicines.value = opdMeds;
+    }
   } catch (err) {
     console.error('Failed to load medicines:', err);
     medicines.value = [];
@@ -675,6 +807,99 @@ const loadInvestigations = async (encounterId) => {
   }
 };
 
+const showMedicineSelectDialog = () => {
+  selectedUndispensedKeys.value = undispensedMedicines.value.map((med) => med.prescriptionKey);
+  medicineSelectDialogOpen.value = true;
+  return new Promise((resolve) => {
+    medicineSelectDeferred = resolve;
+  });
+};
+
+const toggleUndispensedKey = (key, checked) => {
+  if (checked) {
+    if (!selectedUndispensedKeys.value.includes(key)) {
+      selectedUndispensedKeys.value.push(key);
+    }
+  } else {
+    selectedUndispensedKeys.value = selectedUndispensedKeys.value.filter((k) => k !== key);
+  }
+};
+
+const cancelMedicineSelection = () => {
+  medicineSelectDialogOpen.value = false;
+  medicineSelectDeferred?.({ cancelled: true, opd: [], ipd: [] });
+  medicineSelectDeferred = null;
+};
+
+const confirmMedicineSelection = () => {
+  const opd = [];
+  const ipd = [];
+  for (const key of selectedUndispensedKeys.value) {
+    if (key.startsWith('ipd-')) {
+      ipd.push(parseInt(key.slice(4), 10));
+    } else {
+      opd.push(parseInt(key.slice(4), 10));
+    }
+  }
+  medicineSelectDialogOpen.value = false;
+  medicineSelectDeferred?.({ cancelled: false, opd, ipd });
+  medicineSelectDeferred = null;
+};
+
+const submitClaim = async (includePrescriptionIds = { opd: [], ipd: [] }) => {
+  generating.value = true;
+  try {
+    const claimData = {
+      ...claimForm,
+    };
+
+    if (includePrescriptionIds.opd.length > 0) {
+      claimData.include_prescription_ids = includePrescriptionIds.opd;
+    }
+    if (includePrescriptionIds.ipd.length > 0) {
+      claimData.include_inpatient_prescription_ids = includePrescriptionIds.ipd;
+    }
+
+    // For IPD claims, include ward_admission_id; for OPD, include encounter_id
+    if (isIPD.value && wardAdmissionId.value) {
+      claimData.ward_admission_id = wardAdmissionId.value;
+      claimData.type_of_service = 'IPD';
+    } else {
+      claimData.encounter_id = encounter.value.id;
+    }
+
+    let claimId;
+
+    if (isRegenerating.value && existingClaimId.value) {
+      const response = await claimsAPI.regenerate(existingClaimId.value, claimData);
+      claimId = response.data.id;
+
+      $q.notify({
+        type: 'positive',
+        message: 'Claim regenerated successfully',
+      });
+    } else {
+      const response = await claimsAPI.create(claimData);
+      claimId = response.data.id;
+
+      $q.notify({
+        type: 'positive',
+        message: 'Claim generated successfully',
+      });
+    }
+
+    router.push(`/claims/edit/${claimId}`);
+  } catch (err) {
+    $q.notify({
+      type: 'negative',
+      message: err.response?.data?.detail || 'Failed to generate claim',
+      timeout: 5000,
+    });
+  } finally {
+    generating.value = false;
+  }
+};
+
 const generateClaim = async () => {
   // If there are incomplete investigations, show a confirmation dialog
   if (incompleteInvestigations.value.length > 0) {
@@ -700,53 +925,30 @@ const generateClaim = async () => {
     }
   }
 
-  generating.value = true;
-  try {
-    const claimData = {
-      ...claimForm,
-    };
-    
-    // For IPD claims, include ward_admission_id; for OPD, include encounter_id
-    if (isIPD.value && wardAdmissionId.value) {
-      claimData.ward_admission_id = wardAdmissionId.value;
-      claimData.type_of_service = 'IPD';
-    } else {
-      claimData.encounter_id = encounter.value.id;
-    }
-
-    let claimId;
-    
-    if (isRegenerating.value && existingClaimId.value) {
-      // Regenerate existing claim
-      const response = await claimsAPI.regenerate(existingClaimId.value, claimData);
-      claimId = response.data.id;
-      
-      $q.notify({
-        type: 'positive',
-        message: 'Claim regenerated successfully',
-      });
-    } else {
-      // Create new claim
-      const response = await claimsAPI.create(claimData);
-      claimId = response.data.id;
-      
-      $q.notify({
-        type: 'positive',
-        message: 'Claim generated successfully',
-      });
-    }
-
-    // Redirect to edit page instead of claims list
-    router.push(`/claims/edit/${claimId}`);
-  } catch (err) {
-    $q.notify({
-      type: 'negative',
-      message: err.response?.data?.detail || 'Failed to generate claim',
-      timeout: 5000,
+  let includePrescriptionIds = { opd: [], ipd: [] };
+  if (undispensedMedicines.value.length > 0) {
+    const wantsInclude = await new Promise((resolve) => {
+      $q.dialog({
+        title: 'Undispensed Medicines',
+        message: `${undispensedMedicines.value.length} medicine(s) have not been dispensed yet. Do you want to include any of them in the claim?`,
+        cancel: { label: 'No, skip undispensed', flat: true },
+        ok: { label: 'Yes, choose medicines', color: 'primary' },
+        persistent: true,
+      })
+        .onOk(() => resolve(true))
+        .onCancel(() => resolve(false));
     });
-  } finally {
-    generating.value = false;
+
+    if (wantsInclude) {
+      const selection = await showMedicineSelectDialog();
+      if (selection.cancelled) {
+        return;
+      }
+      includePrescriptionIds = { opd: selection.opd, ipd: selection.ipd };
+    }
   }
+
+  await submitClaim(includePrescriptionIds);
 };
 
 const loadExistingClaim = async (claimId) => {

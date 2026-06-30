@@ -8270,7 +8270,7 @@ def get_all_ward_diagnoses(
 def get_all_inpatient_prescriptions_for_pharmacy(
     ward_admission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin"]))
+    current_user: User = Depends(require_role(["Pharmacy", "Pharmacy Head", "Store Manager", "Admin", "Claims", "Doctor", "PA"]))
 ):
     """Get ALL inpatient prescriptions for a ward admission (for pharmacy - includes pending, confirmed, and dispensed)"""
     from app.models.ward_admission import WardAdmission

@@ -58,6 +58,23 @@ def _enrich_encounter_row_with_claim_amount(
     return row
 
 
+def _should_include_opd_prescription(presc, include_prescription_ids: Optional[List[int]] = None) -> bool:
+    """Include dispensed OPD prescriptions, or undispensed ones explicitly selected at claim generation."""
+    if not presc.medicine_code:
+        return False
+    if presc.dispensed_by:
+        return True
+    return bool(include_prescription_ids and presc.id in include_prescription_ids)
+
+
+def _should_include_ipd_prescription(presc, include_inpatient_prescription_ids: Optional[List[int]] = None) -> bool:
+    """Include dispensed IPD prescriptions, or undispensed ones explicitly selected at claim generation."""
+    if not presc.medicine_code:
+        return False
+    if presc.dispensed_by:
+        return True
+    return bool(include_inpatient_prescription_ids and presc.id in include_inpatient_prescription_ids)
+
 
 def _categorize_claimit_error_pairs(pairs: List[Tuple[Optional[str], str]]) -> dict:
     """
@@ -211,6 +228,8 @@ class ClaimCreate(BaseModel):
     type_of_service: str = "OPD"
     type_of_attendance: Optional[str] = "EAE"
     specialty_attended: Optional[str] = "OPDC"
+    include_prescription_ids: Optional[List[int]] = None  # OPD: undispensed prescriptions to include
+    include_inpatient_prescription_ids: Optional[List[int]] = None  # IPD: undispensed prescriptions to include
 
 
 class DiagnosisUpdate(BaseModel):
@@ -387,12 +406,11 @@ def create_claim(
                 InpatientInvestigation.status != "cancelled"
             ).order_by(InpatientInvestigation.created_at).all()
         
-        # Get IPD prescriptions (dispensed only)
+        # Get all IPD prescriptions (dispensed auto-included; undispensed only if selected)
         ipd_prescriptions = []
         if clinical_review_ids:
             ipd_prescriptions = db.query(InpatientPrescription).filter(
-                InpatientPrescription.clinical_review_id.in_(clinical_review_ids),
-                InpatientPrescription.dispensed_by.isnot(None)
+                InpatientPrescription.clinical_review_id.in_(clinical_review_ids)
             ).order_by(InpatientPrescription.created_at).all()
         
         # Check if pharmacy items exist (OPD + IPD)
@@ -525,7 +543,7 @@ def create_claim(
         # Add OPD prescriptions first
         if opd_encounter:
             for presc in opd_encounter.prescriptions:
-                if presc.dispensed_by and presc.medicine_code:
+                if _should_include_opd_prescription(presc, claim_data.include_prescription_ids):
                     claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                     prescription_exists = db.query(OPDPrescription).filter(OPDPrescription.id == presc.id).first() is not None
                     
@@ -549,7 +567,7 @@ def create_claim(
         
         # Add IPD prescriptions (all of them - no limit)
         for presc in ipd_prescriptions:
-            if presc.medicine_code:
+            if _should_include_ipd_prescription(presc, claim_data.include_inpatient_prescription_ids):
                 claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                 
                 # Get clinical review for service date
@@ -710,12 +728,12 @@ def create_claim(
                 db.add(claim_inv)
                 investigation_order += 1
         
-        # Populate prescriptions (up to 5, only dispensed)
+        # Populate prescriptions (up to 5; dispensed auto-included, undispensed only if selected)
         prescription_order = 0
         for presc in encounter.prescriptions:
             if prescription_order >= 5:
                 break
-            if presc.dispensed_by and presc.medicine_code:
+            if _should_include_opd_prescription(presc, claim_data.include_prescription_ids):
                 # Get claim amount from price list
                 claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                 
@@ -925,12 +943,11 @@ def regenerate_claim(
                 InpatientInvestigation.status != "cancelled"
             ).order_by(InpatientInvestigation.created_at).all()
         
-        # Get IPD prescriptions (dispensed only)
+        # Get all IPD prescriptions (dispensed auto-included; undispensed only if selected)
         ipd_prescriptions = []
         if clinical_review_ids:
             ipd_prescriptions = db.query(InpatientPrescription).filter(
-                InpatientPrescription.clinical_review_id.in_(clinical_review_ids),
-                InpatientPrescription.dispensed_by.isnot(None)
+                InpatientPrescription.clinical_review_id.in_(clinical_review_ids)
             ).order_by(InpatientPrescription.created_at).all()
         
         # Check if pharmacy items exist (OPD + IPD)
@@ -982,7 +999,6 @@ def regenerate_claim(
             )
         
         patient = encounter.patient
-        # Note: Incomplete investigations are automatically excluded during regeneration - only completed investigations are included
         
         # Check if pharmacy items exist
         has_pharmacy = len(encounter.prescriptions) > 0
@@ -1106,7 +1122,7 @@ def regenerate_claim(
         # Add OPD prescriptions first
         if opd_encounter:
             for presc in opd_encounter.prescriptions:
-                if presc.dispensed_by and presc.medicine_code:
+                if _should_include_opd_prescription(presc, claim_data.include_prescription_ids):
                     claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                     claim_presc = ClaimPrescription(
                         claim_id=claim.id,
@@ -1128,7 +1144,7 @@ def regenerate_claim(
         
         # Add IPD prescriptions (all of them - no limit)
         for presc in ipd_prescriptions:
-            if presc.medicine_code:
+            if _should_include_ipd_prescription(presc, claim_data.include_inpatient_prescription_ids):
                 claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                 
                 # Get clinical review for service date
@@ -1195,13 +1211,13 @@ def regenerate_claim(
             db.add(claim_diag)
             diagnosis_order += 1
         
-        # Populate investigations (up to 5, only completed)
+        # Populate investigations (up to 5, include all except cancelled)
         investigation_order = 0
         from app.models.investigation import Investigation
         for inv in encounter.investigations:
             if investigation_order >= 5:
                 break
-            if inv.status == "completed" and inv.gdrg_code:
+            if inv.status != "cancelled" and inv.gdrg_code:
                 # Verify investigation still exists in database (it might have been deleted)
                 investigation_exists = db.query(Investigation).filter(Investigation.id == inv.id).first() is not None
                 investigation_id = inv.id if investigation_exists else None
@@ -1218,12 +1234,12 @@ def regenerate_claim(
                 db.add(claim_inv)
                 investigation_order += 1
         
-        # Populate prescriptions (up to 5, only dispensed)
+        # Populate prescriptions (up to 5; dispensed auto-included, undispensed only if selected)
         prescription_order = 0
         for presc in encounter.prescriptions:
             if prescription_order >= 5:
                 break
-            if presc.dispensed_by and presc.medicine_code:
+            if _should_include_opd_prescription(presc, claim_data.include_prescription_ids):
                 # Get claim amount from price list
                 claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                 
