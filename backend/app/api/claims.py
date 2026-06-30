@@ -87,6 +87,30 @@ def _load_encounter_with_services(db: Session, encounter_id: int) -> Optional[En
     ).filter(Encounter.id == encounter_id).first()
 
 
+def _resolve_opd_encounter_for_ipd(db: Session, ward_admission) -> Optional[Encounter]:
+    """
+    Encounter holding OPD-level services for an IPD claim.
+    May be a separate pre-admission visit or the same encounter as the ward admission.
+    """
+    from app.models.admission import AdmissionRecommendation
+
+    opd_encounter_id = None
+    if ward_admission.admission_recommendation_id:
+        admission_recommendation = db.query(AdmissionRecommendation).filter(
+            AdmissionRecommendation.id == ward_admission.admission_recommendation_id
+        ).first()
+        if admission_recommendation and admission_recommendation.encounter_id:
+            opd_encounter_id = admission_recommendation.encounter_id
+
+    if not opd_encounter_id:
+        opd_encounter_id = ward_admission.encounter_id
+
+    if not opd_encounter_id:
+        return None
+
+    return _load_encounter_with_services(db, opd_encounter_id)
+
+
 def _categorize_claimit_error_pairs(pairs: List[Tuple[Optional[str], str]]) -> dict:
     """
     Map ClaimIT messages to form sections. Each pair is (outcome_or_None, message).
@@ -355,23 +379,8 @@ def create_claim(
         if not encounter:
             raise HTTPException(status_code=404, detail="Encounter not found for ward admission")
         
-        # Get OPD encounter that led to admission (if exists)
-        opd_encounter = None
-        admission_recommendation = db.query(AdmissionRecommendation).filter(
-            AdmissionRecommendation.id == ward_admission.admission_recommendation_id
-        ).first()
-        
-        if admission_recommendation and admission_recommendation.encounter_id != ward_admission.encounter_id:
-            # Different encounter means there was an OPD encounter before admission
-            from sqlalchemy.orm import joinedload
-            opd_encounter = db.query(Encounter)\
-                .options(
-                    joinedload(Encounter.diagnoses),
-                    joinedload(Encounter.investigations),
-                    joinedload(Encounter.prescriptions)
-                )\
-                .filter(Encounter.id == admission_recommendation.encounter_id)\
-                .first()
+        # Get OPD encounter (separate pre-admission visit or same encounter as ward admission)
+        opd_encounter = _resolve_opd_encounter_for_ipd(db, ward_admission)
         
         # Check if all bills are paid for the IPD encounter
         unpaid_bills_gt_zero = db.query(Bill).filter(
@@ -914,23 +923,8 @@ def regenerate_claim(
         if ward_admission.discharged_at:
             encounter.finalized_at = ward_admission.discharged_at
         
-        # Get OPD encounter that led to admission (if exists)
-        opd_encounter = None
-        admission_recommendation = db.query(AdmissionRecommendation).filter(
-            AdmissionRecommendation.id == ward_admission.admission_recommendation_id
-        ).first()
-        
-        if admission_recommendation and admission_recommendation.encounter_id != ward_admission.encounter_id:
-            # Different encounter means there was an OPD encounter before admission
-            from sqlalchemy.orm import joinedload
-            opd_encounter = db.query(Encounter)\
-                .options(
-                    joinedload(Encounter.diagnoses),
-                    joinedload(Encounter.investigations),
-                    joinedload(Encounter.prescriptions)
-                )\
-                .filter(Encounter.id == admission_recommendation.encounter_id)\
-                .first()
+        # Get OPD encounter (separate pre-admission visit or same encounter as ward admission)
+        opd_encounter = _resolve_opd_encounter_for_ipd(db, ward_admission)
         
         # Get all IPD services
         clinical_reviews = db.query(InpatientClinicalReview).filter(
@@ -2915,7 +2909,7 @@ def get_claim_edit_details(
                     # Convert to list to force evaluation of the relationship
                     opd_prescriptions = list(opd_encounter.prescriptions) if hasattr(opd_encounter, 'prescriptions') else []
                     for presc in opd_prescriptions:
-                        if presc.dispensed_by and presc.medicine_code:
+                        if presc.medicine_code:
                             claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                             prescriptions_list.append({
                                 "id": presc.id,
@@ -2947,7 +2941,6 @@ def get_claim_edit_details(
                 if clinical_review_ids:
                     ipd_prescriptions = db.query(InpatientPrescription).filter(
                         InpatientPrescription.clinical_review_id.in_(clinical_review_ids),
-                        InpatientPrescription.dispensed_by.isnot(None)
                     ).order_by(InpatientPrescription.created_at).all()
                     
                     for presc in ipd_prescriptions:
