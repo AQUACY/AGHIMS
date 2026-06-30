@@ -76,6 +76,17 @@ def _should_include_ipd_prescription(presc, include_inpatient_prescription_ids: 
     return bool(include_inpatient_prescription_ids and presc.id in include_inpatient_prescription_ids)
 
 
+def _load_encounter_with_services(db: Session, encounter_id: int) -> Optional[Encounter]:
+    """Load encounter with diagnoses, investigations, prescriptions, and patient eagerly."""
+    from sqlalchemy.orm import joinedload
+    return db.query(Encounter).options(
+        joinedload(Encounter.diagnoses),
+        joinedload(Encounter.investigations),
+        joinedload(Encounter.prescriptions),
+        joinedload(Encounter.patient),
+    ).filter(Encounter.id == encounter_id).first()
+
+
 def _categorize_claimit_error_pairs(pairs: List[Tuple[Optional[str], str]]) -> dict:
     """
     Map ClaimIT messages to form sections. Each pair is (outcome_or_None, message).
@@ -618,7 +629,7 @@ def create_claim(
         if not claim_data.encounter_id:
             raise HTTPException(status_code=400, detail="encounter_id is required for OPD claims")
         
-        encounter = db.query(Encounter).filter(Encounter.id == claim_data.encounter_id).first()
+        encounter = _load_encounter_with_services(db, claim_data.encounter_id)
         if not encounter:
             raise HTTPException(status_code=404, detail="Encounter not found")
         
@@ -988,7 +999,7 @@ def regenerate_claim(
         if not encounter_id:
             raise HTTPException(status_code=400, detail="encounter_id is required for OPD claim regeneration")
         
-        encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+        encounter = _load_encounter_with_services(db, encounter_id)
         if not encounter:
             raise HTTPException(status_code=404, detail="Encounter not found")
         
@@ -1132,7 +1143,7 @@ def regenerate_claim(
                         price=float(claim_amount) if claim_amount else 0.0,
                         quantity=presc.quantity,
                         total_cost=float(claim_amount * presc.quantity) if claim_amount else 0.0,
-                        service_date=presc.dispensed_at or opd_encounter.created_at,
+                        service_date=presc.service_date or opd_encounter.created_at,
                         dose=presc.dose or "",
                         frequency=presc.frequency or "",
                         duration=presc.duration or "",
@@ -2705,10 +2716,8 @@ def get_claim_edit_details(
         .all()
     
     diagnoses_list = []
-    if claim_has_been_edited:
-        # Use only claim detail table data so the user sees exactly what they saved
-        # (e.g. dose "80 MG", duration "7 DAYS"). Do not prepend encounter data or
-        # the wrong rows would appear first and overwrite the saved edits in the UI.
+    if claim_diagnoses:
+        # Use claim detail diagnoses when present (preserves user edits)
         for claim_diag in claim_diagnoses:
             diagnoses_list.append({
                 "id": claim_diag.diagnosis_id if claim_diag.diagnosis_id else claim_diag.id,
@@ -2790,8 +2799,8 @@ def get_claim_edit_details(
         .all()
     
     investigations_list = []
-    if claim_has_been_edited:
-        # Use only claim detail table data so saved edits (e.g. descriptions) are shown
+    if claim_investigations:
+        # Use claim detail investigations when present (preserves user edits)
         for claim_inv in claim_investigations:
             investigations_list.append({
                 "id": claim_inv.id,
@@ -2880,9 +2889,8 @@ def get_claim_edit_details(
         .all()
     
     prescriptions_list = []
-    if claim_has_been_edited:
-        # Use only claim detail table data so saved edits (dose "80 MG", duration "7 DAYS", etc.) are shown.
-        # Do not prepend OPD encounter data or the form would show original encounter values instead.
+    if claim_prescriptions:
+        # Use claim detail prescriptions when present (preserves user edits)
         for claim_presc in claim_prescriptions:
             prescriptions_list.append({
                 "id": claim_presc.id,
@@ -2963,9 +2971,9 @@ def get_claim_edit_details(
                                 "unparsed": presc.unparsed or "",
                             })
         else:
-            # OPD claim - use encounter prescriptions
+            # OPD claim - use encounter prescriptions (include undispensed so claim edit matches generate page)
             for presc in encounter.prescriptions:
-                if presc.dispensed_by:
+                if presc.medicine_code:
                     claim_amount = get_claim_amount_from_price_list(db, presc.medicine_code, is_insured=True)
                     prescriptions_list.append({
                         "id": presc.id,
@@ -3102,7 +3110,21 @@ def get_claim_edit_details(
     
     # Build response with debug info for OPD encounter
     debug_info = {}
-    if is_ipd:
+    if not is_ipd:
+        debug_info = {
+            "encounter_id": encounter.id,
+            "claim_has_been_edited": claim_has_been_edited,
+            "claim_diagnoses_count": len(claim_diagnoses),
+            "claim_investigations_count": len(claim_investigations),
+            "claim_prescriptions_count": len(claim_prescriptions),
+            "encounter_diagnoses_count": len(list(encounter.diagnoses)) if hasattr(encounter, "diagnoses") else 0,
+            "encounter_investigations_count": len(list(encounter.investigations)) if hasattr(encounter, "investigations") else 0,
+            "encounter_prescriptions_count": len(list(encounter.prescriptions)) if hasattr(encounter, "prescriptions") else 0,
+            "final_diagnoses_count": len(diagnoses_list),
+            "final_prescriptions_count": len(prescriptions_list),
+            "final_investigations_count": len(investigations_list),
+        }
+    elif is_ipd:
         opd_diag_count = 0
         opd_presc_count = 0
         opd_inv_count = 0
