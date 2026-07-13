@@ -1,0 +1,50 @@
+"""
+Patient model
+"""
+from sqlalchemy import Column, Integer, String, Boolean, Date, DateTime
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from app.core.database import Base
+from app.core.datetime_utils import utcnow_callable
+
+
+class Patient(Base):
+    """Patient/Client model"""
+    __tablename__ = "patients"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    surname = Column(String(255))
+    other_names = Column(String(255))
+    gender = Column(String(10), nullable=False)  # M, F
+    age = Column(Integer)
+    date_of_birth = Column(Date)
+    card_number = Column(String(50), unique=True, index=True, nullable=False)  # Current card (GHIMS or HMS)
+    legacy_card_number = Column(String(50), nullable=True, index=True)  # Previous HMS card after GHIMS migration
+    insured = Column(Boolean, default=False)
+    nhis_active = Column(Boolean, default=False)  # NHIS card active (staff-verified / NHIA lookup)
+    insurance_id = Column(String(100), nullable=True)  # NHIS member / card number (used for CCC lookup)
+    hin = Column(String(100), nullable=True)  # NHIA HIN returned from attendance — not used for CCC lookup
+    insurance_start_date = Column(Date, nullable=True)
+    insurance_end_date = Column(Date, nullable=True)
+    ccc_number = Column(String(50), nullable=True)  # 5-digit CCC number
+    ccc_status = Column(String(50), nullable=True)  # ACTIVE / INACTIVE from NHIA portal
+    contact = Column(String(100))
+    address = Column(String(500))
+    # Emergency contact details
+    emergency_contact_name = Column(String(255), nullable=True)
+    emergency_contact_relationship = Column(String(100), nullable=True)
+    emergency_contact_number = Column(String(100), nullable=True)
+    # Additional demographic information
+    marital_status = Column(String(50), nullable=True)  # e.g., Single, Married, Divorced, Widowed
+    educational_level = Column(String(100), nullable=True)  # e.g., Primary, Secondary, Tertiary, None
+    occupation = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utcnow_callable)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)
+    
+    # Relationships
+    encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<Patient {self.card_number} - {self.name}>"
+

@@ -1,0 +1,82 @@
+-- Migration script to make encounter_id nullable in investigations table
+-- This allows direct walk-in services without a consultation/encounter
+-- 
+-- IMPORTANT: Check if encounter_id is already nullable before running this migration
+-- 
+-- ============================================
+-- MySQL Migration
+-- ============================================
+-- ALTER TABLE investigations MODIFY COLUMN encounter_id INTEGER NULL;
+
+-- ============================================
+-- PostgreSQL Migration
+-- ============================================
+-- ALTER TABLE investigations ALTER COLUMN encounter_id DROP NOT NULL;
+
+-- ============================================
+-- SQLite Migration
+-- ============================================
+-- Note: SQLite doesn't support MODIFY COLUMN directly
+-- Use the Python script: migrate_make_encounter_id_nullable.py
+-- 
+-- If you need to run SQL manually for SQLite:
+-- BEGIN TRANSACTION;
+-- 
+-- CREATE TABLE IF NOT EXISTS investigations_backup AS 
+-- SELECT * FROM investigations;
+-- 
+-- ALTER TABLE investigations RENAME TO investigations_old;
+-- 
+-- CREATE TABLE investigations (
+--     id INTEGER PRIMARY KEY AUTOINCREMENT,
+--     encounter_id INTEGER,  -- Now nullable
+--     gdrg_code VARCHAR(50) NOT NULL,
+--     procedure_name VARCHAR(500),
+--     investigation_type VARCHAR(50) NOT NULL,
+--     notes VARCHAR(1000),
+--     price VARCHAR(50),
+--     status VARCHAR(50) NOT NULL DEFAULT 'requested',
+--     service_date DATETIME,
+--     requested_by INTEGER NOT NULL,
+--     confirmed_by INTEGER,
+--     completed_by INTEGER,
+--     cancelled_by INTEGER,
+--     cancellation_reason VARCHAR(1000),
+--     cancelled_at DATETIME,
+--     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+--     FOREIGN KEY (encounter_id) REFERENCES encounters(id),
+--     FOREIGN KEY (requested_by) REFERENCES users(id),
+--     FOREIGN KEY (confirmed_by) REFERENCES users(id),
+--     FOREIGN KEY (completed_by) REFERENCES users(id),
+--     FOREIGN KEY (cancelled_by) REFERENCES users(id)
+-- );
+-- 
+-- INSERT INTO investigations (
+--     id, encounter_id, gdrg_code, procedure_name, investigation_type,
+--     notes, price, status, service_date, requested_by,
+--     confirmed_by, completed_by, cancelled_by, cancellation_reason,
+--     cancelled_at, created_at
+-- )
+-- SELECT 
+--     id, 
+--     encounter_id, 
+--     COALESCE(gdrg_code, '') as gdrg_code,
+--     procedure_name,
+--     COALESCE(investigation_type, 'lab') as investigation_type,
+--     notes,
+--     price,
+--     COALESCE(status, 'requested') as status,
+--     service_date,
+--     requested_by,
+--     confirmed_by,
+--     completed_by,
+--     cancelled_by,
+--     cancellation_reason,
+--     cancelled_at,
+--     COALESCE(created_at, CURRENT_TIMESTAMP) as created_at
+-- FROM investigations_old;
+-- 
+-- DROP TABLE investigations_old;
+-- DROP TABLE IF EXISTS investigations_backup;
+-- 
+-- COMMIT;

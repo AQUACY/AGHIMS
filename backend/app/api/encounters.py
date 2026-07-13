@@ -1,0 +1,439 @@
+"""
+Encounter management endpoints
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime, date
+from app.core.database import get_db
+from app.core.dependencies import require_role, get_current_user, require_module_permission
+from app.core.audit import get_effective_creator_id
+from app.core.datetime_utils import utcnow
+from app.models.user import User
+from app.models.encounter import Encounter, EncounterStatus
+
+router = APIRouter(prefix="/encounters", tags=["encounters"])
+
+
+class EncounterResponse(BaseModel):
+    """Encounter response model"""
+    id: int
+    patient_id: int
+    patient_name: Optional[str] = None  # Patient full name
+    patient_card_number: Optional[str] = None  # Patient card number
+    patient_insurance_id: Optional[str] = None  # Patient member number (insurance ID)
+    ccc_number: Optional[str] = None
+    status: str
+    department: str
+    procedure_g_drg_code: Optional[str] = None
+    procedure_name: Optional[str] = None
+    created_at: datetime
+    finalized_at: Optional[datetime] = None
+    finalized_by: Optional[int] = None
+    finalized_by_name: Optional[str] = None  # Name of doctor/PA who finalized
+    finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
+    finalized_by_username: Optional[str] = None  # Username of doctor/PA who finalized
+    archived: bool = False
+    
+    class Config:
+        from_attributes = True
+
+
+class EncounterUpdate(BaseModel):
+    """Encounter update model"""
+    department: Optional[str] = None
+    ccc_number: Optional[str] = None
+    status: Optional[str] = None
+    procedure_g_drg_code: Optional[str] = None
+    procedure_name: Optional[str] = None
+
+
+@router.get("/{encounter_id}", response_model=EncounterResponse)
+def get_encounter(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
+):
+    """Get encounter by ID"""
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Get finalized_by user info if exists
+    finalized_by_name = None
+    finalized_by_role = None
+    finalized_by_username = None
+    if encounter.finalized_by:
+        finalized_user = db.query(User).filter(User.id == encounter.finalized_by).first()
+        if finalized_user:
+            finalized_by_name = finalized_user.full_name
+            finalized_by_role = finalized_user.role
+            finalized_by_username = finalized_user.username
+    
+    # Get patient information
+    patient = encounter.patient
+    patient_name = ""
+    patient_card_number = ""
+    patient_insurance_id = ""
+    if patient:
+        # Construct patient name
+        name_parts = []
+        if patient.name:
+            name_parts.append(patient.name)
+        if patient.surname:
+            name_parts.append(patient.surname)
+        if patient.other_names:
+            name_parts.append(patient.other_names)
+        patient_name = " ".join(name_parts).strip() if name_parts else ""
+        patient_card_number = patient.card_number or ""
+        patient_insurance_id = patient.insurance_id or ""
+    
+    return {
+        "id": encounter.id,
+        "patient_id": encounter.patient_id,
+        "patient_name": patient_name,
+        "patient_card_number": patient_card_number,
+        "patient_insurance_id": patient_insurance_id,
+        "ccc_number": encounter.ccc_number,
+        "status": encounter.status,
+        "department": encounter.department,
+        "procedure_g_drg_code": encounter.procedure_g_drg_code,
+        "procedure_name": encounter.procedure_name,
+        "created_at": encounter.created_at,
+        "finalized_at": encounter.finalized_at,
+        "finalized_by": encounter.finalized_by,
+        "finalized_by_name": finalized_by_name,
+        "finalized_by_role": finalized_by_role,
+        "finalized_by_username": finalized_by_username,
+        "archived": encounter.archived,
+    }
+
+
+@router.get("/{encounter_id}/bill-total")
+def get_encounter_bill_total(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
+):
+    """Get total bill amount for an encounter"""
+    from app.models.bill import Bill
+    
+    bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).all()
+    total_amount = sum(bill.total_amount for bill in bills)
+    
+    return {
+        "encounter_id": encounter_id,
+        "total_bill_amount": total_amount,
+        "bill_count": len(bills)
+    }
+
+
+@router.put("/{encounter_id}/status")
+def update_encounter_status(
+    encounter_id: int,
+    new_status: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Doctor", "PA", "Records", "Admin"])),
+    _module_check: User = Depends(require_module_permission("encounters", "update"))
+):
+    """Update encounter status"""
+    from app.models.bill import Bill
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Validate status transition
+    valid_transitions = {
+        "draft": ["in_consultation", "awaiting_services", "finalized"],  # Allow draft to go to awaiting_services
+        "in_consultation": ["draft", "awaiting_services", "finalized"],
+        "awaiting_services": ["draft", "in_consultation", "awaiting_services", "finalized"],
+        "finalized": ["draft", "in_consultation", "awaiting_services", "finalized"]  # Cannot transition from finalized
+    }
+    
+    if new_status not in valid_transitions.get(encounter.status, []):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition from {encounter.status} to {new_status}"
+        )
+    
+    # If finalizing, require diagnosis, follow-up date, outcome, and payment
+    if new_status == "finalized":
+        from app.models.consultation_notes import ConsultationNotes
+        from app.models.diagnosis import Diagnosis
+        from app.models.bill import Bill
+        
+        # Require at least one diagnosis
+        diagnoses = db.query(Diagnosis).filter(Diagnosis.encounter_id == encounter_id).all()
+        if not diagnoses or len(diagnoses) == 0:
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. At least one diagnosis is required.")
+        
+        # Require consultation notes with outcome and follow-up date
+        notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter_id).first()
+        if not notes:
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation notes are required.")
+        
+        if not (notes.outcome and notes.outcome.strip()):
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation outcome is required.")
+        
+        if not notes.follow_up_date:
+            raise HTTPException(status_code=400, detail="Cannot finalize encounter. Follow-up date is required.")
+        
+        # Determine if patient is insured (has CCC number)
+        is_insured = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+        
+        # Check for unpaid bills
+        # For insured clients: bills can be 0 (fully covered) or must be paid
+        # For non-insured clients: all bills must be paid
+        unpaid_bills = db.query(Bill).filter(
+            Bill.encounter_id == encounter_id,
+            Bill.is_paid == False,
+            Bill.total_amount > 0
+        ).all()
+        
+        if unpaid_bills:
+            unpaid_amount = sum(bill.total_amount for bill in unpaid_bills)
+            if is_insured:
+                # For insured clients, if there's an unpaid amount > 0, it must be paid
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                )
+            else:
+                # For non-insured clients, all bills must be paid
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                )
+        
+        encounter.finalized_at = utcnow()
+        encounter.finalized_by = get_effective_creator_id(db, current_user)
+    
+    encounter.status = new_status
+    db.commit()
+    db.refresh(encounter)
+    return {"encounter_id": encounter.id, "status": encounter.status}
+
+
+@router.get("/patient/{patient_id}", response_model=List[EncounterResponse])
+def get_patient_encounters(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
+):
+    """Get all encounters for a patient (excluding archived)"""
+    encounters = db.query(Encounter).filter(
+        Encounter.patient_id == patient_id,
+        Encounter.archived == False
+    ).order_by(Encounter.created_at.desc()).all()
+    return encounters
+
+
+@router.put("/{encounter_id}", response_model=EncounterResponse)
+def update_encounter(
+    encounter_id: int,
+    encounter_data: EncounterUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Records", "Doctor", "PA", "Admin"])),
+    _module_check: User = Depends(require_module_permission("encounters", "update"))
+):
+    """Update encounter details"""
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    if encounter.archived:
+        raise HTTPException(status_code=400, detail="Cannot update archived encounter")
+    
+    # Update fields if provided
+    if encounter_data.department is not None:
+        encounter.department = encounter_data.department
+    if encounter_data.procedure_g_drg_code is not None:
+        encounter.procedure_g_drg_code = encounter_data.procedure_g_drg_code
+    if encounter_data.procedure_name is not None:
+        encounter.procedure_name = encounter_data.procedure_name
+    if encounter_data.ccc_number is not None:
+        # Enforce single insured encounter per patient per day
+        # Exception: Allow CCC number for ward/IPD encounters even if another insured encounter exists today
+        if encounter_data.ccc_number and encounter_data.ccc_number.strip():
+            from sqlalchemy import func
+            from app.models.ward_admission import WardAdmission
+            
+            # Check if this encounter is a ward/IPD encounter
+            # Either it already has a ward admission, or the department being updated to is a ward
+            is_ward_encounter = False
+            
+            # Check if encounter already has a ward admission
+            ward_admission = db.query(WardAdmission).filter(
+                WardAdmission.encounter_id == encounter_id
+            ).first()
+            if ward_admission:
+                is_ward_encounter = True
+            
+            # Check if the department being updated to is a ward department
+            # (check the new department value if provided, otherwise check current department)
+            department_to_check = encounter_data.department if encounter_data.department is not None else encounter.department
+            if department_to_check:
+                # Common ward department patterns
+                ward_keywords = ['ward', 'ipd', 'inpatient', 'maternity', 'surgical', 'medical']
+                is_ward_encounter = is_ward_encounter or any(
+                    keyword in department_to_check.lower() for keyword in ward_keywords
+                )
+            
+            # Only enforce the single insured encounter rule if this is NOT a ward encounter
+            if not is_ward_encounter:
+                existing_other = db.query(Encounter).filter(
+                    Encounter.patient_id == encounter.patient_id,
+                    Encounter.id != encounter_id,
+                    Encounter.archived == False,
+                    Encounter.ccc_number.isnot(None),
+                    Encounter.ccc_number != "",
+                    func.date(Encounter.created_at) == func.date(encounter.created_at)
+                ).first()
+                if existing_other:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="An insured encounter already exists today for this patient. This encounter cannot have a CCC number."
+                    )
+        encounter.ccc_number = encounter_data.ccc_number
+    if encounter_data.status is not None:
+        # Validate status transition if provided
+        valid_transitions = {  
+            "draft": ["in_consultation", "awaiting_services", "finalized"],
+            "in_consultation": ["draft", "awaiting_services", "finalized"],
+            "awaiting_services": ["draft", "in_consultation", "awaiting_services", "finalized"],
+            "finalized": ["draft","in_consultation", "awaiting_services", "finalized"]
+        }
+        if encounter_data.status not in valid_transitions.get(encounter.status, []):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot transition from {encounter.status} to {encounter_data.status}"
+            )
+        
+        # If finalizing, require diagnosis, follow-up date, outcome, and payment
+        if encounter_data.status == "finalized":
+            from app.models.bill import Bill
+            from app.models.consultation_notes import ConsultationNotes
+            from app.models.diagnosis import Diagnosis
+            
+            # Require at least one diagnosis
+            diagnoses = db.query(Diagnosis).filter(Diagnosis.encounter_id == encounter_id).all()
+            if not diagnoses or len(diagnoses) == 0:
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. At least one diagnosis is required.")
+            
+            # Require consultation notes with outcome and follow-up date
+            notes = db.query(ConsultationNotes).filter(ConsultationNotes.encounter_id == encounter_id).first()
+            if not notes:
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation notes are required.")
+            
+            if not (notes.outcome and notes.outcome.strip()):
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. Consultation outcome is required.")
+            
+            if not notes.follow_up_date:
+                raise HTTPException(status_code=400, detail="Cannot finalize encounter. Follow-up date is required.")
+            
+            # Determine if patient is insured (has CCC number)
+            is_insured = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+            
+            # Check for unpaid bills
+            # For insured clients: bills can be 0 (fully covered) or must be paid
+            # For non-insured clients: all bills must be paid
+            unpaid_bills = db.query(Bill).filter(
+                Bill.encounter_id == encounter_id,
+                Bill.is_paid == False,
+                Bill.total_amount > 0
+            ).all()
+            
+            if unpaid_bills:
+                unpaid_amount = sum(bill.total_amount for bill in unpaid_bills)
+                if is_insured:
+                    # For insured clients, if there's an unpaid amount > 0, it must be paid
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                    )
+                else:
+                    # For non-insured clients, all bills must be paid
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot finalize encounter. There are {len(unpaid_bills)} unpaid bill(s) totaling GHC {unpaid_amount:.2f}. Please ensure all bills are paid before finalizing."
+                    )
+            
+            encounter.finalized_at = utcnow()
+            encounter.finalized_by = get_effective_creator_id(db, current_user)
+        
+        encounter.status = encounter_data.status
+    
+    encounter.updated_at = utcnow()
+    db.commit()
+    db.refresh(encounter)
+    return encounter
+
+
+@router.delete("/{encounter_id}")
+def archive_encounter(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("encounters", "delete"))
+):
+    """Archive (soft delete) an encounter - Admin only"""
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    if encounter.archived:
+        raise HTTPException(status_code=400, detail="Encounter is already archived")
+    
+    # Soft delete - mark as archived
+    encounter.archived = True
+    encounter.updated_at = utcnow()
+    db.commit()
+    
+    return {"message": "Encounter archived successfully", "encounter_id": encounter_id}
+
+
+@router.get("/date/{date}")
+def get_encounters_by_date(
+    date: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("encounters", "read"))
+):
+    """Get all encounters for a specific date (excluding archived)"""
+    try:
+        target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        start_datetime = datetime.combine(target_date, datetime.min.time())
+        end_datetime = datetime.combine(target_date, datetime.max.time())
+        
+        encounters = db.query(Encounter).filter(
+            Encounter.created_at >= start_datetime,
+            Encounter.created_at <= end_datetime,
+            Encounter.archived == False  # Exclude archived encounters
+        ).order_by(Encounter.created_at).all()
+        
+        # Include patient information
+        result = []
+        for encounter in encounters:
+            result.append({
+                "id": encounter.id,
+                "patient_id": encounter.patient_id,
+                "patient_name": f"{encounter.patient.name or ''} {encounter.patient.surname or ''} {encounter.patient.other_names or ''}".strip(),
+                "patient_card_number": encounter.patient.card_number,
+                "patient_age": encounter.patient.age,
+                "patient_gender": encounter.patient.gender,
+                "patient_insurance_id": encounter.patient.insurance_id,
+                "patient_address": encounter.patient.address,
+                "ccc_number": encounter.ccc_number,
+                "status": encounter.status,
+                "department": encounter.department,
+                "created_at": encounter.created_at,
+            })
+        
+        return result
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")

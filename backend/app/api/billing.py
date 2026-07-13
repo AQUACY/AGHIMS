@@ -1,0 +1,1619 @@
+"""
+Billing endpoints
+"""
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Request, File, UploadFile
+from sqlalchemy.orm import Session, joinedload
+from pydantic import BaseModel, Field
+from typing import Optional, List, Union
+from datetime import datetime
+from app.core.database import get_db
+from app.core.dependencies import require_role, get_current_user, require_module_permission
+from app.core.audit import get_effective_creator_id
+from app.core.datetime_utils import utcnow
+from app.models.user import User
+from app.models.encounter import Encounter
+from app.models.patient import Patient
+from app.models.bill import Bill, BillItem, Receipt, ReceiptItem
+from app.models.price_list import PriceListItem
+from app.services.price_list_service_v2 import get_price_from_all_tables
+from app.services.opd_government_export import (
+    parse_government_opd_export,
+    parse_government_ipd_export,
+    normalize_service_name,
+)
+import random
+
+router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+class GovernmentServiceLineResponse(BaseModel):
+    description: str
+    quantity: float
+    unit: Optional[str] = None
+    total: Optional[float] = None
+    normalized: str
+
+
+class BillingReconciliationItem(BaseModel):
+    bill_item_id: int
+    bill_id: int
+    item_name: str
+    quantity: float
+    unit_price: float
+    total_price: float
+    normalized: str
+
+
+class OpdGovernmentReconciliationResponse(BaseModel):
+    encounter_id: int
+    claim_status: Optional[str] = None
+    insurance_no: Optional[str] = None
+    claim_no: Optional[str] = None
+    patient_name: Optional[str] = None
+    patient_no: Optional[str] = None
+    service_date: Optional[str] = None
+    service_type: Optional[str] = None
+
+    government_lines: List[GovernmentServiceLineResponse]
+    billed_items: List[BillingReconciliationItem]
+
+    missing_in_billing: List[GovernmentServiceLineResponse]
+    extra_in_billing: List[BillingReconciliationItem]
+    quantity_mismatches: List[dict]
+
+
+class IpdInvoiceParseResponse(BaseModel):
+    """Result of parsing an IPD (in-patient) government invoice file."""
+    invoice_no: Optional[str] = None
+    visit_no: Optional[str] = None
+    admission_no: Optional[str] = None
+    patient_no: Optional[str] = None
+    patient_name: Optional[str] = None
+    invoice_date: Optional[str] = None
+    admission_date: Optional[str] = None
+    discharge_date: Optional[str] = None
+    insurance_no: Optional[str] = None
+    billing_info: Optional[str] = None
+    lines: List[GovernmentServiceLineResponse]
+
+
+@router.post("/parse-ipd-invoice", response_model=IpdInvoiceParseResponse)
+async def parse_ipd_invoice(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["Billing", "Admin", "Doctor", "PA", "Nurse"])),
+):
+    """
+    Parse a government IPD (in-patient) invoice file (.xls or .xlsx, often HTML saved as .xls).
+    Returns extracted meta (admission no., patient name, etc.) and line items (SERVICE DESCRIPTION, QTY).
+    Use this to test the IPD check parser or to feed into IPD reconciliation.
+    """
+    if not file.filename or not (file.filename.lower().endswith(".xls") or file.filename.lower().endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="File must be .xls or .xlsx")
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    try:
+        export = parse_government_ipd_export(contents, filename=file.filename or "upload")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return IpdInvoiceParseResponse(
+        invoice_no=export.invoice_no,
+        visit_no=export.visit_no,
+        admission_no=export.admission_no,
+        patient_no=export.patient_no,
+        patient_name=export.patient_name,
+        invoice_date=export.invoice_date,
+        admission_date=export.admission_date,
+        discharge_date=export.discharge_date,
+        insurance_no=export.insurance_no,
+        billing_info=export.billing_info,
+        lines=[
+            GovernmentServiceLineResponse(
+                description=ln.description,
+                quantity=float(ln.quantity),
+                unit=ln.unit,
+                total=ln.total,
+                normalized=normalize_service_name(ln.description),
+            )
+            for ln in export.lines
+        ],
+    )
+
+
+@router.post("/encounter/{encounter_id}/reconcile-opd-government", response_model=OpdGovernmentReconciliationResponse)
+async def reconcile_opd_services_with_government_export(
+    encounter_id: int,
+    file: "UploadFile" = None,  # type: ignore[name-defined]
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "read")),
+):
+    """
+    Compare government OPD export line-items with services billed in the system (BillItems for an encounter).
+    Returns:
+    - missing_in_billing: in government export but not in system billing
+    - extra_in_billing: in system billing but not in government export
+    - quantity_mismatches: matched descriptions but different quantities
+    """
+    # Lazy import to avoid adding at top-level (FastAPI typing only)
+    from fastapi import UploadFile
+
+    if file is None or not isinstance(file, UploadFile):
+        raise HTTPException(status_code=400, detail="File upload is required")
+
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+
+    contents = await file.read()
+    export = parse_government_opd_export(contents, filename=file.filename or "upload")
+
+    gov_lines = [
+        {
+            "description": ln.description,
+            "quantity": float(ln.quantity),
+            "unit": ln.unit,
+            "total": ln.total,
+            "normalized": normalize_service_name(ln.description),
+        }
+        for ln in export.lines
+    ]
+
+    # Load all bill items across all bills for encounter
+    bills = db.query(Bill).options(joinedload(Bill.bill_items)).filter(Bill.encounter_id == encounter_id).all()
+    billed: list[dict] = []
+    for b in bills:
+        for it in b.bill_items:
+            billed.append(
+                {
+                    "bill_item_id": it.id,
+                    "bill_id": b.id,
+                    "item_name": it.item_name,
+                    "quantity": float(it.quantity),
+                    "unit_price": float(it.unit_price),
+                    "total_price": float(it.total_price),
+                    "normalized": normalize_service_name(it.item_name),
+                }
+            )
+
+    # Build matching maps by normalized description
+    gov_by_norm: dict[str, list[dict]] = {}
+    for g in gov_lines:
+        gov_by_norm.setdefault(g["normalized"], []).append(g)
+
+    billed_by_norm: dict[str, list[dict]] = {}
+    for bi in billed:
+        billed_by_norm.setdefault(bi["normalized"], []).append(bi)
+
+    missing_in_billing: list[dict] = []
+    extra_in_billing: list[dict] = []
+    quantity_mismatches: list[dict] = []
+
+    # Missing: gov norm not present in billed
+    for norm, glines in gov_by_norm.items():
+        if not norm:
+            continue
+        if norm not in billed_by_norm:
+            missing_in_billing.extend(glines)
+            continue
+        # Compare quantities (sum across duplicates)
+        gov_qty = sum(float(x["quantity"]) for x in glines)
+        billed_qty = sum(float(x["quantity"]) for x in billed_by_norm[norm])
+        if abs(gov_qty - billed_qty) > 1e-6:
+            quantity_mismatches.append(
+                {
+                    "normalized": norm,
+                    "government_quantity": gov_qty,
+                    "billed_quantity": billed_qty,
+                    "government_lines": glines,
+                    "billed_items": billed_by_norm[norm],
+                }
+            )
+
+    # Extra: billed norm not present in gov
+    for norm, items in billed_by_norm.items():
+        if not norm:
+            continue
+        if norm not in gov_by_norm:
+            extra_in_billing.extend(items)
+
+    return {
+        "encounter_id": encounter_id,
+        "claim_status": export.claim_status,
+        "insurance_no": export.insurance_no,
+        "claim_no": export.claim_no,
+        "patient_name": export.patient_name,
+        "patient_no": export.patient_no,
+        "service_date": export.service_date,
+        "service_type": export.service_type,
+        "government_lines": gov_lines,
+        "billed_items": billed,
+        "missing_in_billing": missing_in_billing,
+        "extra_in_billing": extra_in_billing,
+        "quantity_mismatches": quantity_mismatches,
+    }
+
+
+def generate_unique_receipt_number(db: Session, max_attempts: int = 100) -> str:
+    """
+    Generate a unique receipt number by checking against existing receipts in the database.
+    Format: REC-XXXXXX (6-digit number)
+    """
+    for _ in range(max_attempts):
+        receipt_number = f"REC-{random.randint(100000, 999999)}"
+        # Check if receipt number already exists globally
+        existing_receipt = db.query(Receipt).filter(
+            Receipt.receipt_number == receipt_number
+        ).first()
+        
+        if not existing_receipt:
+            return receipt_number
+    
+    # If we couldn't generate a unique number after max_attempts, use timestamp-based approach
+    import time
+    timestamp = int(time.time() * 1000) % 1000000  # Last 6 digits of timestamp
+    receipt_number = f"REC-{timestamp:06d}"
+    
+    # Double-check uniqueness
+    existing_receipt = db.query(Receipt).filter(
+        Receipt.receipt_number == receipt_number
+    ).first()
+    
+    if existing_receipt:
+        # If still exists, append random suffix
+        receipt_number = f"REC-{timestamp:06d}{random.randint(10, 99)}"
+    
+    return receipt_number
+
+
+def determine_service_group(item_name: str, category: str, investigation_type: Optional[str] = None) -> str:
+    """Determine service group based on item name, category, and investigation type"""
+    item_name_lower = item_name.lower()
+    
+    # Check item name prefixes
+    if item_name_lower.startswith("diagnosis:"):
+        return "Diagnose"
+    elif item_name_lower.startswith("prescription:"):
+        return "Pharmacy"
+    elif item_name_lower.startswith("investigation:"):
+        # Use investigation type if available
+        if investigation_type:
+            if investigation_type.lower() == "lab":
+                return "Lab"
+            elif investigation_type.lower() == "scan":
+                return "Scan"
+            elif investigation_type.lower() == "xray":
+                return "X-ray"
+        # Fallback to checking item name
+        if "lab" in item_name_lower:
+            return "Lab"
+        elif "scan" in item_name_lower:
+            return "Scan"
+        elif "xray" in item_name_lower or "x-ray" in item_name_lower:
+            return "X-ray"
+        return "Investigation"  # Fallback
+    elif category == "surgery":
+        return "Surgery"
+    elif category == "product" or category == "pharmacy":
+        return "Pharmacy"
+    elif category == "drg":
+        return "Diagnose"
+    else:
+        return "Other"
+
+
+class BillItemCreate(BaseModel):
+    """Bill item creation model - allows None for item_code and category for miscellaneous items"""
+    # Using Optional[str] = None allows None values - this is standard Pydantic behavior
+    item_code: Optional[str] = None  # Optional - for miscellaneous items without codes (can be None/null)
+    item_name: str  # Required - name/description of the item
+    category: Optional[str] = None  # Optional - for miscellaneous items without category (can be None/null)
+    quantity: float = 1.0  # Changed to float to support fractional quantities (e.g., 6.15 hours)
+    unit_price: Optional[float] = None  # Optional custom price. If not provided, will look up from price list
+    
+    class Config:
+        # Pydantic configuration - this is compatible with both v1 and v2
+        from_attributes = True
+
+
+class BillCreate(BaseModel):
+    """Bill creation model"""
+    encounter_id: int
+    items: List[BillItemCreate]
+    miscellaneous: Optional[str] = None
+
+
+class BillItemPaymentInfo(BaseModel):
+    """Payment information for a bill item"""
+    receipt_id: int
+    receipt_item_id: int
+    receipt_number: str
+    amount_paid: float
+    payment_method: Optional[str] = None
+    issued_at: datetime
+    refunded: bool = False
+    
+    class Config:
+        from_attributes = True
+
+
+class BillItemResponse(BaseModel):
+    """Bill item response model with payment info"""
+    id: int
+    item_code: str
+    item_name: str
+    category: str
+    quantity: float  # Changed to float to support fractional quantities (e.g., 6.15 hours)
+    unit_price: float
+    total_price: float
+    amount_paid: float = 0.0  # Total amount paid for this item across all receipts
+    remaining_balance: float = 0.0  # Remaining balance for this item
+    payment_info: List[BillItemPaymentInfo] = []  # List of receipts that paid for this item
+    
+    class Config:
+        from_attributes = True
+
+
+class BillResponse(BaseModel):
+    """Bill response model"""
+    id: int
+    encounter_id: int
+    bill_number: str
+    total_amount: float
+    paid_amount: float
+    is_paid: bool
+    miscellaneous: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class BillDetailResponse(BillResponse):
+    """Bill detail response with items"""
+    bill_items: List[BillItemResponse]
+
+
+class ReceiptItemCreate(BaseModel):
+    """Receipt item creation model"""
+    bill_item_id: int
+    amount_paid: float
+    receipt_number: Optional[str] = None  # Manual receipt number (optional)
+
+
+class ReceiptCreate(BaseModel):
+    """Receipt creation model"""
+    bill_id: int
+    payment_method: str = "cash"
+    receipt_items: Optional[List[ReceiptItemCreate]] = None  # Optional itemized payments
+    receipt_number: Optional[str] = None  # Manual receipt number (if all items use same receipt)
+
+
+class ManualReceiptCreate(BaseModel):
+    """Manual receipt creation model for bill item"""
+    receipt_number: str  # Manually entered receipt number
+    amount_paid: float
+    payment_method: str = "cash"
+
+
+@router.post("/", response_model=BillResponse, status_code=status.HTTP_201_CREATED)
+def create_bill(
+    request: Request,
+    bill_data: BillCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "create"))
+):
+    """Create a bill for an encounter"""
+    encounter = db.query(Encounter).filter(Encounter.id == bill_data.encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    patient = encounter.patient
+    
+    # Determine if insured based on encounter CCC number
+    # If encounter has CCC number, client has active insurance, otherwise cash/carry
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    # Find or create an unpaid bill for this encounter
+    existing_bill = db.query(Bill).filter(
+        Bill.encounter_id == bill_data.encounter_id,
+        Bill.is_paid == False  # Only use unpaid bills
+    ).first()
+    
+    if existing_bill:
+        # Add items to existing unpaid bill
+        bill = existing_bill
+        total_amount = bill.total_amount
+    else:
+        # Create new bill
+        bill_number = f"BILL-{random.randint(100000, 999999)}"
+        bill = Bill(
+            encounter_id=bill_data.encounter_id,
+            bill_number=bill_number,
+            is_insured=is_insured_encounter,
+            miscellaneous=bill_data.miscellaneous,
+            created_by=get_effective_creator_id(db, current_user)
+        )
+        db.add(bill)
+        db.flush()
+        total_amount = 0.0
+    
+    # Create bill items (check for duplicates first)
+    for item_data in bill_data.items:
+        # Handle optional fields - use defaults for items without codes/categories
+        item_code = item_data.item_code or "MISC"
+        category = item_data.category or "other"
+        
+        # Check if this item already exists in the bill
+        # For items without codes, match by name only
+        if item_data.item_code:
+            existing_item = db.query(BillItem).filter(
+                BillItem.bill_id == bill.id,
+                BillItem.item_code == item_data.item_code,
+                BillItem.item_name == item_data.item_name,
+                BillItem.category == category
+            ).first()
+        else:
+            # For items without codes, match by name and category only
+            existing_item = db.query(BillItem).filter(
+                BillItem.bill_id == bill.id,
+                BillItem.item_code == "MISC",
+                BillItem.item_name == item_data.item_name,
+                BillItem.category == category
+            ).first()
+        
+        if existing_item:
+            # Item already exists, skip or update quantity
+            continue
+        
+        # Get price - use custom price if provided, otherwise look up from price list
+        if item_data.unit_price is not None and item_data.unit_price >= 0:
+            # Use custom price provided by user (for miscellaneous items)
+            unit_price = item_data.unit_price
+        elif item_data.item_code:
+            # Only look up price if item_code is provided
+            # Pass item_name as procedure_name to match exact procedure when G-DRG codes map to multiple procedures
+            unit_price = get_price_from_all_tables(db, item_data.item_code, is_insured_encounter, None, item_data.item_name)
+            print(f"DEBUG create_bill: Looked up price for item_code='{item_data.item_code}', item_name='{item_data.item_name}', is_insured={is_insured_encounter}, price={unit_price}")
+        else:
+            # Items without codes must have a custom price
+            raise HTTPException(
+                status_code=400,
+                detail=f"Custom price is required for items without item codes. Please provide unit_price for '{item_data.item_name}'"
+            )
+        
+        total_price = unit_price * item_data.quantity
+        
+        bill_item = BillItem(
+            bill_id=bill.id,
+            item_code=item_code,
+            item_name=item_data.item_name,
+            category=category,
+            quantity=item_data.quantity,
+            unit_price=unit_price,
+            total_price=total_price
+        )
+        db.add(bill_item)
+        total_amount += total_price
+    
+    bill.total_amount = total_amount
+    db.commit()
+    db.refresh(bill)
+    
+    from app.core.audit import set_audit_summary
+    from app.core.audit_patient import summarize_bill_for_patient
+    set_audit_summary(request, summarize_bill_for_patient(patient, total_amount))
+    
+    return bill
+
+
+@router.post("/receipt", status_code=status.HTTP_201_CREATED)
+def create_receipt(
+    request: Request,
+    receipt_data: ReceiptCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "create"))
+):
+    """Create a receipt for a paid bill with optional itemized payments"""
+    bill = db.query(Bill).filter(Bill.id == receipt_data.bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    if bill.is_paid:
+        raise HTTPException(status_code=400, detail="Bill is already fully paid")
+    
+    # Calculate total amount to be paid
+    total_paid = 0.0
+    
+    if receipt_data.receipt_items:
+        # Itemized payment - validate all items belong to this bill
+        bill_item_ids = {item.bill_item_id for item in receipt_data.receipt_items}
+        bill_items = db.query(BillItem).filter(
+            BillItem.id.in_(bill_item_ids),
+            BillItem.bill_id == bill.id
+        ).all()
+        
+        if len(bill_items) != len(receipt_data.receipt_items):
+            raise HTTPException(status_code=400, detail="Some bill items do not belong to this bill")
+        
+        # Create a map for quick lookup
+        bill_item_map = {item.id: item for item in bill_items}
+        
+        # Validate amounts and calculate total
+        for receipt_item_data in receipt_data.receipt_items:
+            bill_item = bill_item_map[receipt_item_data.bill_item_id]
+            if receipt_item_data.amount_paid > bill_item.total_price:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Amount paid ({receipt_item_data.amount_paid}) exceeds bill item price ({bill_item.total_price}) for {bill_item.item_name}"
+                )
+            if receipt_item_data.amount_paid <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Amount paid must be greater than 0 for {bill_item.item_name}"
+                )
+            total_paid += receipt_item_data.amount_paid
+    else:
+        # Full payment - pay entire bill
+        total_paid = bill.total_amount
+    
+    if total_paid <= 0:
+        raise HTTPException(status_code=400, detail="Total payment amount must be greater than 0")
+    
+    if total_paid > bill.total_amount:
+        raise HTTPException(status_code=400, detail="Total payment exceeds bill amount")
+    
+    # Group items by receipt number if provided, otherwise create one receipt
+    receipts_created = []
+    
+    if receipt_data.receipt_items:
+        # Group items by receipt number
+        receipts_map = {}  # receipt_number -> {items: [], total: 0}
+        
+        for receipt_item_data in receipt_data.receipt_items:
+            # Use receipt_number from item if provided, otherwise use global receipt_number, otherwise generate
+            item_receipt_number = (
+                receipt_item_data.receipt_number or 
+                receipt_data.receipt_number or 
+                None
+            )
+            
+            if not item_receipt_number:
+                # If no receipt number provided at all, generate a unique one
+                item_receipt_number = generate_unique_receipt_number(db)
+            
+            if item_receipt_number not in receipts_map:
+                receipts_map[item_receipt_number] = {
+                    "items": [],
+                    "total": 0.0
+                }
+            
+            receipts_map[item_receipt_number]["items"].append(receipt_item_data)
+            receipts_map[item_receipt_number]["total"] += receipt_item_data.amount_paid
+        
+        # Create receipts for each unique receipt number
+        for receipt_number_key, receipt_data_map in receipts_map.items():
+            receipt_number = receipt_number_key
+            
+            # Check if receipt number already exists globally (not just for this bill)
+            existing_receipt_global = db.query(Receipt).filter(
+                Receipt.receipt_number == receipt_number
+            ).first()
+            
+            if existing_receipt_global and existing_receipt_global.bill_id != bill.id:
+                # Receipt number exists for a different bill - generate a new unique one
+                receipt_number = generate_unique_receipt_number(db)
+            
+            # Check if receipt number already exists for this bill (to allow updating existing receipt)
+            existing_receipt = db.query(Receipt).filter(
+                Receipt.receipt_number == receipt_number,
+                Receipt.bill_id == bill.id
+            ).first()
+            
+            if existing_receipt:
+                receipt = existing_receipt
+                # Update receipt amount
+                receipt.amount_paid += receipt_data_map["total"]
+            else:
+                # Create new receipt
+                receipt = Receipt(
+                    bill_id=bill.id,
+                    receipt_number=receipt_number,
+                    amount_paid=receipt_data_map["total"],
+                    payment_method=receipt_data.payment_method,
+                    issued_by=get_effective_creator_id(db, current_user)
+                )
+                db.add(receipt)
+                db.flush()
+            
+            # Create receipt items
+            for receipt_item_data in receipt_data_map["items"]:
+                # Check if receipt item already exists
+                existing_item = db.query(ReceiptItem).filter(
+                    ReceiptItem.receipt_id == receipt.id,
+                    ReceiptItem.bill_item_id == receipt_item_data.bill_item_id
+                ).first()
+                
+                if not existing_item:
+                    receipt_item = ReceiptItem(
+                        receipt_id=receipt.id,
+                        bill_item_id=receipt_item_data.bill_item_id,
+                        amount_paid=receipt_item_data.amount_paid
+                    )
+                    db.add(receipt_item)
+            
+            receipts_created.append({
+                "receipt_id": receipt.id,
+                "receipt_number": receipt.receipt_number,
+                "amount_paid": receipt_data_map["total"]
+            })
+    else:
+        # Full payment - use provided receipt number or generate a unique one
+        if receipt_data.receipt_number:
+            receipt_number = receipt_data.receipt_number
+            # Check if receipt number already exists globally (not just for this bill)
+            existing_receipt_global = db.query(Receipt).filter(
+                Receipt.receipt_number == receipt_number
+            ).first()
+            if existing_receipt_global:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Receipt number {receipt_number} already exists. Please use a different receipt number."
+                )
+        else:
+            receipt_number = generate_unique_receipt_number(db)
+        
+        # Check if receipt number already exists for this bill (to allow updating existing receipt)
+        existing_receipt = db.query(Receipt).filter(
+            Receipt.receipt_number == receipt_number,
+            Receipt.bill_id == bill.id
+        ).first()
+        
+        if existing_receipt:
+            receipt = existing_receipt
+            receipt.amount_paid += total_paid
+        else:
+            receipt = Receipt(
+                bill_id=bill.id,
+                receipt_number=receipt_number,
+                amount_paid=total_paid,
+                payment_method=receipt_data.payment_method,
+                issued_by=get_effective_creator_id(db, current_user)
+            )
+            db.add(receipt)
+            db.flush()
+        
+        # Create receipt items for all bill items
+        for item in bill.bill_items:
+            receipt_item = ReceiptItem(
+                receipt_id=receipt.id,
+                bill_item_id=item.id,
+                amount_paid=item.total_price
+            )
+            db.add(receipt_item)
+        
+        receipts_created.append({
+            "receipt_id": receipt.id,
+            "receipt_number": receipt.receipt_number,
+            "amount_paid": total_paid
+        })
+    
+    # Update bill
+    bill.paid_amount += total_paid
+    if bill.paid_amount >= bill.total_amount:
+        bill.is_paid = True
+        bill.paid_at = datetime.utcnow()
+    
+    db.commit()
+    
+    encounter = db.query(Encounter).filter(Encounter.id == bill.encounter_id).first()
+    patient = encounter.patient if encounter else None
+    from app.core.audit import set_audit_summary
+    from app.core.audit_patient import summarize_receipt_for_patient
+    if patient:
+        set_audit_summary(request, summarize_receipt_for_patient(patient, total_paid))
+    else:
+        set_audit_summary(request, f"Recorded payment of {total_paid:.2f} cedis (receipt).")
+    
+    return {
+        "receipts": receipts_created,
+        "total_amount": total_paid
+    }
+
+
+class BillItemUpdate(BaseModel):
+    """Bill item update model"""
+    item_code: Optional[str] = None
+    item_name: Optional[str] = None
+    category: Optional[str] = None
+    quantity: Optional[int] = None
+    unit_price: Optional[float] = None
+
+
+class BillUpdate(BaseModel):
+    """Bill update model"""
+    items: Optional[List[BillItemUpdate]] = None
+    miscellaneous: Optional[str] = None
+
+
+@router.put("/bill/{bill_id}")
+def update_bill(
+    bill_id: int,
+    bill_data: BillUpdate,
+    db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("billing", "update")),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update a bill - Admin only"""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Update miscellaneous if provided
+    if bill_data.miscellaneous is not None:
+        bill.miscellaneous = bill_data.miscellaneous
+    
+    # Update bill items if provided
+    if bill_data.items is not None:
+        total_amount = 0.0
+        
+        for item_update in bill_data.items:
+            # Find the bill item to update
+            # If item_code is provided, use it to find the item
+            if item_update.item_code:
+                bill_item = db.query(BillItem).filter(
+                    BillItem.bill_id == bill_id,
+                    BillItem.item_code == item_update.item_code
+                ).first()
+            else:
+                # If no item_code, try to find by name (for miscellaneous items)
+                if item_update.item_name:
+                    bill_item = db.query(BillItem).filter(
+                        BillItem.bill_id == bill_id,
+                        BillItem.item_name == item_update.item_name
+                    ).first()
+                else:
+                    continue  # Skip if no identifier provided
+            
+            if not bill_item:
+                # Item not found - skip or create new item
+                continue
+            
+            # Update fields if provided
+            if item_update.item_name is not None:
+                bill_item.item_name = item_update.item_name
+            if item_update.category is not None:
+                bill_item.category = item_update.category
+            if item_update.quantity is not None and item_update.quantity > 0:
+                bill_item.quantity = item_update.quantity
+            if item_update.unit_price is not None and item_update.unit_price >= 0:
+                bill_item.unit_price = item_update.unit_price
+            
+            # Recalculate total price
+            bill_item.total_price = bill_item.unit_price * bill_item.quantity
+            total_amount += bill_item.total_price
+        
+        # Recalculate bill total from all items
+        all_items = db.query(BillItem).filter(BillItem.bill_id == bill_id).all()
+        bill.total_amount = sum(item.total_price for item in all_items)
+        
+        # Check if bill is still paid (paid_amount should not exceed total_amount)
+        if bill.paid_amount > bill.total_amount:
+            bill.paid_amount = bill.total_amount
+        
+        # Update is_paid status
+        if bill.paid_amount >= bill.total_amount and bill.total_amount > 0:
+            bill.is_paid = True
+            if not bill.paid_at:
+                bill.paid_at = datetime.utcnow()
+        else:
+            bill.is_paid = False
+            bill.paid_at = None
+    
+    db.commit()
+    db.refresh(bill)
+    
+    return bill
+
+
+@router.put("/bill-item/{bill_item_id}")
+def update_bill_item(
+    bill_item_id: int,
+    item_data: BillItemUpdate,
+    db: Session = Depends(get_db),
+    _module_check: User = Depends(require_module_permission("billing", "update")),
+    current_user: User = Depends(require_role(["Admin"]))
+):
+    """Update a specific bill item - Admin only"""
+    bill_item = db.query(BillItem).filter(BillItem.id == bill_item_id).first()
+    if not bill_item:
+        raise HTTPException(status_code=404, detail=f"Bill item with ID {bill_item_id} not found")
+    
+    # Get the bill using bill_id to avoid relationship loading issues
+    bill = db.query(Bill).filter(Bill.id == bill_item.bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail=f"Bill with ID {bill_item.bill_id} not found for bill item {bill_item_id}")
+    
+    # Update fields if provided
+    if item_data.item_name is not None:
+        bill_item.item_name = item_data.item_name
+    if item_data.category is not None:
+        bill_item.category = item_data.category
+    if item_data.quantity is not None and item_data.quantity > 0:
+        bill_item.quantity = item_data.quantity
+    if item_data.unit_price is not None and item_data.unit_price >= 0:
+        bill_item.unit_price = item_data.unit_price
+    
+    # Recalculate total price
+    bill_item.total_price = bill_item.unit_price * bill_item.quantity
+    
+    # Recalculate bill total
+    all_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+    bill.total_amount = sum(item.total_price for item in all_items)
+    
+    # Check if bill is still paid
+    if bill.paid_amount > bill.total_amount:
+        bill.paid_amount = bill.total_amount
+    
+    # Update is_paid status
+    if bill.paid_amount >= bill.total_amount and bill.total_amount > 0:
+        bill.is_paid = True
+        if not bill.paid_at:
+            bill.paid_at = datetime.utcnow()
+    else:
+        bill.is_paid = False
+        bill.paid_at = None
+    
+    db.commit()
+    db.refresh(bill_item)
+    db.refresh(bill)
+    
+    return bill_item
+
+
+@router.delete("/bill/{bill_id}")
+def delete_bill(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "delete"))
+):
+    """Delete a bill - Admin only"""
+    bill = db.query(Bill).filter(Bill.id == bill_id).first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Check if bill has any receipts (query directly to ensure we get the count)
+    receipt_count = db.query(Receipt).filter(Receipt.bill_id == bill_id).count()
+    if receipt_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete bill with receipts. Please delete or refund all receipts first."
+        )
+    
+    # Delete bill items first (cascade should handle this, but explicit deletion is safer)
+    db.query(BillItem).filter(BillItem.bill_id == bill_id).delete()
+    
+    # Delete the bill
+    db.delete(bill)
+    db.commit()
+    
+    return {"message": "Bill deleted successfully", "bill_id": bill_id}
+
+
+@router.get("/encounter/{encounter_id}", response_model=List[BillResponse])
+def get_encounter_bills(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
+):
+    """Get all bills for an encounter - visible to all users so they can see what patient owes"""
+    # Query bills and explicitly refresh to ensure we get the latest data
+    bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).order_by(Bill.created_at.desc()).all()
+    
+    # Refresh each bill and recalculate total if needed
+    for bill in bills:
+        db.refresh(bill)
+        # Recalculate total from items if total_amount is 0 but items exist
+        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+        if bill_items and bill.total_amount == 0:
+            # Recalculate and update
+            calculated_total = sum(item.total_price for item in bill_items)
+            if calculated_total > 0:
+                bill.total_amount = calculated_total
+                db.commit()
+                db.refresh(bill)
+    
+    return bills
+
+
+class ReceiptInfo(BaseModel):
+    """Receipt information"""
+    id: int
+    receipt_number: str
+    amount_paid: float
+    payment_method: Optional[str] = None
+    refunded: bool
+    issued_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class BillDetailResponseWithReceipt(BillDetailResponse):
+    """Bill detail response with receipt info"""
+    receipt: Optional[ReceiptInfo] = None
+
+
+@router.get("/bill/{bill_id}", response_model=BillDetailResponseWithReceipt)
+def get_bill_details(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
+):
+    """Get detailed bill information with all bill items and receipt"""
+    # Eager load all relationships
+    bill = db.query(Bill)\
+        .options(
+            joinedload(Bill.bill_items),
+            joinedload(Bill.receipts).joinedload(Receipt.receipt_items)
+        )\
+        .filter(Bill.id == bill_id)\
+        .first()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+    
+    # Get all non-refunded receipts for this bill
+    non_refunded_receipts = [r for r in bill.receipts if not r.refunded]
+    latest_receipt = non_refunded_receipts[-1] if non_refunded_receipts else None
+    
+    # Get all investigations for this encounter to determine service groups
+    from app.models.investigation import Investigation
+    investigations = db.query(Investigation).filter(
+        Investigation.encounter_id == bill.encounter_id
+    ).all()
+    # Create a map of item_code (gdrg_code) to investigation_type
+    item_code_to_investigation_type = {}
+    for inv in investigations:
+        if inv.gdrg_code:
+            item_code_to_investigation_type[inv.gdrg_code] = inv.investigation_type
+    
+    # Build bill items with payment information
+    bill_items_with_payment = []
+    for item in bill.bill_items:
+        # Get all receipt items for this bill item from non-refunded receipts
+        receipt_items_for_item = []
+        total_paid_for_item = 0.0
+        
+        # Get all receipts (including refunded) to show in payment info
+        for receipt in bill.receipts:
+            for receipt_item in receipt.receipt_items:
+                if receipt_item.bill_item_id == item.id:
+                    receipt_items_for_item.append({
+                        "receipt_id": receipt.id,
+                        "receipt_item_id": receipt_item.id,
+                        "receipt_number": receipt.receipt_number,
+                        "amount_paid": receipt_item.amount_paid,
+                        "payment_method": receipt.payment_method,
+                        "issued_at": receipt.issued_at,
+                        "refunded": receipt.refunded,
+                    })
+                    # Only count non-refunded receipts towards paid amount
+                    if not receipt.refunded:
+                        total_paid_for_item += receipt_item.amount_paid
+        
+        remaining_balance = item.total_price - total_paid_for_item
+        
+        # Determine service group
+        service_group = "Other"
+        if item.category == "product":
+            service_group = "Pharmacy"
+        elif item.category in ["procedure", "surgery", "drg"]:
+            # Check investigation type for labs/scans/xrays
+            investigation_type = item_code_to_investigation_type.get(item.item_code)
+            if investigation_type == "Lab":
+                service_group = "Lab"
+            elif investigation_type == "Scan":
+                service_group = "Scan"
+            elif investigation_type == "X-ray":
+                service_group = "X-ray"
+            elif item.category == "drg":
+                service_group = "Diagnose"
+            elif item.category == "surgery":
+                service_group = "Surgery"
+            else:
+                service_group = "Other"
+        elif item.category == "drg":
+            service_group = "Diagnose"
+        elif item.category == "surgery":
+            service_group = "Surgery"
+        
+        bill_items_with_payment.append({
+            "id": item.id,
+            "item_code": item.item_code,
+            "item_name": item.item_name,
+            "category": item.category,
+            "quantity": item.quantity,
+            "unit_price": item.unit_price,
+            "total_price": item.total_price,
+            "amount_paid": total_paid_for_item,
+            "remaining_balance": remaining_balance,
+            "payment_info": receipt_items_for_item,
+            "service_group": service_group,
+        })
+    
+    # Build response
+    response_data = {
+        "id": bill.id,
+        "encounter_id": bill.encounter_id,
+        "bill_number": bill.bill_number,
+        "total_amount": bill.total_amount,
+        "paid_amount": bill.paid_amount,
+        "is_paid": bill.is_paid,
+        "miscellaneous": bill.miscellaneous,
+        "created_at": bill.created_at,
+        "bill_items": bill_items_with_payment,
+        "receipt": None
+    }
+    
+    # Add latest receipt info if exists
+    if latest_receipt:
+        response_data["receipt"] = {
+            "id": latest_receipt.id,
+            "receipt_number": latest_receipt.receipt_number,
+            "amount_paid": latest_receipt.amount_paid,
+            "payment_method": latest_receipt.payment_method,
+            "refunded": latest_receipt.refunded,
+            "issued_at": latest_receipt.issued_at,
+        }
+    
+    return response_data
+
+
+@router.post("/bill-item/{bill_item_id}/receipt")
+def add_manual_receipt_to_bill_item(
+    bill_item_id: int,
+    receipt_data: ManualReceiptCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "create"))
+):
+    """Manually add a receipt number for a specific bill item (for auditing)"""
+    bill_item = db.query(BillItem).filter(BillItem.id == bill_item_id).first()
+    if not bill_item:
+        raise HTTPException(status_code=404, detail="Bill item not found")
+    
+    bill = bill_item.bill
+    
+    # Check if receipt number already exists
+    existing_receipt = db.query(Receipt).filter(
+        Receipt.receipt_number == receipt_data.receipt_number
+    ).first()
+    
+    receipt = None
+    if existing_receipt:
+        # Use existing receipt if it belongs to the same bill
+        if existing_receipt.bill_id != bill.id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Receipt number {receipt_data.receipt_number} already exists for a different bill"
+            )
+        receipt = existing_receipt
+    else:
+        # Create new receipt with manual receipt number
+        receipt = Receipt(
+            bill_id=bill.id,
+            receipt_number=receipt_data.receipt_number,
+            amount_paid=receipt_data.amount_paid,
+            payment_method=receipt_data.payment_method,
+            issued_by=get_effective_creator_id(db, current_user)
+        )
+        db.add(receipt)
+        db.flush()
+    
+    # Check if receipt item already exists
+    existing_receipt_item = db.query(ReceiptItem).filter(
+        ReceiptItem.receipt_id == receipt.id,
+        ReceiptItem.bill_item_id == bill_item_id
+    ).first()
+    
+    if existing_receipt_item:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This receipt number is already associated with this bill item"
+        )
+    
+    # Validate amount doesn't exceed remaining balance
+    # Calculate already paid amount for this item
+    total_paid_for_item = 0.0
+    for r in bill.receipts:
+        if not r.refunded:
+            for ri in r.receipt_items:
+                if ri.bill_item_id == bill_item_id:
+                    total_paid_for_item += ri.amount_paid
+    
+    remaining_balance = bill_item.total_price - total_paid_for_item
+    
+    if receipt_data.amount_paid > remaining_balance:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amount paid ({receipt_data.amount_paid}) exceeds remaining balance ({remaining_balance:.2f}) for this item"
+        )
+    
+    if receipt_data.amount_paid <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Amount paid must be greater than 0"
+        )
+    
+    # Create receipt item
+    receipt_item = ReceiptItem(
+        receipt_id=receipt.id,
+        bill_item_id=bill_item_id,
+        amount_paid=receipt_data.amount_paid
+    )
+    db.add(receipt_item)
+    
+    # Update receipt total if it's a new receipt
+    if not existing_receipt:
+        receipt.amount_paid = receipt_data.amount_paid
+    else:
+        receipt.amount_paid += receipt_data.amount_paid
+    
+    # Update bill paid amount (only if receipt is not refunded)
+    if not receipt.refunded:
+        bill.paid_amount += receipt_data.amount_paid
+        if bill.paid_amount >= bill.total_amount:
+            bill.is_paid = True
+            bill.paid_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(receipt)
+    db.refresh(receipt_item)
+    
+    return {
+        "receipt_id": receipt.id,
+        "receipt_number": receipt.receipt_number,
+        "amount_paid": receipt_data.amount_paid,
+        "bill_item_id": bill_item_id
+    }
+
+
+@router.delete("/receipt-item/{receipt_item_id}")
+def delete_receipt_item(
+    receipt_item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "delete"))
+):
+    """Delete a receipt item (manually entered receipt)"""
+    receipt_item = db.query(ReceiptItem).filter(ReceiptItem.id == receipt_item_id).first()
+    if not receipt_item:
+        raise HTTPException(status_code=404, detail="Receipt item not found")
+    
+    receipt = receipt_item.receipt
+    bill = receipt.bill
+    
+    # Only allow deletion if receipt is not refunded
+    if receipt.refunded:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete a receipt item from a refunded receipt. Use refund action instead."
+        )
+    
+    amount_to_remove = receipt_item.amount_paid
+    
+    # Update receipt amount
+    receipt.amount_paid -= amount_to_remove
+    if receipt.amount_paid <= 0:
+        # Delete the receipt if it has no items left
+        db.delete(receipt)
+    else:
+        # Check if receipt has other items
+        remaining_items = db.query(ReceiptItem).filter(
+            ReceiptItem.receipt_id == receipt.id,
+            ReceiptItem.id != receipt_item_id
+        ).count()
+        
+        if remaining_items == 0:
+            # Delete receipt if it's empty
+            db.delete(receipt)
+    
+    # Update bill paid amount
+    bill.paid_amount -= amount_to_remove
+    if bill.paid_amount < 0:
+        bill.paid_amount = 0
+    
+    if bill.paid_amount < bill.total_amount:
+        bill.is_paid = False
+        bill.paid_at = None
+    
+    # Delete receipt item
+    db.delete(receipt_item)
+    db.commit()
+    
+    return {"message": "Receipt item deleted successfully"}
+
+
+@router.post("/receipt/{receipt_id}/refund")
+def refund_receipt(
+    receipt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "update"))
+):
+    """Refund a receipt (Admin only)"""
+    receipt = db.query(Receipt).filter(Receipt.id == receipt_id).first()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    
+    if receipt.refunded:
+        raise HTTPException(status_code=400, detail="Receipt has already been refunded")
+    
+    bill = receipt.bill
+    
+    # Mark receipt as refunded
+    receipt.refunded = True
+    receipt.refunded_at = datetime.utcnow()
+    receipt.refunded_by = get_effective_creator_id(db, current_user)
+    
+    # Update bill payment status - subtract this receipt's amount
+    bill.paid_amount -= receipt.amount_paid
+    if bill.paid_amount < 0:
+        bill.paid_amount = 0
+    
+    # Check if there are any other non-refunded receipts
+    non_refunded_receipts = [r for r in bill.receipts if not r.refunded]
+    if bill.paid_amount < bill.total_amount:
+        bill.is_paid = False
+        bill.paid_at = None
+    elif bill.paid_amount >= bill.total_amount and non_refunded_receipts:
+        # Still has non-refunded receipts covering the full amount
+        bill.is_paid = True
+    
+    db.commit()
+    
+    return {
+        "receipt_id": receipt.id,
+        "receipt_number": receipt.receipt_number,
+        "amount_refunded": receipt.amount_paid,
+        "refunded_at": receipt.refunded_at
+    }
+
+
+class AutoBillItem(BaseModel):
+    """Auto-calculated bill item"""
+    item_code: str
+    item_name: str
+    category: str
+    quantity: int = 1
+    unit_price: float
+    total_price: float
+    service_group: str  # Group: Lab, Scan, X-ray, Diagnose, Surgery, Pharmacy
+    
+    class Config:
+        from_attributes = True
+
+
+class AutoCalculateResponse(BaseModel):
+    """Auto-calculate bill items response"""
+    encounter_id: int
+    patient_insured: bool
+    items: List[AutoBillItem]
+    total_amount: float
+
+
+@router.get("/encounter/{encounter_id}/auto-calculate", response_model=AutoCalculateResponse)
+def auto_calculate_bill_items(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
+):
+    """Auto-calculate bill items. NOTE: Diagnoses are excluded for OPD consultations since the initial service request already covers the diagnosis billing."""
+    from app.models.diagnosis import Diagnosis
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    patient = encounter.patient
+    
+    # Determine if insured based on encounter CCC number
+    # If encounter has CCC number, client has active insurance, otherwise cash/carry
+    is_insured_encounter = encounter.ccc_number is not None and encounter.ccc_number.strip() != ""
+    
+    bill_items = []
+    
+    # NOTE: Diagnoses are excluded from auto-calculation for OPD consultations
+    # since the initial service request already covers the diagnosis billing.
+    # Get diagnoses with GDRG codes - DISABLED FOR OPD
+    # diagnoses = db.query(Diagnosis).filter(
+    #     Diagnosis.encounter_id == encounter_id,
+    #     Diagnosis.gdrg_code.isnot(None),
+    #     Diagnosis.gdrg_code != ''
+    # ).all()
+    # 
+    # for diagnosis in diagnoses:
+    #     if diagnosis.gdrg_code:
+    #         # Check if bill item already exists for this diagnosis
+    #         existing_item = db.query(BillItem).join(Bill).filter(
+    #             Bill.encounter_id == encounter_id,
+    #             BillItem.item_code == diagnosis.gdrg_code,
+    #             BillItem.category == "drg"
+    #         ).first()
+    #         
+    #         if not existing_item:
+    #             unit_price = get_price_from_all_tables(db, diagnosis.gdrg_code, is_insured_encounter)
+    #             if unit_price > 0:
+    #                 bill_items.append(AutoBillItem(
+    #                     item_code=diagnosis.gdrg_code,
+    #                     item_name=f"Diagnosis: {diagnosis.diagnosis}",
+    #                     category="drg",
+    #                     quantity=1,
+    #                     unit_price=unit_price,
+    #                     total_price=unit_price,
+    #                     service_group="Diagnose"
+    #                 ))
+    
+    return AutoCalculateResponse(
+        encounter_id=encounter_id,
+        patient_insured=is_insured_encounter,
+        items=bill_items,
+        total_amount=sum(item.total_price for item in bill_items)
+    )
+
+
+class RecalculateBillingRequest(BaseModel):
+    """Request to recalculate billing with insurance rates"""
+    ccc_number: str  # CCC number to update the encounter with
+
+
+class RecalculateBillingResponse(BaseModel):
+    """Response from recalculating billing"""
+    encounter_id: int
+    bills_updated: int
+    total_excess_payment: float  # Total excess payment that needs refund
+    bills_with_excess: List[dict]  # List of bills with excess payments
+    message: str
+
+
+@router.get("/encounter/{encounter_id}/opd-ccc")
+def get_opd_ccc_for_encounter(
+    encounter_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Billing"])),
+    _module_check: User = Depends(require_module_permission("billing", "read"))
+):
+    """Get CCC number from OPD consultation that led to this IPD admission (for auto-detection)"""
+    from sqlalchemy import func
+    from app.models.ward_admission import WardAdmission
+    from app.models.admission import AdmissionRecommendation
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Check if this is an IPD encounter (has ward admission)
+    ward_admission = db.query(WardAdmission).filter(
+        WardAdmission.encounter_id == encounter_id
+    ).first()
+    
+    ccc_number = None
+    opd_encounter_info = None
+    
+    if ward_admission:
+        # This is an IPD encounter - try to find OPD encounter via admission recommendation
+        admission_recommendation = db.query(AdmissionRecommendation).filter(
+            AdmissionRecommendation.encounter_id == encounter_id
+        ).first()
+        
+        if admission_recommendation and admission_recommendation.recommended_from_encounter_id:
+            # Get the OPD encounter that led to this admission
+            opd_encounter = db.query(Encounter).filter(
+                Encounter.id == admission_recommendation.recommended_from_encounter_id
+            ).first()
+            
+            if opd_encounter and opd_encounter.ccc_number:
+                ccc_number = opd_encounter.ccc_number
+                opd_encounter_info = {
+                    "id": opd_encounter.id,
+                    "department": opd_encounter.department,
+                    "created_at": opd_encounter.created_at.isoformat() if opd_encounter.created_at else None
+                }
+    
+    # Fallback: Look for OPD encounter with CCC for same patient on same day
+    if not ccc_number:
+        # Get all ward admission encounter IDs to exclude IPD encounters
+        ward_admission_encounter_ids = [wa[0] for wa in db.query(WardAdmission.encounter_id).filter(
+            WardAdmission.encounter_id.isnot(None)
+        ).all()]
+        
+        # Find OPD encounter with CCC for same patient today
+        opd_query = db.query(Encounter).filter(
+            Encounter.patient_id == encounter.patient_id,
+            Encounter.id != encounter_id,
+            Encounter.archived == False,
+            Encounter.ccc_number.isnot(None),
+            Encounter.ccc_number != "",
+            func.date(Encounter.created_at) == func.date(encounter.created_at)
+        )
+        
+        # Exclude IPD encounters
+        if ward_admission_encounter_ids:
+            opd_query = opd_query.filter(~Encounter.id.in_(ward_admission_encounter_ids))
+        
+        opd_encounter_with_ccc = opd_query.order_by(Encounter.created_at.desc()).first()
+        
+        if opd_encounter_with_ccc and opd_encounter_with_ccc.ccc_number:
+            ccc_number = opd_encounter_with_ccc.ccc_number
+            opd_encounter_info = {
+                "id": opd_encounter_with_ccc.id,
+                "department": opd_encounter_with_ccc.department,
+                "created_at": opd_encounter_with_ccc.created_at.isoformat() if opd_encounter_with_ccc.created_at else None
+            }
+    
+    return {
+        "ccc_number": ccc_number,
+        "opd_encounter": opd_encounter_info,
+        "found": ccc_number is not None
+    }
+
+
+@router.post("/encounter/{encounter_id}/recalculate-insurance", response_model=RecalculateBillingResponse)
+def recalculate_billing_with_insurance(
+    encounter_id: int,
+    request: RecalculateBillingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "update"))
+):
+    """Recalculate all bill items for an encounter using insurance co-payment rates instead of cash rates.
+    Works for both paid and unpaid bills. Returns excess payment information if bills were overpaid.
+    """
+    from app.models.diagnosis import Diagnosis
+    from sqlalchemy import func
+    
+    encounter = db.query(Encounter).filter(Encounter.id == encounter_id).first()
+    if not encounter:
+        raise HTTPException(status_code=404, detail="Encounter not found")
+    
+    # Verify patient is insured
+    if not encounter.patient or not encounter.patient.insured:
+        raise HTTPException(
+            status_code=400,
+            detail="Patient is not marked as insured. Cannot recalculate with insurance rates."
+        )
+    
+    # Update encounter CCC number
+    encounter.ccc_number = request.ccc_number.strip()
+    encounter.updated_at = utcnow()
+    
+    # Get all bills for this encounter (both paid and unpaid)
+    all_bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).all()
+    
+    if not all_bills:
+        raise HTTPException(
+            status_code=404,
+            detail="No bills found for this encounter"
+        )
+    
+    bills_updated = 0
+    total_excess_payment = 0.0
+    bills_with_excess = []
+    
+    # Recalculate each bill
+    for bill in all_bills:
+        old_total = bill.total_amount
+        old_paid = bill.paid_amount
+        
+        # Update bill insurance flag
+        bill.is_insured = True
+        
+        # Get all bill items for this bill
+        bill_items = db.query(BillItem).filter(BillItem.bill_id == bill.id).all()
+        
+        new_total = 0.0
+        
+        # Recalculate each bill item with insurance rates
+        for item in bill_items:
+            # Skip items that don't have item codes (miscellaneous items)
+            if not item.item_code or item.item_code == "MISC":
+                new_total += item.total_price
+                continue
+            
+            # Handle special IPD admission fee item
+            if item.item_code == "IPD-ADM-FEE":
+                # Admission fee: 50 for insured, 30 for non-insured
+                new_unit_price = 50.0
+                item.unit_price = new_unit_price
+                item.total_price = new_unit_price * item.quantity
+                # Update item name to reflect insured status
+                item.item_name = "IPD Admission Fee (Insured)"
+                new_total += item.total_price
+                continue
+            
+            # Determine if this is a product/prescription or a procedure/surgery
+            # Products use medication_code lookup, procedures use g_drg_code
+            is_product = item.category in ["product", "pharmacy"] or "Prescription:" in (item.item_name or "")
+            
+            # For procedures/surgeries, we might need procedure_name for exact matching
+            # For products, we should NOT pass procedure_name as it might interfere
+            procedure_name_for_lookup = None
+            if not is_product and item.item_name:
+                # For procedures, try to extract the procedure name
+                # But for now, let's not pass it to avoid mismatches
+                procedure_name_for_lookup = None
+            
+            # Get new price using insurance co-payment rates
+            new_unit_price = get_price_from_all_tables(
+                db,
+                item.item_code,
+                is_insured=True,  # Now using insurance rates
+                service_type=encounter.department if not is_product else None,  # Don't pass service_type for products
+                procedure_name=procedure_name_for_lookup
+            )
+            
+            # Log the price lookup result for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Recalculating item: code='{item.item_code}', category='{item.category}', "
+                f"old_price={item.unit_price}, new_price={new_unit_price}, "
+                f"is_insured=True, is_product={is_product}"
+            )
+            
+            # If price lookup returned 0 and we couldn't find the item, that's a problem
+            # But if co-payment is legitimately 0 (free for insured), that's correct
+            # We'll trust the price lookup result
+            
+            # Update item prices
+            item.unit_price = new_unit_price
+            item.total_price = new_unit_price * item.quantity
+            new_total += item.total_price
+        
+        # Update bill total
+        bill.total_amount = new_total
+        
+        # Check for excess payment
+        if old_paid > new_total:
+            excess = old_paid - new_total
+            total_excess_payment += excess
+            bills_with_excess.append({
+                "bill_id": bill.id,
+                "bill_number": bill.bill_number,
+                "old_total": old_total,
+                "new_total": new_total,
+                "paid_amount": old_paid,
+                "excess_payment": excess,
+                "is_paid": bill.is_paid
+            })
+        
+        # Update bill payment status
+        if bill.paid_amount > bill.total_amount:
+            bill.paid_amount = bill.total_amount
+        
+        if bill.paid_amount >= bill.total_amount and bill.total_amount > 0:
+            bill.is_paid = True
+        else:
+            bill.is_paid = False
+        
+        bills_updated += 1
+    
+    db.commit()
+    
+    message = f"Successfully recalculated {bills_updated} bill(s) with insurance rates."
+    if total_excess_payment > 0:
+        message += f" Total excess payment: ₵{total_excess_payment:.2f} requires refund."
+    
+    return RecalculateBillingResponse(
+        encounter_id=encounter_id,
+        bills_updated=bills_updated,
+        total_excess_payment=total_excess_payment,
+        bills_with_excess=bills_with_excess,
+        message=message
+    )

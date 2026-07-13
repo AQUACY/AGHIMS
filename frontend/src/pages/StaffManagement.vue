@@ -1,0 +1,763 @@
+<template>
+  <q-page class="q-pa-md">
+    <div class="text-h4 q-mb-md text-weight-bold glass-text">Staff Management</div>
+    <q-banner class="glass-card q-pa-md q-mb-md">
+      <template v-slot:avatar>
+        <q-icon name="info" color="primary" />
+      </template>
+      Create and manage staff accounts. You can create individual accounts or import multiple staff members from an Excel file.
+    </q-banner>
+
+    <!-- Create New Staff -->
+    <q-card class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-md glass-text">Create New Staff</div>
+        <q-form @submit="createStaff" ref="createForm">
+          <div class="row q-gutter-md">
+            <q-input
+              v-model="staffForm.username"
+              label="Username *"
+              filled
+              class="col-12 col-md-6"
+              lazy-rules
+              :rules="[(val) => !!val || 'Username is required']"
+            />
+            <q-input
+              v-model="staffForm.email"
+              label="Email"
+              type="email"
+              filled
+              class="col-12 col-md-6"
+            />
+            <q-input
+              v-model="staffForm.full_name"
+              label="Full Name"
+              filled
+              class="col-12 col-md-6"
+            />
+            <q-input
+              v-model="staffForm.password"
+              label="Password *"
+              type="password"
+              filled
+              class="col-12 col-md-6"
+              lazy-rules
+              :rules="[(val) => !!val || 'Password is required']"
+            />
+            <q-select
+              v-model="staffForm.role"
+              :options="roleOptions"
+              label="Role *"
+              filled
+              class="col-12 col-md-6"
+              lazy-rules
+              :rules="[(val) => !!val || 'Role is required']"
+            />
+            <q-toggle
+              v-model="staffForm.is_active"
+              label="Active"
+              class="col-12 col-md-6"
+            />
+            <div class="col-12">
+              <q-btn
+                type="submit"
+                color="primary"
+                label="Create Staff"
+                :loading="creating"
+                icon="person_add"
+              />
+              <q-btn
+                flat
+                label="Reset"
+                @click="resetForm"
+                class="q-ml-sm"
+              />
+            </div>
+          </div>
+        </q-form>
+      </q-card-section>
+    </q-card>
+
+    <!-- Import Staff from Excel -->
+    <q-card class="q-mb-md">
+      <q-card-section>
+        <div class="text-h6 q-mb-md">Import Staff from Excel</div>
+        <div class="row q-gutter-md">
+          <q-file
+            v-model="importFile"
+            label="Select Excel File (.xlsx, .xls)"
+            accept=".xlsx,.xls"
+            filled
+            class="col-12 col-md-8"
+          >
+            <template v-slot:prepend>
+              <q-icon name="attach_file" />
+            </template>
+          </q-file>
+          <q-input
+            v-model="defaultPassword"
+            label="Default Password"
+            type="password"
+            filled
+            class="col-12 col-md-4"
+            hint="Password for imported staff"
+          />
+          <div class="col-12">
+            <q-btn
+              color="primary"
+              label="Import Staff"
+              @click="importStaff"
+              :loading="importing"
+              :disable="!importFile"
+              icon="upload"
+            />
+          </div>
+        </div>
+        <div class="q-mt-md">
+          <q-banner class="bg-grey-2">
+            <div class="text-caption">
+              <strong>Excel File Format:</strong><br/>
+              Required columns: <strong>username</strong>, <strong>full_name</strong>, <strong>role</strong><br/>
+              Optional columns: <strong>Email</strong>, <strong>is_active</strong> (1 or 0, default: 1)<br/>
+              <br/>
+              <strong>Roles:</strong> Records, Nurse, Doctor, PA, Billing, Pharmacist, Lab, Claims, Auditor, Admin<br/>
+              <br/>
+              <strong>Note:</strong> All imported staff will have the same default password (changeable after login).
+            </div>
+          </q-banner>
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <!-- Staff List -->
+    <q-card>
+      <q-card-section>
+        <div class="text-h6 q-mb-md">Staff Members</div>
+        <div class="row q-gutter-md q-mb-md">
+          <q-input
+            v-model="searchTerm"
+            filled
+            label="Search by username, name, or email"
+            class="col-12 col-md-6"
+            clearable
+            @keyup.enter="loadStaff"
+            @clear="loadStaff"
+          >
+            <template v-slot:append>
+              <q-icon name="search" />
+            </template>
+          </q-input>
+          <div class="col-12 col-md-6 text-right">
+            <q-btn
+              color="primary"
+              label="Refresh"
+              @click="loadStaff"
+              icon="refresh"
+            />
+          </div>
+        </div>
+        <q-table
+          :rows="filteredStaff"
+          :columns="columns"
+          :loading="loading"
+          row-key="id"
+          :pagination="pagination"
+        >
+          <template v-slot:body-cell-role="props">
+            <q-td :props="props">
+              <q-badge :color="getRoleColor(props.value)" :label="props.value" />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-additional_roles="props">
+            <q-td :props="props">
+              <div class="q-gutter-xs">
+                <q-badge
+                  v-for="role in (props.row.additional_roles || [])"
+                  :key="role"
+                  :color="getRoleColor(role)"
+                  :label="role"
+                  class="q-mr-xs"
+                />
+                <span v-if="!props.row.additional_roles || props.row.additional_roles.length === 0" class="text-grey-6 text-caption">None</span>
+              </div>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-is_active="props">
+            <q-td :props="props">
+              <q-badge
+                :color="props.value ? 'positive' : 'negative'"
+                :label="props.value ? 'Active' : 'Inactive'"
+              />
+            </q-td>
+          </template>
+          <template v-slot:body-cell-actions="props">
+            <q-td :props="props">
+              <q-btn
+                flat
+                dense
+                round
+                icon="edit"
+                color="primary"
+                @click="openEditDialog(props.row)"
+                size="sm"
+              >
+                <q-tooltip>Edit Staff</q-tooltip>
+              </q-btn>
+              <q-btn
+                flat
+                dense
+                round
+                icon="badge"
+                color="secondary"
+                @click="openManageRolesDialog(props.row)"
+                size="sm"
+              >
+                <q-tooltip>Manage Roles</q-tooltip>
+              </q-btn>
+              <q-btn
+                flat
+                dense
+                round
+                icon="delete"
+                color="negative"
+                @click="confirmDelete(props.row)"
+                size="sm"
+                :disable="props.row.id === currentUser?.id"
+              >
+                <q-tooltip>Delete Staff</q-tooltip>
+              </q-btn>
+            </q-td>
+          </template>
+        </q-table>
+      </q-card-section>
+    </q-card>
+
+    <!-- Edit Dialog -->
+    <q-dialog v-model="showEditDialog">
+      <q-card style="min-width: 500px">
+        <q-card-section>
+          <div class="text-h6">Edit Staff</div>
+        </q-card-section>
+        <q-card-section>
+          <q-form @submit="updateStaff">
+            <div class="row q-gutter-md">
+              <q-input
+                v-model="editForm.username"
+                label="Username *"
+                filled
+                class="col-12"
+                lazy-rules
+                :rules="[(val) => !!val || 'Username is required']"
+              />
+              <q-input
+                v-model="editForm.email"
+                label="Email"
+                type="email"
+                filled
+                class="col-12"
+              />
+              <q-input
+                v-model="editForm.full_name"
+                label="Full Name"
+                filled
+                class="col-12"
+              />
+              <q-input
+                v-model="editForm.password"
+                label="New Password (leave blank to keep current)"
+                type="password"
+                filled
+                class="col-12"
+              />
+              <q-select
+                v-model="editForm.role"
+                :options="roleOptions"
+                label="Role *"
+                filled
+                class="col-12"
+                lazy-rules
+                :rules="[(val) => !!val || 'Role is required']"
+              />
+              <q-toggle
+                v-model="editForm.is_active"
+                label="Active"
+                class="col-12"
+              />
+            </div>
+            <div class="q-mt-md">
+              <q-btn
+                type="submit"
+                color="primary"
+                label="Update"
+                :loading="updating"
+              />
+              <q-btn
+                flat
+                label="Cancel"
+                @click="showEditDialog = false"
+                class="q-ml-sm"
+              />
+            </div>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Manage Roles Dialog -->
+    <q-dialog v-model="showManageRolesDialog">
+      <q-card style="min-width: 500px">
+        <q-card-section>
+          <div class="text-h6">Manage Additional Roles</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+            {{ selectedUserForRoles?.full_name || selectedUserForRoles?.username }} (Primary: {{ selectedUserForRoles?.role }})
+          </div>
+        </q-card-section>
+        <q-card-section>
+          <div class="q-mb-md">
+            <div class="text-subtitle2 q-mb-sm">Current Additional Roles:</div>
+            <div v-if="userAdditionalRoles.length === 0" class="text-grey-6 text-caption q-mb-md">No additional roles assigned</div>
+            <div v-else class="q-gutter-xs q-mb-md">
+              <q-chip
+                v-for="role in userAdditionalRoles"
+                :key="role.id"
+                :color="getRoleColor(role.role)"
+                text-color="white"
+                removable
+                @remove="removeRole(role.id)"
+              >
+                {{ role.role }}
+              </q-chip>
+            </div>
+          </div>
+          
+          <q-separator class="q-mb-md" />
+          
+          <div>
+            <div class="text-subtitle2 q-mb-sm">Add New Role:</div>
+            <q-select
+              v-model="newRoleToAdd"
+              :options="availableRolesForUser"
+              label="Select Role to Add"
+              filled
+              clearable
+              @update:model-value="addRole"
+            >
+              <template v-slot:no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No available roles to add
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="primary" @click="showManageRolesDialog = false" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+  </q-page>
+</template>
+
+<script>
+import { ref, reactive, computed, onMounted } from 'vue';
+import { useQuasar } from 'quasar';
+import { staffAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
+
+export default {
+  name: 'StaffManagement',
+  setup() {
+    const $q = useQuasar();
+    const authStore = useAuthStore();
+    const currentUser = computed(() => authStore.user);
+
+    const loading = ref(false);
+    const creating = ref(false);
+    const updating = ref(false);
+    const importing = ref(false);
+    const staff = ref([]);
+    const searchTerm = ref('');
+    const importFile = ref(null);
+    const defaultPassword = ref('password123');
+    const showEditDialog = ref(false);
+    const showManageRolesDialog = ref(false);
+    const createForm = ref(null);
+    const selectedUserForRoles = ref(null);
+    const userAdditionalRoles = ref([]);
+    const newRoleToAdd = ref(null);
+    const loadingRoles = ref(false);
+
+    const roleOptions = [
+      'Lab Head',
+      'Scan Head',
+      'Xray Head',
+      'Records',
+      'Nurse',
+      'Doctor',
+      'PA',
+      'Anaesthetist',
+      'Billing',
+      'Management',
+      'Pharmacy',
+      'Pharmacy Head',
+      'Store Manager',
+      'Lab',
+      'Scan',
+      'Xray',
+      'Claims',
+      'Auditor',
+      'Admin'
+    ];
+
+    const columns = [
+      { name: 'id', label: 'ID', field: 'id', align: 'left', sortable: true },
+      { name: 'username', label: 'Username', field: 'username', align: 'left', sortable: true },
+      { name: 'full_name', label: 'Full Name', field: 'full_name', align: 'left', sortable: true },
+      { name: 'email', label: 'Email', field: 'email', align: 'left', sortable: true },
+      { name: 'role', label: 'Primary Role', field: 'role', align: 'left', sortable: true },
+      { name: 'additional_roles', label: 'Additional Roles', field: 'additional_roles', align: 'left', sortable: false },
+      { name: 'is_active', label: 'Status', field: 'is_active', align: 'center', sortable: true },
+      { name: 'actions', label: 'Actions', field: 'actions', align: 'center' },
+    ];
+
+    const pagination = {
+      rowsPerPage: 20,
+    };
+
+    const staffForm = reactive({
+      username: '',
+      email: '',
+      full_name: '',
+      password: '',
+      role: '',
+      is_active: true,
+    });
+
+    const editForm = reactive({
+      id: null,
+      username: '',
+      email: '',
+      full_name: '',
+      password: '',
+      role: '',
+      is_active: true,
+    });
+
+    const filteredStaff = computed(() => {
+      if (!searchTerm.value) {
+        return staff.value;
+      }
+      const search = searchTerm.value.toLowerCase();
+      return staff.value.filter(
+        (s) =>
+          s.username?.toLowerCase().includes(search) ||
+          s.full_name?.toLowerCase().includes(search) ||
+          s.email?.toLowerCase().includes(search)
+      );
+    });
+
+    const getRoleColor = (role) => {
+      const colors = {
+        Admin: 'red',
+        Doctor: 'blue',
+        PA: 'indigo',
+        Anaesthetist: 'purple',
+        Nurse: 'green',
+        Lab: 'orange',
+        'Lab Head': 'deep-orange',
+        Scan: 'amber',
+        'Scan Head': 'orange',
+        Xray: 'lime',
+        'Xray Head': 'light-green',
+        Pharmacy: 'pink',
+        'Pharmacy Head': 'purple',
+        'Store Manager': 'deep-purple',
+        Billing: 'teal',
+        Management: 'blue-grey',
+        Claims: 'cyan',
+        Auditor: 'brown',
+        Records: 'grey',
+      };
+      return colors[role] || 'grey';
+    };
+
+    const loadStaff = async () => {
+      loading.value = true;
+      try {
+        const response = await staffAPI.getAll();
+        staff.value = response.data || [];
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to load staff: ' + (error.response?.data?.detail || error.message),
+        });
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    const createStaff = async () => {
+      if (!createForm.value) return;
+      const valid = await createForm.value.validate();
+      if (!valid) return;
+
+      creating.value = true;
+      try {
+        await staffAPI.create(staffForm);
+        $q.notify({
+          type: 'positive',
+          message: 'Staff member created successfully',
+        });
+        resetForm();
+        loadStaff();
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to create staff: ' + (error.response?.data?.detail || error.message),
+        });
+      } finally {
+        creating.value = false;
+      }
+    };
+
+    const resetForm = () => {
+      staffForm.username = '';
+      staffForm.email = '';
+      staffForm.full_name = '';
+      staffForm.password = '';
+      staffForm.role = '';
+      staffForm.is_active = true;
+      if (createForm.value) {
+        createForm.value.resetValidation();
+      }
+    };
+
+    const openEditDialog = (row) => {
+      editForm.id = row.id;
+      editForm.username = row.username || '';
+      editForm.email = row.email || '';
+      editForm.full_name = row.full_name || '';
+      editForm.password = '';
+      editForm.role = row.role || '';
+      editForm.is_active = row.is_active ?? true;
+      showEditDialog.value = true;
+    };
+
+    const openManageRolesDialog = async (row) => {
+      selectedUserForRoles.value = row;
+      loadingRoles.value = true;
+      try {
+        const response = await staffAPI.getUserRoles(row.id);
+        userAdditionalRoles.value = response.data || [];
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to load roles: ' + (error.response?.data?.detail || error.message),
+        });
+        userAdditionalRoles.value = [];
+      } finally {
+        loadingRoles.value = false;
+      }
+      showManageRolesDialog.value = true;
+    };
+
+    const availableRolesForUser = computed(() => {
+      if (!selectedUserForRoles.value) return [];
+      const primaryRole = selectedUserForRoles.value.role;
+      const existingAdditionalRoles = userAdditionalRoles.value.map(ur => ur.role);
+      return roleOptions.filter(role => role !== primaryRole && !existingAdditionalRoles.includes(role));
+    });
+
+    const addRole = async (role) => {
+      if (!role || !selectedUserForRoles.value) return;
+      
+      try {
+        await staffAPI.addUserRole(selectedUserForRoles.value.id, role);
+        $q.notify({
+          type: 'positive',
+          message: `Role '${role}' added successfully`,
+        });
+        // Reload roles
+        const response = await staffAPI.getUserRoles(selectedUserForRoles.value.id);
+        userAdditionalRoles.value = response.data || [];
+        // Reload staff list to update the table
+        await loadStaff();
+        newRoleToAdd.value = null;
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to add role: ' + (error.response?.data?.detail || error.message),
+        });
+      }
+    };
+
+    const removeRole = async (roleId) => {
+      if (!selectedUserForRoles.value) return;
+      
+      $q.dialog({
+        title: 'Remove Role',
+        message: 'Are you sure you want to remove this role?',
+        cancel: true,
+        persistent: true,
+      }).onOk(async () => {
+        try {
+          await staffAPI.removeUserRole(selectedUserForRoles.value.id, roleId);
+          $q.notify({
+            type: 'positive',
+            message: 'Role removed successfully',
+          });
+          // Reload roles
+          const response = await staffAPI.getUserRoles(selectedUserForRoles.value.id);
+          userAdditionalRoles.value = response.data || [];
+          // Reload staff list to update the table
+          await loadStaff();
+        } catch (error) {
+          $q.notify({
+            type: 'negative',
+            message: 'Failed to remove role: ' + (error.response?.data?.detail || error.message),
+          });
+        }
+      });
+    };
+
+    const updateStaff = async () => {
+      updating.value = true;
+      try {
+        const updateData = {
+          username: editForm.username,
+          email: editForm.email,
+          full_name: editForm.full_name,
+          role: editForm.role,
+          is_active: editForm.is_active,
+        };
+        if (editForm.password) {
+          updateData.password = editForm.password;
+        }
+        await staffAPI.update(editForm.id, updateData);
+        $q.notify({
+          type: 'positive',
+          message: 'Staff member updated successfully',
+        });
+        showEditDialog.value = false;
+        loadStaff();
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to update staff: ' + (error.response?.data?.detail || error.message),
+        });
+      } finally {
+        updating.value = false;
+      }
+    };
+
+    const confirmDelete = (row) => {
+      if (row.id === currentUser.value?.id) {
+        $q.notify({
+          type: 'warning',
+          message: 'You cannot delete your own account',
+        });
+        return;
+      }
+      $q.dialog({
+        title: 'Confirm Delete',
+        message: `Are you sure you want to deactivate ${row.username}?`,
+        cancel: true,
+        persistent: true,
+      }).onOk(async () => {
+        try {
+          await staffAPI.delete(row.id);
+          $q.notify({
+            type: 'positive',
+            message: 'Staff member deactivated successfully',
+          });
+          loadStaff();
+        } catch (error) {
+          $q.notify({
+            type: 'negative',
+            message: 'Failed to delete staff: ' + (error.response?.data?.detail || error.message),
+          });
+        }
+      });
+    };
+
+    const importStaff = async () => {
+      if (!importFile.value) {
+        $q.notify({
+          type: 'warning',
+          message: 'Please select an Excel file',
+        });
+        return;
+      }
+
+      importing.value = true;
+      try {
+        const response = await staffAPI.import(importFile.value, defaultPassword.value);
+        $q.dialog({
+          title: 'Import Complete',
+          message: `Successfully imported ${response.data.imported?.length || 0} staff member(s).${
+            response.data.errors?.length > 0
+              ? `\n\nErrors:\n${response.data.errors.join('\n')}`
+              : ''
+          }`,
+          persistent: true,
+        });
+        importFile.value = null;
+        loadStaff();
+      } catch (error) {
+        $q.notify({
+          type: 'negative',
+          message: 'Failed to import staff: ' + (error.response?.data?.detail || error.message),
+        });
+      } finally {
+        importing.value = false;
+      }
+    };
+
+    onMounted(() => {
+      loadStaff();
+    });
+
+    return {
+      loading,
+      creating,
+      updating,
+      importing,
+      staff,
+      searchTerm,
+      importFile,
+      defaultPassword,
+      showEditDialog,
+      createForm,
+      roleOptions,
+      columns,
+      pagination,
+      staffForm,
+      editForm,
+      filteredStaff,
+      currentUser,
+      getRoleColor,
+      loadStaff,
+      createStaff,
+      resetForm,
+      openEditDialog,
+      updateStaff,
+      confirmDelete,
+      importStaff,
+      openManageRolesDialog,
+      addRole,
+      removeRole,
+      availableRolesForUser,
+      userAdditionalRoles,
+      newRoleToAdd,
+      loadingRoles,
+      showManageRolesDialog,
+    };
+  },
+};
+</script>
+
+<style scoped>
+</style>
+

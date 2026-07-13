@@ -1,0 +1,155 @@
+import { defineStore } from 'pinia';
+import { patientsAPI } from '../services/api';
+import { Notify } from 'quasar';
+
+export const usePatientsStore = defineStore('patients', {
+  state: () => ({
+    currentPatient: null,
+    searchResults: [],
+  }),
+
+  actions: {
+    async fetchRegistrationConfig() {
+      const response = await patientsAPI.getRegistrationConfig();
+      return response.data;
+    },
+
+    async validateRegistration(patientData) {
+      const response = await patientsAPI.validateRegistration(patientData);
+      return response.data;
+    },
+
+    async createPatient(patientData) {
+      try {
+        const response = await patientsAPI.create(patientData);
+        Notify.create({
+          type: 'positive',
+          message: 'Patient registered successfully',
+          position: 'top',
+        });
+        return response.data;
+      } catch (error) {
+        const detail = error.response?.data?.detail;
+        if (error.response?.status === 409 && detail && typeof detail === 'object') {
+          const err = new Error(detail.message || 'Registration blocked');
+          err.validation = detail;
+          throw err;
+        }
+        Notify.create({
+          type: 'negative',
+          message: typeof detail === 'string' ? detail : 'Failed to register patient',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async getPatientByCard(cardNumber) {
+      try {
+        const response = await patientsAPI.getByCard(cardNumber);
+        // API returns a list, so take the first result
+        const patients = response.data || [];
+        if (patients.length > 0) {
+          this.currentPatient = patients[0];
+          return patients[0];
+        } else {
+          this.currentPatient = null;
+          Notify.create({
+            type: 'warning',
+            message: 'No patient found with this card number',
+            position: 'top',
+          });
+          return null;
+        }
+      } catch (error) {
+        if (error.response?.status === 404) {
+          this.currentPatient = null;
+          Notify.create({
+            type: 'warning',
+            message: 'No patient found with this card number',
+            position: 'top',
+          });
+          return null;
+        }
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to fetch patient',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async updatePatient(patientId, patientData) {
+      try {
+        const response = await patientsAPI.update(patientId, patientData);
+        Notify.create({
+          type: 'positive',
+          message: 'Patient updated successfully',
+          position: 'top',
+        });
+        return response.data;
+      } catch (error) {
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to update patient',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async lookupNhia(insuranceId, otac = null) {
+      try {
+        const response = await patientsAPI.lookupNhia(insuranceId, otac);
+        return response.data;
+      } catch (error) {
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to fetch NHIA member data',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async generateCcc(patientId, otac = null) {
+      try {
+        const response = await patientsAPI.generateCcc(patientId, otac);
+        Notify.create({
+          type: 'positive',
+          message: response.data?.message || 'CCC generated successfully',
+          position: 'top',
+        });
+        return response.data;
+      } catch (error) {
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to generate CCC',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+
+    async createEncounter(patientId, serviceType, cccNumber = null, procedureGDrgCode = null, procedureName = null) {
+      try {
+        const response = await patientsAPI.createEncounter(patientId, serviceType, cccNumber, procedureGDrgCode, procedureName);
+        Notify.create({
+          type: 'positive',
+          message: 'Encounter created successfully',
+          position: 'top',
+        });
+        return response.data;
+      } catch (error) {
+        Notify.create({
+          type: 'negative',
+          message: error.response?.data?.detail || 'Failed to create encounter',
+          position: 'top',
+        });
+        throw error;
+      }
+    },
+  },
+});
+

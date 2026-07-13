@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HMS License Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    label { display: block; margin-top: 0.75rem; font-weight: 600; }
+    input, textarea { width: 100%; padding: 0.5rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    pre { background: #111; color: #eee; padding: 1rem; overflow: auto; font-size: 12px; }
+    .err { color: #b00; }
+    .ok { color: #060; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ccc; padding: 0.35rem 0.5rem; text-align: left; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>HMS License Portal</h1>
+  <p>This application uses a <strong>separate database</strong> from the hospital HMS. RSA private keys stay on this server only.</p>
+
+  <section id="login-section">
+    <h2>Sign in</h2>
+    <label>Username <input id="username" type="text" autocomplete="username" /></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
+    <button type="button" id="btn-login">Login</button>
+    <p id="login-msg" class="err"></p>
+  </section>
+
+  <section id="app-section" style="display:none;">
+    <p>Signed in. <button type="button" id="btn-logout">Logout</button></p>
+
+    <h2>Create license</h2>
+    <label>Customer label <input id="cust" type="text" placeholder="Hospital name" /></label>
+    <label>Facility code (optional, must match HMS facility code if set) <input id="fc" type="text" /></label>
+    <label>Valid from <input id="vf" type="datetime-local" /></label>
+    <label>Valid until <input id="vu" type="datetime-local" /></label>
+    <label>Notes <textarea id="notes" rows="2"></textarea></label>
+    <button type="button" id="btn-create">Create</button>
+    <p id="create-msg"></p>
+
+    <h2>Licenses</h2>
+    <button type="button" id="btn-refresh">Refresh list</button>
+    <div id="list-wrap"></div>
+  </section>
+
+  <script>
+    const api = (path, opts = {}) => {
+      const base = '/api';
+      return fetch(base + path, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(opts.headers || {}),
+        },
+      }).then(async (r) => {
+        const t = await r.text();
+        let j = null;
+        try { j = JSON.parse(t); } catch (_) {}
+        if (!r.ok) throw new Error((j && j.detail) || t || r.statusText);
+        return j;
+      });
+    };
+
+    let token = localStorage.getItem('license_portal_token') || '';
+
+    function setToken(t) {
+      token = t || '';
+      if (token) localStorage.setItem('license_portal_token', token);
+      else localStorage.removeItem('license_portal_token');
+    }
+
+    function authHeaders() {
+      return token ? { Authorization: 'Bearer ' + token } : {};
+    }
+
+    async function login() {
+      document.getElementById('login-msg').textContent = '';
+      const body = new URLSearchParams();
+      body.set('username', document.getElementById('username').value.trim());
+      body.set('password', document.getElementById('password').value);
+      const r = await fetch('/api/portal/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+      const t = await r.text();
+      let j = null;
+      try { j = JSON.parse(t); } catch (_) {}
+      if (!r.ok) {
+        document.getElementById('login-msg').textContent = (j && j.detail) || t || 'Login failed';
+        return;
+      }
+      setToken(j.access_token);
+      document.getElementById('login-section').style.display = 'none';
+      document.getElementById('app-section').style.display = 'block';
+      loadList();
+    }
+
+    async function loadList() {
+      const wrap = document.getElementById('list-wrap');
+      wrap.textContent = 'Loading…';
+      const rows = await api('/portal/licenses', { headers: authHeaders() });
+      if (!rows.length) {
+        wrap.innerHTML = '<p>No licenses yet.</p>';
+        return;
+      }
+      let html = '<table><thead><tr><th>ID</th><th>Customer</th><th>Facility</th><th>Until</th><th>Download</th></tr></thead><tbody>';
+      for (const row of rows) {
+        const id = row.license_id;
+        html += `<tr><td><code>${id.slice(0, 8)}…</code></td><td>${escapeHtml(row.customer_label)}</td><td>${escapeHtml(row.facility_code || '')}</td><td>${row.valid_until}</td><td><a href="#" data-id="${id}">signed.json</a></td></tr>`;
+      }
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
+      wrap.querySelectorAll('a[data-id]').forEach((a) => {
+        a.addEventListener('click', async (e) => {
+          e.preventDefault();
+          const id = a.getAttribute('data-id');
+          const doc = await api('/portal/licenses/' + encodeURIComponent(id) + '/signed.json', { headers: authHeaders() });
+          const pre = document.createElement('pre');
+          pre.textContent = JSON.stringify(doc, null, 2);
+          wrap.appendChild(document.createElement('hr'));
+          wrap.appendChild(pre);
+        });
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function createLicense() {
+      const msg = document.getElementById('create-msg');
+      msg.textContent = '';
+      const vf = document.getElementById('vf').value;
+      const vu = document.getElementById('vu').value;
+      if (!vf || !vu) {
+        msg.textContent = 'Set valid from / until.';
+        msg.className = 'err';
+        return;
+      }
+      const payload = {
+        customer_label: document.getElementById('cust').value.trim(),
+        facility_code: document.getElementById('fc').value.trim() || null,
+        valid_from: new Date(vf).toISOString(),
+        valid_until: new Date(vu).toISOString(),
+        notes: document.getElementById('notes').value.trim() || null,
+      };
+      try {
+        await api('/portal/licenses', { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+        msg.textContent = 'Created.';
+        msg.className = 'ok';
+        loadList();
+      } catch (e) {
+        msg.textContent = e.message || String(e);
+        msg.className = 'err';
+      }
+    }
+
+    document.getElementById('btn-login').addEventListener('click', login);
+    document.getElementById('btn-logout').addEventListener('click', () => {
+      setToken('');
+      document.getElementById('app-section').style.display = 'none';
+      document.getElementById('login-section').style.display = 'block';
+    });
+    document.getElementById('btn-create').addEventListener('click', createLicense);
+    document.getElementById('btn-refresh').addEventListener('click', loadList);
+
+    if (token) {
+      document.getElementById('login-section').style.display = 'none';
+      document.getElementById('app-section').style.display = 'block';
+      loadList().catch(() => {
+        setToken('');
+        document.getElementById('login-section').style.display = 'block';
+        document.getElementById('app-section').style.display = 'none';
+      });
+    }
+  </script>
+</body>
+</html>
