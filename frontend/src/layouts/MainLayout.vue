@@ -324,6 +324,38 @@
               <q-item-label>Import GHIMS XML</q-item-label>
             </q-item-section>
           </q-item>
+
+          <q-item
+            :clickable="isModuleActive('price_list')"
+            v-ripple
+            :to="isModuleActive('price_list') ? { name: 'ClaimsPriceListManagement' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('price_list') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('price_list') && $q.notify({ type: 'warning', message: 'Price list module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="price_check" :class="{ 'text-grey-6': !isModuleActive('price_list') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Price List Management</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
+            :clickable="isModuleActive('icd10_mapping')"
+            v-ripple
+            :to="isModuleActive('icd10_mapping') ? { name: 'ClaimsIcd10DrgMapping' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('icd10_mapping') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('icd10_mapping') && $q.notify({ type: 'warning', message: 'ICD-10 mapping module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="medical_information" :class="{ 'text-grey-6': !isModuleActive('icd10_mapping') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>ICD-10 DRG Mapping</q-item-label>
+            </q-item-section>
+          </q-item>
         </template>
 
         <template v-else>

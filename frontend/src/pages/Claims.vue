@@ -90,6 +90,40 @@
           </q-card-section>
         </q-card>
       </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
+          @click="$router.push('/claims/price-list')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="price_check" size="64px" color="primary" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Price List Management</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Manage service tariffs and NHIA price list entries used for claims.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
+          @click="$router.push('/claims/icd10-drg-mapping')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="medical_information" size="64px" color="indigo" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">ICD-10 DRG Mapping</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Map ICD-10 diagnoses to G-DRG codes for claim coding.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
   </q-page>
 </template>

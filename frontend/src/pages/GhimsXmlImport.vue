@@ -320,6 +320,7 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import { setGhimsNavIds } from '../utils/claimNav';
 
 const $route = useRoute();
 const $router = useRouter();
@@ -677,16 +678,27 @@ async function refreshCurrentBatch() {
   }
 }
 
+function storeGhimsFilteredNav() {
+  // Always navigate the currently filtered set (never the full unfiltered batch).
+  setGhimsNavIds(
+    filteredClaims.value
+      .map((r) => Number(r.id))
+      .filter((id) => Number.isFinite(id) && id > 0)
+  );
+}
+
 function editImportedClaim(row) {
   if (!row?.id) return;
   if (row.status === 'finalized') {
     $q.notify({ type: 'warning', message: 'Finalized imported claims cannot be edited' });
     return;
   }
+  storeGhimsFilteredNav();
   const route = $router.resolve({ path: `/claims/ghims-import/item/${row.id}` });
   window.open(route.href, '_blank');
 }
 function viewImportedClaim(row) {
+  storeGhimsFilteredNav();
   const route = $router.resolve({ path: `/claims/ghims-import/item/${row.id}` });
   window.open(route.href, '_blank');
 }

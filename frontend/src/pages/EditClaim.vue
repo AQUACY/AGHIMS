@@ -1,8 +1,31 @@
 <template>
   <q-page class="q-pa-md" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
-    <div class="row items-center q-mb-md">
+    <div class="row items-center q-mb-md q-col-gutter-sm">
       <div class="text-h4">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
       <q-space />
+      <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
+        <q-btn
+          outline
+          color="primary"
+          icon="chevron_left"
+          label="Previous"
+          dense
+          :disable="!claimNav.prevId || loading"
+          @click="goToAdjacentClaim(claimNav.prevId)"
+        />
+        <span class="text-body2 text-grey-8 text-weight-medium q-px-sm claim-nav-position">
+          {{ claimNav.position }} of {{ claimNav.total }}
+        </span>
+        <q-btn
+          outline
+          color="primary"
+          icon-right="chevron_right"
+          label="Next"
+          dense
+          :disable="!claimNav.nextId || loading"
+          @click="goToAdjacentClaim(claimNav.nextId)"
+        />
+      </div>
       <q-btn
         color="secondary"
         label="Back to Claims"
@@ -1087,6 +1110,7 @@ import {
   normalizeInsuranceCovered,
   claimLineRowClass,
 } from '../utils/claimMedicineCoverage';
+import { getClaimsNavPosition } from '../utils/claimNav';
 
 const facilityStore = useFacilityStore();
 const $route = useRoute();
@@ -1101,7 +1125,6 @@ const patientNhiaMeta = ref({ insured: false, nhis_active: false });
 const claimId = ref(null);
 const claimStatus = ref('draft');
 const isViewMode = ref(false);
-const route = useRoute();
 /** Snapshot of last saved claim payload (JSON) for change detection in view mode */
 const lastSavedClaimPayload = ref(null);
 
@@ -2458,24 +2481,38 @@ const saveClaim = async (e) => {
 };
 
 onMounted(async () => {
-  claimId.value = parseInt(route.params.claimId);
-  if (!claimId.value) {
-    $q.notify({
-      type: 'negative',
-      message: 'Invalid claim ID',
-    });
-    $router.push('/claims');
-    return;
-  }
-  // View mode from query (main claims list uses View → view=true; vetting can view read-only, then Reopen to edit)
-  isViewMode.value = route.query.view === 'true';
-
   await facilityStore.fetchPublic();
   providerInfo.provider_name = facilityStore.displayName;
-
-  await loadClaimData();
-  lastSavedClaimPayload.value = JSON.stringify(buildClaimPayload());
 });
+
+const claimNav = computed(() => getClaimsNavPosition(claimId.value));
+
+function goToAdjacentClaim(targetId) {
+  if (!targetId || loading.value) return;
+  const query = { ...$route.query };
+  $router.push({ path: `/claims/edit/${targetId}`, query });
+}
+
+watch(
+  () => [$route.params.claimId, $route.query.view],
+  async ([newClaimId]) => {
+    claimId.value = parseInt(newClaimId, 10);
+    if (!claimId.value) {
+      $q.notify({
+        type: 'negative',
+        message: 'Invalid claim ID',
+      });
+      $router.push('/claims');
+      return;
+    }
+    isViewMode.value = $route.query.view === 'true';
+    await facilityStore.fetchPublic();
+    providerInfo.provider_name = facilityStore.displayName;
+    await loadClaimData();
+    lastSavedClaimPayload.value = JSON.stringify(buildClaimPayload());
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>
@@ -2490,6 +2527,15 @@ onMounted(async () => {
 }
 .q-page.reopen-bar-visible {
   padding-bottom: 64px;
+}
+
+.claim-nav-controls {
+  margin-right: 8px;
+}
+
+.claim-nav-position {
+  min-width: 4.5rem;
+  text-align: center;
 }
 
 :deep(tr.medicine-not-covered-row) {
