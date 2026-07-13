@@ -307,6 +307,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import { setClaimsNavIds, setGhimsNavIds } from '../utils/claimNav';
 
 const STORAGE_KEY = 'claimit_batch_selections';
 
@@ -545,12 +546,22 @@ async function openBatch(id) {
 }
 
 function editClaim(claimId) {
+  setClaimsNavIds(
+    (filteredErrors.value || [])
+      .map((e) => e.claim_id)
+      .filter(Boolean)
+  );
   const route = $router.resolve({ path: `/claims/edit/${claimId}` });
   window.open(route.href, '_blank');
 }
 
 function editGhimsImportItem(itemId) {
   if (!itemId) return;
+  setGhimsNavIds(
+    (filteredErrors.value || [])
+      .map((e) => e.ghims_import_item_id)
+      .filter(Boolean)
+  );
   const route = $router.resolve({ path: `/claims/ghims-import/item/${itemId}` });
   window.open(route.href, '_blank');
 }

@@ -297,6 +297,7 @@ import { useClaimsStore } from '../stores/claims';
 import { encountersAPI, claimsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import { useRouter } from 'vue-router';
+import { setClaimsNavIds } from '../utils/claimNav';
 
 const $router = useRouter();
 
@@ -393,6 +394,57 @@ const sortedEncounters = computed(() => {
 
 const onSortChange = () => {
   // No need to reload; sortedEncounters computed will update the table
+};
+
+/** Sort rows the same way as the claims table (for prev/next order). */
+const sortEncounterRows = (list) => {
+  const rows = list || [];
+  if (sortBy.value === 'default' || rows.length === 0) return rows;
+  const copy = [...rows];
+  if (sortBy.value === 'patient_asc') {
+    copy.sort((a, b) => (a.patient_name || '').localeCompare(b.patient_name || '', undefined, { sensitivity: 'base' }));
+  } else if (sortBy.value === 'patient_desc') {
+    copy.sort((a, b) => (b.patient_name || '').localeCompare(a.patient_name || '', undefined, { sensitivity: 'base' }));
+  } else if (sortBy.value === 'id_asc') {
+    copy.sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  } else if (sortBy.value === 'id_desc') {
+    copy.sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+  }
+  return copy;
+};
+
+/**
+ * Build prev/next from the full filtered result set (not the whole unfiltered total,
+ * and not only the current page).
+ */
+const prepareClaimsNavIds = async () => {
+  const total = pagination.value.rowsNumber || 0;
+  const pageRows = sortedEncounters.value || [];
+
+  // Current page already has every filtered row
+  if (!total || pageRows.length >= total) {
+    setClaimsNavIds(pageRows.map((row) => row.claim_id).filter(Boolean));
+    return;
+  }
+
+  const limit = Math.min(Math.max(total, 1), 10000);
+  const response = await claimsAPI.getEligibleEncounters(
+    claimType.value,
+    filterStartDate.value || null,
+    filterEndDate.value || null,
+    filterClaimStatus.value || null,
+    filterCardNumber.value || null,
+    filterClaimId.value || null,
+    filterClaimCheckCode.value || null,
+    filterSpecialty.value || null,
+    0,
+    limit
+  );
+  const data = response.data;
+  const items = data?.items && Array.isArray(data.items)
+    ? data.items
+    : (Array.isArray(data) ? data : []);
+  setClaimsNavIds(sortEncounterRows(items).map((row) => row.claim_id).filter(Boolean));
 };
 
 const columns = [
@@ -587,8 +639,13 @@ const generateClaim = (encounter) => {
 
 const editClaim = async (encounter) => {
   if (!encounter.claim_id) return;
-  
-  // Open edit page in new tab
+
+  try {
+    await prepareClaimsNavIds();
+  } catch (error) {
+    // Fall back to the visible filtered page so navigation still works
+    setClaimsNavIds(sortedEncounters.value.map((row) => row.claim_id).filter(Boolean));
+  }
   const route = $router.resolve(`/claims/edit/${encounter.claim_id}`);
   window.open(route.href, '_blank');
 };
@@ -699,8 +756,12 @@ const regenerateClaim = (encounter) => {
   window.open(route.href, '_blank');
 };
 
-const viewClaim = (claimId) => {
-  // Open edit page in new tab in view mode
+const viewClaim = async (claimId) => {
+  try {
+    await prepareClaimsNavIds();
+  } catch (error) {
+    setClaimsNavIds(sortedEncounters.value.map((row) => row.claim_id).filter(Boolean));
+  }
   const route = $router.resolve({
     path: `/claims/edit/${claimId}`,
     query: { view: 'true' }

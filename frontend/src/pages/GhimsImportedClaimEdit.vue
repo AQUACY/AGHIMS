@@ -1,10 +1,37 @@
 <template>
   <q-page class="q-pa-md" :class="{ 'revert-bar-visible': !loading && status === 'finalized' }">
-    <div class="row items-center q-mb-md">
+    <div class="row items-center q-mb-md q-col-gutter-sm">
       <q-btn flat round dense icon="arrow_back" @click="$router.back()" />
       <div class="text-h5 q-ml-sm">{{ status === 'finalized' ? 'View Imported Claim' : 'Edit Imported Claim' }}</div>
+      <q-badge
+        class="q-ml-sm"
+        :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : 'warning')"
+        :label="status"
+      />
       <q-space />
-      <q-badge :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : 'warning')" :label="status" />
+      <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
+        <q-btn
+          outline
+          color="primary"
+          icon="chevron_left"
+          label="Previous"
+          dense
+          :disable="!claimNav.prevId || loading"
+          @click="goToAdjacentClaim(claimNav.prevId)"
+        />
+        <span class="text-body2 text-grey-8 text-weight-medium q-px-sm claim-nav-position">
+          {{ claimNav.position }} of {{ claimNav.total }}
+        </span>
+        <q-btn
+          outline
+          color="primary"
+          icon-right="chevron_right"
+          label="Next"
+          dense
+          :disable="!claimNav.nextId || loading"
+          @click="goToAdjacentClaim(claimNav.nextId)"
+        />
+      </div>
     </div>
 
     <q-card v-if="loading" flat bordered class="q-pa-md">
@@ -34,7 +61,12 @@
       </template>
     </q-banner>
 
-    <q-form v-else @submit.prevent="saveAndFinalize" class="q-gutter-md" :inert="status === 'finalized' || undefined">
+    <q-form
+      v-if="!loading"
+      @submit.prevent="saveAndFinalize"
+      class="q-gutter-md"
+      :inert="status === 'finalized' || undefined"
+    >
       <q-banner v-if="claimitErrors.by_section?.other?.length" class="bg-orange-1 q-mb-md" rounded dense>
         <template #avatar><q-icon name="warning" color="orange" /></template>
         <div class="text-subtitle2">ClaimIT reported (fix in the section below if applicable):</div>
@@ -135,9 +167,23 @@
           <div class="text-subtitle1 q-mb-sm">Date(s) of Service</div>
           <div v-for="(dt, i) in payload.dateOfService" :key="`date-${i}`" class="row q-col-gutter-sm q-mb-sm">
             <q-input v-model="payload.dateOfService[i]" type="date" filled dense class="col-12 col-md-4" />
-            <q-btn flat dense color="negative" icon="delete" @click="payload.dateOfService.splice(i, 1)" />
+            <q-btn
+              v-if="status !== 'finalized'"
+              flat
+              dense
+              color="negative"
+              icon="delete"
+              @click="payload.dateOfService.splice(i, 1)"
+            />
           </div>
-          <q-btn flat color="primary" icon="add" label="Add Service Date" @click="payload.dateOfService.push('')" />
+          <q-btn
+            v-if="status !== 'finalized'"
+            flat
+            color="primary"
+            icon="add"
+            label="Add Service Date"
+            @click="payload.dateOfService.push('')"
+          />
         </q-card-section>
       </q-card>
 
@@ -193,9 +239,23 @@
             />
             <q-input v-model="d.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="d.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-7" />
-            <q-btn flat dense color="negative" icon="delete" @click="removeDiagnosis(i)" />
+            <q-btn
+              v-if="status !== 'finalized'"
+              flat
+              dense
+              color="negative"
+              icon="delete"
+              @click="removeDiagnosis(i)"
+            />
           </div>
-          <q-btn flat color="primary" icon="add" label="Add Diagnosis" @click="payload.diagnoses.push({ icd10:'', gdrgCode:'', diagnosis:'' })" />
+          <q-btn
+            v-if="status !== 'finalized'"
+            flat
+            color="primary"
+            icon="add"
+            label="Add Diagnosis"
+            @click="payload.diagnoses.push({ icd10:'', gdrgCode:'', diagnosis:'' })"
+          />
         </q-card-section>
       </q-card>
 
@@ -244,9 +304,23 @@
             />
             <q-input v-model="inv._serviceName" label="Service Name" filled dense class="col-12 col-md-7" />
             <q-input v-model="inv.gdrgCode" label="GDRG Code" filled dense class="col-12 col-md-4" />
-            <q-btn flat dense color="negative" icon="delete" @click="payload.investigations.splice(i,1)" />
+            <q-btn
+              v-if="status !== 'finalized'"
+              flat
+              dense
+              color="negative"
+              icon="delete"
+              @click="payload.investigations.splice(i,1)"
+            />
           </div>
-          <q-btn flat color="primary" icon="add" label="Add Investigation" @click="payload.investigations.push({ serviceDate:'', gdrgCode:'' })" />
+          <q-btn
+            v-if="status !== 'finalized'"
+            flat
+            color="primary"
+            icon="add"
+            label="Add Investigation"
+            @click="payload.investigations.push({ serviceDate:'', gdrgCode:'' })"
+          />
         </q-card-section>
       </q-card>
 
@@ -332,9 +406,23 @@
               @update:model-value="() => syncPrescriptionUnparsed(m)"
             />
             <q-input v-model="m.prescription.unparsed" label="Unparsed" filled dense class="col-12 col-md-10" />
-            <q-btn flat dense color="negative" icon="delete" @click="payload.medicines.splice(i,1)" />
+            <q-btn
+              v-if="status !== 'finalized'"
+              flat
+              dense
+              color="negative"
+              icon="delete"
+              @click="payload.medicines.splice(i,1)"
+            />
           </div>
-          <q-btn flat color="primary" icon="add" label="Add Medicine" @click="addMedicine" />
+          <q-btn
+            v-if="status !== 'finalized'"
+            flat
+            color="primary"
+            icon="add"
+            label="Add Medicine"
+            @click="addMedicine"
+          />
         </q-card-section>
       </q-card>
 
@@ -386,9 +474,23 @@
             <q-input v-model="p.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="p.description" label="Description" filled dense class="col-12 col-md-5" />
             <q-input v-model="p.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-10" />
-            <q-btn flat dense color="negative" icon="delete" @click="payload.procedures.splice(i,1)" />
+            <q-btn
+              v-if="status !== 'finalized'"
+              flat
+              dense
+              color="negative"
+              icon="delete"
+              @click="payload.procedures.splice(i,1)"
+            />
           </div>
-          <q-btn flat color="primary" icon="add" label="Add Procedure" @click="payload.procedures.push({ serviceDate:'', gdrgCode:'', description:'', icd10:'', diagnosis:'' })" />
+          <q-btn
+            v-if="status !== 'finalized'"
+            flat
+            color="primary"
+            icon="add"
+            label="Add Procedure"
+            @click="payload.procedures.push({ serviceDate:'', gdrgCode:'', description:'', icd10:'', diagnosis:'' })"
+          />
         </q-card-section>
       </q-card>
 
@@ -438,8 +540,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, reactive, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
 import {
@@ -455,8 +557,10 @@ import {
   normalizeInsuranceCovered,
   claimLineSectionClass,
 } from '../utils/claimMedicineCoverage';
+import { getGhimsNavPosition } from '../utils/claimNav';
 
 const route = useRoute();
+const $router = useRouter();
 const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
@@ -465,7 +569,7 @@ const fetchingClaimCcc = ref(false);
 const status = ref('draft');
 const flagComment = ref('');
 const principalDiagnosisIndex = ref(-1);
-const itemId = Number(route.params.itemId);
+const itemId = ref(Number(route.params.itemId));
 const diagnosisSearchOptions = ref([]);
 const investigationSearchOptions = ref([]);
 const procedureSearchOptions = ref([]);
@@ -474,6 +578,13 @@ const payload = reactive({
   claimID: '', claimCheckCode: '', memberNo: '', surname: '', otherNames: '', dateOfBirth: '',
   typeOfService: '', typeOfAttendance: '', specialtyAttended: '', diagnoses: [], medicines: [],
 });
+
+const claimNav = computed(() => getGhimsNavPosition(itemId.value));
+
+function goToAdjacentClaim(targetId) {
+  if (!targetId || loading.value) return;
+  $router.push({ path: `/claims/ghims-import/item/${targetId}` });
+}
 
 const canGetGhimsCcc = computed(() => canFetchClaimCcc({ memberNo: payload.memberNo }));
 
@@ -1142,7 +1253,7 @@ async function revertToDraft() {
   if (status.value !== 'finalized') return;
   reverting.value = true;
   try {
-    await claimsAPI.reopenGhimsImportItem(itemId);
+    await claimsAPI.reopenGhimsImportItem(itemId.value);
     $q.notify({
       type: 'positive',
       message: 'Imported claim reverted to draft. You can now edit and save.',
@@ -1168,7 +1279,7 @@ async function onGetGhimsClaimCcc() {
   fetchingClaimCcc.value = true;
   try {
     const memberNo = (payload.memberNo || '').trim();
-    const res = await claimsAPI.fetchGhimsImportCcc(itemId, memberNo || null);
+    const res = await claimsAPI.fetchGhimsImportCcc(itemId.value, memberNo || null);
     applyGhimsFetchCccToPayload(payload, res.data);
     skipServiceDateRebase = true;
     syncGhimsServiceDateSnapshot();
@@ -1192,7 +1303,7 @@ async function onGetGhimsClaimCcc() {
 async function load() {
   loading.value = true;
   try {
-    const res = await claimsAPI.getGhimsImportItem(itemId);
+    const res = await claimsAPI.getGhimsImportItem(itemId.value);
     status.value = res.data.status || 'draft';
     flagComment.value = String(res.data.flag_comment || '').trim();
     Object.assign(payload, normalize(res.data.payload || {}));
@@ -1256,9 +1367,9 @@ async function saveAndFinalize() {
         unparsed: m.prescription?.unparsed || '',
       },
     }));
-    await claimsAPI.updateGhimsImportItem(itemId, clean);
+    await claimsAPI.updateGhimsImportItem(itemId.value, clean);
     if (status.value !== 'finalized') {
-      await claimsAPI.finalizeGhimsImportItem(itemId);
+      await claimsAPI.finalizeGhimsImportItem(itemId.value);
     }
     $q.notify({ type: 'positive', message: 'Imported claim saved and finalized' });
     await load();
@@ -1307,7 +1418,7 @@ async function flagClaim() {
         unparsed: m.prescription?.unparsed || '',
       },
     }));
-    await claimsAPI.updateGhimsImportItem(itemId, clean);
+    await claimsAPI.updateGhimsImportItem(itemId.value, clean);
     const comment = await new Promise((resolve) => {
       $q.dialog({
         title: 'Flag imported claim',
@@ -1327,7 +1438,7 @@ async function flagClaim() {
         .onDismiss(() => resolve(null));
     });
     if (!comment) return;
-    await claimsAPI.flagGhimsImportItem(itemId, comment);
+    await claimsAPI.flagGhimsImportItem(itemId.value, comment);
     $q.notify({ type: 'positive', message: 'Imported claim flagged' });
     await load();
   } catch (e) {
@@ -1337,7 +1448,16 @@ async function flagClaim() {
   }
 }
 
-onMounted(load);
+watch(
+  () => route.params.itemId,
+  async (newId) => {
+    const id = Number(newId);
+    if (!id) return;
+    itemId.value = id;
+    await load();
+  },
+  { immediate: true }
+);
 
 watch(
   () => payload.medicines.length,
@@ -1387,5 +1507,14 @@ watch(
 
 .q-page.revert-bar-visible {
   padding-bottom: 64px;
+}
+
+.claim-nav-controls {
+  margin-left: 8px;
+}
+
+.claim-nav-position {
+  min-width: 4.5rem;
+  text-align: center;
 }
 </style>
