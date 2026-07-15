@@ -96,6 +96,23 @@
           class="claims-module-tile cursor-pointer glass-card"
           flat
           bordered
+          @click="$router.push('/claims/cxf-tools')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="compare_arrows" size="64px" color="deep-purple" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">CFX Convert &amp; Diff</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Convert ClaimIT CFX to XML, or find XML claims missing from a CFX package.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
           @click="$router.push('/claims/price-list')"
         >
           <q-card-section class="text-center q-pa-xl">

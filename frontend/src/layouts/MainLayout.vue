@@ -326,6 +326,22 @@
           </q-item>
 
           <q-item
+            :clickable="isModuleActive('claims')"
+            v-ripple
+            :to="isModuleActive('claims') ? { name: 'ClaimsCxfTools' } : null"
+            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
+            active-class="glass-nav-active"
+            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
+          >
+            <q-item-section avatar>
+              <q-icon name="compare_arrows" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>CFX Convert &amp; Diff</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item
             :clickable="isModuleActive('price_list')"
             v-ripple
             :to="isModuleActive('price_list') ? { name: 'ClaimsPriceListManagement' } : null"

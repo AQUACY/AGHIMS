@@ -190,6 +190,7 @@
                 <th class="text-left">Client</th>
                 <th class="text-left">Hosp Rec No</th>
                 <th class="text-left">Age</th>
+                <th class="text-left">Visit Start Date</th>
                 <th class="text-left">Check Code</th>
                 <th class="text-right">Claim Total</th>
                 <th class="text-left">Status / Missing</th>
@@ -210,6 +211,7 @@
                 <td>{{ claimClientName(row) || '-' }}</td>
                 <td>{{ claimHospitalRecNo(row) || '-' }}</td>
                 <td>{{ claimClientAge(row) }}</td>
+                <td>{{ formatVisitStartDate(row.visit_start_date) }}</td>
                 <td>{{ claimCheckCode(row) || '-' }}</td>
                 <td class="text-right">
                   <template v-if="totalsLoading && row.total_claim_amount == null">
@@ -285,7 +287,7 @@
                 </td>
               </tr>
               <tr v-if="pagedClaims.length === 0">
-                <td colspan="10" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
+                <td colspan="11" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
               </tr>
             </tbody>
           </q-markup-table>
@@ -480,6 +482,20 @@ const pagedClaims = computed(() => {
 });
 
 function formatDate(iso) { try { return iso ? new Date(iso).toLocaleString() : ''; } catch { return iso || ''; } }
+
+function formatVisitStartDate(val) {
+  if (!val) return '-';
+  try {
+    // Keep YYYY-MM-DD as a calendar date (avoid timezone shifting)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(val))) {
+      const [y, m, d] = String(val).split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString();
+    }
+    return new Date(val).toLocaleDateString();
+  } catch {
+    return String(val);
+  }
+}
 
 function claimClientName(row) {
   if (row?.client_name) return row.client_name;

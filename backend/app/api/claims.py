@@ -24,6 +24,13 @@ from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.services.claimit_report_parser import parse_claimit_report_html
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.services.claim_xml_import_parser import parse_claims_xml, build_claims_xml_from_payloads
+from app.services.cxf_claims import (
+    CxfParseError,
+    convert_cxf_to_xml,
+    diff_xml_vs_cxf,
+    build_xml_subset_missing_from_cxf,
+    parse_cxf,
+)
 from app.services.claim_nhia_ccc import fetch_ccc_preview_for_claim, fetch_ccc_preview_for_ghims_payload
 from app.services.nhia_integration import NhiaIntegrationError
 from app.models.product_price import ProductPrice
@@ -3951,6 +3958,13 @@ def get_ghims_import_batch(
         surname = str(p.get("surname") or "").strip()
         other_names = str(p.get("otherNames") or "").strip()
         missing_sections = _ghims_missing_sections(p)
+        date_of_service = p.get("dateOfService") or p.get("date_of_service") or []
+        visit_start_date = None
+        if isinstance(date_of_service, list):
+            dates = [str(d).strip() for d in date_of_service if d is not None and str(d).strip()]
+            visit_start_date = min(dates) if dates else None
+        elif date_of_service:
+            visit_start_date = str(date_of_service).strip() or None
         row = {
             "id": i.id,
             "row_index": i.row_index,
@@ -3958,6 +3972,7 @@ def get_ghims_import_batch(
             "claim_check_code": p.get("claimCheckCode"),
             "hospital_rec_no": p.get("hospitalRecNo"),
             "date_of_birth": p.get("dateOfBirth"),
+            "visit_start_date": visit_start_date,
             "client_name": " ".join([x for x in [surname, other_names] if x]).strip() or None,
             "type_of_service": p.get("typeOfService") or p.get("type_of_service"),
             "type_of_attendance": p.get("typeOfAttendance"),
@@ -4403,5 +4418,142 @@ def export_ghims_import_items(
         content=xml_content,
         media_type="application/xml",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+# ---------- CFX convert / diff tools ----------
+
+def _decode_upload_text(content: bytes) -> str:
+    for encoding in ("utf-8", "cp1252", "iso-8859-1", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return content.decode("latin-1", errors="replace")
+
+
+def _read_cxf_upload(file: UploadFile, content: bytes) -> bytes:
+    name = (file.filename or "").lower()
+    if name and not name.endswith(".cxf"):
+        raise HTTPException(status_code=400, detail="Please upload a .cxf file.")
+    if not content:
+        raise HTTPException(status_code=400, detail="CFX file is empty.")
+    return content
+
+
+@router.post("/cxf/convert")
+async def convert_cxf_file_to_xml(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Convert a ClaimIT CFX package into GHIMS-compatible claims XML."""
+    try:
+        content = await file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read CFX file.")
+    content = _read_cxf_upload(file, content)
+    try:
+        xml_content, summary = convert_cxf_to_xml(content)
+    except CxfParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to convert CFX: {e}")
+
+    filename = f"CFX_converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+    return Response(
+        content=xml_content,
+        media_type="application/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-CFX-Claim-Count": str(summary.get("claim_count") or 0),
+        },
+    )
+
+
+@router.post("/cxf/preview")
+async def preview_cxf_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Parse CFX and return claim counts without downloading XML."""
+    try:
+        content = await file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read CFX file.")
+    content = _read_cxf_upload(file, content)
+    try:
+        parsed = parse_cxf(content)
+    except CxfParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse CFX: {e}")
+    return {
+        "claim_count": parsed.get("claim_count") or 0,
+        "meta": parsed.get("meta") or {},
+        "status_counts": (parsed.get("meta") or {}).get("status_counts") or {},
+    }
+
+
+@router.post("/cxf/diff")
+async def diff_xml_against_cxf(
+    xml_file: UploadFile = File(...),
+    cxf_file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Compare a GHIMS XML export against a ClaimIT CFX package."""
+    xml_name = (xml_file.filename or "").lower()
+    if xml_name and not xml_name.endswith(".xml"):
+        raise HTTPException(status_code=400, detail="Please upload an XML file for the GHIMS side.")
+    try:
+        xml_bytes = await xml_file.read()
+        cxf_bytes = await cxf_file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read uploaded files.")
+    cxf_bytes = _read_cxf_upload(cxf_file, cxf_bytes)
+    xml_text = _decode_upload_text(xml_bytes)
+    try:
+        return diff_xml_vs_cxf(xml_text, cxf_bytes)
+    except CxfParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to compare files: {e}")
+
+
+@router.post("/cxf/diff/download-missing")
+async def download_xml_missing_from_cxf(
+    xml_file: UploadFile = File(...),
+    cxf_file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Download subset of GHIMS XML claims that are not present in the CFX package."""
+    xml_name = (xml_file.filename or "").lower()
+    if xml_name and not xml_name.endswith(".xml"):
+        raise HTTPException(status_code=400, detail="Please upload an XML file for the GHIMS side.")
+    try:
+        xml_bytes = await xml_file.read()
+        cxf_bytes = await cxf_file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read uploaded files.")
+    cxf_bytes = _read_cxf_upload(cxf_file, cxf_bytes)
+    xml_text = _decode_upload_text(xml_bytes)
+    try:
+        xml_out, info = build_xml_subset_missing_from_cxf(xml_text, cxf_bytes)
+    except CxfParseError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to build missing claims XML: {e}")
+
+    filename = f"XML_missing_from_CFX_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
+    return Response(
+        content=xml_out,
+        media_type="application/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Missing-Claim-Count": str(info.get("missing_count") or 0),
+        },
     )
 
