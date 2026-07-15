@@ -454,6 +454,20 @@ const columns = [
   { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left' },
   { name: 'ccc_number', label: 'CCC Number', field: 'ccc_number', align: 'left' },
   { name: 'department', label: 'Department', field: 'department', align: 'left' },
+  {
+    name: 'visit_start_date',
+    label: 'Visit Start Date',
+    field: 'visit_start_date',
+    align: 'left',
+    format: (val) => {
+      if (!val) return '-';
+      try {
+        return new Date(val).toLocaleDateString();
+      } catch {
+        return String(val);
+      }
+    },
+  },
   { name: 'finalized_at', label: 'Finalized At', field: 'finalized_at', align: 'left', format: (val) => val ? new Date(val).toLocaleString() : '-' },
   { name: 'claim_status', label: 'Claim Status', field: 'claim_status', align: 'center' },
   { name: 'total_claim_amount', label: 'Claim Total', field: 'total_claim_amount', align: 'right', sortable: true },
@@ -502,6 +516,7 @@ const searchEncounter = async () => {
       finalizedEncounters.value = [{
         id: encounter.data.id,
         patient_name: 'Patient', // You may need to fetch patient info
+        visit_start_date: encounter.data.created_at || null,
         finalized_at: encounter.data.finalized_at,
         claim_id: null,
         claim_status: null,
@@ -826,10 +841,12 @@ const loadFinalizedEncounters = async (page = 1) => {
       patient_name: encounter.patient_name,
       patient_card_number: encounter.patient_card_number,
       ccc_number: encounter.ccc_number,
+      visit_start_date: encounter.created_at || null,
       finalized_at: encounter.finalized_at,
       claim_id: encounter.claim_id,
       claim_status: encounter.claim_status,
       department: encounter.department,
+      total_claim_amount: encounter.total_claim_amount ?? null,
     }));
   } catch (error) {
     console.error('Error loading encounters:', error);

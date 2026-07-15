@@ -904,6 +904,29 @@ export const claimsAPI = {
   bulkUpdateGhimsImportItemsStatus: (itemIds, action, comment = null) =>
     api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action, comment }),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
+  // CFX convert / diff tools
+  previewCxf: (formData) =>
+    api.post('/claims/cxf/preview', formData, {
+      timeout: 180000,
+      headers: { 'Content-Type': undefined },
+    }),
+  convertCxfToXml: (formData) =>
+    api.post('/claims/cxf/convert', formData, {
+      timeout: 180000,
+      responseType: 'blob',
+      headers: { 'Content-Type': undefined },
+    }),
+  diffXmlVsCxf: (formData) =>
+    api.post('/claims/cxf/diff', formData, {
+      timeout: 180000,
+      headers: { 'Content-Type': undefined },
+    }),
+  downloadXmlMissingFromCxf: (formData) =>
+    api.post('/claims/cxf/diff/download-missing', formData, {
+      timeout: 180000,
+      responseType: 'blob',
+      headers: { 'Content-Type': undefined },
+    }),
 };
 
 /** Claims analytics: dashboard aggregates + advice */

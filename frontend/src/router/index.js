@@ -229,6 +229,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/cxf-tools',
+        name: 'ClaimsCxfTools',
+        component: () => import('../pages/ClaimsCxfTools.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/edit/:claimId',
         name: 'EditClaim',
         component: () => import('../pages/EditClaim.vue'),
@@ -709,6 +715,7 @@ const routeModuleMap = {
   'Claims': 'claims',
   'ClaimsDashboard': 'claims',
   'ClaimsReports': 'claims',
+  'ClaimsCxfTools': 'claims',
   'EditClaim': 'claims',
   'GenerateClaim': 'claims',
   'IPD': 'ipd',
