@@ -469,18 +469,50 @@
               @filter="filterProcedureSearch"
               @update:model-value="(val) => onProcedureSelect(i, val)"
             />
-            <q-input v-model="p._serviceName" label="Procedure Name" filled dense class="col-12 col-md-5" />
-            <q-input v-model="p.gdrgCode" label="GDRG Code" filled dense class="col-12 col-md-2" />
+            <q-input v-model="p._serviceName" label="Procedure Name" filled dense class="col-12 col-md-4" />
+            <q-checkbox
+              v-if="showProcedurePrincipalPicker"
+              :model-value="!!p.is_principal"
+              label="Principal"
+              dense
+              class="col-12 col-md-2"
+              :disable="!(p.description || p._serviceName || p.gdrgCode)"
+              @update:model-value="(checked) => setPrincipalProcedure(i, checked)"
+            />
+            <q-input
+              v-model="p.gdrgCode"
+              label="GDRG Code"
+              filled
+              dense
+              class="col-12 col-md-2"
+              @blur="onProcedureGdrgChange(i)"
+            />
+            <q-select
+              :model-value="p.diagnosis || p.icd10"
+              :options="diagnosisSearchOptions"
+              option-label="optionLabel"
+              use-input
+              input-debounce="250"
+              fill-input
+              hide-selected
+              clearable
+              dense
+              filled
+              label="Diagnosis (search ICD-10)"
+              class="col-12 col-md-6"
+              @filter="filterDiagnosisSearch"
+              @update:model-value="(val) => onProcedureDiagnosisSelect(i, val)"
+            />
             <q-input v-model="p.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="p.description" label="Description" filled dense class="col-12 col-md-5" />
-            <q-input v-model="p.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-10" />
+            <q-input v-model="p.diagnosis" label="Diagnosis text" filled dense class="col-12 col-md-10" />
             <q-btn
               v-if="status !== 'finalized'"
               flat
               dense
               color="negative"
               icon="delete"
-              @click="payload.procedures.splice(i,1)"
+              @click="removeProcedure(i)"
             />
           </div>
           <q-btn
@@ -489,7 +521,7 @@
             color="primary"
             icon="add"
             label="Add Procedure"
-            @click="payload.procedures.push({ serviceDate:'', gdrgCode:'', description:'', icd10:'', diagnosis:'' })"
+            @click="addProcedureRow"
           />
         </q-card-section>
       </q-card>
@@ -943,7 +975,9 @@ function onProcedureSelect(index, val) {
     row.description = '';
     row.icd10 = '';
     row.diagnosis = '';
+    row.is_principal = false;
     row._selectedOption = null;
+    syncPrincipalFromProcedures();
     recalculateClaimSummary();
     return;
   }
@@ -952,9 +986,165 @@ function onProcedureSelect(index, val) {
     row._serviceName = val.service_name || val.item_name || row._serviceName || '';
     if (!row.description) row.description = row._serviceName || '';
     row._selectedOption = withServiceOptionLabel(val);
+    if (!row.serviceDate) {
+      row.serviceDate = firstClaimServiceDate();
+    }
+    if (row.icd10 && row.gdrgCode) {
+      upsertDiagnosisFromProcedure(row);
+    }
+    syncPrincipalFromProcedures();
     recalculateClaimSummary();
     return;
   }
+}
+
+function firstClaimServiceDate() {
+  const dates = (payload.dateOfService || [])
+    .map((d) => String(d || '').trim())
+    .filter(Boolean)
+    .sort();
+  return dates[0] || '';
+}
+
+const filledProcedures = computed(() =>
+  (payload.procedures || []).filter(
+    (p) => String(p.description || p._serviceName || p.gdrgCode || '').trim()
+  )
+);
+
+const showProcedurePrincipalPicker = computed(() => filledProcedures.value.length >= 2);
+
+function upsertDiagnosisFromProcedure(proc) {
+  const icd10 = String(proc.icd10 || '').trim();
+  const description = String(proc.diagnosis || '').trim();
+  const gdrg = String(proc.gdrgCode || '').trim();
+  if (!icd10 && !description) return;
+
+  let row = (payload.diagnoses || []).find(
+    (d) => String(d.icd10 || '').trim().toUpperCase() === icd10.toUpperCase() && icd10
+  );
+  if (!row) {
+    row = (payload.diagnoses || []).find(
+      (d) => !String(d.diagnosis || d._diagnosisName || '').trim() && !String(d.icd10 || '').trim()
+    );
+  }
+  if (!row) {
+    row = { icd10: '', gdrgCode: '', diagnosis: '', _diagnosisName: '' };
+    payload.diagnoses.push(row);
+  }
+  row.icd10 = icd10 || row.icd10;
+  row.diagnosis = description || row.diagnosis;
+  row._diagnosisName = description || row._diagnosisName || '';
+  if (gdrg) row.gdrgCode = gdrg;
+}
+
+function syncPrincipalFromProcedures() {
+  const filled = filledProcedures.value;
+  if (!filled.length) return;
+
+  if (filled.length === 1) {
+    (payload.procedures || []).forEach((p) => {
+      p.is_principal = p === filled[0];
+    });
+  }
+
+  let principal = filled.find((p) => p.is_principal);
+  if (!principal && filled.length === 1) {
+    principal = filled[0];
+    principal.is_principal = true;
+  }
+  if (!principal) return;
+
+  const gdrg = String(principal.gdrgCode || '').trim();
+  if (gdrg) {
+    payload.principalGDRG = gdrg;
+  }
+  if (principal.icd10 || principal.diagnosis) {
+    upsertDiagnosisFromProcedure(principal);
+  }
+
+  const principalIcd = String(principal.icd10 || '').trim().toUpperCase();
+  const principalGdrg = String(principal.gdrgCode || '').trim();
+  let principalIdx = -1;
+  (payload.diagnoses || []).forEach((d, i) => {
+    const matchIcd = principalIcd && String(d.icd10 || '').trim().toUpperCase() === principalIcd;
+    const matchGdrg = principalGdrg && String(d.gdrgCode || '').trim() === principalGdrg;
+    if (matchIcd || (matchGdrg && principalIdx < 0)) {
+      if (principalIdx < 0) principalIdx = i;
+    }
+  });
+  if (principalIdx >= 0) {
+    moveDiagnosisToFirst(principalIdx);
+    principalDiagnosisIndex.value = 0;
+    payload.principalGDRG = payload.diagnoses[0]?.gdrgCode || gdrg || payload.principalGDRG;
+  }
+}
+
+function setPrincipalProcedure(index, checked) {
+  const row = payload.procedures[index];
+  if (!row) return;
+  if (!checked) {
+    row.is_principal = false;
+    return;
+  }
+  (payload.procedures || []).forEach((p, i) => {
+    p.is_principal = i === index;
+  });
+  syncPrincipalFromProcedures();
+}
+
+function onProcedureGdrgChange(index) {
+  const row = payload.procedures[index];
+  if (!row) return;
+  if (row.icd10 || row.diagnosis) {
+    upsertDiagnosisFromProcedure(row);
+  }
+  if (row.is_principal || filledProcedures.value.length === 1) {
+    syncPrincipalFromProcedures();
+  }
+  recalculateClaimSummary();
+}
+
+function onProcedureDiagnosisSelect(index, val) {
+  const row = payload.procedures[index];
+  if (!row) return;
+  if (val == null || val === '') {
+    row.diagnosis = '';
+    row.icd10 = '';
+    syncPrincipalFromProcedures();
+    return;
+  }
+  if (typeof val === 'object') {
+    row.diagnosis = val.icd10_description || '';
+    row.icd10 = val.icd10_code || '';
+    upsertDiagnosisFromProcedure(row);
+    const filled = filledProcedures.value;
+    if (filled.length === 1 || row.is_principal || !filled.some((p) => p.is_principal)) {
+      row.is_principal = true;
+      (payload.procedures || []).forEach((p, i) => {
+        if (i !== index) p.is_principal = false;
+      });
+    }
+    syncPrincipalFromProcedures();
+  }
+}
+
+function addProcedureRow() {
+  payload.procedures.push({
+    serviceDate: firstClaimServiceDate(),
+    gdrgCode: '',
+    description: '',
+    icd10: '',
+    diagnosis: '',
+    is_principal: false,
+  });
+  syncPrincipalFromProcedures();
+}
+
+function removeProcedure(index) {
+  payload.procedures.splice(index, 1);
+  syncPrincipalFromProcedures();
+  recalculateClaimSummary();
 }
 
 function onMedicineSelect(index, val) {
@@ -1314,6 +1504,14 @@ async function load() {
     };
     reorderDiagnosesWithPrincipalFirst();
     await resolveServiceNames();
+    const principalGdrg = String(payload.principalGDRG || '').trim();
+    if (principalGdrg) {
+      const matchProc = (payload.procedures || []).find(
+        (p) => String(p.gdrgCode || '').trim() === principalGdrg
+      );
+      if (matchProc) matchProc.is_principal = true;
+    }
+    syncPrincipalFromProcedures();
     if (res.data.claim_summary) {
       applyClaimSummaryFromApi(res.data.claim_summary);
     } else {
