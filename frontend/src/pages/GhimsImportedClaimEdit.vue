@@ -155,9 +155,31 @@
             </ul>
           </q-banner>
           <div class="row q-col-gutter-md q-mb-md">
-            <q-input v-model="payload.typeOfService" label="Type of Service" filled class="col-12 col-md-3" />
-            <q-input v-model="payload.typeOfAttendance" label="Type of Attendance" filled class="col-12 col-md-3" />
-            <q-input v-model="payload.specialtyAttended" label="Specialty Attended" filled class="col-12 col-md-3" />
+            <q-select
+              v-model="payload.typeOfService"
+              :options="serviceTypeOptions"
+              emit-value
+              map-options
+              filled
+              label="Type of Service"
+              class="col-12 col-md-3"
+            />
+            <q-select
+              v-model="payload.typeOfAttendance"
+              :options="attendanceTypeOptions"
+              emit-value
+              map-options
+              filled
+              label="Type of Attendance"
+              class="col-12 col-md-3"
+            />
+            <q-input
+              v-model="payload.specialtyAttended"
+              label="Specialty Attended"
+              filled
+              class="col-12 col-md-3"
+              hint="Type the specialty attended"
+            />
             <q-input v-model="payload.serviceOutcome" label="Service Outcome" filled class="col-12 col-md-3" />
             <q-input v-model="payload.principalGDRG" label="Principal GDRG" filled class="col-12 col-md-3" />
             <q-input v-model="payload.isDependant" label="Is Dependant (0/1)" filled class="col-12 col-md-3" />
@@ -216,14 +238,6 @@
               @update:model-value="(val) => onDiagnosisSelect(i, val)"
             />
             <q-input v-model="d._diagnosisName" label="Diagnosis Name" filled dense class="col-12 col-md-6" />
-            <q-input v-model="d.gdrgCode" label="GDRG" filled dense class="col-12 col-md-2" />
-            <q-checkbox
-              :model-value="principalDiagnosisIndex === i"
-              label="Principal diagnosis"
-              dense
-              class="col-12 col-md-3"
-              @update:model-value="(checked) => setPrincipalDiagnosis(i, checked)"
-            />
             <q-select
               v-if="(d._drgOptions || []).length > 1"
               :model-value="d.gdrgCode"
@@ -233,9 +247,18 @@
               clearable
               filled
               dense
-              label="Mapped DRG options"
+              label="Select mapped DRG"
+              hint="This ICD-10 maps to multiple DRGs"
               class="col-12 col-md-4"
-              @update:model-value="(val) => { d.gdrgCode = val || ''; }"
+              @update:model-value="(val) => onMappedDrgSelect(i, val)"
+            />
+            <q-input v-else v-model="d.gdrgCode" label="GDRG" filled dense class="col-12 col-md-2" />
+            <q-checkbox
+              :model-value="principalDiagnosisIndex === i"
+              label="Principal diagnosis"
+              dense
+              class="col-12 col-md-3"
+              @update:model-value="(checked) => setPrincipalDiagnosis(i, checked)"
             />
             <q-input v-model="d.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="d.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-7" />
@@ -469,18 +492,50 @@
               @filter="filterProcedureSearch"
               @update:model-value="(val) => onProcedureSelect(i, val)"
             />
-            <q-input v-model="p._serviceName" label="Procedure Name" filled dense class="col-12 col-md-5" />
-            <q-input v-model="p.gdrgCode" label="GDRG Code" filled dense class="col-12 col-md-2" />
+            <q-input v-model="p._serviceName" label="Procedure Name" filled dense class="col-12 col-md-4" />
+            <q-checkbox
+              v-if="showProcedurePrincipalPicker"
+              :model-value="!!p.is_principal"
+              label="Principal"
+              dense
+              class="col-12 col-md-2"
+              :disable="!(p.description || p._serviceName || p.gdrgCode)"
+              @update:model-value="(checked) => setPrincipalProcedure(i, checked)"
+            />
+            <q-input
+              v-model="p.gdrgCode"
+              label="GDRG Code"
+              filled
+              dense
+              class="col-12 col-md-2"
+              @blur="onProcedureGdrgChange(i)"
+            />
+            <q-select
+              :model-value="p.diagnosis || p.icd10"
+              :options="diagnosisSearchOptions"
+              option-label="optionLabel"
+              use-input
+              input-debounce="250"
+              fill-input
+              hide-selected
+              clearable
+              dense
+              filled
+              label="Diagnosis (search ICD-10)"
+              class="col-12 col-md-6"
+              @filter="filterDiagnosisSearch"
+              @update:model-value="(val) => onProcedureDiagnosisSelect(i, val)"
+            />
             <q-input v-model="p.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="p.description" label="Description" filled dense class="col-12 col-md-5" />
-            <q-input v-model="p.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-10" />
+            <q-input v-model="p.diagnosis" label="Diagnosis text" filled dense class="col-12 col-md-10" />
             <q-btn
               v-if="status !== 'finalized'"
               flat
               dense
               color="negative"
               icon="delete"
-              @click="payload.procedures.splice(i,1)"
+              @click="removeProcedure(i)"
             />
           </div>
           <q-btn
@@ -489,7 +544,7 @@
             color="primary"
             icon="add"
             label="Add Procedure"
-            @click="payload.procedures.push({ serviceDate:'', gdrgCode:'', description:'', icd10:'', diagnosis:'' })"
+            @click="addProcedureRow"
           />
         </q-card-section>
       </q-card>
@@ -572,6 +627,15 @@ const principalDiagnosisIndex = ref(-1);
 const itemId = ref(Number(route.params.itemId));
 const diagnosisSearchOptions = ref([]);
 const investigationSearchOptions = ref([]);
+
+const serviceTypeOptions = [
+  { label: 'OPD', value: 'OPD' },
+  { label: 'IPD', value: 'IPD' },
+];
+const attendanceTypeOptions = [
+  { label: 'EAE', value: 'EAE' },
+  { label: 'CFU', value: 'CFU' },
+];
 const procedureSearchOptions = ref([]);
 const medicineSearchOptions = ref([]);
 const payload = reactive({
@@ -852,13 +916,14 @@ function onInvestigationSelect(index, val) {
   }
 }
 
-function onDiagnosisSelect(index, val) {
+async function onDiagnosisSelect(index, val) {
   const row = payload.diagnoses[index];
   if (!row) return;
   if (!val) {
     row.icd10 = '';
     row.diagnosis = '';
     row._diagnosisName = '';
+    row.gdrgCode = '';
     row._drgOptions = [];
     row._selectedOption = null;
     return;
@@ -866,22 +931,65 @@ function onDiagnosisSelect(index, val) {
   if (typeof val === 'object') {
     row.icd10 = val.icd10_code || row.icd10 || '';
     row.diagnosis = val.icd10_description || row.diagnosis || '';
-    const drgCodes = Array.isArray(val.drg_codes) ? val.drg_codes.filter(Boolean) : [];
-    row._drgOptions = drgCodes.map((code) => ({ label: code, value: code }));
-    if (drgCodes.length === 1) {
-      row.gdrgCode = drgCodes[0];
-    } else if (drgCodes.length > 1) {
-      const existing = String(row.gdrgCode || '').trim();
-      if (!existing || !drgCodes.includes(existing)) row.gdrgCode = drgCodes[0];
-    } else {
-      row.gdrgCode = val.gdrg_code || val.g_drg_code || val.drg_code || val.gdrgCode || row.gdrgCode || '';
-    }
     row._diagnosisName = val.icd10_description || row._diagnosisName || '';
     row._selectedOption = val;
+    row._drgOptions = [];
+
+    let drgItems = [];
+    const fromSearch = Array.isArray(val.drg_codes) ? val.drg_codes.filter(Boolean) : [];
+    if (fromSearch.length) {
+      drgItems = fromSearch.map((code) =>
+        typeof code === 'string' ? { drg_code: code, drg_description: '' } : code
+      );
+    }
+    if (row.icd10) {
+      try {
+        const res = await priceListAPI.getDrgCodesFromIcd10(row.icd10);
+        if (Array.isArray(res.data) && res.data.length) {
+          drgItems = res.data;
+        }
+      } catch (_) {
+        /* keep search-based options */
+      }
+    }
+
+    const seen = new Set();
+    row._drgOptions = (drgItems || [])
+      .map((d) => {
+        const code = String(d.drg_code || d || '').trim();
+        if (!code || seen.has(code)) return null;
+        seen.add(code);
+        const desc = String(d.drg_description || '').trim();
+        return { label: desc ? `${code} — ${desc}` : code, value: code };
+      })
+      .filter(Boolean);
+
+    if (row._drgOptions.length === 1) {
+      row.gdrgCode = row._drgOptions[0].value;
+    } else if (row._drgOptions.length > 1) {
+      const existing = String(row.gdrgCode || '').trim();
+      const stillValid = row._drgOptions.some((o) => o.value === existing);
+      row.gdrgCode = stillValid ? existing : '';
+      $q.notify({
+        type: 'info',
+        message: `This ICD-10 maps to ${row._drgOptions.length} DRGs — select one`,
+        timeout: 3500,
+      });
+    } else {
+      row.gdrgCode = val.gdrg_code || val.g_drg_code || val.drg_code || val.gdrgCode || '';
+    }
     if (principalDiagnosisIndex.value === index) {
       payload.principalGDRG = row.gdrgCode || '';
     }
-    return;
+  }
+}
+
+function onMappedDrgSelect(index, val) {
+  const row = payload.diagnoses[index];
+  if (!row) return;
+  row.gdrgCode = val || '';
+  if (principalDiagnosisIndex.value === index) {
+    payload.principalGDRG = row.gdrgCode || '';
   }
 }
 
@@ -943,7 +1051,9 @@ function onProcedureSelect(index, val) {
     row.description = '';
     row.icd10 = '';
     row.diagnosis = '';
+    row.is_principal = false;
     row._selectedOption = null;
+    syncPrincipalFromProcedures();
     recalculateClaimSummary();
     return;
   }
@@ -952,9 +1062,165 @@ function onProcedureSelect(index, val) {
     row._serviceName = val.service_name || val.item_name || row._serviceName || '';
     if (!row.description) row.description = row._serviceName || '';
     row._selectedOption = withServiceOptionLabel(val);
+    if (!row.serviceDate) {
+      row.serviceDate = firstClaimServiceDate();
+    }
+    if (row.icd10 && row.gdrgCode) {
+      upsertDiagnosisFromProcedure(row);
+    }
+    syncPrincipalFromProcedures();
     recalculateClaimSummary();
     return;
   }
+}
+
+function firstClaimServiceDate() {
+  const dates = (payload.dateOfService || [])
+    .map((d) => String(d || '').trim())
+    .filter(Boolean)
+    .sort();
+  return dates[0] || '';
+}
+
+const filledProcedures = computed(() =>
+  (payload.procedures || []).filter(
+    (p) => String(p.description || p._serviceName || p.gdrgCode || '').trim()
+  )
+);
+
+const showProcedurePrincipalPicker = computed(() => filledProcedures.value.length >= 2);
+
+function upsertDiagnosisFromProcedure(proc) {
+  const icd10 = String(proc.icd10 || '').trim();
+  const description = String(proc.diagnosis || '').trim();
+  const gdrg = String(proc.gdrgCode || '').trim();
+  if (!icd10 && !description) return;
+
+  let row = (payload.diagnoses || []).find(
+    (d) => String(d.icd10 || '').trim().toUpperCase() === icd10.toUpperCase() && icd10
+  );
+  if (!row) {
+    row = (payload.diagnoses || []).find(
+      (d) => !String(d.diagnosis || d._diagnosisName || '').trim() && !String(d.icd10 || '').trim()
+    );
+  }
+  if (!row) {
+    row = { icd10: '', gdrgCode: '', diagnosis: '', _diagnosisName: '' };
+    payload.diagnoses.push(row);
+  }
+  row.icd10 = icd10 || row.icd10;
+  row.diagnosis = description || row.diagnosis;
+  row._diagnosisName = description || row._diagnosisName || '';
+  if (gdrg) row.gdrgCode = gdrg;
+}
+
+function syncPrincipalFromProcedures() {
+  const filled = filledProcedures.value;
+  if (!filled.length) return;
+
+  if (filled.length === 1) {
+    (payload.procedures || []).forEach((p) => {
+      p.is_principal = p === filled[0];
+    });
+  }
+
+  let principal = filled.find((p) => p.is_principal);
+  if (!principal && filled.length === 1) {
+    principal = filled[0];
+    principal.is_principal = true;
+  }
+  if (!principal) return;
+
+  const gdrg = String(principal.gdrgCode || '').trim();
+  if (gdrg) {
+    payload.principalGDRG = gdrg;
+  }
+  if (principal.icd10 || principal.diagnosis) {
+    upsertDiagnosisFromProcedure(principal);
+  }
+
+  const principalIcd = String(principal.icd10 || '').trim().toUpperCase();
+  const principalGdrg = String(principal.gdrgCode || '').trim();
+  let principalIdx = -1;
+  (payload.diagnoses || []).forEach((d, i) => {
+    const matchIcd = principalIcd && String(d.icd10 || '').trim().toUpperCase() === principalIcd;
+    const matchGdrg = principalGdrg && String(d.gdrgCode || '').trim() === principalGdrg;
+    if (matchIcd || (matchGdrg && principalIdx < 0)) {
+      if (principalIdx < 0) principalIdx = i;
+    }
+  });
+  if (principalIdx >= 0) {
+    moveDiagnosisToFirst(principalIdx);
+    principalDiagnosisIndex.value = 0;
+    payload.principalGDRG = payload.diagnoses[0]?.gdrgCode || gdrg || payload.principalGDRG;
+  }
+}
+
+function setPrincipalProcedure(index, checked) {
+  const row = payload.procedures[index];
+  if (!row) return;
+  if (!checked) {
+    row.is_principal = false;
+    return;
+  }
+  (payload.procedures || []).forEach((p, i) => {
+    p.is_principal = i === index;
+  });
+  syncPrincipalFromProcedures();
+}
+
+function onProcedureGdrgChange(index) {
+  const row = payload.procedures[index];
+  if (!row) return;
+  if (row.icd10 || row.diagnosis) {
+    upsertDiagnosisFromProcedure(row);
+  }
+  if (row.is_principal || filledProcedures.value.length === 1) {
+    syncPrincipalFromProcedures();
+  }
+  recalculateClaimSummary();
+}
+
+function onProcedureDiagnosisSelect(index, val) {
+  const row = payload.procedures[index];
+  if (!row) return;
+  if (val == null || val === '') {
+    row.diagnosis = '';
+    row.icd10 = '';
+    syncPrincipalFromProcedures();
+    return;
+  }
+  if (typeof val === 'object') {
+    row.diagnosis = val.icd10_description || '';
+    row.icd10 = val.icd10_code || '';
+    upsertDiagnosisFromProcedure(row);
+    const filled = filledProcedures.value;
+    if (filled.length === 1 || row.is_principal || !filled.some((p) => p.is_principal)) {
+      row.is_principal = true;
+      (payload.procedures || []).forEach((p, i) => {
+        if (i !== index) p.is_principal = false;
+      });
+    }
+    syncPrincipalFromProcedures();
+  }
+}
+
+function addProcedureRow() {
+  payload.procedures.push({
+    serviceDate: firstClaimServiceDate(),
+    gdrgCode: '',
+    description: '',
+    icd10: '',
+    diagnosis: '',
+    is_principal: false,
+  });
+  syncPrincipalFromProcedures();
+}
+
+function removeProcedure(index) {
+  payload.procedures.splice(index, 1);
+  syncPrincipalFromProcedures();
+  recalculateClaimSummary();
 }
 
 function onMedicineSelect(index, val) {
@@ -1144,9 +1410,25 @@ async function resolveServiceNames() {
               diag._drgOptions = drgCodes.map((code) => ({ label: code, value: code }));
               if (drgCodes.length === 1) {
                 if (!diag.gdrgCode) diag.gdrgCode = drgCodes[0];
-              } else if (!diag.gdrgCode) {
-                diag.gdrgCode = first.gdrg_code || first.g_drg_code || first.drg_code || first.gdrgCode || '';
               }
+              // Prefer full DRG list (with descriptions) from mapping API
+              return priceListAPI.getDrgCodesFromIcd10(diag.icd10).then((drgRes) => {
+                const items = drgRes.data || [];
+                if (!items.length) return;
+                const seen = new Set();
+                diag._drgOptions = items
+                  .map((d) => {
+                    const code = String(d.drg_code || '').trim();
+                    if (!code || seen.has(code)) return null;
+                    seen.add(code);
+                    const desc = String(d.drg_description || '').trim();
+                    return { label: desc ? `${code} — ${desc}` : code, value: code };
+                  })
+                  .filter(Boolean);
+                if (diag._drgOptions.length === 1 && !diag.gdrgCode) {
+                  diag.gdrgCode = diag._drgOptions[0].value;
+                }
+              }).catch(() => {});
             }
           })
           .catch(() => {})
@@ -1314,6 +1596,14 @@ async function load() {
     };
     reorderDiagnosesWithPrincipalFirst();
     await resolveServiceNames();
+    const principalGdrg = String(payload.principalGDRG || '').trim();
+    if (principalGdrg) {
+      const matchProc = (payload.procedures || []).find(
+        (p) => String(p.gdrgCode || '').trim() === principalGdrg
+      );
+      if (matchProc) matchProc.is_principal = true;
+    }
+    syncPrincipalFromProcedures();
     if (res.data.claim_summary) {
       applyClaimSummaryFromApi(res.data.claim_summary);
     } else {

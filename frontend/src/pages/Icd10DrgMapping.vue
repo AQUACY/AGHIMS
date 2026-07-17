@@ -175,6 +175,9 @@
           <div class="text-h6 glass-text">
             {{ editingMapping ? 'Edit ICD-10 DRG Mapping' : 'Add New ICD-10 DRG Mapping' }}
           </div>
+          <div v-if="!editingMapping" class="text-caption text-grey-7 q-mt-xs">
+            One ICD-10 code can map to multiple DRGs. Select all applicable DRGs below.
+          </div>
         </q-card-section>
 
         <q-card-section class="q-pt-none">
@@ -182,6 +185,47 @@
             <div class="row q-col-gutter-md">
               <div class="col-12 col-md-6">
                 <q-select
+                  v-if="!editingMapping"
+                  v-model="formData.drg_codes"
+                  :options="drgCodeOptions"
+                  option-value="drg_code"
+                  option-label="drg_code"
+                  emit-value
+                  map-options
+                  multiple
+                  use-chips
+                  filled
+                  use-input
+                  input-debounce="300"
+                  @filter="filterDrgCodes"
+                  @update:model-value="onDrgCodesSelected"
+                  @new-value="createDrgCodeMulti"
+                  label="DRG Code(s) *"
+                  hint="Select one or more DRGs for this ICD-10. Type to search or enter manually."
+                  :rules="[val => (Array.isArray(val) && val.length > 0) || 'At least one DRG code is required']"
+                  :loading="loadingDrgCodes"
+                  clearable
+                >
+                  <template v-slot:option="scope">
+                    <q-item v-bind="scope.itemProps">
+                      <q-item-section>
+                        <q-item-label>{{ scope.opt.drg_code }}</q-item-label>
+                        <q-item-label caption v-if="scope.opt.drg_description">
+                          {{ scope.opt.drg_description }}
+                        </q-item-label>
+                      </q-item-section>
+                    </q-item>
+                  </template>
+                  <template v-slot:no-option>
+                    <q-item>
+                      <q-item-section class="text-grey">
+                        No DRG codes found
+                      </q-item-section>
+                    </q-item>
+                  </template>
+                </q-select>
+                <q-select
+                  v-else
                   v-model="formData.drg_code"
                   :options="drgCodeOptions"
                   option-value="drg_code"
@@ -194,9 +238,9 @@
                   @filter="filterDrgCodes"
                   @update:model-value="onDrgCodeSelected"
                   @new-value="createDrgCode"
-                  :label="editingMapping && !editingMapping.drg_code ? 'DRG Code (Optional - Currently Unmapped)' : 'DRG Code *'"
+                  :label="!editingMapping.drg_code ? 'DRG Code (Optional - Currently Unmapped)' : 'DRG Code *'"
                   hint="Type to search (e.g., ASUR) or enter manually. Leave empty for unmapped ICD-10."
-                  :rules="editingMapping && !editingMapping.drg_code ? [] : [val => !!val || 'DRG code is required']"
+                  :rules="!editingMapping.drg_code ? [] : [val => !!val || 'DRG code is required']"
                   :loading="loadingDrgCodes"
                   clearable
                 >
@@ -234,7 +278,7 @@
               v-model="formData.drg_description"
               filled
               label="DRG Description"
-              hint="Description of the DRG code"
+              :hint="editingMapping ? 'Description of the DRG code' : 'Optional shared description; each selected DRG keeps its own description when available'"
               type="textarea"
               rows="2"
             />
@@ -313,6 +357,7 @@ const loadingDrgCodes = ref(false);
 // Form data
 const formData = ref({
   drg_code: '',
+  drg_codes: [],
   drg_description: '',
   icd10_code: '',
   icd10_description: '',
@@ -470,7 +515,7 @@ const filterDrgCodes = async (val, update) => {
   }
 };
 
-// Handle DRG code selection
+// Handle DRG code selection (edit / single)
 const onDrgCodeSelected = (drgCode) => {
   if (!drgCode) return;
   
@@ -482,6 +527,17 @@ const onDrgCodeSelected = (drgCode) => {
     // If manually entered, clear description so user can enter it
     if (!selectedOption) {
       formData.value.drg_description = '';
+    }
+  }
+};
+
+// Handle multi-DRG selection (create)
+const onDrgCodesSelected = (codes) => {
+  const list = Array.isArray(codes) ? codes : [];
+  if (list.length === 1) {
+    const selectedOption = drgCodeOptions.value.find(opt => opt.drg_code === list[0]);
+    if (selectedOption?.drg_description) {
+      formData.value.drg_description = selectedOption.drg_description;
     }
   }
 };
@@ -501,12 +557,26 @@ const createDrgCode = (val, done) => {
   }
 };
 
+const createDrgCodeMulti = (val, done) => {
+  if (val.length > 0) {
+    const newOption = { drg_code: val, drg_description: '' };
+    if (!drgCodeOptions.value.find(opt => opt.drg_code === val)) {
+      drgCodeOptions.value.push(newOption);
+    }
+    const current = Array.isArray(formData.value.drg_codes) ? [...formData.value.drg_codes] : [];
+    if (!current.includes(val)) current.push(val);
+    formData.value.drg_codes = current;
+    done(val, 'add-unique');
+  }
+};
+
 // Open dialog for add/edit
 const openDialog = (mapping) => {
   editingMapping.value = mapping;
   if (mapping) {
     formData.value = {
       drg_code: mapping.drg_code || '',
+      drg_codes: mapping.drg_code ? [mapping.drg_code] : [],
       drg_description: mapping.drg_description || '',
       icd10_code: mapping.icd10_code || '',
       icd10_description: mapping.icd10_description || '',
@@ -524,6 +594,7 @@ const openDialog = (mapping) => {
   } else {
     formData.value = {
       drg_code: '',
+      drg_codes: [],
       drg_description: '',
       icd10_code: '',
       icd10_description: '',
@@ -542,6 +613,7 @@ const closeDialog = () => {
   editingMapping.value = null;
   formData.value = {
     drg_code: '',
+    drg_codes: [],
     drg_description: '',
     icd10_code: '',
     icd10_description: '',
@@ -561,29 +633,71 @@ const saveMapping = async () => {
     return;
   }
   
-  // DRG code is optional for unmapped ICD-10 codes
-  // But if it's a new mapping (not editing an unmapped one), require DRG code
-  if (!editingMapping && !formData.value.drg_code) {
-    $q.notify({
-      type: 'negative',
-      message: 'DRG code is required for new mappings',
-    });
-    return;
+  // DRG code is optional for unmapped ICD-10 codes when editing
+  // New mappings require at least one DRG
+  if (!editingMapping.value) {
+    const codes = Array.isArray(formData.value.drg_codes)
+      ? formData.value.drg_codes.map((c) => String(c || '').trim()).filter(Boolean)
+      : [];
+    if (!codes.length) {
+      $q.notify({
+        type: 'negative',
+        message: 'Select at least one DRG code',
+      });
+      return;
+    }
   }
 
   saving.value = true;
   try {
     if (editingMapping.value) {
-      await priceListAPI.updateIcd10DrgMapping(editingMapping.value.id, formData.value);
+      await priceListAPI.updateIcd10DrgMapping(editingMapping.value.id, {
+        drg_code: formData.value.drg_code,
+        drg_description: formData.value.drg_description,
+        icd10_code: formData.value.icd10_code,
+        icd10_description: formData.value.icd10_description,
+        notes: formData.value.notes,
+        remarks: formData.value.remarks,
+        is_active: formData.value.is_active,
+      });
       $q.notify({
         type: 'positive',
         message: 'Mapping updated successfully',
       });
     } else {
-      await priceListAPI.createIcd10DrgMapping(formData.value);
+      const codes = Array.isArray(formData.value.drg_codes)
+        ? formData.value.drg_codes.map((c) => String(c || '').trim()).filter(Boolean)
+        : [];
+      const uniqueCodes = [...new Set(codes)];
+      let created = 0;
+      let skipped = 0;
+      for (const code of uniqueCodes) {
+        const opt = drgCodeOptions.value.find((o) => o.drg_code === code);
+        try {
+          await priceListAPI.createIcd10DrgMapping({
+            drg_code: code,
+            drg_description: opt?.drg_description || formData.value.drg_description || '',
+            icd10_code: formData.value.icd10_code,
+            icd10_description: formData.value.icd10_description,
+            notes: formData.value.notes,
+            remarks: formData.value.remarks,
+            is_active: formData.value.is_active,
+          });
+          created += 1;
+        } catch (err) {
+          const detail = err.response?.data?.detail || '';
+          if (String(detail).toLowerCase().includes('already exists')) {
+            skipped += 1;
+          } else {
+            throw err;
+          }
+        }
+      }
       $q.notify({
-        type: 'positive',
-        message: 'Mapping created successfully',
+        type: created ? 'positive' : 'warning',
+        message: skipped
+          ? `Created ${created} mapping(s); ${skipped} already existed`
+          : `Created ${created} mapping(s) for ${formData.value.icd10_code}`,
       });
     }
     closeDialog();

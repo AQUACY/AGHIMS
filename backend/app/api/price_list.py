@@ -836,7 +836,10 @@ def search_icd10_codes(
             ICD10DRGMapping.is_active == True
         ).distinct(ICD10DRGMapping.drg_code).all()
         
-        result["drg_codes"] = [m.drg_code for m in drg_mappings]
+        result["drg_codes"] = [
+            m.drg_code for m in drg_mappings
+            if m.drg_code and str(m.drg_code).strip()
+        ]
     
     return results
 
@@ -845,10 +848,10 @@ def search_icd10_codes(
 def get_drg_codes_from_icd10(
     icd10_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin"])),
+    current_user: User = Depends(require_role(["Doctor", "Billing", "Admin", "Records", "PA", "Claims"])),
     _module_check: User = Depends(require_module_permission("icd10_mapping", "read"))
 ):
-    """Get all DRG codes mapped to a specific ICD-10 code"""
+    """Get all DRG codes mapped to a specific ICD-10 code (one ICD-10 may map to multiple DRGs)."""
     from app.models.icd10_drg_mapping import ICD10DRGMapping
     
     mappings = db.query(ICD10DRGMapping).filter(
@@ -860,9 +863,14 @@ def get_drg_codes_from_icd10(
         return []
     
     results = []
+    seen = set()
     for mapping in mappings:
+        code = (mapping.drg_code or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
         results.append({
-            "drg_code": mapping.drg_code,
+            "drg_code": code,
             "drg_description": mapping.drg_description or "",
             "icd10_code": mapping.icd10_code,
             "icd10_description": mapping.icd10_description or ""
