@@ -231,32 +231,23 @@
             </ul>
           </q-banner>
           <div class="row q-gutter-md q-mb-md">
-            <div class="col-12">
-              <div class="text-subtitle2 q-mb-xs">Type of Service (select one)</div>
-              <div class="row q-gutter-sm">
-                <q-checkbox
-                  v-model="serviceTypeOpd"
-                  :false-value="false"
-                  :true-value="true"
-                  label="Outpatients (OPD)"
-                  @update:model-value="onServiceTypeOpdChange"
-                />
-                <q-checkbox
-                  v-model="serviceTypeIpd"
-                  :false-value="false"
-                  :true-value="true"
-                  label="In-patient (IPD)"
-                  @update:model-value="onServiceTypeIpdChange"
-                />
-              </div>
-              <div class="row q-gutter-sm q-mt-sm">
-                <q-checkbox
-                  v-model="services.includes_pharmacy"
-                  :false-value="false"
-                  :true-value="true"
-                  label="Pharmacy (claim includes drugs)"
-                />
-              </div>
+            <div class="col-12 col-md-3">
+              <q-select
+                v-model="services.type_of_service"
+                :options="serviceTypeOptions"
+                emit-value
+                map-options
+                filled
+                label="Type of Service"
+              />
+            </div>
+            <div class="col-12 col-md-3">
+              <q-checkbox
+                v-model="services.includes_pharmacy"
+                :false-value="false"
+                :true-value="true"
+                label="Pharmacy (claim includes drugs)"
+              />
             </div>
           </div>
 
@@ -317,18 +308,21 @@
               />
             </div>
             <div class="col-12 col-md-6">
-              <div class="text-subtitle2 q-mb-xs">Type of Attendance</div>
-              <q-option-group
+              <q-select
                 v-model="services.type_of_attendance"
                 :options="attendanceOptions"
-                type="radio"
+                emit-value
+                map-options
+                filled
+                label="Type of Attendance"
               />
             </div>
             <q-input
               v-model="services.specialty_code"
               filled
-              label="Specialty Code"
+              label="Specialty Attended"
               class="col-12 col-md-6"
+              hint="Type the specialty attended"
             />
           </div>
           
@@ -592,7 +586,20 @@
             </template>
             <template v-slot:body-cell-gdrg="props">
               <q-td :props="props">
+                <q-select
+                  v-if="(diagnosesList[props.row.index]._drgOptions || []).length > 1"
+                  v-model="diagnosesList[props.row.index].gdrg"
+                  :options="diagnosesList[props.row.index]._drgOptions"
+                  emit-value
+                  map-options
+                  dense
+                  filled
+                  clearable
+                  label="Select mapped DRG"
+                  :disable="claimStatus === 'finalized' || isViewMode"
+                />
                 <q-input
+                  v-else
                   v-model="diagnosesList[props.row.index].gdrg"
                   dense
                   filled
@@ -1019,7 +1026,20 @@
               lazy-rules
               :rules="[(val) => !!val || 'Required']"
             />
+            <q-select
+              v-if="(claimDiagnosisDrgOptions || []).length > 1"
+              v-model="claimDiagnosisForm.gdrg"
+              :options="claimDiagnosisDrgOptions"
+              emit-value
+              map-options
+              filled
+              clearable
+              label="Select mapped DRG *"
+              hint="This ICD-10 maps to multiple DRGs — choose one"
+              :rules="[(val) => !!val || 'Select a DRG']"
+            />
             <q-input
+              v-else
               v-model="claimDiagnosisForm.gdrg"
               filled
               label="G-DRG Code"
@@ -1245,23 +1265,11 @@ const services = reactive({
   principal_gdrg: '',
 });
 
-// OPD/IPD checkboxes: exactly one must be selected (export typeOfService = OPD | IPD)
-const serviceTypeOpd = computed({
-  get: () => services.type_of_service === 'OPD',
-  set: (v) => { services.type_of_service = v ? 'OPD' : 'IPD'; },
-});
-const serviceTypeIpd = computed({
-  get: () => services.type_of_service === 'IPD',
-  set: (v) => { services.type_of_service = v ? 'IPD' : 'OPD'; },
-});
-function onServiceTypeOpdChange(val) {
-  if (val) services.type_of_service = 'OPD';
-  else services.type_of_service = 'IPD';
-}
-function onServiceTypeIpdChange(val) {
-  if (val) services.type_of_service = 'IPD';
-  else services.type_of_service = 'OPD';
-}
+// OPD/IPD select options (export typeOfService = OPD | IPD)
+const serviceTypeOptions = [
+  { label: 'OPD', value: 'OPD' },
+  { label: 'IPD', value: 'IPD' },
+];
 
 const serviceDateSnapshot = ref({ first_visit: '', second_visit: '' });
 let skipServiceDateRebase = false;
@@ -1310,11 +1318,8 @@ watch(
 
 const outcomeOptions = ['Discharged', 'Died', 'Transferred Out', 'Absconded/Discharged against Medical advice'];
 const attendanceOptions = [
-  { label: 'Chronic Follow-up', value: 'CFU' },
-  { label: 'Emergency/Acute Episode', value: 'EAE' },
-  { label: 'Referral', value: 'Referral' },
-  { label: 'Antenatal', value: 'Antenatal' },
-  { label: 'Postnatal', value: 'Postnatal' },
+  { label: 'EAE', value: 'EAE' },
+  { label: 'CFU', value: 'CFU' },
 ];
 
 // Procedures
@@ -1342,10 +1347,10 @@ const procedureColumns = [
 
 // Diagnoses
 const diagnosesList = ref([
-  { index: 0, id: null, description: '', icd10: '', gdrg: '', is_chief: false },
-  { index: 1, id: null, description: '', icd10: '', gdrg: '', is_chief: false },
-  { index: 2, id: null, description: '', icd10: '', gdrg: '', is_chief: false },
-  { index: 3, id: null, description: '', icd10: '', gdrg: '', is_chief: false },
+  { index: 0, id: null, description: '', icd10: '', gdrg: '', is_chief: false, _drgOptions: [] },
+  { index: 1, id: null, description: '', icd10: '', gdrg: '', is_chief: false, _drgOptions: [] },
+  { index: 2, id: null, description: '', icd10: '', gdrg: '', is_chief: false, _drgOptions: [] },
+  { index: 3, id: null, description: '', icd10: '', gdrg: '', is_chief: false, _drgOptions: [] },
 ]);
 
 const diagnosisColumns = [
@@ -1373,6 +1378,7 @@ const claimDiagnosisForm = reactive({
   gdrg: '',
   is_chief: false,
 });
+const claimDiagnosisDrgOptions = ref([]);
 
 // Investigations
 const investigationsList = ref([
@@ -1686,6 +1692,7 @@ function upsertDiagnosisFromProcedure(proc) {
       icd10: '',
       gdrg: '',
       is_chief: false,
+      _drgOptions: [],
     };
     diagnosesList.value.push(row);
   }
@@ -1803,21 +1810,92 @@ const onDiagnosisSelect = async (index, val) => {
     row.description = '';
     row.icd10 = '';
     row.gdrg = '';
+    row._drgOptions = [];
     return;
   }
   if (typeof val === 'object' && val !== null && (val.icd10_code != null || val.icd10_description != null)) {
     row.description = val.icd10_description || '';
     row.icd10 = val.icd10_code || '';
+    row._drgOptions = [];
     try {
-      const res = await priceListAPI.getDrgCodesFromIcd10(val.icd10_code);
-      const drgCodes = res.data || [];
-      if (drgCodes.length > 0) {
-        row.gdrg = drgCodes[0].drg_code || '';
+      let drgCodes = [];
+      if (Array.isArray(val.drg_codes) && val.drg_codes.length) {
+        drgCodes = val.drg_codes
+          .filter(Boolean)
+          .map((code) => (typeof code === 'string' ? { drg_code: code, drg_description: '' } : code));
       }
-    } catch (_) {}
+      if (!drgCodes.length && val.icd10_code) {
+        const res = await priceListAPI.getDrgCodesFromIcd10(val.icd10_code);
+        drgCodes = res.data || [];
+      }
+      const options = (drgCodes || [])
+        .map((d) => {
+          const code = (d.drg_code || d || '').toString().trim();
+          if (!code) return null;
+          const desc = (d.drg_description || '').toString().trim();
+          return { label: desc ? `${code} — ${desc}` : code, value: code };
+        })
+        .filter(Boolean);
+      // de-dupe by value
+      const seen = new Set();
+      row._drgOptions = options.filter((o) => {
+        if (seen.has(o.value)) return false;
+        seen.add(o.value);
+        return true;
+      });
+      if (row._drgOptions.length === 1) {
+        row.gdrg = row._drgOptions[0].value;
+      } else if (row._drgOptions.length > 1) {
+        const existing = String(row.gdrg || '').trim();
+        const stillValid = row._drgOptions.some((o) => o.value === existing);
+        row.gdrg = stillValid ? existing : '';
+        $q.notify({
+          type: 'info',
+          message: `This ICD-10 maps to ${row._drgOptions.length} DRGs — select one in the G-DRG column`,
+          timeout: 3500,
+        });
+      } else {
+        row.gdrg = '';
+      }
+    } catch (_) {
+      row._drgOptions = [];
+      row.gdrg = '';
+    }
     return;
   }
   row.description = typeof val === 'string' ? val : '';
+};
+
+const applyDrgOptionsForDiagnoses = async () => {
+  const rows = diagnosesList.value || [];
+  await Promise.all(
+    rows.map(async (row) => {
+      const code = String(row.icd10 || '').trim();
+      if (!code) {
+        row._drgOptions = [];
+        return;
+      }
+      try {
+        const res = await priceListAPI.getDrgCodesFromIcd10(code);
+        const options = (res.data || [])
+          .map((d) => {
+            const drg = String(d.drg_code || '').trim();
+            if (!drg) return null;
+            const desc = String(d.drg_description || '').trim();
+            return { label: desc ? `${drg} — ${desc}` : drg, value: drg };
+          })
+          .filter(Boolean);
+        const seen = new Set();
+        row._drgOptions = options.filter((o) => {
+          if (seen.has(o.value)) return false;
+          seen.add(o.value);
+          return true;
+        });
+      } catch (_) {
+        row._drgOptions = [];
+      }
+    })
+  );
 };
 
 const addDiagnosis = () => {
@@ -1846,6 +1924,7 @@ const addDiagnosis = () => {
     icd10: '',
     gdrg: '',
     is_chief: false,
+    _drgOptions: [],
   });
   $q.notify({
     type: 'positive',
@@ -2118,6 +2197,7 @@ function openAddDiagnosisDialog() {
 function resetClaimDiagnosisForm() {
   selectedIcd10.value = null;
   selectedDrgDiagnosis.value = null;
+  claimDiagnosisDrgOptions.value = [];
   Object.assign(claimDiagnosisForm, {
     description: '',
     icd10: '',
@@ -2194,6 +2274,7 @@ async function onIcd10Selected(icd10Item) {
     claimDiagnosisForm.gdrg = '';
     claimDiagnosisForm.description = '';
     selectedDrgDiagnosis.value = null;
+    claimDiagnosisDrgOptions.value = [];
     return;
   }
   claimDiagnosisForm.icd10 = icd10Item.icd10_code || '';
@@ -2201,13 +2282,48 @@ async function onIcd10Selected(icd10Item) {
     claimDiagnosisForm.description = icd10Item.icd10_description;
   }
   selectedDrgDiagnosis.value = null;
+  claimDiagnosisDrgOptions.value = [];
   try {
-    const res = await priceListAPI.getDrgCodesFromIcd10(icd10Item.icd10_code);
-    const drgCodes = res.data || [];
-    if (drgCodes.length > 0) {
-      claimDiagnosisForm.gdrg = drgCodes[0].drg_code || '';
+    let drgCodes = [];
+    if (Array.isArray(icd10Item.drg_codes) && icd10Item.drg_codes.length) {
+      drgCodes = icd10Item.drg_codes
+        .filter(Boolean)
+        .map((code) => (typeof code === 'string' ? { drg_code: code, drg_description: '' } : code));
     }
-  } catch (_) {}
+    if (!drgCodes.length && icd10Item.icd10_code) {
+      const res = await priceListAPI.getDrgCodesFromIcd10(icd10Item.icd10_code);
+      drgCodes = res.data || [];
+    }
+    const options = (drgCodes || [])
+      .map((d) => {
+        const code = String(d.drg_code || d || '').trim();
+        if (!code) return null;
+        const desc = String(d.drg_description || '').trim();
+        return { label: desc ? `${code} — ${desc}` : code, value: code };
+      })
+      .filter(Boolean);
+    const seen = new Set();
+    claimDiagnosisDrgOptions.value = options.filter((o) => {
+      if (seen.has(o.value)) return false;
+      seen.add(o.value);
+      return true;
+    });
+    if (claimDiagnosisDrgOptions.value.length === 1) {
+      claimDiagnosisForm.gdrg = claimDiagnosisDrgOptions.value[0].value;
+    } else if (claimDiagnosisDrgOptions.value.length > 1) {
+      claimDiagnosisForm.gdrg = '';
+      $q.notify({
+        type: 'info',
+        message: `This ICD-10 maps to ${claimDiagnosisDrgOptions.value.length} DRGs — select one`,
+        timeout: 3500,
+      });
+    } else {
+      claimDiagnosisForm.gdrg = '';
+    }
+  } catch (_) {
+    claimDiagnosisDrgOptions.value = [];
+    claimDiagnosisForm.gdrg = '';
+  }
 }
 
 function onDrgDiagnosisSelected(drgItem) {
@@ -2231,6 +2347,10 @@ function addDiagnosisFromDialog() {
     $q.notify({ type: 'warning', message: 'Please enter a diagnosis description.' });
     return;
   }
+  if ((claimDiagnosisDrgOptions.value || []).length > 1 && !String(d.gdrg || '').trim()) {
+    $q.notify({ type: 'warning', message: 'This ICD-10 maps to multiple DRGs — select one.' });
+    return;
+  }
   const nextIndex = diagnosesList.value.length;
   diagnosesList.value.push({
     index: nextIndex,
@@ -2239,6 +2359,7 @@ function addDiagnosisFromDialog() {
     icd10: (d.icd10 || '').trim(),
     gdrg: (d.gdrg || '').trim(),
     is_chief: !!d.is_chief,
+    _drgOptions: [...(claimDiagnosisDrgOptions.value || [])],
   });
   resetClaimDiagnosisForm();
   showDiagnosisDialog.value = false;
@@ -2406,8 +2527,10 @@ const loadClaimData = async () => {
         icd10: diag?.icd10 || '',
         gdrg: diag?.gdrg || '',
         is_chief: diag?.is_chief || false,
+        _drgOptions: [],
       };
     });
+    await applyDrgOptionsForDiagnoses();
 
     // After diagnoses load, align procedure diagnosis labels and principal G-DRG from procedures
     for (const proc of proceduresList.value) {

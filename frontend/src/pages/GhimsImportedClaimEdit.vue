@@ -155,9 +155,31 @@
             </ul>
           </q-banner>
           <div class="row q-col-gutter-md q-mb-md">
-            <q-input v-model="payload.typeOfService" label="Type of Service" filled class="col-12 col-md-3" />
-            <q-input v-model="payload.typeOfAttendance" label="Type of Attendance" filled class="col-12 col-md-3" />
-            <q-input v-model="payload.specialtyAttended" label="Specialty Attended" filled class="col-12 col-md-3" />
+            <q-select
+              v-model="payload.typeOfService"
+              :options="serviceTypeOptions"
+              emit-value
+              map-options
+              filled
+              label="Type of Service"
+              class="col-12 col-md-3"
+            />
+            <q-select
+              v-model="payload.typeOfAttendance"
+              :options="attendanceTypeOptions"
+              emit-value
+              map-options
+              filled
+              label="Type of Attendance"
+              class="col-12 col-md-3"
+            />
+            <q-input
+              v-model="payload.specialtyAttended"
+              label="Specialty Attended"
+              filled
+              class="col-12 col-md-3"
+              hint="Type the specialty attended"
+            />
             <q-input v-model="payload.serviceOutcome" label="Service Outcome" filled class="col-12 col-md-3" />
             <q-input v-model="payload.principalGDRG" label="Principal GDRG" filled class="col-12 col-md-3" />
             <q-input v-model="payload.isDependant" label="Is Dependant (0/1)" filled class="col-12 col-md-3" />
@@ -216,14 +238,6 @@
               @update:model-value="(val) => onDiagnosisSelect(i, val)"
             />
             <q-input v-model="d._diagnosisName" label="Diagnosis Name" filled dense class="col-12 col-md-6" />
-            <q-input v-model="d.gdrgCode" label="GDRG" filled dense class="col-12 col-md-2" />
-            <q-checkbox
-              :model-value="principalDiagnosisIndex === i"
-              label="Principal diagnosis"
-              dense
-              class="col-12 col-md-3"
-              @update:model-value="(checked) => setPrincipalDiagnosis(i, checked)"
-            />
             <q-select
               v-if="(d._drgOptions || []).length > 1"
               :model-value="d.gdrgCode"
@@ -233,9 +247,18 @@
               clearable
               filled
               dense
-              label="Mapped DRG options"
+              label="Select mapped DRG"
+              hint="This ICD-10 maps to multiple DRGs"
               class="col-12 col-md-4"
-              @update:model-value="(val) => { d.gdrgCode = val || ''; }"
+              @update:model-value="(val) => onMappedDrgSelect(i, val)"
+            />
+            <q-input v-else v-model="d.gdrgCode" label="GDRG" filled dense class="col-12 col-md-2" />
+            <q-checkbox
+              :model-value="principalDiagnosisIndex === i"
+              label="Principal diagnosis"
+              dense
+              class="col-12 col-md-3"
+              @update:model-value="(checked) => setPrincipalDiagnosis(i, checked)"
             />
             <q-input v-model="d.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="d.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-7" />
@@ -604,6 +627,15 @@ const principalDiagnosisIndex = ref(-1);
 const itemId = ref(Number(route.params.itemId));
 const diagnosisSearchOptions = ref([]);
 const investigationSearchOptions = ref([]);
+
+const serviceTypeOptions = [
+  { label: 'OPD', value: 'OPD' },
+  { label: 'IPD', value: 'IPD' },
+];
+const attendanceTypeOptions = [
+  { label: 'EAE', value: 'EAE' },
+  { label: 'CFU', value: 'CFU' },
+];
 const procedureSearchOptions = ref([]);
 const medicineSearchOptions = ref([]);
 const payload = reactive({
@@ -884,13 +916,14 @@ function onInvestigationSelect(index, val) {
   }
 }
 
-function onDiagnosisSelect(index, val) {
+async function onDiagnosisSelect(index, val) {
   const row = payload.diagnoses[index];
   if (!row) return;
   if (!val) {
     row.icd10 = '';
     row.diagnosis = '';
     row._diagnosisName = '';
+    row.gdrgCode = '';
     row._drgOptions = [];
     row._selectedOption = null;
     return;
@@ -898,22 +931,65 @@ function onDiagnosisSelect(index, val) {
   if (typeof val === 'object') {
     row.icd10 = val.icd10_code || row.icd10 || '';
     row.diagnosis = val.icd10_description || row.diagnosis || '';
-    const drgCodes = Array.isArray(val.drg_codes) ? val.drg_codes.filter(Boolean) : [];
-    row._drgOptions = drgCodes.map((code) => ({ label: code, value: code }));
-    if (drgCodes.length === 1) {
-      row.gdrgCode = drgCodes[0];
-    } else if (drgCodes.length > 1) {
-      const existing = String(row.gdrgCode || '').trim();
-      if (!existing || !drgCodes.includes(existing)) row.gdrgCode = drgCodes[0];
-    } else {
-      row.gdrgCode = val.gdrg_code || val.g_drg_code || val.drg_code || val.gdrgCode || row.gdrgCode || '';
-    }
     row._diagnosisName = val.icd10_description || row._diagnosisName || '';
     row._selectedOption = val;
+    row._drgOptions = [];
+
+    let drgItems = [];
+    const fromSearch = Array.isArray(val.drg_codes) ? val.drg_codes.filter(Boolean) : [];
+    if (fromSearch.length) {
+      drgItems = fromSearch.map((code) =>
+        typeof code === 'string' ? { drg_code: code, drg_description: '' } : code
+      );
+    }
+    if (row.icd10) {
+      try {
+        const res = await priceListAPI.getDrgCodesFromIcd10(row.icd10);
+        if (Array.isArray(res.data) && res.data.length) {
+          drgItems = res.data;
+        }
+      } catch (_) {
+        /* keep search-based options */
+      }
+    }
+
+    const seen = new Set();
+    row._drgOptions = (drgItems || [])
+      .map((d) => {
+        const code = String(d.drg_code || d || '').trim();
+        if (!code || seen.has(code)) return null;
+        seen.add(code);
+        const desc = String(d.drg_description || '').trim();
+        return { label: desc ? `${code} — ${desc}` : code, value: code };
+      })
+      .filter(Boolean);
+
+    if (row._drgOptions.length === 1) {
+      row.gdrgCode = row._drgOptions[0].value;
+    } else if (row._drgOptions.length > 1) {
+      const existing = String(row.gdrgCode || '').trim();
+      const stillValid = row._drgOptions.some((o) => o.value === existing);
+      row.gdrgCode = stillValid ? existing : '';
+      $q.notify({
+        type: 'info',
+        message: `This ICD-10 maps to ${row._drgOptions.length} DRGs — select one`,
+        timeout: 3500,
+      });
+    } else {
+      row.gdrgCode = val.gdrg_code || val.g_drg_code || val.drg_code || val.gdrgCode || '';
+    }
     if (principalDiagnosisIndex.value === index) {
       payload.principalGDRG = row.gdrgCode || '';
     }
-    return;
+  }
+}
+
+function onMappedDrgSelect(index, val) {
+  const row = payload.diagnoses[index];
+  if (!row) return;
+  row.gdrgCode = val || '';
+  if (principalDiagnosisIndex.value === index) {
+    payload.principalGDRG = row.gdrgCode || '';
   }
 }
 
@@ -1334,9 +1410,25 @@ async function resolveServiceNames() {
               diag._drgOptions = drgCodes.map((code) => ({ label: code, value: code }));
               if (drgCodes.length === 1) {
                 if (!diag.gdrgCode) diag.gdrgCode = drgCodes[0];
-              } else if (!diag.gdrgCode) {
-                diag.gdrgCode = first.gdrg_code || first.g_drg_code || first.drg_code || first.gdrgCode || '';
               }
+              // Prefer full DRG list (with descriptions) from mapping API
+              return priceListAPI.getDrgCodesFromIcd10(diag.icd10).then((drgRes) => {
+                const items = drgRes.data || [];
+                if (!items.length) return;
+                const seen = new Set();
+                diag._drgOptions = items
+                  .map((d) => {
+                    const code = String(d.drg_code || '').trim();
+                    if (!code || seen.has(code)) return null;
+                    seen.add(code);
+                    const desc = String(d.drg_description || '').trim();
+                    return { label: desc ? `${code} — ${desc}` : code, value: code };
+                  })
+                  .filter(Boolean);
+                if (diag._drgOptions.length === 1 && !diag.gdrgCode) {
+                  diag.gdrgCode = diag._drgOptions[0].value;
+                }
+              }).catch(() => {});
             }
           })
           .catch(() => {})
