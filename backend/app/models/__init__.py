@@ -50,6 +50,7 @@ from app.models.xray_result import XrayResult
 from app.models.inpatient_xray_result import InpatientXrayResult
 from app.models.audit_log import AuditLog
 from app.models.consultation_template import ConsultationTemplate
+from app.models.claim_diagnosis_template import ClaimDiagnosisTemplate
 from app.models.ward_stock import WardStock
 from app.models.pharmacy_requisition import PharmacyRequisition, RequisitionStatus
 from app.models.requisition_item import RequisitionItem
@@ -141,6 +142,7 @@ __all__ = [
     "InpatientXrayResult",
     "AuditLog",
     "ConsultationTemplate",
+    "ClaimDiagnosisTemplate",
     "WardStock",
     "PharmacyRequisition",
     "RequisitionStatus",

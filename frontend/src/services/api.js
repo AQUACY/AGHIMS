@@ -855,12 +855,38 @@ export const claimsAPI = {
       ...(memberNo ? { member_no: memberNo } : {}),
       ...(otac ? { otac } : {}),
     }),
+  convertGhanaCardToHin: (claimId, ghanaCard = null, otac = null) =>
+    api.post(`/claims/${claimId}/convert-ghana-card-to-hin`, {
+      ...(ghanaCard ? { ghana_card: ghanaCard } : {}),
+      ...(otac ? { otac } : {}),
+    }),
   fetchGhimsImportCcc: (itemId, memberNo = null, otac = null) =>
     api.post(`/claims/ghims-import/items/${itemId}/fetch-ccc`, {
       ...(memberNo ? { member_no: memberNo } : {}),
       ...(otac ? { otac } : {}),
     }),
+  convertGhimsGhanaCardToHin: (itemId, ghanaCard = null, otac = null) =>
+    api.post(`/claims/ghims-import/items/${itemId}/convert-ghana-card-to-hin`, {
+      ...(ghanaCard ? { ghana_card: ghanaCard } : {}),
+      ...(otac ? { otac } : {}),
+    }),
+  // Diagnosis templates (investigations + medicines presets)
+  listDiagnosisTemplates: (params = {}) =>
+    api.get('/claims/diagnosis-templates', { params }),
+  matchDiagnosisTemplates: ({ icd10, diagnosis, gdrg } = {}) =>
+    api.get('/claims/diagnosis-templates/match', {
+      params: {
+        ...(icd10 ? { icd10 } : {}),
+        ...(diagnosis ? { diagnosis } : {}),
+        ...(gdrg ? { gdrg } : {}),
+      },
+    }),
+  getDiagnosisTemplate: (id) => api.get(`/claims/diagnosis-templates/${id}`),
+  createDiagnosisTemplate: (data) => api.post('/claims/diagnosis-templates', data),
+  updateDiagnosisTemplate: (id, data) => api.put(`/claims/diagnosis-templates/${id}`, data),
+  deleteDiagnosisTemplate: (id) => api.delete(`/claims/diagnosis-templates/${id}`),
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),
+  vetClaim: (claimId, by) => api.put(`/claims/${claimId}/vet`, { by }),
   reopen: (claimId) => api.put(`/claims/${claimId}/reopen`),
   regenerate: (claimId, data) => api.put(`/claims/${claimId}/regenerate`, data),
   exportSingle: (claimId) =>
@@ -898,6 +924,7 @@ export const claimsAPI = {
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
+  vetGhimsImportItem: (itemId, by) => api.patch(`/claims/ghims-import/items/${itemId}/vet`, { by }),
   flagGhimsImportItem: (itemId, comment) =>
     api.patch(`/claims/ghims-import/items/${itemId}/flag`, { comment }),
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),

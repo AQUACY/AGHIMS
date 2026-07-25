@@ -25,7 +25,10 @@
             <q-item-section avatar><q-icon name="folder" color="primary" /></q-item-section>
             <q-item-section>
               <q-item-label>{{ b.file_name }}</q-item-label>
-              <q-item-label caption>{{ formatDate(b.uploaded_at) }} · {{ b.claim_count }} claim(s) · {{ b.finalized_count || 0 }} finalized</q-item-label>
+              <q-item-label caption>
+                {{ formatDate(b.uploaded_at) }} · {{ b.claim_count }} claim(s) · {{ b.finalized_count || 0 }} finalized
+                · {{ b.pharmacy_vetted_count || 0 }} pharmacy-vetted · {{ b.doctor_vetted_count || 0 }} doctor-vetted
+              </q-item-label>
             </q-item-section>
             <q-item-section side class="row items-center q-gutter-sm">
               <q-btn flat dense round icon="chevron_right" @click="openBatch(b.id)" />
@@ -53,10 +56,13 @@
           <div class="text-body2 text-primary">
             Showing {{ filteredClaims.length }} filtered claim(s)
           </div>
+          <div class="text-body2 text-teal">
+            Pharmacy vetted: {{ batchPharmacyVettedCount }} · Doctor vetted: {{ batchDoctorVettedCount }}
+          </div>
           <q-checkbox
-            :model-value="allFinalizedSelected"
-            label="Select all finalized"
-            @update:model-value="toggleSelectAllFinalized"
+            :model-value="allExportableSelected"
+            label="Select all exportable"
+            @update:model-value="toggleSelectAllExportable"
           />
           <q-toggle
             v-model="filtersLocked"
@@ -222,7 +228,7 @@
                   </template>
                 </td>
                 <td>
-                  <q-badge :color="claimStatusColor(row.status)" :label="row.status" />
+                  <q-badge :color="claimStatusColor(row.status)" :label="vetStatusLabel(row.status)" />
                   <q-chip
                     v-if="row.status === 'flagged' && row.flag_comment"
                     class="q-ml-sm q-mt-xs"
@@ -252,7 +258,7 @@
                       size="sm"
                       color="primary"
                       label="Edit"
-                      :disable="row.status === 'finalized' || row.status === 'flagged'"
+                      :disable="row.status === 'finalized'"
                       @click="editImportedClaim(row)"
                     />
                     <q-btn
@@ -262,27 +268,25 @@
                       @click="viewImportedClaim(row)"
                     />
                     <q-btn
-                      v-if="row.status === 'finalized'"
+                      v-if="isClaimExportable(row)"
                       size="sm"
                       color="teal"
                       label="Export"
                       :loading="exportingSingleItemId === row.id"
                       @click="exportSingleClaim(row)"
                     />
-                    <q-btn v-if="row.status !== 'finalized'" size="sm" color="positive" label="Finalize" :disable="row.status === 'flagged'" :loading="statusLoadingItemId === row.id" outline @click="setClaimFinalized(row)" />
+                    <q-btn v-if="row.status !== 'finalized'" size="sm" color="positive" label="Finalize" :loading="statusLoadingItemId === row.id" outline @click="setClaimFinalized(row)" />
                     <q-btn
-                      v-if="row.status !== 'finalized'"
+                      v-if="row.status !== 'finalized' && row.status !== 'flagged'"
                       size="sm"
                       color="negative"
-                      :label="row.status === 'flagged' ? 'Flagged' : 'Flag claim'"
-                      :disable="row.status === 'flagged'"
+                      label="Flag claim"
                       :loading="statusLoadingItemId === row.id"
                       outline
                       @click="flagClaim(row)"
                     />
-                    <q-btn v-if="row.status === 'finalized'" size="sm" color="warning" label="Revert" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
-                    <q-btn v-if="row.status === 'flagged'" size="sm" color="warning" label="Mark draft" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
-                    <q-checkbox v-if="row.status === 'finalized'" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
+                    <q-btn v-if="row.status === 'finalized' || row.status === 'pharmacy_vetted' || row.status === 'doctor_vetted' || row.status === 'flagged'" size="sm" color="warning" :label="row.status === 'flagged' ? 'Mark draft' : 'Revert'" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
+                    <q-checkbox v-if="isClaimExportable(row)" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
                   </div>
                 </td>
               </tr>
@@ -323,6 +327,14 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
 import { setGhimsNavIds } from '../utils/claimNav';
+import {
+  isClaimExportable,
+  confirmExportWithVettingWarning,
+  statusColor as vetStatusColor,
+  statusLabel as vetStatusLabel,
+  isPharmacyVettedStatus,
+  isDoctorVettedStatus,
+} from '../utils/claimVetting';
 
 const $route = useRoute();
 const $router = useRouter();
@@ -362,6 +374,8 @@ const statusFilterOptions = [
   { label: 'All', value: 'all' },
   { label: 'Draft', value: 'draft' },
   { label: 'Flagged', value: 'flagged' },
+  { label: 'Pharmacy vetted', value: 'pharmacy_vetted' },
+  { label: 'Doctor vetted', value: 'doctor_vetted' },
   { label: 'Finalized', value: 'finalized' },
 ];
 const ageGroupFilterOptions = [
@@ -446,12 +460,19 @@ const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(Number(amount));
 };
 
-const allFinalizedSelected = computed(() => {
-  const finalizedIds = (currentBatch.value?.claims || [])
-    .filter((r) => r.status === 'finalized')
+const batchPharmacyVettedCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => isPharmacyVettedStatus(r)).length
+);
+const batchDoctorVettedCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => isDoctorVettedStatus(r)).length
+);
+
+const allExportableSelected = computed(() => {
+  const ids = (currentBatch.value?.claims || [])
+    .filter((r) => isClaimExportable(r))
     .map((r) => Number(r.id));
-  if (!finalizedIds.length) return false;
-  return finalizedIds.every((id) => selectedItemIds.value.includes(id));
+  if (!ids.length) return false;
+  return ids.every((id) => selectedItemIds.value.includes(id));
 });
 
 const allFilteredSelected = computed(() => {
@@ -533,9 +554,7 @@ function claimClientAgeYears(row) {
 }
 
 function claimStatusColor(status) {
-  if (status === 'finalized') return 'positive';
-  if (status === 'flagged') return 'negative';
-  return 'warning';
+  return vetStatusColor(status);
 }
 
 function prettySectionName(key) {
@@ -565,7 +584,7 @@ async function uploadXml() {
 }
 
 function syncSelectedExports() {
-  selectedItemIds.value = (currentBatch.value?.claims || []).filter((r) => r.status === 'finalized').map((r) => r.id);
+  selectedItemIds.value = (currentBatch.value?.claims || []).filter((r) => isClaimExportable(r)).map((r) => r.id);
 }
 
 function toggleBulkSelected(itemId, checked) {
@@ -752,20 +771,23 @@ function toggleExport(itemId, checked) {
   if (!checked) selectedItemIds.value = selectedItemIds.value.filter((x) => x !== id);
 }
 
-function toggleSelectAllFinalized(checked) {
-  const finalizedIds = (currentBatch.value?.claims || [])
-    .filter((r) => r.status === 'finalized')
+function toggleSelectAllExportable(checked) {
+  const exportableIds = (currentBatch.value?.claims || [])
+    .filter((r) => isClaimExportable(r))
     .map((r) => Number(r.id));
   if (checked) {
-    const merged = new Set([...(selectedItemIds.value || []), ...finalizedIds]);
+    const merged = new Set([...(selectedItemIds.value || []), ...exportableIds]);
     selectedItemIds.value = Array.from(merged);
   } else {
-    selectedItemIds.value = (selectedItemIds.value || []).filter((id) => !finalizedIds.includes(Number(id)));
+    selectedItemIds.value = (selectedItemIds.value || []).filter((id) => !exportableIds.includes(Number(id)));
   }
 }
 
 async function exportSelected() {
   if (!selectedItemIds.value.length) return;
+  const rows = (currentBatch.value?.claims || []).filter((r) => selectedItemIds.value.includes(r.id));
+  const ok = await confirmExportWithVettingWarning($q, rows);
+  if (!ok) return;
   exporting.value = true;
   try {
     const res = await claimsAPI.exportGhimsImportItems(selectedItemIds.value);
@@ -782,6 +804,8 @@ async function exportSelected() {
 
 async function exportSingleClaim(row) {
   if (!row?.id) return;
+  const ok = await confirmExportWithVettingWarning($q, [row]);
+  if (!ok) return;
   exportingSingleItemId.value = row.id;
   try {
     const res = await claimsAPI.exportGhimsImportItems([Number(row.id)]);

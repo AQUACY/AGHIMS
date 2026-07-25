@@ -57,21 +57,29 @@ export function confirmClaimGetCcc($q) {
 }
 
 /**
- * @param {{ insured?: boolean, nhis_active?: boolean, insurance_id?: string, memberNo?: string, member_number?: string }} source
+ * @param {{ insured?: boolean, nhis_active?: boolean, insurance_id?: string, memberNo?: string, member_number?: string, ghanaCard?: string, ghana_card?: string }} source
  */
 export function canFetchClaimCcc(source) {
+  const ghanaCard = source?.ghanaCard || source?.ghana_card || '';
   const member = (
     source?.insurance_id
     || source?.memberNo
     || source?.member_number
     || ''
   ).toString().trim();
-  if (!member) return false;
-  if (source?.memberNo) return true;
+
+  // Prefer Ghana Card for CCC when present (HIN cannot generate CCC)
+  const forCcc = (ghanaCard && String(ghanaCard).trim()) || member;
+  if (!forCcc) return false;
+
+  // Imported claims: any usable member/Ghana Card is enough
+  if (source?.memberNo != null || source?.ghanaCard != null) {
+    return !!forCcc;
+  }
   return !!(
     source?.insured
     && source?.nhis_active
-    && member
+    && forCcc
   );
 }
 
@@ -198,7 +206,8 @@ export function applyClaimFetchCccToEditForm(ctx, data) {
   if (checkCode && ctx.claimMeta) {
     ctx.claimMeta.claim_check_code = checkCode;
   }
-  if (data.member_no) {
+  if (data.member_no && !ctx.patientInfo.ghana_card) {
+    // Do not overwrite HIN with Ghana Card used for CCC lookup
     ctx.patientInfo.member_number = data.member_no;
   }
 

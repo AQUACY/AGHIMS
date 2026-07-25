@@ -178,6 +178,9 @@
             @update:model-value="onSortChange"
           />
           <q-space />
+          <span class="text-caption text-teal">
+            Pharmacy vetted: {{ pagePharmacyVettedCount }} · Doctor vetted: {{ pageDoctorVettedCount }}
+          </span>
           <q-btn
             color="primary"
             label="Export selected"
@@ -219,6 +222,16 @@
               />
             </q-td>
           </template>
+          <template v-slot:body-cell-claim_status="props">
+            <q-td :props="props">
+              <q-badge
+                v-if="props.row.claim_status"
+                :color="getStatusColor(props.row.claim_status)"
+                :label="vetStatusLabel(props.row.claim_status)"
+              />
+              <span v-else class="text-grey">—</span>
+            </q-td>
+          </template>
           <template v-slot:body-cell-total_claim_amount="props">
             <q-td :props="props">
               {{ formatCurrency(props.value) }}
@@ -235,7 +248,7 @@
                 class="q-mr-xs"
               />
               <q-btn
-                v-else-if="props.row.claim_status === 'draft' || props.row.claim_status === 'reopened'"
+                v-else-if="props.row.claim_status && props.row.claim_status !== 'finalized'"
                 size="sm"
                 color="secondary"
                 label="Edit"
@@ -243,7 +256,7 @@
                 class="q-mr-xs"
               />
               <q-btn
-                v-if="props.row.claim_status === 'draft' || props.row.claim_status === 'reopened'"
+                v-if="props.row.claim_id && props.row.claim_status && props.row.claim_status !== 'finalized'"
                 size="sm"
                 color="orange"
                 label="Finalize"
@@ -251,11 +264,11 @@
                 class="q-mr-xs"
               />
               <q-btn
-                v-if="props.row.claim_status === 'finalized'"
+                v-if="props.row.claim_id && isClaimExportable(props.row)"
                 size="sm"
                 color="positive"
                 label="Export XML"
-                @click="exportSingleClaim(props.row.claim_id)"
+                @click="exportSingleClaim(props.row)"
                 class="q-mr-xs"
               />
               <q-btn
@@ -267,7 +280,7 @@
                 class="q-mr-xs"
               />
               <q-btn
-                v-if="props.row.claim_id && (props.row.claim_status === 'draft' || props.row.claim_status === 'reopened')"
+                v-if="props.row.claim_id && (props.row.claim_status === 'draft' || props.row.claim_status === 'reopened' || props.row.claim_status === 'pharmacy_vetted' || props.row.claim_status === 'doctor_vetted')"
                 size="sm"
                 color="info"
                 label="Regenerate"
@@ -298,6 +311,14 @@ import { encountersAPI, claimsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import { useRouter } from 'vue-router';
 import { setClaimsNavIds } from '../utils/claimNav';
+import {
+  isClaimExportable,
+  confirmExportWithVettingWarning,
+  statusColor as vetStatusColor,
+  statusLabel as vetStatusLabel,
+  isPharmacyVettedStatus,
+  isDoctorVettedStatus,
+} from '../utils/claimVetting';
 
 const $router = useRouter();
 
@@ -356,6 +377,8 @@ const claimStatusOptions = [
   { label: 'All', value: null },
   { label: 'No Claim', value: 'no_claim' },
   { label: 'Draft', value: 'draft' },
+  { label: 'Pharmacy vetted', value: 'pharmacy_vetted' },
+  { label: 'Doctor vetted', value: 'doctor_vetted' },
   { label: 'Finalized', value: 'finalized' },
   { label: 'Reopened', value: 'reopened' },
 ];
@@ -474,14 +497,14 @@ const columns = [
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
 
-const getStatusColor = (status) => {
-  const colors = {
-    draft: 'orange',
-    finalized: 'green',
-    reopened: 'warning',
-  };
-  return colors[status] || 'grey';
-};
+const getStatusColor = (status) => vetStatusColor(status);
+
+const pagePharmacyVettedCount = computed(() =>
+  (sortedEncounters.value || []).filter((r) => isPharmacyVettedStatus(r)).length
+);
+const pageDoctorVettedCount = computed(() =>
+  (sortedEncounters.value || []).filter((r) => isDoctorVettedStatus(r)).length
+);
 
 const exportByDateRange = async () => {
   if (!exportStartDate.value || !exportEndDate.value) {
@@ -696,9 +719,14 @@ const reopenClaim = async (claimId) => {
   });
 };
 
-const exportSingleClaim = async (claimId) => {
+const exportSingleClaim = async (rowOrId) => {
+  const row = typeof rowOrId === 'object' && rowOrId
+    ? rowOrId
+    : { claim_id: rowOrId, claim_status: 'finalized' };
+  const ok = await confirmExportWithVettingWarning($q, [row]);
+  if (!ok) return;
   try {
-    await claimsStore.exportClaim(claimId);
+    await claimsStore.exportClaim(row.claim_id);
   } catch (error) {
     // Error handled in store
   }
@@ -706,15 +734,17 @@ const exportSingleClaim = async (claimId) => {
 
 const exportSelectedClaims = async () => {
   const exportable = selectedRows.value.filter(
-    (row) => row.claim_id && row.claim_status === 'finalized'
+    (row) => row.claim_id && isClaimExportable(row)
   );
   if (exportable.length === 0) {
     $q.notify({
       type: 'warning',
-      message: 'Select only finalized claims to export (rows with "Finalized" status)',
+      message: 'Select finalized or pharmacy/doctor-vetted claims to export',
     });
     return;
   }
+  const ok = await confirmExportWithVettingWarning($q, exportable);
+  if (!ok) return;
   const claimIds = exportable.map((row) => row.claim_id);
   exportingSelected.value = true;
   try {

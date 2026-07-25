@@ -2,6 +2,12 @@
   <q-page class="q-pa-md" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
     <div class="row items-center q-mb-md q-col-gutter-sm">
       <div class="text-h4">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
+      <q-badge
+        v-if="claimStatus"
+        class="q-ml-sm"
+        :color="claimStatus === 'finalized' ? 'positive' : (claimStatus === 'pharmacy_vetted' ? 'teal' : (claimStatus === 'doctor_vetted' ? 'indigo' : 'warning'))"
+        :label="claimStatus === 'pharmacy_vetted' ? 'pharmacy vetted' : (claimStatus === 'doctor_vetted' ? 'doctor vetted' : claimStatus)"
+      />
       <q-space />
       <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
         <q-btn
@@ -197,11 +203,39 @@
                 type="radio"
               />
             </div>
+            <div class="col-12 col-md-5">
+              <q-input
+                v-model="patientInfo.member_number"
+                filled
+                label="Member Number"
+                :disable="claimStatus === 'finalized' && !isViewMode"
+              >
+                <template v-if="showConvertToHin" v-slot:append>
+                  <q-btn
+                    flat
+                    dense
+                    color="primary"
+                    label="To HIN"
+                    :loading="convertingGhanaCard"
+                    :disable="claimStatus === 'finalized'"
+                    @click="onConvertGhanaCardToHin"
+                  >
+                    <q-tooltip>ClaimIT rejects Ghana Cards — convert to HIN (keeps Ghana Card below)</q-tooltip>
+                  </q-btn>
+                </template>
+              </q-input>
+              <div v-if="isMemberNoGhanaCard" class="text-caption text-orange-8 q-mt-xs">
+                Ghana Card detected — ClaimIT needs HIN or NHIA number
+              </div>
+            </div>
             <q-input
-              v-model="patientInfo.member_number"
+              v-if="patientInfo.ghana_card || showConvertToHin"
+              v-model="patientInfo.ghana_card"
               filled
-              label="Member Number"
-              class="col-12 col-md-5"
+              label="Ghana Card"
+              class="col-12 col-md-4"
+              hint="Saved when converting Member No to HIN (used for Get CCC)"
+              :disable="claimStatus === 'finalized'"
             />
             <q-input
               v-model="patientInfo.hospital_record_no"
@@ -530,6 +564,27 @@
             <div class="text-h6">Diagnosis(es)</div>
             <q-space />
             <q-btn
+              v-if="claimStatus !== 'finalized' && !isViewMode && hasChiefDiagnosis"
+              size="sm"
+              flat
+              color="primary"
+              icon="playlist_add"
+              label="Apply template"
+              :loading="loadingTemplates"
+              @click="openApplyTemplate"
+              class="q-mr-xs"
+            />
+            <q-btn
+              v-if="claimStatus !== 'finalized' && !isViewMode && hasChiefDiagnosis"
+              size="sm"
+              flat
+              color="secondary"
+              icon="save"
+              label="Save as template"
+              @click="openSaveTemplate"
+              class="q-mr-sm"
+            />
+            <q-btn
               v-if="claimStatus !== 'finalized' && !isViewMode"
               size="sm"
               color="primary"
@@ -586,32 +641,38 @@
             </template>
             <template v-slot:body-cell-gdrg="props">
               <q-td :props="props">
-                <q-select
-                  v-if="(diagnosesList[props.row.index]._drgOptions || []).length > 1"
-                  v-model="diagnosesList[props.row.index].gdrg"
-                  :options="diagnosesList[props.row.index]._drgOptions"
-                  emit-value
-                  map-options
-                  dense
-                  filled
-                  clearable
-                  label="Select mapped DRG"
-                  :disable="claimStatus === 'finalized' || isViewMode"
-                />
-                <q-input
-                  v-else
-                  v-model="diagnosesList[props.row.index].gdrg"
-                  dense
-                  filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
-                />
+                <div class="column q-gutter-xs" style="min-width: 140px">
+                  <q-select
+                    v-if="(diagnosesList[props.row.index]._drgOptions || []).length > 1"
+                    :model-value="diagnosesList[props.row.index].gdrg"
+                    :options="diagnosesList[props.row.index]._drgOptions"
+                    emit-value
+                    map-options
+                    dense
+                    filled
+                    clearable
+                    label="Mapped DRG options"
+                    :disable="claimStatus === 'finalized' || isViewMode"
+                    @update:model-value="(val) => onDiagnosisMappedDrgSelect(props.row.index, val)"
+                  />
+                  <q-input
+                    v-model="diagnosesList[props.row.index].gdrg"
+                    dense
+                    filled
+                    label="G-DRG"
+                    hint="Editable — type your own code if needed"
+                    :disable="claimStatus === 'finalized' || isViewMode"
+                    @update:model-value="() => onDiagnosisGdrgEdited(props.row.index)"
+                  />
+                </div>
               </q-td>
             </template>
             <template v-slot:body-cell-is_chief="props">
               <q-td :props="props">
                 <q-checkbox
-                  v-model="diagnosesList[props.row.index].is_chief"
+                  :model-value="diagnosesList[props.row.index].is_chief"
                   :disable="claimStatus === 'finalized' || isViewMode"
+                  @update:model-value="(checked) => setChiefDiagnosis(props.row.index, checked)"
                 />
               </q-td>
             </template>
@@ -922,6 +983,28 @@
 
       <!-- Action Buttons -->
       <div class="row q-gutter-md q-mt-md">
+        <q-btn
+          v-if="claimStatus !== 'finalized' && canVetPharmacy"
+          color="teal"
+          outline
+          icon="local_pharmacy"
+          :label="claimStatus === 'pharmacy_vetted' ? 'Pharmacy vetted' : 'Vet by Pharmacy'"
+          :loading="vettingPharmacy"
+          :disable="claimStatus === 'pharmacy_vetted'"
+          class="col-12 col-md-3"
+          @click="vetByPharmacy"
+        />
+        <q-btn
+          v-if="claimStatus !== 'finalized' && canVetDoctor"
+          color="indigo"
+          outline
+          icon="medical_services"
+          :label="claimStatus === 'doctor_vetted' ? 'Doctor vetted' : 'Vet by Doctor'"
+          :loading="vettingDoctor"
+          :disable="claimStatus === 'doctor_vetted'"
+          class="col-12 col-md-3"
+          @click="vetByDoctor"
+        />
         <!-- Edit Mode Buttons -->
         <template v-if="!isViewMode">
           <q-btn
@@ -1034,16 +1117,14 @@
               map-options
               filled
               clearable
-              label="Select mapped DRG *"
-              hint="This ICD-10 maps to multiple DRGs — choose one"
-              :rules="[(val) => !!val || 'Select a DRG']"
+              label="Mapped DRG options"
+              hint="Pick a mapped DRG, or type your own below"
             />
             <q-input
-              v-else
               v-model="claimDiagnosisForm.gdrg"
               filled
               label="G-DRG Code"
-              hint="Auto-filled from selection or enter manually"
+              hint="Editable — type your own code if needed"
             />
             <q-checkbox
               v-model="claimDiagnosisForm.is_chief"
@@ -1151,6 +1232,68 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <q-dialog v-model="showApplyTemplateDialog" persistent>
+      <q-card style="min-width: 520px; max-width: 720px">
+        <q-card-section>
+          <div class="text-h6">Apply diagnosis template</div>
+          <div class="text-caption text-grey-7">{{ principalDiagnosisLabel }}</div>
+        </q-card-section>
+        <q-card-section v-if="!selectedApplyTemplate">
+          <div v-if="!(matchedTemplates || []).length" class="text-grey-7">No matching templates found.</div>
+          <q-list v-else bordered separator>
+            <q-item v-for="t in matchedTemplates" :key="t.id" clickable v-ripple @click="selectApplyTemplate(t)">
+              <q-item-section>
+                <q-item-label>{{ t.name }}</q-item-label>
+                <q-item-label caption>{{ (t.investigations || []).length }} inv · {{ (t.medicines || []).length }} meds</q-item-label>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+        <q-card-section v-else>
+          <div class="text-subtitle2 q-mb-sm">{{ selectedApplyTemplate.name }} — tick items to apply</div>
+          <div v-if="(applyInvChoices || []).length" class="q-mb-md">
+            <div class="text-weight-medium q-mb-xs">Investigations</div>
+            <q-option-group v-model="selectedApplyInvIndexes" :options="applyInvChoices" type="checkbox" color="primary" />
+          </div>
+          <div v-if="(applyMedChoices || []).length">
+            <div class="text-weight-medium q-mb-xs">Medicines</div>
+            <q-option-group v-model="selectedApplyMedIndexes" :options="applyMedChoices" type="checkbox" color="primary" />
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" @click="closeApplyTemplate" />
+          <q-btn v-if="selectedApplyTemplate" flat label="Back" @click="selectedApplyTemplate = null" />
+          <q-btn v-if="selectedApplyTemplate" color="primary" label="Apply selected" @click="confirmApplyTemplate" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showSaveTemplateDialog" persistent>
+      <q-card style="min-width: 520px; max-width: 720px">
+        <q-card-section>
+          <div class="text-h6">Save as diagnosis template</div>
+          <div class="text-caption text-grey-7">{{ principalDiagnosisLabel }}</div>
+        </q-card-section>
+        <q-card-section class="q-gutter-md">
+          <q-input v-model="saveTemplateForm.name" filled label="Template name *" />
+          <q-input v-model="saveTemplateForm.match_keywords" filled dense label="Match keywords" />
+          <div v-if="(saveInvChoices || []).length">
+            <div class="text-weight-medium q-mb-xs">Investigations</div>
+            <q-option-group v-model="selectedSaveInvIndexes" :options="saveInvChoices" type="checkbox" color="primary" />
+          </div>
+          <div v-if="(saveMedChoices || []).length">
+            <div class="text-weight-medium q-mb-xs">Medicines</div>
+            <q-option-group v-model="selectedSaveMedIndexes" :options="saveMedChoices" type="checkbox" color="primary" />
+          </div>
+          <q-toggle v-model="saveTemplateForm.is_shared" label="Share with other claims users" />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn color="primary" label="Save template" :loading="savingTemplate" @click="confirmSaveTemplate" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -1159,13 +1302,22 @@ import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 import { useFacilityStore, DEFAULT_FACILITY_DISPLAY_NAME } from '../stores/facility';
 import {
   confirmClaimGetCcc,
-  canFetchClaimCcc,
   applyClaimFetchCccToEditForm,
   applyServiceDateChangeToEditForm,
 } from '../utils/claimGetCcc';
+import { isGhanaCard, memberNoForCcc, normalizeGhanaCard } from '../utils/memberIdentity';
+import {
+  buildTemplateMatchFromPrincipal,
+  investigationFromTemplateItem,
+  medicineFromTemplateItem,
+  serializeInvestigationForTemplate,
+  serializeMedicineForTemplate,
+  templateNeedsItemPicker,
+} from '../utils/claimDiagnosisTemplates';
 import {
   isMedicineNotCovered,
   normalizeInsuranceCovered,
@@ -1174,6 +1326,7 @@ import {
 import { getClaimsNavPosition } from '../utils/claimNav';
 
 const facilityStore = useFacilityStore();
+const authStore = useAuthStore();
 const $route = useRoute();
 const $router = useRouter();
 const $q = useQuasar();
@@ -1181,7 +1334,73 @@ const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
 const reopening = ref(false);
+const vettingPharmacy = ref(false);
+const vettingDoctor = ref(false);
+const vetting = reactive({
+  pharmacy_vetted: false,
+  pharmacy_vetted_at: null,
+  pharmacy_vetted_by_name: null,
+  doctor_vetted: false,
+  doctor_vetted_at: null,
+  doctor_vetted_by_name: null,
+});
+const canVetPharmacy = computed(() =>
+  authStore.canAccess(['Pharmacy', 'Pharmacy Head', 'Claims', 'Admin'])
+);
+const canVetDoctor = computed(() =>
+  authStore.canAccess(['Doctor', 'PA', 'Claims', 'Admin'])
+);
+
+function applyVettingFromClaim(claim = {}) {
+  if (claim.status) claimStatus.value = claim.status;
+  vetting.pharmacy_vetted = claim.status === 'pharmacy_vetted' || !!claim.pharmacy_vetted;
+  vetting.pharmacy_vetted_at = claim.pharmacy_vetted_at || null;
+  vetting.pharmacy_vetted_by_name = claim.pharmacy_vetted_by_name || null;
+  vetting.doctor_vetted = claim.status === 'doctor_vetted' || !!claim.doctor_vetted;
+  vetting.doctor_vetted_at = claim.doctor_vetted_at || null;
+  vetting.doctor_vetted_by_name = claim.doctor_vetted_by_name || null;
+}
+
+async function vetByPharmacy() {
+  if (!claimId.value || claimStatus.value === 'pharmacy_vetted' || claimStatus.value === 'finalized') return;
+  vettingPharmacy.value = true;
+  try {
+    const res = await claimsAPI.vetClaim(claimId.value, 'pharmacy');
+    applyVettingFromClaim(res.data || {});
+    $q.notify({ type: 'positive', message: 'Status set to pharmacy vetted' });
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to vet by pharmacy' });
+  } finally {
+    vettingPharmacy.value = false;
+  }
+}
+
+async function vetByDoctor() {
+  if (!claimId.value || claimStatus.value === 'doctor_vetted' || claimStatus.value === 'finalized') return;
+  vettingDoctor.value = true;
+  try {
+    const res = await claimsAPI.vetClaim(claimId.value, 'doctor');
+    applyVettingFromClaim(res.data || {});
+    $q.notify({ type: 'positive', message: 'Status set to doctor vetted' });
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to vet by doctor' });
+  } finally {
+    vettingDoctor.value = false;
+  }
+}
 const fetchingClaimCcc = ref(false);
+const convertingGhanaCard = ref(false);
+const loadingTemplates = ref(false);
+const savingTemplate = ref(false);
+const showApplyTemplateDialog = ref(false);
+const showSaveTemplateDialog = ref(false);
+const matchedTemplates = ref([]);
+const selectedApplyTemplate = ref(null);
+const selectedApplyInvIndexes = ref([]);
+const selectedApplyMedIndexes = ref([]);
+const selectedSaveInvIndexes = ref([]);
+const selectedSaveMedIndexes = ref([]);
+const saveTemplateForm = ref({ name: '', match_keywords: '', is_shared: true });
 const patientNhiaMeta = ref({ insured: false, nhis_active: false });
 const claimId = ref(null);
 const claimStatus = ref('draft');
@@ -1225,12 +1444,14 @@ const claimMeta = reactive({
   claim_check_code: '',
 });
 
-const canGetClaimCcc = computed(() =>
-  canFetchClaimCcc({
-    ...patientNhiaMeta.value,
-    insurance_id: patientInfo.member_number,
-  })
-);
+const canGetClaimCcc = computed(() => {
+  const forCcc = memberNoForCcc({
+    memberNo: patientInfo.member_number,
+    ghanaCard: patientInfo.ghana_card,
+  });
+  if (!forCcc) return false;
+  return !!(patientNhiaMeta.value.insured && patientNhiaMeta.value.nhis_active);
+});
 
 // Patient Information
 const patientInfo = reactive({
@@ -1240,9 +1461,16 @@ const patientInfo = reactive({
   age: null,
   gender: 'M',
   member_number: '',
+  ghana_card: '',
+  hin: '',
   hospital_record_no: '',
   card_serial_no: '',
 });
+
+const isMemberNoGhanaCard = computed(() => isGhanaCard(patientInfo.member_number));
+const showConvertToHin = computed(
+  () => isMemberNoGhanaCard.value || (isGhanaCard(patientInfo.ghana_card) && !String(patientInfo.member_number || '').trim())
+);
 
 const genderOptions = [
   { label: 'Male', value: 'M' },
@@ -1320,6 +1548,8 @@ const outcomeOptions = ['Discharged', 'Died', 'Transferred Out', 'Absconded/Disc
 const attendanceOptions = [
   { label: 'EAE', value: 'EAE' },
   { label: 'CFU', value: 'CFU' },
+  { label: 'ANC', value: 'ANC' },
+  { label: 'PNC', value: 'PNC' },
 ];
 
 // Procedures
@@ -1556,7 +1786,7 @@ const addInvestigation = () => {
       index: investigationsList.value.length,
       id: null,
       description: '',
-      date: '',
+      date: firstClaimServiceDate(),
       gdrg: ''
     });
     $q.notify({
@@ -1599,10 +1829,16 @@ const onInvestigationSelect = (index, val) => {
     row.description = val.service_name || val.item_name || '';
     row.gdrg = val.g_drg_code || val.item_code || '';
     row._selectedOption = val;
+    if (!row.date) {
+      row.date = firstClaimServiceDate();
+    }
     calculateClaimSummary();
     return;
   }
   row.description = typeof val === 'string' ? val : '';
+  if (!row.date) {
+    row.date = firstClaimServiceDate();
+  }
 };
 
 const filterSurgerySearch = (val, update) => {
@@ -1702,6 +1938,269 @@ function upsertDiagnosisFromProcedure(proc) {
   if (gdrg) row.gdrg = gdrg;
 }
 
+function specialtyFromGdrg(code) {
+  const raw = String(code || '').trim().toUpperCase();
+  if (!raw) return '';
+  return raw.slice(0, 4);
+}
+
+function syncSpecialtyFromPrincipalDiagnosis() {
+  const chief = (diagnosesList.value || []).find((d) => d.is_chief);
+  const gdrg = String(chief?.gdrg || services.principal_gdrg || '').trim();
+  const specialty = specialtyFromGdrg(gdrg);
+  if (specialty) {
+    services.specialty_code = specialty;
+  }
+}
+
+function setChiefDiagnosis(index, checked) {
+  const row = diagnosesList.value[index];
+  if (!row) return;
+  if (!checked) {
+    row.is_chief = false;
+    return;
+  }
+  diagnosesList.value.forEach((d, i) => {
+    d.is_chief = i === index;
+  });
+  const gdrg = String(row.gdrg || '').trim();
+  if (gdrg) {
+    services.principal_gdrg = gdrg;
+  }
+  syncSpecialtyFromPrincipalDiagnosis();
+}
+
+const hasChiefDiagnosis = computed(() => (diagnosesList.value || []).some((d) => d.is_chief));
+const principalDiagnosisLabel = computed(() => {
+  const row = (diagnosesList.value || []).find((d) => d.is_chief);
+  if (!row) return '';
+  return [row.description, row.icd10, row.gdrg].filter(Boolean).join(' · ');
+});
+const applyInvChoices = computed(() =>
+  (selectedApplyTemplate.value?.investigations || []).map((item, i) => ({
+    label: `${item.serviceName || 'Investigation'} (${item.gdrgCode || '—'})`,
+    value: i,
+  }))
+);
+const applyMedChoices = computed(() =>
+  (selectedApplyTemplate.value?.medicines || []).map((item, i) => ({
+    label: `${item.serviceName || 'Medicine'} (${item.medicineCode || '—'})`,
+    value: i,
+  }))
+);
+const saveInvChoices = computed(() =>
+  (investigationsList.value || [])
+    .map((inv, i) => ({ inv, i }))
+    .filter(({ inv }) => String(inv?.description || inv?.gdrg || '').trim())
+    .map(({ inv, i }) => ({
+      label: `${inv.description || 'Investigation'} (${inv.gdrg || '—'})`,
+      value: i,
+    }))
+);
+const saveMedChoices = computed(() =>
+  (prescriptionsList.value || [])
+    .map((med, i) => ({ med, i }))
+    .filter(({ med }) => String(med?.description || med?.code || '').trim())
+    .map(({ med, i }) => ({
+      label: `${med.description || 'Medicine'} (${med.code || '—'})`,
+      value: i,
+    }))
+);
+
+function getPrincipalDiagnosisSnapshot() {
+  const row = (diagnosesList.value || []).find((d) => d.is_chief);
+  if (!row) return null;
+  return { icd10: row.icd10 || '', diagnosis: row.description || '', gdrg: row.gdrg || '' };
+}
+
+async function openApplyTemplate() {
+  const snap = getPrincipalDiagnosisSnapshot();
+  if (!snap) {
+    $q.notify({ type: 'warning', message: 'Mark a chief diagnosis first' });
+    return;
+  }
+  loadingTemplates.value = true;
+  selectedApplyTemplate.value = null;
+  try {
+    const res = await claimsAPI.matchDiagnosisTemplates(snap);
+    matchedTemplates.value = res.data || [];
+    if (matchedTemplates.value.length === 1 && !templateNeedsItemPicker(matchedTemplates.value[0])) {
+      const t = matchedTemplates.value[0];
+      selectedApplyTemplate.value = t;
+      selectedApplyInvIndexes.value = Array.from({ length: (t.investigations || []).length }, (_, i) => i);
+      selectedApplyMedIndexes.value = Array.from({ length: (t.medicines || []).length }, (_, i) => i);
+      confirmApplyTemplate();
+      return;
+    }
+    showApplyTemplateDialog.value = true;
+    if (matchedTemplates.value.length === 1) selectApplyTemplate(matchedTemplates.value[0]);
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load templates' });
+  } finally {
+    loadingTemplates.value = false;
+  }
+}
+
+function selectApplyTemplate(t) {
+  selectedApplyTemplate.value = t;
+  selectedApplyInvIndexes.value = Array.from({ length: (t.investigations || []).length }, (_, i) => i);
+  selectedApplyMedIndexes.value = Array.from({ length: (t.medicines || []).length }, (_, i) => i);
+  if (!templateNeedsItemPicker(t)) confirmApplyTemplate();
+}
+
+function closeApplyTemplate() {
+  showApplyTemplateDialog.value = false;
+  selectedApplyTemplate.value = null;
+  matchedTemplates.value = [];
+}
+
+function confirmApplyTemplate() {
+  const t = selectedApplyTemplate.value;
+  if (!t) return;
+  const serviceDate = firstClaimServiceDate();
+  const pickInv = new Set(selectedApplyInvIndexes.value || []);
+  const pickMed = new Set(selectedApplyMedIndexes.value || []);
+  for (const i of pickInv) {
+    const item = (t.investigations || [])[i];
+    if (!item) continue;
+    const row = investigationFromTemplateItem(item, serviceDate);
+    const empty = (investigationsList.value || []).find((x) => !String(x.description || '').trim() && !String(x.gdrg || '').trim());
+    const target = empty || {
+      index: investigationsList.value.length,
+      id: null,
+      description: '',
+      date: serviceDate,
+      gdrg: '',
+    };
+    target.description = row._serviceName || target.description;
+    target.gdrg = row.gdrgCode || target.gdrg;
+    target.date = target.date || serviceDate;
+    if (!empty) investigationsList.value.push(target);
+  }
+  for (const i of pickMed) {
+    const item = (t.medicines || [])[i];
+    if (!item) continue;
+    const row = medicineFromTemplateItem(item, serviceDate);
+    const empty = (prescriptionsList.value || []).find((x) => !String(x.description || '').trim() && !String(x.code || '').trim());
+    const target = empty || {
+      index: prescriptionsList.value.length,
+      id: null,
+      description: '',
+      code: '',
+      price: 0,
+      quantity: 0,
+      total_cost: 0,
+      date: serviceDate,
+      dose: '',
+      frequency: '',
+      duration: '',
+      unparsed: '',
+    };
+    target.description = row._serviceName || target.description;
+    target.code = row.medicineCode || target.code;
+    target.date = target.date || serviceDate;
+    target.dose = row.prescription?.dose || target.dose;
+    target.frequency = row.prescription?.frequency || target.frequency;
+    target.duration = row.prescription?.duration || target.duration;
+    target.quantity = Number(row.dispensedQty) || target.quantity || 1;
+    const parts = [target.dose, target.frequency, target.duration].filter(Boolean);
+    target.unparsed = parts.join(' ');
+    if (!empty) prescriptionsList.value.push(target);
+  }
+  services.includes_pharmacy = true;
+  calculateClaimSummary();
+  closeApplyTemplate();
+  $q.notify({ type: 'positive', message: 'Template items applied — review and edit as needed' });
+}
+
+function openSaveTemplate() {
+  const snap = getPrincipalDiagnosisSnapshot();
+  if (!snap) {
+    $q.notify({ type: 'warning', message: 'Mark a chief diagnosis first' });
+    return;
+  }
+  const match = buildTemplateMatchFromPrincipal(snap);
+  saveTemplateForm.value = {
+    name: snap.diagnosis || snap.icd10 || 'Diagnosis template',
+    match_keywords: match.match_keywords,
+    is_shared: true,
+    ...match,
+  };
+  selectedSaveInvIndexes.value = saveInvChoices.value.map((o) => o.value);
+  selectedSaveMedIndexes.value = saveMedChoices.value.map((o) => o.value);
+  showSaveTemplateDialog.value = true;
+}
+
+async function confirmSaveTemplate() {
+  const name = String(saveTemplateForm.value.name || '').trim();
+  if (!name) {
+    $q.notify({ type: 'warning', message: 'Template name is required' });
+    return;
+  }
+  const invPick = new Set(selectedSaveInvIndexes.value || []);
+  const medPick = new Set(selectedSaveMedIndexes.value || []);
+  const investigations = (investigationsList.value || [])
+    .filter((_, i) => invPick.has(i))
+    .map((inv) => serializeInvestigationForTemplate({
+      gdrgCode: inv.gdrg,
+      _serviceName: inv.description,
+    }))
+    .filter((x) => x.gdrgCode || x.serviceName);
+  const medicines = (prescriptionsList.value || [])
+    .filter((_, i) => medPick.has(i))
+    .map((med) => serializeMedicineForTemplate({
+      medicineCode: med.code,
+      _serviceName: med.description,
+      dispensedQty: med.quantity,
+      prescription: { dose: med.dose, frequency: med.frequency, duration: med.duration, unparsed: med.unparsed },
+    }))
+    .filter((x) => x.medicineCode || x.serviceName);
+  if (!investigations.length && !medicines.length) {
+    $q.notify({ type: 'warning', message: 'Tick at least one investigation or medicine' });
+    return;
+  }
+  savingTemplate.value = true;
+  try {
+    await claimsAPI.createDiagnosisTemplate({
+      name,
+      match_icd10: saveTemplateForm.value.match_icd10,
+      match_diagnosis: saveTemplateForm.value.match_diagnosis,
+      match_gdrg_prefix: saveTemplateForm.value.match_gdrg_prefix,
+      match_keywords: saveTemplateForm.value.match_keywords,
+      sample_icd10: saveTemplateForm.value.sample_icd10,
+      sample_diagnosis: saveTemplateForm.value.sample_diagnosis,
+      sample_gdrg: saveTemplateForm.value.sample_gdrg,
+      investigations,
+      medicines,
+      is_shared: !!saveTemplateForm.value.is_shared,
+      is_active: true,
+    });
+    showSaveTemplateDialog.value = false;
+    $q.notify({ type: 'positive', message: 'Diagnosis template saved' });
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to save template' });
+  } finally {
+    savingTemplate.value = false;
+  }
+}
+
+function onDiagnosisMappedDrgSelect(index, val) {
+  const row = diagnosesList.value[index];
+  if (!row) return;
+  row.gdrg = val || '';
+  if (row.is_chief) {
+    if (row.gdrg) services.principal_gdrg = row.gdrg;
+    syncSpecialtyFromPrincipalDiagnosis();
+  }
+}
+
+function onDiagnosisGdrgEdited(index) {
+  const row = diagnosesList.value[index];
+  if (!row?.is_chief) return;
+  if (row.gdrg) services.principal_gdrg = String(row.gdrg).trim();
+  syncSpecialtyFromPrincipalDiagnosis();
+}
+
 function syncPrincipalFromProcedures() {
   const filled = filledProcedures.value;
   if (!filled.length) return;
@@ -1731,6 +2230,7 @@ function syncPrincipalFromProcedures() {
     const match = principalIcd && String(d.icd10 || '').trim().toUpperCase() === principalIcd;
     d.is_chief = !!match;
   });
+  syncSpecialtyFromPrincipalDiagnosis();
 }
 
 function setPrincipalProcedure(index, checked) {
@@ -1851,11 +2351,15 @@ const onDiagnosisSelect = async (index, val) => {
         row.gdrg = stillValid ? existing : '';
         $q.notify({
           type: 'info',
-          message: `This ICD-10 maps to ${row._drgOptions.length} DRGs — select one in the G-DRG column`,
+          message: `This ICD-10 maps to ${row._drgOptions.length} DRGs — select one or type your own in G-DRG`,
           timeout: 3500,
         });
       } else {
         row.gdrg = '';
+      }
+      if (row.is_chief) {
+        if (row.gdrg) services.principal_gdrg = row.gdrg;
+        syncSpecialtyFromPrincipalDiagnosis();
       }
     } catch (_) {
       row._drgOptions = [];
@@ -1963,6 +2467,9 @@ const onPrescriptionProductSelect = (index, val) => {
     row.code = val.medication_code || val.item_code || '';
     row.insurance_covered = val.insurance_covered || 'yes';
     row._selectedOption = val;
+    if (!row.date) {
+      row.date = firstClaimServiceDate();
+    }
     if (normalizeInsuranceCovered(row.insurance_covered) === 'no') {
       $q.notify({
         type: 'warning',
@@ -1978,6 +2485,9 @@ const onPrescriptionProductSelect = (index, val) => {
     return;
   }
   row.description = typeof val === 'string' ? val : '';
+  if (!row.date) {
+    row.date = firstClaimServiceDate();
+  }
 };
 
 async function resolvePrescriptionCoverage() {
@@ -2061,7 +2571,7 @@ const addPrescription = () => {
       price: 0,
       quantity: 0,
       total_cost: 0,
-      date: '',
+      date: firstClaimServiceDate(),
       dose: '',
       frequency: '',
       duration: '',
@@ -2347,20 +2857,25 @@ function addDiagnosisFromDialog() {
     $q.notify({ type: 'warning', message: 'Please enter a diagnosis description.' });
     return;
   }
-  if ((claimDiagnosisDrgOptions.value || []).length > 1 && !String(d.gdrg || '').trim()) {
-    $q.notify({ type: 'warning', message: 'This ICD-10 maps to multiple DRGs — select one.' });
-    return;
-  }
   const nextIndex = diagnosesList.value.length;
+  const isChief = !!d.is_chief;
+  if (isChief) {
+    diagnosesList.value.forEach((row) => { row.is_chief = false; });
+  }
   diagnosesList.value.push({
     index: nextIndex,
     id: null,
     description: (d.description || '').trim(),
     icd10: (d.icd10 || '').trim(),
     gdrg: (d.gdrg || '').trim(),
-    is_chief: !!d.is_chief,
+    is_chief: isChief,
     _drgOptions: [...(claimDiagnosisDrgOptions.value || [])],
   });
+  if (isChief) {
+    const gdrg = String(d.gdrg || '').trim();
+    if (gdrg) services.principal_gdrg = gdrg;
+    syncSpecialtyFromPrincipalDiagnosis();
+  }
   resetClaimDiagnosisForm();
   showDiagnosisDialog.value = false;
   $q.notify({ type: 'positive', message: 'Diagnosis added', timeout: 2000 });
@@ -2435,6 +2950,7 @@ const loadClaimData = async () => {
     
     // Set claim status
     claimStatus.value = data.claim.status;
+    applyVettingFromClaim(data.claim || {});
     claimMeta.claim_check_code = data.claim.claim_check_code || '';
     patientNhiaMeta.value = {
       insured: !!data.patient?.insured,
@@ -2445,13 +2961,27 @@ const loadClaimData = async () => {
     claimitErrors.value = data.claimit_errors || { messages: [], by_section: {} };
     
     // Populate patient info
+    const insuranceId = data.patient.insurance_id || '';
+    const patientHin = data.patient.hin || '';
+    let memberNumber = insuranceId;
+    let ghanaCard = '';
+    // If insurance is Ghana Card and HIN exists, show HIN as member no (ClaimIT-ready)
+    if (isGhanaCard(insuranceId) && patientHin && !isGhanaCard(patientHin)) {
+      ghanaCard = normalizeGhanaCard(insuranceId);
+      memberNumber = patientHin;
+    } else if (isGhanaCard(insuranceId)) {
+      ghanaCard = '';
+      memberNumber = insuranceId;
+    }
     Object.assign(patientInfo, {
       surname: data.patient.surname || '',
       other_names: `${data.patient.name} ${data.patient.other_names || ''}`.trim(),
       date_of_birth: data.patient.date_of_birth || '',
       age: data.patient.age,
       gender: data.patient.gender,
-      member_number: data.patient.insurance_id || '',
+      member_number: memberNumber,
+      ghana_card: ghanaCard,
+      hin: patientHin,
       hospital_record_no: data.patient.card_number || '',
       card_serial_no: data.encounter.ccc_number || '',
     });
@@ -2610,6 +3140,45 @@ const loadClaimData = async () => {
   }
 };
 
+async function onConvertGhanaCardToHin() {
+  if (!claimId.value || claimStatus.value === 'finalized') return;
+  const ghanaCard = normalizeGhanaCard(patientInfo.ghana_card || patientInfo.member_number);
+  if (!isGhanaCard(ghanaCard)) {
+    $q.notify({
+      type: 'warning',
+      message: 'Member number is not a Ghana Card (expected GHA-xxxxxxxx-x)',
+      position: 'top',
+    });
+    return;
+  }
+  convertingGhanaCard.value = true;
+  try {
+    const res = await claimsAPI.convertGhanaCardToHin(claimId.value, ghanaCard);
+    const data = res.data || {};
+    const hin = (data.hin || data.member_no || '').trim();
+    if (!hin) {
+      throw new Error(data.message || 'No HIN returned from NHIA');
+    }
+    patientInfo.ghana_card = data.ghana_card || ghanaCard;
+    patientInfo.hin = hin;
+    patientInfo.member_number = hin;
+    $q.notify({
+      type: 'positive',
+      message: 'Member No set to HIN. Ghana Card kept for CCC / ClaimIT export.',
+      position: 'top',
+      timeout: 4500,
+    });
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to convert Ghana Card to HIN',
+      position: 'top',
+    });
+  } finally {
+    convertingGhanaCard.value = false;
+  }
+}
+
 async function onGetClaimCcc() {
   if (!claimId.value || !canGetClaimCcc.value) return;
   const confirmed = await confirmClaimGetCcc($q);
@@ -2617,8 +3186,20 @@ async function onGetClaimCcc() {
 
   fetchingClaimCcc.value = true;
   try {
-    const memberNo = (patientInfo.member_number || '').trim();
-    const res = await claimsAPI.fetchCcc(claimId.value, memberNo || null);
+    // HIN cannot generate CCC — use Ghana Card when present
+    const memberNo = memberNoForCcc({
+      memberNo: patientInfo.member_number,
+      ghanaCard: patientInfo.ghana_card,
+    });
+    if (!memberNo) {
+      $q.notify({
+        type: 'warning',
+        message: 'Enter an NHIA number or Ghana Card to fetch CCC (HIN cannot generate CCC)',
+        position: 'top',
+      });
+      return;
+    }
+    const res = await claimsAPI.fetchCcc(claimId.value, memberNo);
     applyClaimFetchCccToEditForm(
       {
         patientInfo,

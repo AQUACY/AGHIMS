@@ -32,7 +32,8 @@ from app.services.cxf_claims import (
     parse_cxf,
 )
 from app.services.claim_nhia_ccc import fetch_ccc_preview_for_claim, fetch_ccc_preview_for_ghims_payload
-from app.services.nhia_integration import NhiaIntegrationError
+from app.services.nhia_integration import NhiaIntegrationError, lookup_member_by_hin
+from app.utils.ghims_card import is_ghana_card, normalize_ghana_card
 from app.models.product_price import ProductPrice
 from app.services.claim_amount_service import (
     get_claim_amount_from_price_list,
@@ -47,6 +48,107 @@ router = APIRouter(prefix="/claims", tags=["claims"])
 
 # Section keys used for ClaimIT errors on Edit Claim (must match frontend)
 CLAIMIT_SECTION_ORDER = ["client", "provider", "services", "procedures", "diagnosis", "investigations", "medicines", "other"]
+
+PHARMACY_VET_ROLES = ("Pharmacy", "Pharmacy Head", "Claims", "Admin")
+DOCTOR_VET_ROLES = ("Doctor", "PA", "Claims", "Admin")
+
+
+def _user_can_vet(user: User, by: str) -> bool:
+    by = (by or "").strip().lower()
+    if by == "pharmacy":
+        return any(user.has_role(r) for r in PHARMACY_VET_ROLES)
+    if by in ("doctor", "prescriber"):
+        return any(user.has_role(r) for r in DOCTOR_VET_ROLES)
+    return False
+
+
+EXPORTABLE_CLAIM_STATUSES = frozenset({
+    ClaimStatus.FINALIZED.value,
+    ClaimStatus.PHARMACY_VETTED.value,
+    ClaimStatus.DOCTOR_VETTED.value,
+    "finalized",
+    "pharmacy_vetted",
+    "doctor_vetted",
+})
+
+
+def _claim_is_exportable(claim: Claim) -> bool:
+    return (claim.status or "").strip().lower() in EXPORTABLE_CLAIM_STATUSES
+
+
+def _import_item_is_exportable(item: ClaimXmlImportItem) -> bool:
+    return (item.status or "").strip().lower() in EXPORTABLE_CLAIM_STATUSES
+
+
+def _vetting_snapshot(obj, db: Session) -> dict:
+    status = (getattr(obj, "status", None) or "").strip().lower()
+    pharmacy_name = None
+    doctor_name = None
+    if getattr(obj, "pharmacy_vetted_by", None):
+        u = db.query(User).filter(User.id == obj.pharmacy_vetted_by).first()
+        pharmacy_name = (u.full_name if u and u.full_name else None) or (u.username if u else None)
+    if getattr(obj, "doctor_vetted_by", None):
+        u = db.query(User).filter(User.id == obj.doctor_vetted_by).first()
+        doctor_name = (u.full_name if u and u.full_name else None) or (u.username if u else None)
+    return {
+        "pharmacy_vetted": status == "pharmacy_vetted" or bool(obj.pharmacy_vetted_at),
+        "pharmacy_vetted_at": obj.pharmacy_vetted_at.isoformat() if obj.pharmacy_vetted_at else None,
+        "pharmacy_vetted_by": obj.pharmacy_vetted_by,
+        "pharmacy_vetted_by_name": pharmacy_name,
+        "doctor_vetted": status == "doctor_vetted" or bool(obj.doctor_vetted_at),
+        "doctor_vetted_at": obj.doctor_vetted_at.isoformat() if obj.doctor_vetted_at else None,
+        "doctor_vetted_by": obj.doctor_vetted_by,
+        "doctor_vetted_by_name": doctor_name,
+    }
+
+
+def _list_vet_fields(claim: Optional[Claim], db: Session) -> dict:
+    if not claim:
+        return {
+            "pharmacy_vetted": False,
+            "doctor_vetted": False,
+            "pharmacy_vetted_by_name": None,
+            "doctor_vetted_by_name": None,
+        }
+    snap = _vetting_snapshot(claim, db)
+    return {
+        "pharmacy_vetted": snap["pharmacy_vetted"],
+        "doctor_vetted": snap["doctor_vetted"],
+        "pharmacy_vetted_by_name": snap["pharmacy_vetted_by_name"],
+        "doctor_vetted_by_name": snap["doctor_vetted_by_name"],
+    }
+
+
+def _ensure_claim_vetting_columns(db: Session) -> None:
+    """Ensure vetting columns exist on claims and claim_xml_import_items."""
+    bind = db.get_bind()
+    dialect = bind.dialect.name if hasattr(bind, "dialect") else ""
+    specs = [
+        ("claims", "pharmacy_vetted_at", "DATETIME NULL"),
+        ("claims", "pharmacy_vetted_by", "INTEGER NULL"),
+        ("claims", "doctor_vetted_at", "DATETIME NULL"),
+        ("claims", "doctor_vetted_by", "INTEGER NULL"),
+        ("claim_xml_import_items", "pharmacy_vetted_at", "DATETIME NULL"),
+        ("claim_xml_import_items", "pharmacy_vetted_by", "INTEGER NULL"),
+        ("claim_xml_import_items", "doctor_vetted_at", "DATETIME NULL"),
+        ("claim_xml_import_items", "doctor_vetted_by", "INTEGER NULL"),
+    ]
+    for table, col, typ in specs:
+        try:
+            db.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+            db.flush()
+        except Exception as e:
+            err = str(e).lower()
+            if "duplicate column" in err or "already exists" in err:
+                continue
+            # Ignore "unknown table" during early boot; other errors re-raise
+            if "doesn't exist" in err or "no such table" in err:
+                continue
+            if dialect and "duplicate" not in err:
+                # MySQL reports duplicate differently sometimes
+                if "1060" in err:
+                    continue
+            raise
 
 
 def _enrich_encounter_row_with_claim_amount(
@@ -257,9 +359,18 @@ class EncounterWithClaimInfo(BaseModel):
     claim_status: Optional[str] = None
     ward_admission_id: Optional[int] = None  # For IPD claims
     total_claim_amount: Optional[float] = None
+    pharmacy_vetted: bool = False
+    doctor_vetted: bool = False
+    pharmacy_vetted_by_name: Optional[str] = None
+    doctor_vetted_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
+
+
+class ClaimVetBody(BaseModel):
+    """Mark claim vetted by pharmacy or doctor (prescriber)."""
+    by: str  # pharmacy | doctor
 
 
 class ClaimCreate(BaseModel):
@@ -847,6 +958,50 @@ def finalize_claim(
     return {"claim_id": claim.id, "status": claim.status}
 
 
+@router.put("/{claim_id}/vet")
+def vet_claim(
+    claim_id: int,
+    body: ClaimVetBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Claims", "Admin", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Mark claim as vetted by pharmacy or doctor/prescriber (does not finalize)."""
+    _ensure_claim_vetting_columns(db)
+    by = (body.by or "").strip().lower()
+    if by not in ("pharmacy", "doctor", "prescriber"):
+        raise HTTPException(status_code=400, detail="by must be 'pharmacy' or 'doctor'")
+    if by == "prescriber":
+        by = "doctor"
+    if not _user_can_vet(current_user, by):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your role cannot mark claims as vetted by {by}",
+        )
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.status == ClaimStatus.FINALIZED.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot vet a finalized claim. Revert to draft first.",
+        )
+    now = datetime.utcnow()
+    if by == "pharmacy":
+        claim.pharmacy_vetted_at = now
+        claim.pharmacy_vetted_by = current_user.id
+        claim.status = ClaimStatus.PHARMACY_VETTED.value
+    else:
+        claim.doctor_vetted_at = now
+        claim.doctor_vetted_by = current_user.id
+        claim.status = ClaimStatus.DOCTOR_VETTED.value
+    db.commit()
+    db.refresh(claim)
+    return {"claim_id": claim.id, "status": claim.status, **_vetting_snapshot(claim, db)}
+
+
 @router.put("/{claim_id}/reopen")
 def reopen_claim(
     claim_id: int,
@@ -1351,8 +1506,9 @@ def export_claims_batch(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
-    """Export multiple finalized claims as a single XML file. Uses selectinload for speed."""
+    """Export claims as XML. Allows manager-finalized or pharmacy/doctor-vetted claims."""
     import time
+    _ensure_claim_vetting_columns(db)
     if not body.claim_ids:
         raise HTTPException(status_code=400, detail="No claim IDs provided")
     from app.services.xml_export import generate_claim_xml, _claim_export_load_options
@@ -1368,11 +1524,15 @@ def export_claims_batch(
     missing = [i for i in body.claim_ids if i not in found_ids]
     if missing:
         raise HTTPException(status_code=404, detail=f"Claims not found: {missing}")
-    not_finalized = [c for c in claims if c.status != "finalized"]
-    if not_finalized:
+    not_exportable = [c.id for c in claims if not _claim_is_exportable(c)]
+    if not_exportable:
         raise HTTPException(
             status_code=400,
-            detail="Can only export finalized claims"
+            detail=(
+                "Can only export claims that are finalized by claims manager, "
+                "or vetted by pharmacy/doctor. Not exportable: "
+                + ", ".join(str(i) for i in not_exportable[:20])
+            ),
         )
     xml_content = generate_claim_xml(claims, db)
     t2 = time.perf_counter()
@@ -1395,15 +1555,16 @@ def export_claim_xml(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read"))
 ):
-    """Export a single claim as XML"""
+    """Export a single claim as XML (finalized or pharmacy/doctor-vetted)."""
+    _ensure_claim_vetting_columns(db)
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     
-    if claim.status != "finalized":
+    if not _claim_is_exportable(claim):
         raise HTTPException(
             status_code=400,
-            detail="Can only export finalized claims"
+            detail="Can only export claims that are finalized or vetted by pharmacy/doctor",
         )
     
     xml_content = export_claims_xml([claim_id], db)
@@ -2276,6 +2437,7 @@ def get_eligible_encounters_for_claims(
                 "claim_id": claim.id if claim else None,
                 "claim_status": claim.status if claim else None,
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
+                **_list_vet_fields(claim, db),
             }
             result.append(_enrich_encounter_row_with_claim_amount(db, encounter_data, encounter, claim))
         
@@ -2334,6 +2496,7 @@ def get_eligible_encounters_for_claims(
                 "claim_id": claim.id if claim else None,
                 "claim_status": claim.status if claim else None,
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
+                **_list_vet_fields(claim, db),
             }
             result.append(_enrich_encounter_row_with_claim_amount(db, encounter_data, encounter, claim))
     
@@ -2493,6 +2656,7 @@ def get_eligible_ipd_ward_admissions_for_claims(
             "created_at": ward_admission.admitted_at,
             "claim_id": claim.id if claim else None,
             "claim_status": claim.status if claim else None,
+            **_list_vet_fields(claim, db),
         }
         result.append(
             _enrich_encounter_row_with_claim_amount(
@@ -3210,6 +3374,7 @@ def get_claim_edit_details(
             "is_unbundled": claim.is_unbundled,
             "principal_gdrg": claim.principal_gdrg or "",
             "status": claim.status,
+            **_vetting_snapshot(claim, db),
         },
         "encounter": {
             "id": encounter.id,
@@ -3230,6 +3395,7 @@ def get_claim_edit_details(
             "gender": encounter.patient.gender,
             "card_number": encounter.patient.card_number,
             "insurance_id": encounter.patient.insurance_id or "",
+            "hin": encounter.patient.hin or "",
             "insured": bool(encounter.patient.insured),
             "nhis_active": bool(encounter.patient.nhis_active),
         },
@@ -3270,6 +3436,11 @@ class GhimsFetchCccRequest(BaseModel):
     otac: Optional[str] = None
 
 
+class ConvertGhanaCardRequest(BaseModel):
+    ghana_card: Optional[str] = None
+    otac: Optional[str] = None
+
+
 @router.post("/{claim_id}/fetch-ccc")
 def fetch_claim_ccc(
     claim_id: int,
@@ -3291,6 +3462,79 @@ def fetch_claim_ccc(
         return fetch_ccc_preview_for_claim(claim, member_no=body.member_no, otac=body.otac)
     except NhiaIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{claim_id}/convert-ghana-card-to-hin")
+def convert_claim_ghana_card_to_hin(
+    claim_id: int,
+    body: ConvertGhanaCardRequest = ConvertGhanaCardRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """
+    Look up NHIA HIN for a Ghana Card on this claim's patient.
+    Keeps insurance_id as the Ghana Card (for CCC); stores HIN on patient.hin and claim.member_no.
+    HIN must not be used for CCC generation.
+    """
+    claim = db.query(Claim).filter(Claim.id == claim_id).first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.status == ClaimStatus.FINALIZED.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot convert Ghana Card on a finalized claim. Reopen the claim first.",
+        )
+
+    encounter = db.query(Encounter).filter(Encounter.id == claim.encounter_id).first()
+    patient = encounter.patient if encounter else None
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found for this claim")
+
+    ghana_card = normalize_ghana_card(
+        body.ghana_card or patient.insurance_id or claim.member_no or ""
+    )
+    if not ghana_card or not is_ghana_card(ghana_card):
+        raise HTTPException(
+            status_code=400,
+            detail="Member number is not a Ghana Card (expected format GHA-xxxxxxxx-x).",
+        )
+
+    try:
+        data = lookup_member_by_hin(ghana_card, otac=body.otac)
+    except NhiaIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    hin = (data.hin or "").strip()
+    if not hin:
+        raise HTTPException(
+            status_code=400,
+            detail="NHIA did not return a HIN for this Ghana Card. Try again or enter HIN manually.",
+        )
+    if is_ghana_card(hin):
+        raise HTTPException(
+            status_code=400,
+            detail="NHIA returned another Ghana Card instead of a HIN.",
+        )
+
+    # Preserve Ghana Card for CCC; put HIN on claim for ClaimIT export
+    patient.insurance_id = ghana_card
+    patient.hin = hin
+    patient.insured = True
+    claim.member_no = hin
+    db.commit()
+    db.refresh(patient)
+    db.refresh(claim)
+
+    return {
+        "success": True,
+        "ghana_card": ghana_card,
+        "hin": hin,
+        "member_no": hin,
+        "ccc": (data.ccc or "").strip() or None,
+        "status": data.status,
+        "message": "Ghana Card saved; Member No set to HIN for ClaimIT.",
+    }
 
 
 @router.post("/ghims-import/items/{item_id}/fetch-ccc")
@@ -3318,6 +3562,66 @@ def fetch_ghims_import_item_ccc(
         )
     except NhiaIntegrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ghims-import/items/{item_id}/convert-ghana-card-to-hin")
+def convert_ghims_ghana_card_to_hin(
+    item_id: int,
+    body: ConvertGhanaCardRequest = ConvertGhanaCardRequest(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """
+    Look up NHIA HIN for a Ghana Card on an imported claim payload.
+    Moves Ghana Card to payload.ghanaCard and sets memberNo to HIN.
+    Does not persist until the user saves the imported claim.
+    """
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if item.status == "finalized":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot convert Ghana Card on a finalized imported claim. Reopen it first.",
+        )
+
+    payload = dict(item.payload or {})
+    ghana_card = normalize_ghana_card(
+        body.ghana_card or payload.get("ghanaCard") or payload.get("memberNo") or ""
+    )
+    if not ghana_card or not is_ghana_card(ghana_card):
+        raise HTTPException(
+            status_code=400,
+            detail="Member number is not a Ghana Card (expected format GHA-xxxxxxxx-x).",
+        )
+
+    try:
+        data = lookup_member_by_hin(ghana_card, otac=body.otac)
+    except NhiaIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    hin = (data.hin or "").strip()
+    if not hin:
+        raise HTTPException(
+            status_code=400,
+            detail="NHIA did not return a HIN for this Ghana Card. Try again or enter HIN manually.",
+        )
+    if is_ghana_card(hin):
+        raise HTTPException(
+            status_code=400,
+            detail="NHIA returned another Ghana Card instead of a HIN.",
+        )
+
+    return {
+        "success": True,
+        "ghana_card": ghana_card,
+        "hin": hin,
+        "member_no": hin,
+        "ccc": (data.ccc or "").strip() or None,
+        "status": data.status,
+        "message": "Ghana Card ready to save; set Member No to HIN for ClaimIT.",
+    }
 
 
 @router.put("/{claim_id}", response_model=ClaimResponse)
@@ -3920,6 +4224,8 @@ def list_ghims_import_batches(
             "claim_count": b.claim_count,
             "finalized_count": sum(1 for i in (b.items or []) if i.status == "finalized"),
             "flagged_count": sum(1 for i in (b.items or []) if i.status == "flagged"),
+            "pharmacy_vetted_count": sum(1 for i in (b.items or []) if i.status == "pharmacy_vetted"),
+            "doctor_vetted_count": sum(1 for i in (b.items or []) if i.status == "doctor_vetted"),
         }
         for b in batches
     ]
@@ -3982,6 +4288,7 @@ def get_ghims_import_batch(
             "missing_sections": missing_sections,
             "has_missing_sections": len(missing_sections) > 0,
             "no_clinical_sections": len(missing_sections) == 4,
+            **_vetting_snapshot(i, db),
         }
         if include_totals:
             row["total_claim_amount"] = totals_by_id.get(i.id, 0.0)
@@ -4220,7 +4527,54 @@ def get_ghims_import_item(
         "payload": payload,
         "claim_summary": claim_summary,
         "claimit_errors": _get_claimit_errors_for_import_item(db, item),
+        **_vetting_snapshot(item, db),
     }
+
+
+@router.patch("/ghims-import/items/{item_id}/vet")
+def vet_ghims_import_item(
+    item_id: int,
+    body: ClaimVetBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Claims", "Admin", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Mark imported claim as vetted by pharmacy or doctor/prescriber (does not finalize)."""
+    _ensure_claim_vetting_columns(db)
+    by = (body.by or "").strip().lower()
+    if by not in ("pharmacy", "doctor", "prescriber"):
+        raise HTTPException(status_code=400, detail="by must be 'pharmacy' or 'doctor'")
+    if by == "prescriber":
+        by = "doctor"
+    if not _user_can_vet(current_user, by):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Your role cannot mark claims as vetted by {by}",
+        )
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if item.status == "finalized":
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot vet a finalized claim. Revert to draft first.",
+        )
+    now = datetime.utcnow()
+    if by == "pharmacy":
+        item.pharmacy_vetted_at = now
+        item.pharmacy_vetted_by = current_user.id
+        item.status = "pharmacy_vetted"
+        item.flag_comment = None
+    else:
+        item.doctor_vetted_at = now
+        item.doctor_vetted_by = current_user.id
+        item.status = "doctor_vetted"
+        item.flag_comment = None
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
 
 
 @router.put("/ghims-import/items/{item_id}")
@@ -4395,6 +4749,7 @@ def export_ghims_import_items(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
+    _ensure_claim_vetting_columns(db)
     if not body.item_ids:
         raise HTTPException(status_code=400, detail="No imported claim IDs selected.")
     items = (
@@ -4404,13 +4759,30 @@ def export_ghims_import_items(
     )
     if len(items) != len(set(body.item_ids)):
         raise HTTPException(status_code=404, detail="Some imported claims were not found.")
-    not_finalized = [i.id for i in items if i.status != "finalized"]
-    if not_finalized:
-        raise HTTPException(status_code=400, detail="Only finalized imported claims can be exported.")
+    not_exportable = [i.id for i in items if not _import_item_is_exportable(i)]
+    if not_exportable:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only finalized or pharmacy/doctor-vetted imported claims can be exported. "
+                "Not exportable: " + ", ".join(str(i) for i in not_exportable[:20])
+            ),
+        )
     payloads = []
     for i in sorted(items, key=lambda x: x.row_index or 0):
         p = dict(i.payload or {})
         _reorder_ghims_diagnoses_principal_first(p)
+        from app.utils.ghims_card import is_ghana_card
+        member = str(p.get("memberNo") or "").strip()
+        hin = str(p.get("hin") or "").strip()
+        if is_ghana_card(member) and not hin:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Claim {p.get('claimID') or i.id} still has a Ghana Card as Member No. "
+                    "Open the claim and use “To HIN” before exporting (ClaimIT rejects Ghana Cards)."
+                ),
+            )
         payloads.append(p)
     xml_content = build_claims_xml_from_payloads(payloads)
     filename = f"NHIS_CLA_imported_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"

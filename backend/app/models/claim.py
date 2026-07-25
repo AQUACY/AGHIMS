@@ -12,6 +12,9 @@ from app.core.datetime_utils import utcnow_callable
 class ClaimStatus(str, enum.Enum):
     """Claim status enumeration"""
     DRAFT = "draft"
+    FLAGGED = "flagged"
+    PHARMACY_VETTED = "pharmacy_vetted"
+    DOCTOR_VETTED = "doctor_vetted"
     FINALIZED = "finalized"
     REOPENED = "reopened"
 
@@ -41,6 +44,12 @@ class Claim(Base):
     created_at = Column(DateTime, default=utcnow_callable)
     finalized_at = Column(DateTime, nullable=True)
     exported_at = Column(DateTime, nullable=True)
+
+    # Clinical/pharmacy checkpoints before claims-manager finalize
+    pharmacy_vetted_at = Column(DateTime, nullable=True)
+    pharmacy_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    doctor_vetted_at = Column(DateTime, nullable=True)
+    doctor_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     
     # Relationships
     encounter = relationship("Encounter", back_populates="claims")
