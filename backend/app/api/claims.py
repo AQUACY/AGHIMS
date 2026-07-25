@@ -66,22 +66,66 @@ EXPORTABLE_CLAIM_STATUSES = frozenset({
     ClaimStatus.FINALIZED.value,
     ClaimStatus.PHARMACY_VETTED.value,
     ClaimStatus.DOCTOR_VETTED.value,
+    ClaimStatus.VETTED.value,
     "finalized",
     "pharmacy_vetted",
     "doctor_vetted",
+    "vetted",
 })
 
 
 def _claim_is_exportable(claim: Claim) -> bool:
-    return (claim.status or "").strip().lower() in EXPORTABLE_CLAIM_STATUSES
+    status = (claim.status or "").strip().lower()
+    if status in EXPORTABLE_CLAIM_STATUSES:
+        return True
+    # Finalized claims remain exportable; also allow either independent vet flag
+    return bool(claim.pharmacy_vetted_at or claim.doctor_vetted_at)
 
 
 def _import_item_is_exportable(item: ClaimXmlImportItem) -> bool:
-    return (item.status or "").strip().lower() in EXPORTABLE_CLAIM_STATUSES
+    status = (item.status or "").strip().lower()
+    if status in EXPORTABLE_CLAIM_STATUSES:
+        return True
+    return bool(item.pharmacy_vetted_at or item.doctor_vetted_at)
+
+
+def _refresh_vet_workflow_status(obj) -> None:
+    """Update workflow status from independent pharmacy/doctor vet flags (never clears finalize)."""
+    status = (getattr(obj, "status", None) or "").strip().lower()
+    if status == "finalized":
+        return
+    has_pharm = bool(getattr(obj, "pharmacy_vetted_at", None))
+    has_doc = bool(getattr(obj, "doctor_vetted_at", None))
+    if has_pharm and has_doc:
+        obj.status = ClaimStatus.VETTED.value if isinstance(obj, Claim) else "vetted"
+    elif has_pharm:
+        obj.status = ClaimStatus.PHARMACY_VETTED.value if isinstance(obj, Claim) else "pharmacy_vetted"
+    elif has_doc:
+        obj.status = ClaimStatus.DOCTOR_VETTED.value if isinstance(obj, Claim) else "doctor_vetted"
+    elif status in ("pharmacy_vetted", "doctor_vetted", "vetted"):
+        # All vets cleared — return to draft for further work
+        obj.status = ClaimStatus.DRAFT.value if isinstance(obj, Claim) else "draft"
+
+
+def _apply_claim_status_filter(query, claim_status: str):
+    """
+    Filter claims by workflow status, or by durable vet flags for pharmacy/doctor/vetted.
+    pharmacy_vetted / doctor_vetted include finalized claims that still have those flags.
+    """
+    key = (claim_status or "").strip().lower()
+    if key == "pharmacy_vetted":
+        return query.filter(Claim.pharmacy_vetted_at.isnot(None))
+    if key == "doctor_vetted":
+        return query.filter(Claim.doctor_vetted_at.isnot(None))
+    if key == "vetted":
+        return query.filter(
+            Claim.pharmacy_vetted_at.isnot(None),
+            Claim.doctor_vetted_at.isnot(None),
+        )
+    return query.filter(Claim.status == claim_status)
 
 
 def _vetting_snapshot(obj, db: Session) -> dict:
-    status = (getattr(obj, "status", None) or "").strip().lower()
     pharmacy_name = None
     doctor_name = None
     if getattr(obj, "pharmacy_vetted_by", None):
@@ -90,12 +134,13 @@ def _vetting_snapshot(obj, db: Session) -> dict:
     if getattr(obj, "doctor_vetted_by", None):
         u = db.query(User).filter(User.id == obj.doctor_vetted_by).first()
         doctor_name = (u.full_name if u and u.full_name else None) or (u.username if u else None)
+    # Flags are independent and persist after claims-manager finalize
     return {
-        "pharmacy_vetted": status == "pharmacy_vetted" or bool(obj.pharmacy_vetted_at),
+        "pharmacy_vetted": bool(obj.pharmacy_vetted_at),
         "pharmacy_vetted_at": obj.pharmacy_vetted_at.isoformat() if obj.pharmacy_vetted_at else None,
         "pharmacy_vetted_by": obj.pharmacy_vetted_by,
         "pharmacy_vetted_by_name": pharmacy_name,
-        "doctor_vetted": status == "doctor_vetted" or bool(obj.doctor_vetted_at),
+        "doctor_vetted": bool(obj.doctor_vetted_at),
         "doctor_vetted_at": obj.doctor_vetted_at.isoformat() if obj.doctor_vetted_at else None,
         "doctor_vetted_by": obj.doctor_vetted_by,
         "doctor_vetted_by_name": doctor_name,
@@ -369,8 +414,9 @@ class EncounterWithClaimInfo(BaseModel):
 
 
 class ClaimVetBody(BaseModel):
-    """Mark claim vetted by pharmacy or doctor (prescriber)."""
+    """Mark or clear pharmacy/doctor (prescriber) vetting."""
     by: str  # pharmacy | doctor
+    clear: bool = False  # True = remove this vet (revert mistake)
 
 
 class ClaimCreate(BaseModel):
@@ -968,7 +1014,7 @@ def vet_claim(
     ),
     _module_check: User = Depends(require_module_permission("claims", "update")),
 ):
-    """Mark claim as vetted by pharmacy or doctor/prescriber (does not finalize)."""
+    """Mark or clear pharmacy/doctor vetting (does not finalize)."""
     _ensure_claim_vetting_columns(db)
     by = (body.by or "").strip().lower()
     if by not in ("pharmacy", "doctor", "prescriber"):
@@ -978,7 +1024,7 @@ def vet_claim(
     if not _user_can_vet(current_user, by):
         raise HTTPException(
             status_code=403,
-            detail=f"Your role cannot mark claims as vetted by {by}",
+            detail=f"Your role cannot change {by} vetting on claims",
         )
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
@@ -986,17 +1032,24 @@ def vet_claim(
     if claim.status == ClaimStatus.FINALIZED.value:
         raise HTTPException(
             status_code=400,
-            detail="Cannot vet a finalized claim. Revert to draft first.",
+            detail="Cannot change vetting on a finalized claim. Revert to draft first.",
         )
-    now = datetime.utcnow()
-    if by == "pharmacy":
-        claim.pharmacy_vetted_at = now
-        claim.pharmacy_vetted_by = current_user.id
-        claim.status = ClaimStatus.PHARMACY_VETTED.value
+    if body.clear:
+        if by == "pharmacy":
+            claim.pharmacy_vetted_at = None
+            claim.pharmacy_vetted_by = None
+        else:
+            claim.doctor_vetted_at = None
+            claim.doctor_vetted_by = None
     else:
-        claim.doctor_vetted_at = now
-        claim.doctor_vetted_by = current_user.id
-        claim.status = ClaimStatus.DOCTOR_VETTED.value
+        now = datetime.utcnow()
+        if by == "pharmacy":
+            claim.pharmacy_vetted_at = now
+            claim.pharmacy_vetted_by = current_user.id
+        else:
+            claim.doctor_vetted_at = now
+            claim.doctor_vetted_by = current_user.id
+    _refresh_vet_workflow_status(claim)
     db.commit()
     db.refresh(claim)
     return {"claim_id": claim.id, "status": claim.status, **_vetting_snapshot(claim, db)}
@@ -1015,9 +1068,11 @@ def reopen_claim(
         raise HTTPException(status_code=404, detail="Claim not found")
     
     claim.status = ClaimStatus.REOPENED.value
+    # Keep pharmacy/doctor vet history; restore vet workflow status if either side had vetted
+    _refresh_vet_workflow_status(claim)
     db.commit()
     
-    return {"claim_id": claim.id, "status": claim.status}
+    return {"claim_id": claim.id, "status": claim.status, **_vetting_snapshot(claim, db)}
 
 
 @router.put("/{claim_id}/regenerate")
@@ -2333,8 +2388,8 @@ def get_eligible_encounters_for_claims(
             # No claim: claim should not exist
             query = query.filter(Claim.id.is_(None))
         else:
-            # Specific status: claim must exist and have matching status
-            query = query.filter(Claim.status == claim_status)
+            # Specific status / vet flag filter
+            query = _apply_claim_status_filter(query, claim_status)
 
     # Apply CCC / claim check code filter (partial match)
     if ccc:
@@ -2381,7 +2436,7 @@ def get_eligible_encounters_for_claims(
             if claim_status == 'no_claim':
                 ipd_count_query = ipd_count_query.filter(Claim.id.is_(None))
             else:
-                ipd_count_query = ipd_count_query.filter(Claim.status == claim_status)
+                ipd_count_query = _apply_claim_status_filter(ipd_count_query, claim_status)
         if card_number:
             card_number_clean = card_number.strip()
             if card_number_clean:
@@ -2610,8 +2665,7 @@ def get_eligible_ipd_ward_admissions_for_claims(
             # No claim: claim should not exist
             query = query.filter(Claim.id.is_(None))
         else:
-            # Specific status: claim must exist and have matching status
-            query = query.filter(Claim.status == claim_status)
+            query = _apply_claim_status_filter(query, claim_status)
     
     # Apply specialty filter (IPD: by ward name; when not set, all wards are included)
     if specialty and specialty.strip():
@@ -4224,8 +4278,8 @@ def list_ghims_import_batches(
             "claim_count": b.claim_count,
             "finalized_count": sum(1 for i in (b.items or []) if i.status == "finalized"),
             "flagged_count": sum(1 for i in (b.items or []) if i.status == "flagged"),
-            "pharmacy_vetted_count": sum(1 for i in (b.items or []) if i.status == "pharmacy_vetted"),
-            "doctor_vetted_count": sum(1 for i in (b.items or []) if i.status == "doctor_vetted"),
+            "pharmacy_vetted_count": sum(1 for i in (b.items or []) if i.pharmacy_vetted_at),
+            "doctor_vetted_count": sum(1 for i in (b.items or []) if i.doctor_vetted_at),
         }
         for b in batches
     ]
@@ -4541,7 +4595,7 @@ def vet_ghims_import_item(
     ),
     _module_check: User = Depends(require_module_permission("claims", "update")),
 ):
-    """Mark imported claim as vetted by pharmacy or doctor/prescriber (does not finalize)."""
+    """Mark or clear pharmacy/doctor vetting on an imported claim (does not finalize)."""
     _ensure_claim_vetting_columns(db)
     by = (body.by or "").strip().lower()
     if by not in ("pharmacy", "doctor", "prescriber"):
@@ -4551,7 +4605,7 @@ def vet_ghims_import_item(
     if not _user_can_vet(current_user, by):
         raise HTTPException(
             status_code=403,
-            detail=f"Your role cannot mark claims as vetted by {by}",
+            detail=f"Your role cannot change {by} vetting on claims",
         )
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
@@ -4559,19 +4613,25 @@ def vet_ghims_import_item(
     if item.status == "finalized":
         raise HTTPException(
             status_code=400,
-            detail="Cannot vet a finalized claim. Revert to draft first.",
+            detail="Cannot change vetting on a finalized claim. Revert to draft first.",
         )
-    now = datetime.utcnow()
-    if by == "pharmacy":
-        item.pharmacy_vetted_at = now
-        item.pharmacy_vetted_by = current_user.id
-        item.status = "pharmacy_vetted"
-        item.flag_comment = None
+    if body.clear:
+        if by == "pharmacy":
+            item.pharmacy_vetted_at = None
+            item.pharmacy_vetted_by = None
+        else:
+            item.doctor_vetted_at = None
+            item.doctor_vetted_by = None
     else:
-        item.doctor_vetted_at = now
-        item.doctor_vetted_by = current_user.id
-        item.status = "doctor_vetted"
+        now = datetime.utcnow()
+        if by == "pharmacy":
+            item.pharmacy_vetted_at = now
+            item.pharmacy_vetted_by = current_user.id
+        else:
+            item.doctor_vetted_at = now
+            item.doctor_vetted_by = current_user.id
         item.flag_comment = None
+    _refresh_vet_workflow_status(item)
     db.commit()
     db.refresh(item)
     return {"id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
@@ -4630,8 +4690,10 @@ def reopen_ghims_import_item(
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     item.status = "draft"
     item.finalized_at = None
+    # Keep pharmacy/doctor vet history after revert
+    _refresh_vet_workflow_status(item)
     db.commit()
-    return {"id": item.id, "status": item.status}
+    return {"id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
 
 
 @router.patch("/ghims-import/items/{item_id}/flag")

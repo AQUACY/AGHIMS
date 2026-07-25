@@ -886,7 +886,7 @@ export const claimsAPI = {
   updateDiagnosisTemplate: (id, data) => api.put(`/claims/diagnosis-templates/${id}`, data),
   deleteDiagnosisTemplate: (id) => api.delete(`/claims/diagnosis-templates/${id}`),
   finalize: (claimId) => api.put(`/claims/${claimId}/finalize`),
-  vetClaim: (claimId, by) => api.put(`/claims/${claimId}/vet`, { by }),
+  vetClaim: (claimId, by, clear = false) => api.put(`/claims/${claimId}/vet`, { by, clear: !!clear }),
   reopen: (claimId) => api.put(`/claims/${claimId}/reopen`),
   regenerate: (claimId, data) => api.put(`/claims/${claimId}/regenerate`, data),
   exportSingle: (claimId) =>
@@ -924,7 +924,8 @@ export const claimsAPI = {
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
-  vetGhimsImportItem: (itemId, by) => api.patch(`/claims/ghims-import/items/${itemId}/vet`, { by }),
+  vetGhimsImportItem: (itemId, by, clear = false) =>
+    api.patch(`/claims/ghims-import/items/${itemId}/vet`, { by, clear: !!clear }),
   flagGhimsImportItem: (itemId, comment) =>
     api.patch(`/claims/ghims-import/items/${itemId}/flag`, { comment }),
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),

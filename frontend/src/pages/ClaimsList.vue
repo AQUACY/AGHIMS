@@ -224,12 +224,18 @@
           </template>
           <template v-slot:body-cell-claim_status="props">
             <q-td :props="props">
-              <q-badge
-                v-if="props.row.claim_status"
-                :color="getStatusColor(props.row.claim_status)"
-                :label="vetStatusLabel(props.row.claim_status)"
-              />
-              <span v-else class="text-grey">—</span>
+              <div class="column q-gutter-xs items-center">
+                <q-badge
+                  v-if="props.row.claim_status"
+                  :color="getStatusColor(props.row.claim_status)"
+                  :label="vetStatusLabel(props.row.claim_status)"
+                />
+                <span v-else class="text-grey">—</span>
+                <div class="row q-gutter-xs justify-center">
+                  <q-badge v-if="props.row.pharmacy_vetted" dense color="teal" label="Pharm" />
+                  <q-badge v-if="props.row.doctor_vetted" dense color="indigo" label="Dr" />
+                </div>
+              </div>
             </q-td>
           </template>
           <template v-slot:body-cell-total_claim_amount="props">
@@ -280,7 +286,7 @@
                 class="q-mr-xs"
               />
               <q-btn
-                v-if="props.row.claim_id && (props.row.claim_status === 'draft' || props.row.claim_status === 'reopened' || props.row.claim_status === 'pharmacy_vetted' || props.row.claim_status === 'doctor_vetted')"
+                v-if="props.row.claim_id && (props.row.claim_status === 'draft' || props.row.claim_status === 'reopened' || props.row.claim_status === 'pharmacy_vetted' || props.row.claim_status === 'doctor_vetted' || props.row.claim_status === 'vetted')"
                 size="sm"
                 color="info"
                 label="Regenerate"
@@ -379,6 +385,7 @@ const claimStatusOptions = [
   { label: 'Draft', value: 'draft' },
   { label: 'Pharmacy vetted', value: 'pharmacy_vetted' },
   { label: 'Doctor vetted', value: 'doctor_vetted' },
+  { label: 'Pharmacy + doctor vetted', value: 'vetted' },
   { label: 'Finalized', value: 'finalized' },
   { label: 'Reopened', value: 'reopened' },
 ];

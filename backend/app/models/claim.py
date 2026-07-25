@@ -15,6 +15,7 @@ class ClaimStatus(str, enum.Enum):
     FLAGGED = "flagged"
     PHARMACY_VETTED = "pharmacy_vetted"
     DOCTOR_VETTED = "doctor_vetted"
+    VETTED = "vetted"  # both pharmacy and doctor have vetted
     FINALIZED = "finalized"
     REOPENED = "reopened"
 

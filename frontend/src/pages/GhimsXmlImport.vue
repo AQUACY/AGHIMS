@@ -229,6 +229,8 @@
                 </td>
                 <td>
                   <q-badge :color="claimStatusColor(row.status)" :label="vetStatusLabel(row.status)" />
+                  <q-badge v-if="row.pharmacy_vetted" class="q-ml-xs q-mt-xs" dense color="teal" label="Pharmacy" />
+                  <q-badge v-if="row.doctor_vetted" class="q-ml-xs q-mt-xs" dense color="indigo" label="Doctor" />
                   <q-chip
                     v-if="row.status === 'flagged' && row.flag_comment"
                     class="q-ml-sm q-mt-xs"
@@ -285,7 +287,7 @@
                       outline
                       @click="flagClaim(row)"
                     />
-                    <q-btn v-if="row.status === 'finalized' || row.status === 'pharmacy_vetted' || row.status === 'doctor_vetted' || row.status === 'flagged'" size="sm" color="warning" :label="row.status === 'flagged' ? 'Mark draft' : 'Revert'" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
+                    <q-btn v-if="row.status === 'finalized' || row.status === 'pharmacy_vetted' || row.status === 'doctor_vetted' || row.status === 'vetted' || row.status === 'flagged'" size="sm" color="warning" :label="row.status === 'flagged' ? 'Mark draft' : 'Revert'" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
                     <q-checkbox v-if="isClaimExportable(row)" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
                   </div>
                 </td>
@@ -334,6 +336,8 @@ import {
   statusLabel as vetStatusLabel,
   isPharmacyVettedStatus,
   isDoctorVettedStatus,
+  hasPharmacyVetted,
+  hasDoctorVetted,
 } from '../utils/claimVetting';
 
 const $route = useRoute();
@@ -376,6 +380,7 @@ const statusFilterOptions = [
   { label: 'Flagged', value: 'flagged' },
   { label: 'Pharmacy vetted', value: 'pharmacy_vetted' },
   { label: 'Doctor vetted', value: 'doctor_vetted' },
+  { label: 'Pharmacy + doctor vetted', value: 'vetted' },
   { label: 'Finalized', value: 'finalized' },
 ];
 const ageGroupFilterOptions = [
@@ -384,10 +389,22 @@ const ageGroupFilterOptions = [
   { label: 'Adults (12+)', value: 'adults' },
 ];
 
+const STANDARD_ATTENDANCE_TYPES = ['EAE', 'CFU', 'ANC', 'PNC'];
+
 const attendanceFilterOptions = computed(() => {
   const rows = currentBatch.value?.claims || [];
-  const vals = Array.from(new Set(rows.map((r) => String(r.type_of_attendance || '').trim()).filter(Boolean)));
-  vals.sort((a, b) => a.localeCompare(b));
+  const fromData = rows
+    .map((r) => String(r.type_of_attendance || '').trim())
+    .filter(Boolean);
+  const vals = Array.from(new Set([...STANDARD_ATTENDANCE_TYPES, ...fromData]));
+  vals.sort((a, b) => {
+    const ia = STANDARD_ATTENDANCE_TYPES.indexOf(a);
+    const ib = STANDARD_ATTENDANCE_TYPES.indexOf(b);
+    if (ia !== -1 || ib !== -1) {
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    }
+    return a.localeCompare(b);
+  });
   return [{ label: 'All', value: 'all' }, ...vals.map((v) => ({ label: v, value: v }))];
 });
 
@@ -427,7 +444,18 @@ const filteredClaims = computed(() => {
   const q = String(searchText.value || '').trim().toLowerCase();
   const out = rows.filter((r) => {
     if (missingSectionsOnly.value && !r.no_clinical_sections) return false;
-    if (statusFilter.value !== 'all' && (r.status || '').toLowerCase() !== statusFilter.value) return false;
+    if (statusFilter.value !== 'all') {
+      const sf = statusFilter.value;
+      if (sf === 'pharmacy_vetted') {
+        if (!hasPharmacyVetted(r)) return false;
+      } else if (sf === 'doctor_vetted') {
+        if (!hasDoctorVetted(r)) return false;
+      } else if (sf === 'vetted') {
+        if (!(hasPharmacyVetted(r) && hasDoctorVetted(r))) return false;
+      } else if ((r.status || '').toLowerCase() !== sf) {
+        return false;
+      }
+    }
     if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
     const age = claimClientAgeYears(r);
     if (ageGroupFilter.value === 'kids' && !(age !== null && age <= 11)) return false;

@@ -5,9 +5,11 @@
       <div class="text-h5 q-ml-sm">{{ status === 'finalized' ? 'View Imported Claim' : 'Edit Imported Claim' }}</div>
       <q-badge
         class="q-ml-sm"
-        :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : (status === 'pharmacy_vetted' ? 'teal' : (status === 'doctor_vetted' ? 'indigo' : 'warning')))"
-        :label="status === 'pharmacy_vetted' ? 'pharmacy vetted' : (status === 'doctor_vetted' ? 'doctor vetted' : status)"
+        :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : (status === 'vetted' ? 'deep-purple' : (status === 'pharmacy_vetted' ? 'teal' : (status === 'doctor_vetted' ? 'indigo' : 'warning'))))"
+        :label="status === 'vetted' ? 'pharmacy + doctor vetted' : (status === 'pharmacy_vetted' ? 'pharmacy vetted' : (status === 'doctor_vetted' ? 'doctor vetted' : status))"
       />
+      <q-badge v-if="vetting.pharmacy_vetted" class="q-ml-xs" color="teal" label="Pharmacy" />
+      <q-badge v-if="vetting.doctor_vetted" class="q-ml-xs" color="indigo" label="Doctor" />
       <q-space />
       <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
         <q-btn
@@ -640,22 +642,22 @@
       <div class="row q-gutter-md">
         <q-btn
           v-if="status !== 'finalized' && canVetPharmacy"
-          color="teal"
-          outline
-          icon="local_pharmacy"
-          :label="status === 'pharmacy_vetted' ? 'Pharmacy vetted' : 'Vet by Pharmacy'"
+          :color="vetting.pharmacy_vetted ? 'orange-9' : 'teal-7'"
+          text-color="white"
+          unelevated
+          :icon="vetting.pharmacy_vetted ? 'undo' : 'local_pharmacy'"
+          :label="vetting.pharmacy_vetted ? 'Revert pharmacy vet' : 'Vet by Pharmacy'"
           :loading="vettingPharmacy"
-          :disable="status === 'pharmacy_vetted'"
           @click="vetByPharmacy"
         />
         <q-btn
           v-if="status !== 'finalized' && canVetDoctor"
-          color="indigo"
-          outline
-          icon="medical_services"
-          :label="status === 'doctor_vetted' ? 'Doctor vetted' : 'Vet by Doctor'"
+          :color="vetting.doctor_vetted ? 'orange-9' : 'indigo-7'"
+          text-color="white"
+          unelevated
+          :icon="vetting.doctor_vetted ? 'undo' : 'medical_services'"
+          :label="vetting.doctor_vetted ? 'Revert doctor vet' : 'Vet by Doctor'"
           :loading="vettingDoctor"
-          :disable="status === 'doctor_vetted'"
           @click="vetByDoctor"
         />
         <q-btn v-if="status !== 'finalized'" type="submit" color="primary" label="Save and Finalize" :loading="saving" />
@@ -826,37 +828,67 @@ const canVetDoctor = computed(() =>
 
 function applyVettingFromItem(data = {}) {
   if (data.status) status.value = data.status;
-  vetting.pharmacy_vetted = data.status === 'pharmacy_vetted' || !!data.pharmacy_vetted;
+  vetting.pharmacy_vetted = !!data.pharmacy_vetted || !!data.pharmacy_vetted_at;
   vetting.pharmacy_vetted_at = data.pharmacy_vetted_at || null;
   vetting.pharmacy_vetted_by_name = data.pharmacy_vetted_by_name || null;
-  vetting.doctor_vetted = data.status === 'doctor_vetted' || !!data.doctor_vetted;
+  vetting.doctor_vetted = !!data.doctor_vetted || !!data.doctor_vetted_at;
   vetting.doctor_vetted_at = data.doctor_vetted_at || null;
   vetting.doctor_vetted_by_name = data.doctor_vetted_by_name || null;
 }
 
 async function vetByPharmacy() {
-  if (!itemId.value || status.value === 'pharmacy_vetted' || status.value === 'finalized') return;
+  if (!itemId.value || status.value === 'finalized') return;
+  const clearing = !!vetting.pharmacy_vetted;
+  if (clearing) {
+    const ok = await new Promise((resolve) => {
+      $q.dialog({
+        title: 'Revert pharmacy vet',
+        message: 'Remove pharmacy vetted status from this claim?',
+        cancel: true,
+        persistent: true,
+      }).onOk(() => resolve(true)).onCancel(() => resolve(false)).onDismiss(() => resolve(false));
+    });
+    if (!ok) return;
+  }
   vettingPharmacy.value = true;
   try {
-    const res = await claimsAPI.vetGhimsImportItem(itemId.value, 'pharmacy');
+    const res = await claimsAPI.vetGhimsImportItem(itemId.value, 'pharmacy', clearing);
     applyVettingFromItem(res.data || {});
-    $q.notify({ type: 'positive', message: 'Status set to pharmacy vetted' });
+    $q.notify({
+      type: 'positive',
+      message: clearing ? 'Pharmacy vet removed' : 'Pharmacy vet recorded',
+    });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to vet by pharmacy' });
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update pharmacy vet' });
   } finally {
     vettingPharmacy.value = false;
   }
 }
 
 async function vetByDoctor() {
-  if (!itemId.value || status.value === 'doctor_vetted' || status.value === 'finalized') return;
+  if (!itemId.value || status.value === 'finalized') return;
+  const clearing = !!vetting.doctor_vetted;
+  if (clearing) {
+    const ok = await new Promise((resolve) => {
+      $q.dialog({
+        title: 'Revert doctor vet',
+        message: 'Remove doctor vetted status from this claim?',
+        cancel: true,
+        persistent: true,
+      }).onOk(() => resolve(true)).onCancel(() => resolve(false)).onDismiss(() => resolve(false));
+    });
+    if (!ok) return;
+  }
   vettingDoctor.value = true;
   try {
-    const res = await claimsAPI.vetGhimsImportItem(itemId.value, 'doctor');
+    const res = await claimsAPI.vetGhimsImportItem(itemId.value, 'doctor', clearing);
     applyVettingFromItem(res.data || {});
-    $q.notify({ type: 'positive', message: 'Status set to doctor vetted' });
+    $q.notify({
+      type: 'positive',
+      message: clearing ? 'Doctor vet removed' : 'Doctor vet recorded',
+    });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to vet by doctor' });
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update doctor vet' });
   } finally {
     vettingDoctor.value = false;
   }
