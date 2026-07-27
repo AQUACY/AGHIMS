@@ -33,7 +33,7 @@ from app.services.cxf_claims import (
 )
 from app.services.claim_nhia_ccc import fetch_ccc_preview_for_claim, fetch_ccc_preview_for_ghims_payload
 from app.services.nhia_integration import NhiaIntegrationError, lookup_member_by_hin
-from app.utils.ghims_card import is_ghana_card, normalize_ghana_card
+from app.utils.ghims_card import is_ghana_card, normalize_ghana_card, needs_hin_conversion
 from app.models.product_price import ProductPrice
 from app.services.claim_amount_service import (
     get_claim_amount_from_price_list,
@@ -4325,6 +4325,8 @@ def get_ghims_import_batch(
             visit_start_date = min(dates) if dates else None
         elif date_of_service:
             visit_start_date = str(date_of_service).strip() or None
+        member_no = str(p.get("memberNo") or "").strip() or None
+        hin = str(p.get("hin") or "").strip() or None
         row = {
             "id": i.id,
             "row_index": i.row_index,
@@ -4334,6 +4336,9 @@ def get_ghims_import_batch(
             "date_of_birth": p.get("dateOfBirth"),
             "visit_start_date": visit_start_date,
             "client_name": " ".join([x for x in [surname, other_names] if x]).strip() or None,
+            "member_no": member_no,
+            "hin": hin,
+            "needs_hin_conversion": needs_hin_conversion(member_no, hin),
             "type_of_service": p.get("typeOfService") or p.get("type_of_service"),
             "type_of_attendance": p.get("typeOfAttendance"),
             "specialty_attended": p.get("specialtyAttended"),
@@ -4831,21 +4836,40 @@ def export_ghims_import_items(
             ),
         )
     payloads = []
+    ghana_card_claims = []
     for i in sorted(items, key=lambda x: x.row_index or 0):
         p = dict(i.payload or {})
         _reorder_ghims_diagnoses_principal_first(p)
-        from app.utils.ghims_card import is_ghana_card
         member = str(p.get("memberNo") or "").strip()
         hin = str(p.get("hin") or "").strip()
-        if is_ghana_card(member) and not hin:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Claim {p.get('claimID') or i.id} still has a Ghana Card as Member No. "
-                    "Open the claim and use “To HIN” before exporting (ClaimIT rejects Ghana Cards)."
-                ),
+        if needs_hin_conversion(member, hin):
+            surname = str(p.get("surname") or "").strip()
+            other_names = str(p.get("otherNames") or "").strip()
+            client_name = " ".join([x for x in [surname, other_names] if x]).strip() or None
+            ghana_card_claims.append(
+                {
+                    "item_id": i.id,
+                    "claim_id": str(p.get("claimID") or i.claim_claim_id or i.id),
+                    "member_no": member,
+                    "client_name": client_name,
+                }
             )
         payloads.append(p)
+    if ghana_card_claims:
+        claim_ids = [c["claim_id"] for c in ghana_card_claims]
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "ghana_card_member_no",
+                "message": (
+                    f"{len(ghana_card_claims)} claim(s) still have a Ghana Card as Member No. "
+                    "Open each claim and use “To HIN” (or set the HIN / insurance number) before exporting — "
+                    "ClaimIT rejects Ghana Cards."
+                ),
+                "claims": ghana_card_claims,
+                "claim_ids": claim_ids,
+            },
+        )
     xml_content = build_claims_xml_from_payloads(payloads)
     filename = f"NHIS_CLA_imported_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
     return Response(

@@ -202,12 +202,15 @@
               label="Type of Attendance"
               class="col-12 col-md-3"
             />
-            <q-input
+            <q-select
               v-model="payload.specialtyAttended"
-              label="Specialty Attended"
+              :options="specialtyAttendedOptions"
+              emit-value
+              map-options
               filled
+              label="Specialty Attended"
               class="col-12 col-md-3"
-              hint="Type the specialty attended"
+              hint="Defaults from principal GDRG; change if needed"
             />
             <q-input v-model="payload.serviceOutcome" label="Service Outcome" filled class="col-12 col-md-3" />
             <q-input v-model="payload.principalGDRG" label="Principal GDRG" filled class="col-12 col-md-3" />
@@ -923,6 +926,17 @@ const attendanceTypeOptions = [
   { label: 'ANC', value: 'ANC' },
   { label: 'PNC', value: 'PNC' },
 ];
+const SPECIALTY_ATTENDED_CODES = [
+  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPTH', 'ORTH', 'PAED', 'PSUR', 'RSUR',
+];
+const specialtyAttendedOptions = computed(() => {
+  const base = SPECIALTY_ATTENDED_CODES.map((code) => ({ label: code, value: code }));
+  const current = String(payload.specialtyAttended || '').trim().toUpperCase();
+  if (current && !SPECIALTY_ATTENDED_CODES.includes(current)) {
+    return [{ label: current, value: current }, ...base];
+  }
+  return base;
+});
 const procedureSearchOptions = ref([]);
 const medicineSearchOptions = ref([]);
 const payload = reactive({

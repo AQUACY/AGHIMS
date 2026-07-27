@@ -353,12 +353,15 @@
                 label="Type of Attendance"
               />
             </div>
-            <q-input
+            <q-select
               v-model="services.specialty_code"
+              :options="specialtyAttendedOptions"
+              emit-value
+              map-options
               filled
               label="Specialty Attended"
               class="col-12 col-md-6"
-              hint="Type the specialty attended"
+              hint="Defaults from principal GDRG; change if needed"
             />
           </div>
           
@@ -1583,6 +1586,17 @@ const attendanceOptions = [
   { label: 'ANC', value: 'ANC' },
   { label: 'PNC', value: 'PNC' },
 ];
+const SPECIALTY_ATTENDED_CODES = [
+  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPTH', 'ORTH', 'PAED', 'PSUR', 'RSUR',
+];
+const specialtyAttendedOptions = computed(() => {
+  const base = SPECIALTY_ATTENDED_CODES.map((code) => ({ label: code, value: code }));
+  const current = String(services.specialty_code || '').trim().toUpperCase();
+  if (current && !SPECIALTY_ATTENDED_CODES.includes(current)) {
+    return [{ label: current, value: current }, ...base];
+  }
+  return base;
+});
 
 // Procedures
 const procedures = reactive({

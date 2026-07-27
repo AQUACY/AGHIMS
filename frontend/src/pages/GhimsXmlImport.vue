@@ -136,6 +136,31 @@
             label="Show only claims with missing sections"
             class="col-12 col-md-4"
           />
+          <q-toggle
+            v-model="ghanaCardMemberOnly"
+            color="orange"
+            label="Show only Ghana Card Member No (need To HIN)"
+            class="col-12 col-md-5"
+          />
+          <q-banner
+            v-if="ghanaCardMemberCount > 0"
+            dense
+            rounded
+            class="bg-orange-1 text-orange-10 col-12"
+          >
+            <template #avatar><q-icon name="badge" color="orange" /></template>
+            {{ ghanaCardMemberCount }} claim(s) still have a Ghana Card as Member No.
+            Use <strong>To HIN</strong> on each claim (or set HIN / insurance number) before exporting.
+            <template #action>
+              <q-btn
+                flat
+                dense
+                color="orange-10"
+                label="Filter them"
+                @click="applyGhanaCardMemberFilter()"
+              />
+            </template>
+          </q-banner>
           <q-space />
           <q-btn
             color="secondary"
@@ -242,6 +267,12 @@
                     :label="row.flag_comment"
                   />
                   <q-badge
+                    v-if="row.needs_hin_conversion"
+                    class="q-ml-sm q-mt-xs"
+                    color="orange"
+                    label="Ghana Card Member No — use To HIN"
+                  />
+                  <q-badge
                     v-if="row.has_missing_sections"
                     class="q-ml-sm q-mt-xs"
                     color="deep-orange"
@@ -339,6 +370,11 @@ import {
   hasPharmacyVetted,
   hasDoctorVetted,
 } from '../utils/claimVetting';
+import {
+  parseExportErrorDetail,
+  exportErrorMessage,
+  isGhanaCardMemberExportError,
+} from '../utils/exportErrorDetail';
 
 const $route = useRoute();
 const $router = useRouter();
@@ -364,6 +400,7 @@ const serviceTypeFilter = ref('all');
 const statusFilter = ref('all');
 const ageGroupFilter = ref('all');
 const missingSectionsOnly = ref(false);
+const ghanaCardMemberOnly = ref(false);
 const currentPage = ref(1);
 const rowsPerPage = ref(20);
 const rowsPerPageOptions = [
@@ -444,6 +481,7 @@ const filteredClaims = computed(() => {
   const q = String(searchText.value || '').trim().toLowerCase();
   const out = rows.filter((r) => {
     if (missingSectionsOnly.value && !r.no_clinical_sections) return false;
+    if (ghanaCardMemberOnly.value && !r.needs_hin_conversion) return false;
     if (statusFilter.value !== 'all') {
       const sf = statusFilter.value;
       if (sf === 'pharmacy_vetted') {
@@ -468,6 +506,7 @@ const filteredClaims = computed(() => {
       r.hospital_rec_no,
       r.claim_claim_id,
       r.claim_check_code,
+      r.member_no,
       getServiceType(r),
       r.type_of_attendance,
       r.specialty_attended,
@@ -478,6 +517,10 @@ const filteredClaims = computed(() => {
   });
   return out;
 });
+
+const ghanaCardMemberCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => r.needs_hin_conversion).length
+);
 
 const filteredRevenue = computed(() => {
   return filteredClaims.value.reduce((sum, row) => sum + (Number(row.total_claim_amount) || 0), 0);
@@ -826,8 +869,11 @@ async function exportSelected() {
     link.setAttribute('download', `NHIS_CLA_batch_${currentBatch.value?.file_name?.replace(/\.[^.]+$/, '') || 'export'}.xml`);
     document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url);
     $q.notify({ type: 'positive', message: 'Export complete' });
-  } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Export failed' }); }
-  finally { exporting.value = false; }
+  } catch (e) {
+    await handleExportError(e);
+  } finally {
+    exporting.value = false;
+  }
 }
 
 async function exportSingleClaim(row) {
@@ -848,10 +894,60 @@ async function exportSingleClaim(row) {
     window.URL.revokeObjectURL(url);
     $q.notify({ type: 'positive', message: `Exported claim ${row.claim_claim_id || row.id}` });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Single claim export failed' });
+    await handleExportError(e);
   } finally {
     exportingSingleItemId.value = null;
   }
+}
+
+function applyGhanaCardMemberFilter(claimItems) {
+  ghanaCardMemberOnly.value = true;
+  currentPage.value = 1;
+  if (Array.isArray(claimItems) && claimItems.length) {
+    const ids = claimItems.map((c) => Number(c.item_id)).filter((id) => Number.isFinite(id) && id > 0);
+    if (ids.length) {
+      selectedBulkItemIds.value = ids;
+      // Keep export selection only if those rows are exportable — still useful to highlight
+    }
+  }
+}
+
+async function handleExportError(e) {
+  const detail = await parseExportErrorDetail(e);
+  if (isGhanaCardMemberExportError(detail)) {
+    const lines = detail.claims
+      .slice(0, 40)
+      .map((c) => {
+        const name = c.client_name ? ` — ${c.client_name}` : '';
+        const member = c.member_no ? ` (${c.member_no})` : '';
+        return `• ${c.claim_id}${name}${member}`;
+      })
+      .join('<br>');
+    const more =
+      detail.claims.length > 40
+        ? `<br><em>…and ${detail.claims.length - 40} more</em>`
+        : '';
+    $q.dialog({
+      title: 'Ghana Card as Member No',
+      message:
+        `<p>${exportErrorMessage(detail)}</p>` +
+        `<p class="q-mb-none"><strong>Claims that need To HIN / insurance number:</strong></p>` +
+        `<div style="max-height:280px;overflow:auto;margin-top:8px">${lines}${more}</div>`,
+      html: true,
+      ok: { label: 'Filter these claims', color: 'orange', unelevated: true },
+      cancel: { label: 'Close', flat: true },
+      persistent: true,
+    }).onOk(() => {
+      applyGhanaCardMemberFilter(detail.claims);
+    });
+    return;
+  }
+  $q.notify({
+    type: 'negative',
+    message: exportErrorMessage(detail) || 'Export failed',
+    multiLine: true,
+    timeout: 8000,
+  });
 }
 
 function deleteBatch(batch) {
@@ -875,6 +971,7 @@ function persistFilterState() {
         specialtyFilter: specialtyFilter.value,
         statusFilter: statusFilter.value,
         missingSectionsOnly: missingSectionsOnly.value,
+        ghanaCardMemberOnly: ghanaCardMemberOnly.value,
         rowsPerPage: rowsPerPage.value,
       })
     );
@@ -895,11 +992,12 @@ function restoreFilterState() {
     specialtyFilter.value = s.specialtyFilter || 'all';
     statusFilter.value = s.statusFilter || 'all';
     missingSectionsOnly.value = Boolean(s.missingSectionsOnly);
+    ghanaCardMemberOnly.value = Boolean(s.ghanaCardMemberOnly);
     rowsPerPage.value = Number(s.rowsPerPage) > 0 ? Number(s.rowsPerPage) : 20;
   } catch (_) {}
 }
 
-watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, missingSectionsOnly, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, missingSectionsOnly, ghanaCardMemberOnly, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });

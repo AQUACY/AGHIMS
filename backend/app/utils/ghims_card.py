@@ -53,6 +53,18 @@ def resolve_claimit_member_no(
     return mn
 
 
+def needs_hin_conversion(
+    member_no: Optional[str],
+    hin: Optional[str] = None,
+) -> bool:
+    """True when Member No is a Ghana Card and no usable HIN is available for ClaimIT."""
+    mn = (member_no or "").strip()
+    if not is_ghana_card(mn):
+        return False
+    hin_val = (hin or "").strip()
+    return not hin_val or is_ghana_card(hin_val)
+
+
 def ghims_card_numbers_enabled() -> bool:
     return bool(getattr(settings, "GHIMS_CARD_NUMBERS_ENABLED", False))
 
