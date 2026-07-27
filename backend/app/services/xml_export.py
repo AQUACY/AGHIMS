@@ -179,8 +179,22 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         SubElement(claim_elem, "preAuthorizationCodes").text = claim.pre_authorization_codes or " ,"
         SubElement(claim_elem, "physicianID").text = claim.physician_id
         
-        # Patient information
-        SubElement(claim_elem, "memberNo").text = patient.insurance_id or ""
+        # Patient information — ClaimIT rejects Ghana Card; export HIN when available
+        from app.utils.ghims_card import is_ghana_card, resolve_claimit_member_no
+
+        insurance_id = (patient.insurance_id or "").strip()
+        patient_hin = (getattr(patient, "hin", None) or "").strip()
+        claim_member = (claim.member_no or "").strip()
+        if is_ghana_card(insurance_id):
+            export_member = resolve_claimit_member_no(
+                insurance_id, hin=patient_hin or (claim_member if not is_ghana_card(claim_member) else None)
+            )
+        elif is_ghana_card(claim_member):
+            export_member = resolve_claimit_member_no(claim_member, hin=patient_hin)
+        else:
+            # NHIA number (or already HIN on claim) — leave alone
+            export_member = claim_member or insurance_id
+        SubElement(claim_elem, "memberNo").text = export_member
         SubElement(claim_elem, "cardSerialNo").text = ""  # Leave empty as requested
         
         # Optimize name parsing - compute once and reuse

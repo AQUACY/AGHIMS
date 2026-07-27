@@ -18,6 +18,7 @@ from app.api import (
     consultation,
     billing,
     claims,
+    claim_diagnosis_templates,
     price_list,
     staff,
     lab_templates,
@@ -200,6 +201,9 @@ app.include_router(encounters.router, prefix="/api")
 app.include_router(vitals.router, prefix="/api")
 app.include_router(consultation.router, prefix="/api")
 app.include_router(billing.router, prefix="/api")
+# Diagnosis templates must be registered before claims: claims has GET /{claim_id}
+# which would otherwise capture /claims/diagnosis-templates as an int id (422).
+app.include_router(claim_diagnosis_templates.router, prefix="/api")
 app.include_router(claims.router, prefix="/api")
 app.include_router(price_list.router, prefix="/api")
 app.include_router(staff.router, prefix="/api")

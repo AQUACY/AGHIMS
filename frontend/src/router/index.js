@@ -193,6 +193,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/diagnosis-templates',
+        name: 'ClaimsDiagnosisTemplates',
+        component: () => import('../pages/ClaimsDiagnosisTemplates.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/list',
         name: 'ClaimsList',
         component: () => import('../pages/ClaimsList.vue'),

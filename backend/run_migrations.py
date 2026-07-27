@@ -27,6 +27,20 @@ TRACKER_TABLE = "migration_tracker"
 SKIP_MIGRATIONS = {"migrate_create_migration_tracker"}
 
 
+def should_skip_for_db(name: str, is_mysql: bool):
+    """
+    Return a skip reason when this script is for the other database dialect.
+    - On MySQL: skip SQLite twins when a matching *_mysql.py exists.
+    - On SQLite: skip *_mysql.py scripts.
+    """
+    if is_mysql:
+        if not name.endswith("_mysql") and (backend_dir / f"{name}_mysql.py").exists():
+            return f"sqlite-only twin; use {name}_mysql.py on MySQL"
+    elif name.endswith("_mysql"):
+        return "MySQL-only migration; skipped on SQLite"
+    return None
+
+
 def ensure_tracker_table(conn, is_mysql: bool):
     """Create migration_tracker table if it does not exist."""
     if is_mysql:
@@ -115,6 +129,17 @@ def main():
                 print(f"Skip (runner-managed): {name}")
                 skipped += 1
                 continue
+
+            dialect_skip = should_skip_for_db(name, is_mysql)
+            if dialect_skip:
+                # Mark as success so old failed SQLite twins stop counting as Failed on MySQL prod
+                if not is_migration_success(conn, name):
+                    record_migration(conn, name, "success", 0, f"skipped: {dialect_skip}")
+                    conn.commit()
+                print(f"Skip (wrong DB dialect): {name} — {dialect_skip}")
+                skipped += 1
+                continue
+
             spec = importlib.util.spec_from_file_location(name, path)
             if spec is None or spec.loader is None:
                 no_fn.append(name)

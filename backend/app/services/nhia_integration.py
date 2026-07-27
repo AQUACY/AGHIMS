@@ -195,7 +195,7 @@ def _ensure_session(*, force_refresh: bool = False) -> httpx.Client:
 
 # Ghana Card on NHIA portal: GHA-123456789-0 (case-insensitive prefix)
 _GHANA_CARD_PATTERN = re.compile(
-    r"^GHA-\d+-\d$",
+    r"^GHA-\d+-\d{1,2}$",
     re.IGNORECASE,
 )
 

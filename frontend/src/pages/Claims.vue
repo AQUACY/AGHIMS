@@ -96,6 +96,23 @@
           class="claims-module-tile cursor-pointer glass-card"
           flat
           bordered
+          @click="$router.push('/claims/diagnosis-templates')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="playlist_add_check" size="64px" color="teal" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Diagnosis Templates</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Save investigations &amp; medicines for diagnoses (e.g. Malaria) and apply them on claims.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card"
+          flat
+          bordered
           @click="$router.push('/claims/cxf-tools')"
         >
           <q-card-section class="text-center q-pa-xl">

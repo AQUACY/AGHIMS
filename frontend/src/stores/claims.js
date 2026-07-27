@@ -96,17 +96,9 @@ export const useClaimsStore = defineStore('claims', {
     },
 
     async _blobErrorDetail(blob) {
-      if (!blob || typeof blob.text !== 'function') return null;
-      try {
-        const text = await blob.text();
-        const j = JSON.parse(text);
-        const d = j.detail;
-        if (typeof d === 'string') return d;
-        if (Array.isArray(d)) return d.map((x) => x.msg || JSON.stringify(x)).join('; ');
-        return d ? String(d) : text.slice(0, 200);
-      } catch {
-        return null;
-      }
+      const { parseExportErrorDetail, exportErrorMessage } = await import('../utils/exportErrorDetail');
+      const detail = await parseExportErrorDetail(blob);
+      return exportErrorMessage(detail);
     },
 
     async exportByDateRange(startDate, endDate) {

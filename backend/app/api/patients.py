@@ -670,7 +670,7 @@ class GenerateCccResponse(BaseModel):
 def lookup_nhia_member(
     request: Request,
     body: NhiaLookupRequest,
-    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor"])),
+    current_user: User = Depends(require_role(["Records", "Admin", "PA", "Doctor", "Claims"])),
     _module_check: User = Depends(require_module_permission("patients", "read")),
 ):
     """Fetch member/CCC data from NHIA portal without saving a patient record."""

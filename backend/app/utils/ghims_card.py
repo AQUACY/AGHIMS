@@ -12,7 +12,57 @@ from app.core.config import settings
 # Letter-facility segment-8-digit serial (e.g. E-0032-26050735)
 GHIMS_CARD_PATTERN = re.compile(r"^[A-Za-z]-\d{4}-\d{8}$")
 
-GHANA_CARD_PATTERN = re.compile(r"^GHA-\d+-\d$", re.IGNORECASE)
+# GHA-xxxxxxxx-x or GHA-xxxxxxxx-xx (ClaimIT rejects Ghana Card as memberNo)
+GHANA_CARD_PATTERN = re.compile(r"^GHA-\d+-\d{1,2}$", re.IGNORECASE)
+
+
+def is_ghana_card(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    cleaned = re.sub(r"\s+", "", value.strip())
+    return bool(GHANA_CARD_PATTERN.match(cleaned))
+
+
+def normalize_ghana_card(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    cleaned = re.sub(r"\s+", "", value.strip())
+    if not GHANA_CARD_PATTERN.match(cleaned):
+        return cleaned
+    return cleaned.upper()
+
+
+def resolve_claimit_member_no(
+    member_no: Optional[str],
+    *,
+    hin: Optional[str] = None,
+    ghana_card: Optional[str] = None,
+) -> str:
+    """
+    ClaimIT accepts NHIA numbers or HIN — not Ghana Cards.
+    If memberNo is a Ghana Card, prefer the generated HIN.
+    NHIA membership numbers are left unchanged.
+    """
+    mn = (member_no or "").strip()
+    hin_val = (hin or "").strip()
+    if is_ghana_card(mn):
+        if hin_val and not is_ghana_card(hin_val):
+            return hin_val
+        return normalize_ghana_card(mn) or mn
+    # Already HIN / NHIA — leave alone
+    return mn
+
+
+def needs_hin_conversion(
+    member_no: Optional[str],
+    hin: Optional[str] = None,
+) -> bool:
+    """True when Member No is a Ghana Card and no usable HIN is available for ClaimIT."""
+    mn = (member_no or "").strip()
+    if not is_ghana_card(mn):
+        return False
+    hin_val = (hin or "").strip()
+    return not hin_val or is_ghana_card(hin_val)
 
 
 def ghims_card_numbers_enabled() -> bool:

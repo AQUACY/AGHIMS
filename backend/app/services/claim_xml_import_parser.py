@@ -155,6 +155,8 @@ def _normalize_duration_for_export(duration: str) -> str:
 
 
 def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
+    from app.utils.ghims_card import is_ghana_card, resolve_claimit_member_no
+
     root = ET.Element("claims")
     for payload in payloads:
         claim_el = ET.SubElement(root, "claim")
@@ -164,8 +166,24 @@ def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
             "isDependant", "typeOfService", "isUnbundled", "includesPharmacy", "typeOfAttendance",
             "serviceOutcome", "specialtyAttended", "principalGDRG",
         ]
+        # ClaimIT memberNo: swap Ghana Card → HIN when needed; keep NHIA as-is.
+        # ghanaCard / hin are payload-only fields and are not written to XML.
+        export_payload = dict(payload or {})
+        raw_member = str(export_payload.get("memberNo") or "").strip()
+        hin = str(export_payload.get("hin") or "").strip()
+        ghana_card = str(export_payload.get("ghanaCard") or "").strip()
+        if is_ghana_card(raw_member):
+            export_payload["memberNo"] = resolve_claimit_member_no(
+                raw_member,
+                hin=hin or None,
+                ghana_card=ghana_card or None,
+            )
+        elif ghana_card and hin and not is_ghana_card(hin):
+            # Already converted on the sheet — memberNo should already be HIN
+            export_payload["memberNo"] = raw_member or hin
+
         for tag in simple_tags:
-            ET.SubElement(claim_el, tag).text = str(payload.get(tag, "") or "")
+            ET.SubElement(claim_el, tag).text = str(export_payload.get(tag, "") or "")
 
         for dt in payload.get("dateOfService", [])[:4]:
             ET.SubElement(claim_el, "dateOfService").text = str(dt or "")

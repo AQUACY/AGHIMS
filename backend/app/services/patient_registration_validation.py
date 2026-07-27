@@ -14,7 +14,7 @@ from app.core.datetime_utils import today
 from app.models.patient import Patient
 from app.services.ghims_settings import validate_ghims_card_number
 
-_GHANA_CARD_PATTERN = re.compile(r"^GHA-\d+-\d$", re.IGNORECASE)
+_GHANA_CARD_PATTERN = re.compile(r"^GHA-\d+-\d{1,2}$", re.IGNORECASE)
 _BABY_MAX_AGE_DAYS = 92  # ~3 months
 
 

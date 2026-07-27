@@ -25,7 +25,10 @@
             <q-item-section avatar><q-icon name="folder" color="primary" /></q-item-section>
             <q-item-section>
               <q-item-label>{{ b.file_name }}</q-item-label>
-              <q-item-label caption>{{ formatDate(b.uploaded_at) }} · {{ b.claim_count }} claim(s) · {{ b.finalized_count || 0 }} finalized</q-item-label>
+              <q-item-label caption>
+                {{ formatDate(b.uploaded_at) }} · {{ b.claim_count }} claim(s) · {{ b.finalized_count || 0 }} finalized
+                · {{ b.pharmacy_vetted_count || 0 }} pharmacy-vetted · {{ b.doctor_vetted_count || 0 }} doctor-vetted
+              </q-item-label>
             </q-item-section>
             <q-item-section side class="row items-center q-gutter-sm">
               <q-btn flat dense round icon="chevron_right" @click="openBatch(b.id)" />
@@ -53,10 +56,13 @@
           <div class="text-body2 text-primary">
             Showing {{ filteredClaims.length }} filtered claim(s)
           </div>
+          <div class="text-body2 text-teal">
+            Pharmacy vetted: {{ batchPharmacyVettedCount }} · Doctor vetted: {{ batchDoctorVettedCount }}
+          </div>
           <q-checkbox
-            :model-value="allFinalizedSelected"
-            label="Select all finalized"
-            @update:model-value="toggleSelectAllFinalized"
+            :model-value="allExportableSelected"
+            label="Select all exportable"
+            @update:model-value="toggleSelectAllExportable"
           />
           <q-toggle
             v-model="filtersLocked"
@@ -130,6 +136,31 @@
             label="Show only claims with missing sections"
             class="col-12 col-md-4"
           />
+          <q-toggle
+            v-model="ghanaCardMemberOnly"
+            color="orange"
+            label="Show only Ghana Card Member No (need To HIN)"
+            class="col-12 col-md-5"
+          />
+          <q-banner
+            v-if="ghanaCardMemberCount > 0"
+            dense
+            rounded
+            class="bg-orange-1 text-orange-10 col-12"
+          >
+            <template #avatar><q-icon name="badge" color="orange" /></template>
+            {{ ghanaCardMemberCount }} claim(s) still have a Ghana Card as Member No.
+            Use <strong>To HIN</strong> on each claim (or set HIN / insurance number) before exporting.
+            <template #action>
+              <q-btn
+                flat
+                dense
+                color="orange-10"
+                label="Filter them"
+                @click="applyGhanaCardMemberFilter()"
+              />
+            </template>
+          </q-banner>
           <q-space />
           <q-btn
             color="secondary"
@@ -222,7 +253,9 @@
                   </template>
                 </td>
                 <td>
-                  <q-badge :color="claimStatusColor(row.status)" :label="row.status" />
+                  <q-badge :color="claimStatusColor(row.status)" :label="vetStatusLabel(row.status)" />
+                  <q-badge v-if="row.pharmacy_vetted" class="q-ml-xs q-mt-xs" dense color="teal" label="Pharmacy" />
+                  <q-badge v-if="row.doctor_vetted" class="q-ml-xs q-mt-xs" dense color="indigo" label="Doctor" />
                   <q-chip
                     v-if="row.status === 'flagged' && row.flag_comment"
                     class="q-ml-sm q-mt-xs"
@@ -232,6 +265,12 @@
                     text-color="dark"
                     icon="comment"
                     :label="row.flag_comment"
+                  />
+                  <q-badge
+                    v-if="row.needs_hin_conversion"
+                    class="q-ml-sm q-mt-xs"
+                    color="orange"
+                    label="Ghana Card Member No — use To HIN"
                   />
                   <q-badge
                     v-if="row.has_missing_sections"
@@ -252,7 +291,7 @@
                       size="sm"
                       color="primary"
                       label="Edit"
-                      :disable="row.status === 'finalized' || row.status === 'flagged'"
+                      :disable="row.status === 'finalized'"
                       @click="editImportedClaim(row)"
                     />
                     <q-btn
@@ -262,27 +301,25 @@
                       @click="viewImportedClaim(row)"
                     />
                     <q-btn
-                      v-if="row.status === 'finalized'"
+                      v-if="isClaimExportable(row)"
                       size="sm"
                       color="teal"
                       label="Export"
                       :loading="exportingSingleItemId === row.id"
                       @click="exportSingleClaim(row)"
                     />
-                    <q-btn v-if="row.status !== 'finalized'" size="sm" color="positive" label="Finalize" :disable="row.status === 'flagged'" :loading="statusLoadingItemId === row.id" outline @click="setClaimFinalized(row)" />
+                    <q-btn v-if="row.status !== 'finalized'" size="sm" color="positive" label="Finalize" :loading="statusLoadingItemId === row.id" outline @click="setClaimFinalized(row)" />
                     <q-btn
-                      v-if="row.status !== 'finalized'"
+                      v-if="row.status !== 'finalized' && row.status !== 'flagged'"
                       size="sm"
                       color="negative"
-                      :label="row.status === 'flagged' ? 'Flagged' : 'Flag claim'"
-                      :disable="row.status === 'flagged'"
+                      label="Flag claim"
                       :loading="statusLoadingItemId === row.id"
                       outline
                       @click="flagClaim(row)"
                     />
-                    <q-btn v-if="row.status === 'finalized'" size="sm" color="warning" label="Revert" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
-                    <q-btn v-if="row.status === 'flagged'" size="sm" color="warning" label="Mark draft" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
-                    <q-checkbox v-if="row.status === 'finalized'" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
+                    <q-btn v-if="row.status === 'finalized' || row.status === 'pharmacy_vetted' || row.status === 'doctor_vetted' || row.status === 'vetted' || row.status === 'flagged'" size="sm" color="warning" :label="row.status === 'flagged' ? 'Mark draft' : 'Revert'" :loading="statusLoadingItemId === row.id" outline @click="revertClaim(row)" />
+                    <q-checkbox v-if="isClaimExportable(row)" :model-value="selectedItemIds.includes(row.id)" label="Export" @update:model-value="toggleExport(row.id, $event)" />
                   </div>
                 </td>
               </tr>
@@ -323,6 +360,21 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
 import { setGhimsNavIds } from '../utils/claimNav';
+import {
+  isClaimExportable,
+  confirmExportWithVettingWarning,
+  statusColor as vetStatusColor,
+  statusLabel as vetStatusLabel,
+  isPharmacyVettedStatus,
+  isDoctorVettedStatus,
+  hasPharmacyVetted,
+  hasDoctorVetted,
+} from '../utils/claimVetting';
+import {
+  parseExportErrorDetail,
+  exportErrorMessage,
+  isGhanaCardMemberExportError,
+} from '../utils/exportErrorDetail';
 
 const $route = useRoute();
 const $router = useRouter();
@@ -348,6 +400,7 @@ const serviceTypeFilter = ref('all');
 const statusFilter = ref('all');
 const ageGroupFilter = ref('all');
 const missingSectionsOnly = ref(false);
+const ghanaCardMemberOnly = ref(false);
 const currentPage = ref(1);
 const rowsPerPage = ref(20);
 const rowsPerPageOptions = [
@@ -362,6 +415,9 @@ const statusFilterOptions = [
   { label: 'All', value: 'all' },
   { label: 'Draft', value: 'draft' },
   { label: 'Flagged', value: 'flagged' },
+  { label: 'Pharmacy vetted', value: 'pharmacy_vetted' },
+  { label: 'Doctor vetted', value: 'doctor_vetted' },
+  { label: 'Pharmacy + doctor vetted', value: 'vetted' },
   { label: 'Finalized', value: 'finalized' },
 ];
 const ageGroupFilterOptions = [
@@ -370,10 +426,22 @@ const ageGroupFilterOptions = [
   { label: 'Adults (12+)', value: 'adults' },
 ];
 
+const STANDARD_ATTENDANCE_TYPES = ['EAE', 'CFU', 'ANC', 'PNC'];
+
 const attendanceFilterOptions = computed(() => {
   const rows = currentBatch.value?.claims || [];
-  const vals = Array.from(new Set(rows.map((r) => String(r.type_of_attendance || '').trim()).filter(Boolean)));
-  vals.sort((a, b) => a.localeCompare(b));
+  const fromData = rows
+    .map((r) => String(r.type_of_attendance || '').trim())
+    .filter(Boolean);
+  const vals = Array.from(new Set([...STANDARD_ATTENDANCE_TYPES, ...fromData]));
+  vals.sort((a, b) => {
+    const ia = STANDARD_ATTENDANCE_TYPES.indexOf(a);
+    const ib = STANDARD_ATTENDANCE_TYPES.indexOf(b);
+    if (ia !== -1 || ib !== -1) {
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    }
+    return a.localeCompare(b);
+  });
   return [{ label: 'All', value: 'all' }, ...vals.map((v) => ({ label: v, value: v }))];
 });
 
@@ -413,7 +481,19 @@ const filteredClaims = computed(() => {
   const q = String(searchText.value || '').trim().toLowerCase();
   const out = rows.filter((r) => {
     if (missingSectionsOnly.value && !r.no_clinical_sections) return false;
-    if (statusFilter.value !== 'all' && (r.status || '').toLowerCase() !== statusFilter.value) return false;
+    if (ghanaCardMemberOnly.value && !r.needs_hin_conversion) return false;
+    if (statusFilter.value !== 'all') {
+      const sf = statusFilter.value;
+      if (sf === 'pharmacy_vetted') {
+        if (!hasPharmacyVetted(r)) return false;
+      } else if (sf === 'doctor_vetted') {
+        if (!hasDoctorVetted(r)) return false;
+      } else if (sf === 'vetted') {
+        if (!(hasPharmacyVetted(r) && hasDoctorVetted(r))) return false;
+      } else if ((r.status || '').toLowerCase() !== sf) {
+        return false;
+      }
+    }
     if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
     const age = claimClientAgeYears(r);
     if (ageGroupFilter.value === 'kids' && !(age !== null && age <= 11)) return false;
@@ -426,6 +506,7 @@ const filteredClaims = computed(() => {
       r.hospital_rec_no,
       r.claim_claim_id,
       r.claim_check_code,
+      r.member_no,
       getServiceType(r),
       r.type_of_attendance,
       r.specialty_attended,
@@ -437,6 +518,10 @@ const filteredClaims = computed(() => {
   return out;
 });
 
+const ghanaCardMemberCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => r.needs_hin_conversion).length
+);
+
 const filteredRevenue = computed(() => {
   return filteredClaims.value.reduce((sum, row) => sum + (Number(row.total_claim_amount) || 0), 0);
 });
@@ -446,12 +531,19 @@ const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS' }).format(Number(amount));
 };
 
-const allFinalizedSelected = computed(() => {
-  const finalizedIds = (currentBatch.value?.claims || [])
-    .filter((r) => r.status === 'finalized')
+const batchPharmacyVettedCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => isPharmacyVettedStatus(r)).length
+);
+const batchDoctorVettedCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => isDoctorVettedStatus(r)).length
+);
+
+const allExportableSelected = computed(() => {
+  const ids = (currentBatch.value?.claims || [])
+    .filter((r) => isClaimExportable(r))
     .map((r) => Number(r.id));
-  if (!finalizedIds.length) return false;
-  return finalizedIds.every((id) => selectedItemIds.value.includes(id));
+  if (!ids.length) return false;
+  return ids.every((id) => selectedItemIds.value.includes(id));
 });
 
 const allFilteredSelected = computed(() => {
@@ -533,9 +625,7 @@ function claimClientAgeYears(row) {
 }
 
 function claimStatusColor(status) {
-  if (status === 'finalized') return 'positive';
-  if (status === 'flagged') return 'negative';
-  return 'warning';
+  return vetStatusColor(status);
 }
 
 function prettySectionName(key) {
@@ -565,7 +655,7 @@ async function uploadXml() {
 }
 
 function syncSelectedExports() {
-  selectedItemIds.value = (currentBatch.value?.claims || []).filter((r) => r.status === 'finalized').map((r) => r.id);
+  selectedItemIds.value = (currentBatch.value?.claims || []).filter((r) => isClaimExportable(r)).map((r) => r.id);
 }
 
 function toggleBulkSelected(itemId, checked) {
@@ -752,20 +842,23 @@ function toggleExport(itemId, checked) {
   if (!checked) selectedItemIds.value = selectedItemIds.value.filter((x) => x !== id);
 }
 
-function toggleSelectAllFinalized(checked) {
-  const finalizedIds = (currentBatch.value?.claims || [])
-    .filter((r) => r.status === 'finalized')
+function toggleSelectAllExportable(checked) {
+  const exportableIds = (currentBatch.value?.claims || [])
+    .filter((r) => isClaimExportable(r))
     .map((r) => Number(r.id));
   if (checked) {
-    const merged = new Set([...(selectedItemIds.value || []), ...finalizedIds]);
+    const merged = new Set([...(selectedItemIds.value || []), ...exportableIds]);
     selectedItemIds.value = Array.from(merged);
   } else {
-    selectedItemIds.value = (selectedItemIds.value || []).filter((id) => !finalizedIds.includes(Number(id)));
+    selectedItemIds.value = (selectedItemIds.value || []).filter((id) => !exportableIds.includes(Number(id)));
   }
 }
 
 async function exportSelected() {
   if (!selectedItemIds.value.length) return;
+  const rows = (currentBatch.value?.claims || []).filter((r) => selectedItemIds.value.includes(r.id));
+  const ok = await confirmExportWithVettingWarning($q, rows);
+  if (!ok) return;
   exporting.value = true;
   try {
     const res = await claimsAPI.exportGhimsImportItems(selectedItemIds.value);
@@ -776,12 +869,17 @@ async function exportSelected() {
     link.setAttribute('download', `NHIS_CLA_batch_${currentBatch.value?.file_name?.replace(/\.[^.]+$/, '') || 'export'}.xml`);
     document.body.appendChild(link); link.click(); link.remove(); window.URL.revokeObjectURL(url);
     $q.notify({ type: 'positive', message: 'Export complete' });
-  } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Export failed' }); }
-  finally { exporting.value = false; }
+  } catch (e) {
+    await handleExportError(e);
+  } finally {
+    exporting.value = false;
+  }
 }
 
 async function exportSingleClaim(row) {
   if (!row?.id) return;
+  const ok = await confirmExportWithVettingWarning($q, [row]);
+  if (!ok) return;
   exportingSingleItemId.value = row.id;
   try {
     const res = await claimsAPI.exportGhimsImportItems([Number(row.id)]);
@@ -796,10 +894,60 @@ async function exportSingleClaim(row) {
     window.URL.revokeObjectURL(url);
     $q.notify({ type: 'positive', message: `Exported claim ${row.claim_claim_id || row.id}` });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Single claim export failed' });
+    await handleExportError(e);
   } finally {
     exportingSingleItemId.value = null;
   }
+}
+
+function applyGhanaCardMemberFilter(claimItems) {
+  ghanaCardMemberOnly.value = true;
+  currentPage.value = 1;
+  if (Array.isArray(claimItems) && claimItems.length) {
+    const ids = claimItems.map((c) => Number(c.item_id)).filter((id) => Number.isFinite(id) && id > 0);
+    if (ids.length) {
+      selectedBulkItemIds.value = ids;
+      // Keep export selection only if those rows are exportable — still useful to highlight
+    }
+  }
+}
+
+async function handleExportError(e) {
+  const detail = await parseExportErrorDetail(e);
+  if (isGhanaCardMemberExportError(detail)) {
+    const lines = detail.claims
+      .slice(0, 40)
+      .map((c) => {
+        const name = c.client_name ? ` — ${c.client_name}` : '';
+        const member = c.member_no ? ` (${c.member_no})` : '';
+        return `• ${c.claim_id}${name}${member}`;
+      })
+      .join('<br>');
+    const more =
+      detail.claims.length > 40
+        ? `<br><em>…and ${detail.claims.length - 40} more</em>`
+        : '';
+    $q.dialog({
+      title: 'Ghana Card as Member No',
+      message:
+        `<p>${exportErrorMessage(detail)}</p>` +
+        `<p class="q-mb-none"><strong>Claims that need To HIN / insurance number:</strong></p>` +
+        `<div style="max-height:280px;overflow:auto;margin-top:8px">${lines}${more}</div>`,
+      html: true,
+      ok: { label: 'Filter these claims', color: 'orange', unelevated: true },
+      cancel: { label: 'Close', flat: true },
+      persistent: true,
+    }).onOk(() => {
+      applyGhanaCardMemberFilter(detail.claims);
+    });
+    return;
+  }
+  $q.notify({
+    type: 'negative',
+    message: exportErrorMessage(detail) || 'Export failed',
+    multiLine: true,
+    timeout: 8000,
+  });
 }
 
 function deleteBatch(batch) {
@@ -823,6 +971,7 @@ function persistFilterState() {
         specialtyFilter: specialtyFilter.value,
         statusFilter: statusFilter.value,
         missingSectionsOnly: missingSectionsOnly.value,
+        ghanaCardMemberOnly: ghanaCardMemberOnly.value,
         rowsPerPage: rowsPerPage.value,
       })
     );
@@ -843,11 +992,12 @@ function restoreFilterState() {
     specialtyFilter.value = s.specialtyFilter || 'all';
     statusFilter.value = s.statusFilter || 'all';
     missingSectionsOnly.value = Boolean(s.missingSectionsOnly);
+    ghanaCardMemberOnly.value = Boolean(s.ghanaCardMemberOnly);
     rowsPerPage.value = Number(s.rowsPerPage) > 0 ? Number(s.rowsPerPage) : 20;
   } catch (_) {}
 }
 
-watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, missingSectionsOnly, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, missingSectionsOnly, ghanaCardMemberOnly, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });
