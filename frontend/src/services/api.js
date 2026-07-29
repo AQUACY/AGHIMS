@@ -1,23 +1,19 @@
 import axios from 'axios';
 
-// API_BASE_URL is set in quasar.config.js build.env
-// Production default: https://app.aquacy.me/api
-// Development default: http://localhost:8000/api
+// API_BASE_URL comes from frontend/.env (loaded in quasar.config.js → build.env).
+// Example: API_BASE_URL=http://10.10.16.40:8000/api
 const getApiBaseUrl = () => {
   const configured = String(process.env.API_BASE_URL || '').trim();
   if (configured) {
     return configured.replace(/\/$/, '');
   }
 
+  // Fallbacks only if .env / build.env was not set
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
-
-  // Dev server (9000/9001/3000): same host, backend on port 8000
   if (['9000', '9001', '3000'].includes(window.location.port)) {
     return `${protocol}//${hostname}:8000/api`;
   }
-
-  // Production fallback when env was not baked in
   return 'https://app.aquacy.me/api';
 };
 

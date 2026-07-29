@@ -9,8 +9,15 @@
    ```
 
 2. **Configure API URL**
-   - Edit `quasar.config.js` and update the `API_BASE_URL` in the `env` section to match your backend URL
-   - Default is `http://localhost:8000/api`
+   - Copy `.env.example` to `.env` (if you don't already have one):
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit `frontend/.env` and set your backend URL (include `/api`):
+     ```
+     API_BASE_URL=http://10.10.16.40:8000/api
+     ```
+   - Restart `npm run dev` after changing `.env`
 
 3. **Start Development Server**
    ```bash
