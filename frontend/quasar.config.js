@@ -1,6 +1,37 @@
 /* eslint-env node */
 
+const path = require('path');
+const fs = require('fs');
 const { configure } = require('quasar/wrappers');
+
+/**
+ * Load KEY=VALUE pairs from a .env file into process.env.
+ * Does not override variables already set in the shell.
+ */
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const text = fs.readFileSync(filePath, 'utf8');
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (!key || process.env[key] !== undefined) continue;
+    let val = trimmed.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+  }
+}
+
+// Prefer .env.local (machine-specific) over .env
+loadEnvFile(path.join(__dirname, '.env'));
+loadEnvFile(path.join(__dirname, '.env.local'));
 
 module.exports = configure(function (ctx) {
   // Production is hosted at domain root (e.g. https://claims.aquacy.me/).
@@ -11,10 +42,11 @@ module.exports = configure(function (ctx) {
       ? String(process.env.PUBLIC_PATH).trim()
       : '/';
 
-  // Live API is at app.aquacy.me. api.aquacy.me currently serves static HTML, not FastAPI.
+  // Set in frontend/.env (or .env.local), e.g. API_BASE_URL=http://10.10.16.40:8000/api
+  // Must include the /api suffix used by the FastAPI app.
   const apiBaseUrl =
     process.env.API_BASE_URL != null && String(process.env.API_BASE_URL).trim() !== ''
-      ? String(process.env.API_BASE_URL).trim()
+      ? String(process.env.API_BASE_URL).trim().replace(/\/$/, '')
       : ctx.dev
         ? 'http://localhost:8000/api'
         : 'https://app.aquacy.me/api';
@@ -42,7 +74,6 @@ module.exports = configure(function (ctx) {
         node: 'node20'
       },
       vueRouterMode: 'history',
-      // Override API: API_BASE_URL=https://app.aquacy.me/api npx quasar build
       publicPath,
       env: {
         API_BASE_URL: apiBaseUrl,
