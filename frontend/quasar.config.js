@@ -3,12 +3,21 @@
 const { configure } = require('quasar/wrappers');
 
 module.exports = configure(function (ctx) {
+  // Production is hosted at domain root (e.g. https://claims.aquacy.me/).
+  // Do NOT default to /frontend/ — that causes /frontend/assets 404s on subdomain deploys.
+  // Do not set PUBLIC_PATH=/ in Git Bash on Windows (path mangling); leave unset for "/".
   const publicPath =
     process.env.PUBLIC_PATH != null && String(process.env.PUBLIC_PATH).trim() !== ''
       ? String(process.env.PUBLIC_PATH).trim()
+      : '/';
+
+  // Live API is at app.aquacy.me. api.aquacy.me currently serves static HTML, not FastAPI.
+  const apiBaseUrl =
+    process.env.API_BASE_URL != null && String(process.env.API_BASE_URL).trim() !== ''
+      ? String(process.env.API_BASE_URL).trim()
       : ctx.dev
-        ? '/'
-        : '/frontend/';
+        ? 'http://localhost:8000/api'
+        : 'https://app.aquacy.me/api';
 
   return {
     framework: {
@@ -33,13 +42,10 @@ module.exports = configure(function (ctx) {
         node: 'node20'
       },
       vueRouterMode: 'history',
-      // Production default: SPA under https://api.aquacy.me/frontend/ (same folder as this .htaccess).
-      // Override: PUBLIC_PATH=/other/ quasar build   (must start/end with /; then edit public/.htaccess if needed)
+      // Override API: API_BASE_URL=https://app.aquacy.me/api npx quasar build
       publicPath,
       env: {
-        API_BASE_URL: ctx.dev
-          ? 'http://localhost:8000/api'  // Development
-          : 'https://app.aquacy.me/api'  // Production - will be overridden by dynamic detection in api.js
+        API_BASE_URL: apiBaseUrl,
       }
     },
     devServer: {

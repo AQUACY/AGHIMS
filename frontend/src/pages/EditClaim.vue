@@ -1245,12 +1245,27 @@
           <div class="text-caption text-grey-7">{{ principalDiagnosisLabel }}</div>
         </q-card-section>
         <q-card-section v-if="!selectedApplyTemplate">
-          <div v-if="!(matchedTemplates || []).length" class="text-grey-7">No matching templates found.</div>
+          <q-banner
+            v-if="!templatesHaveExactMatch && (matchedTemplates || []).length"
+            dense
+            rounded
+            class="bg-orange-1 text-orange-10 q-mb-md"
+          >
+            <template #avatar><q-icon name="info" color="orange" /></template>
+            No templates are mapped to this diagnosis. You can still choose any template below and pick its investigations and medicines.
+          </q-banner>
+          <div v-if="!(matchedTemplates || []).length" class="text-grey-7">
+            No templates available. Create one from Claims → Diagnosis Templates, or Save as template from this claim.
+          </div>
           <q-list v-else bordered separator>
             <q-item v-for="t in matchedTemplates" :key="t.id" clickable v-ripple @click="selectApplyTemplate(t)">
               <q-item-section>
                 <q-item-label>{{ t.name }}</q-item-label>
-                <q-item-label caption>{{ (t.investigations || []).length }} inv · {{ (t.medicines || []).length }} meds</q-item-label>
+                <q-item-label caption>
+                  {{ (t.investigations || []).length }} inv · {{ (t.medicines || []).length }} meds
+                  <span v-if="matchedTemplateIds.has(t.id)" class="text-positive"> · matched</span>
+                  <span v-else class="text-orange-8"> · not mapped to this diagnosis</span>
+                </q-item-label>
               </q-item-section>
             </q-item>
           </q-list>
@@ -1321,7 +1336,7 @@ import {
   medicineFromTemplateItem,
   serializeInvestigationForTemplate,
   serializeMedicineForTemplate,
-  templateNeedsItemPicker,
+  mergeMatchedAndAllTemplates,
 } from '../utils/claimDiagnosisTemplates';
 import {
   isMedicineNotCovered,
@@ -1430,6 +1445,8 @@ const savingTemplate = ref(false);
 const showApplyTemplateDialog = ref(false);
 const showSaveTemplateDialog = ref(false);
 const matchedTemplates = ref([]);
+const matchedTemplateIds = ref(new Set());
+const templatesHaveExactMatch = ref(false);
 const selectedApplyTemplate = ref(null);
 const selectedApplyInvIndexes = ref([]);
 const selectedApplyMedIndexes = ref([]);
@@ -1916,7 +1933,7 @@ const onProcedureSelect = async (index, val) => {
     row.diagnosis = '';
     row.is_principal = false;
     row._selectedOption = null;
-    syncPrincipalFromProcedures();
+    syncPrincipalFromProcedures({ syncSpecialty: true });
     return;
   }
   if (typeof val === 'object' && val !== null && (val.service_name != null || val.item_name != null)) {
@@ -1931,14 +1948,14 @@ const onProcedureSelect = async (index, val) => {
     if (row.icd10 && gdrg) {
       upsertDiagnosisFromProcedure(row);
     }
-    syncPrincipalFromProcedures();
+    syncPrincipalFromProcedures({ syncSpecialty: true });
     return;
   }
   row.description = typeof val === 'string' ? val : '';
   if (!row.date) {
     row.date = firstClaimServiceDate();
   }
-  syncPrincipalFromProcedures();
+  syncPrincipalFromProcedures({ syncSpecialty: true });
 };
 
 function firstClaimServiceDate() {
@@ -1987,7 +2004,10 @@ function upsertDiagnosisFromProcedure(proc) {
 function specialtyFromGdrg(code) {
   const raw = String(code || '').trim().toUpperCase();
   if (!raw) return '';
-  return raw.slice(0, 4);
+  const prefix = raw.slice(0, 4);
+  // ZOOM* GDRGs (e.g. dressings) always use OPDC specialty for ClaimIT
+  if (prefix === 'ZOOM') return 'OPDC';
+  return prefix;
 }
 
 function syncSpecialtyFromPrincipalDiagnosis() {
@@ -1996,6 +2016,44 @@ function syncSpecialtyFromPrincipalDiagnosis() {
   const specialty = specialtyFromGdrg(gdrg);
   if (specialty) {
     services.specialty_code = specialty;
+  }
+}
+
+/** Align principal GDRG / chief diagnosis from procedures. Specialty sync is opt-in so load/save does not overwrite a manual selection. */
+function syncPrincipalFromProcedures({ syncSpecialty = false } = {}) {
+  const filled = filledProcedures.value;
+  if (!filled.length) return;
+
+  if (filled.length === 1) {
+    proceduresList.value.forEach((p) => {
+      p.is_principal = p === filled[0];
+    });
+  }
+
+  let principal = filled.find((p) => p.is_principal);
+  if (!principal && filled.length === 1) {
+    principal = filled[0];
+    principal.is_principal = true;
+  }
+  if (!principal) return;
+
+  const gdrg = String(principal.gdrg || '').trim();
+  if (gdrg) {
+    services.principal_gdrg = gdrg;
+  }
+  if (principal.icd10 || principal.diagnosis) {
+    upsertDiagnosisFromProcedure(principal);
+  }
+  const principalIcd = String(principal.icd10 || '').trim().toUpperCase();
+  diagnosesList.value.forEach((d) => {
+    const match = principalIcd && String(d.icd10 || '').trim().toUpperCase() === principalIcd;
+    d.is_chief = !!match;
+  });
+  if (syncSpecialty) {
+    syncSpecialtyFromPrincipalDiagnosis();
+  } else if (String(services.specialty_code || '').trim().toUpperCase() === 'ZOOM') {
+    // Legacy claims may still have ZOOM stored — normalize to OPDC
+    services.specialty_code = 'OPDC';
   }
 }
 
@@ -2068,18 +2126,15 @@ async function openApplyTemplate() {
   loadingTemplates.value = true;
   selectedApplyTemplate.value = null;
   try {
-    const res = await claimsAPI.matchDiagnosisTemplates(snap);
-    matchedTemplates.value = res.data || [];
-    if (matchedTemplates.value.length === 1 && !templateNeedsItemPicker(matchedTemplates.value[0])) {
-      const t = matchedTemplates.value[0];
-      selectedApplyTemplate.value = t;
-      selectedApplyInvIndexes.value = Array.from({ length: (t.investigations || []).length }, (_, i) => i);
-      selectedApplyMedIndexes.value = Array.from({ length: (t.medicines || []).length }, (_, i) => i);
-      confirmApplyTemplate();
-      return;
-    }
+    const [matchRes, listRes] = await Promise.all([
+      claimsAPI.matchDiagnosisTemplates(snap),
+      claimsAPI.listDiagnosisTemplates({ active_only: true }),
+    ]);
+    const merged = mergeMatchedAndAllTemplates(matchRes.data || [], listRes.data || []);
+    matchedTemplates.value = merged.templates;
+    matchedTemplateIds.value = merged.matchedIds;
+    templatesHaveExactMatch.value = merged.hasExactMatch;
     showApplyTemplateDialog.value = true;
-    if (matchedTemplates.value.length === 1) selectApplyTemplate(matchedTemplates.value[0]);
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load templates' });
   } finally {
@@ -2087,17 +2142,36 @@ async function openApplyTemplate() {
   }
 }
 
-function selectApplyTemplate(t) {
+function applySelectTemplate(t) {
   selectedApplyTemplate.value = t;
   selectedApplyInvIndexes.value = Array.from({ length: (t.investigations || []).length }, (_, i) => i);
   selectedApplyMedIndexes.value = Array.from({ length: (t.medicines || []).length }, (_, i) => i);
-  if (!templateNeedsItemPicker(t)) confirmApplyTemplate();
+}
+
+function selectApplyTemplate(t) {
+  if (!t) return;
+  if (matchedTemplateIds.value.has(t.id)) {
+    applySelectTemplate(t);
+    return;
+  }
+  $q.dialog({
+    title: 'Template not mapped to this diagnosis',
+    message:
+      'This template does not map to the selected diagnosis. You can still go ahead and choose it, then pick which investigations and medicines to add.',
+    cancel: { label: 'Cancel', flat: true },
+    ok: { label: 'Continue', color: 'primary', unelevated: true },
+    persistent: true,
+  }).onOk(() => {
+    applySelectTemplate(t);
+  });
 }
 
 function closeApplyTemplate() {
   showApplyTemplateDialog.value = false;
   selectedApplyTemplate.value = null;
   matchedTemplates.value = [];
+  matchedTemplateIds.value = new Set();
+  templatesHaveExactMatch.value = false;
 }
 
 function confirmApplyTemplate() {
@@ -2247,38 +2321,6 @@ function onDiagnosisGdrgEdited(index) {
   syncSpecialtyFromPrincipalDiagnosis();
 }
 
-function syncPrincipalFromProcedures() {
-  const filled = filledProcedures.value;
-  if (!filled.length) return;
-
-  if (filled.length === 1) {
-    proceduresList.value.forEach((p) => {
-      p.is_principal = p === filled[0];
-    });
-  }
-
-  let principal = filled.find((p) => p.is_principal);
-  if (!principal && filled.length === 1) {
-    principal = filled[0];
-    principal.is_principal = true;
-  }
-  if (!principal) return;
-
-  const gdrg = String(principal.gdrg || '').trim();
-  if (gdrg) {
-    services.principal_gdrg = gdrg;
-  }
-  if (principal.icd10 || principal.diagnosis) {
-    upsertDiagnosisFromProcedure(principal);
-  }
-  const principalIcd = String(principal.icd10 || '').trim().toUpperCase();
-  diagnosesList.value.forEach((d) => {
-    const match = principalIcd && String(d.icd10 || '').trim().toUpperCase() === principalIcd;
-    d.is_chief = !!match;
-  });
-  syncSpecialtyFromPrincipalDiagnosis();
-}
-
 function setPrincipalProcedure(index, checked) {
   const row = proceduresList.value[index];
   if (!row || !(row.description || '').trim()) return;
@@ -2289,7 +2331,7 @@ function setPrincipalProcedure(index, checked) {
   proceduresList.value.forEach((p, i) => {
     p.is_principal = i === index;
   });
-  syncPrincipalFromProcedures();
+  syncPrincipalFromProcedures({ syncSpecialty: true });
 }
 
 function onProcedureGdrgChange(index) {
@@ -2299,7 +2341,7 @@ function onProcedureGdrgChange(index) {
     upsertDiagnosisFromProcedure(row);
   }
   if (row.is_principal || filledProcedures.value.length === 1) {
-    syncPrincipalFromProcedures();
+    syncPrincipalFromProcedures({ syncSpecialty: true });
   }
 }
 
@@ -2309,7 +2351,7 @@ const onProcedureDiagnosisSelect = (index, val) => {
   if (val == null || val === '') {
     row.diagnosis = '';
     row.icd10 = '';
-    syncPrincipalFromProcedures();
+    syncPrincipalFromProcedures({ syncSpecialty: true });
     return;
   }
   if (typeof val === 'object' && val !== null && (val.icd10_code != null || val.icd10_description != null)) {
@@ -2325,7 +2367,7 @@ const onProcedureDiagnosisSelect = (index, val) => {
         if (i !== index) p.is_principal = false;
       });
     }
-    syncPrincipalFromProcedures();
+    syncPrincipalFromProcedures({ syncSpecialty: true });
     return;
   }
   row.diagnosis = typeof val === 'string' ? val : '';

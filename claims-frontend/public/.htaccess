@@ -1,5 +1,5 @@
-# Place this file next to index.html (e.g. public_html/frontend/.htaccess).
-# SPA history mode + JS MIME (Apache / Hostinger).
+# Place next to index.html in the claims.aquacy.me document root.
+# SPA history mode + correct JS/CSS MIME types (Apache / Hostinger).
 
 <IfModule mod_mime.c>
   AddType application/javascript .js .mjs
@@ -14,5 +14,5 @@
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule . index.html [L]
+  RewriteRule . /index.html [L]
 </IfModule>

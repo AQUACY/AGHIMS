@@ -690,7 +690,7 @@ const routes = [
   },
 ];
 
-// Must match quasar.config.js build.publicPath (Vite injects import.meta.env.BASE_URL, e.g. /frontend/)
+// Must match quasar.config.js build.publicPath (Vite injects import.meta.env.BASE_URL, e.g. /)
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,

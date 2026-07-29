@@ -90,9 +90,19 @@ if not cors_origins:
         "http://localhost:9001/",  # Production (with trailing slash)
         "http://10.10.16.50:9000/",
         "http://10.10.16.50:9000",
-        "https://claims.aquacy.me/",
-        "https://claims.aquacy.me",
     ]
+
+# Always allow hosted claims / app frontends (even when CORS_ORIGINS is set)
+for origin in (
+    "https://claims.aquacy.me",
+    "https://claims.aquacy.me/",
+    "https://app.aquacy.me",
+    "https://app.aquacy.me/",
+    "https://api.aquacy.me",
+    "https://api.aquacy.me/",
+):
+    if origin not in cors_origins:
+        cors_origins.append(origin)
 
 app.add_middleware(
     CORSMiddleware,

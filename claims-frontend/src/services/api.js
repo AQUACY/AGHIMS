@@ -1,28 +1,24 @@
 import axios from 'axios';
 
 // API_BASE_URL is set in quasar.config.js build.env
-// In production: Use the current hostname (server IP) with port 8000
-// In development: 'http://localhost:8000/api'
+// Production default: https://app.aquacy.me/api
+// Development default: http://localhost:8000/api
 const getApiBaseUrl = () => {
-  // If API_BASE_URL is explicitly set in environment, use it
-  if (process.env.API_BASE_URL && process.env.API_BASE_URL !== 'http://localhost:8000/api') {
-    return process.env.API_BASE_URL;
+  const configured = String(process.env.API_BASE_URL || '').trim();
+  if (configured) {
+    return configured.replace(/\/$/, '');
   }
-  
-  // Always use the current hostname with port 8000
-  // This works for both localhost and network IP access
+
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
-  
-  // If accessing from dev server (port 9000 or 3000), use the same hostname with port 8000
-  // This allows network access to work (e.g., 10.10.16.50:9000 -> 10.10.16.50:8000)
-  if (window.location.port === '9000' || window.location.port === '3000') {
-    // Development mode - use same hostname with port 8000
+
+  // Dev server (9000/9001/3000): same host, backend on port 8000
+  if (['9000', '9001', '3000'].includes(window.location.port)) {
     return `${protocol}//${hostname}:8000/api`;
   }
-  
-  // Production mode - use current hostname with port 8000
-  return `${protocol}//${hostname}:8000/api`;
+
+  // Production fallback when env was not baked in
+  return 'https://app.aquacy.me/api';
 };
 
 const API_BASE_URL = getApiBaseUrl();

@@ -74,3 +74,21 @@ export function templateNeedsItemPicker(template) {
   const med = Array.isArray(template?.medicines) ? template.medicines.length : 0;
   return inv > 1 || med > 1;
 }
+
+/**
+ * Merge matched templates (first) with the full active list so users can always pick any template.
+ * Returns { templates, matchedIds, hasExactMatch }.
+ */
+export function mergeMatchedAndAllTemplates(matched = [], all = []) {
+  const matchedList = Array.isArray(matched) ? matched : [];
+  const allList = Array.isArray(all) ? all : [];
+  const matchedIds = new Set(matchedList.map((t) => t?.id).filter((id) => id != null));
+  const rest = allList.filter((t) => t?.id != null && !matchedIds.has(t.id));
+  // Prefer match order, then remaining by name
+  const templates = [...matchedList, ...rest];
+  return {
+    templates,
+    matchedIds,
+    hasExactMatch: matchedIds.size > 0,
+  };
+}
