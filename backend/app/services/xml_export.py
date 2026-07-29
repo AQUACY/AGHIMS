@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, case
 from app.models.encounter import Encounter
 from app.models.claim import Claim
+from app.utils.ghims_card import resolve_specialty_attended
 from typing import List
 
 
@@ -270,7 +271,10 @@ def generate_claim_xml(claims: List[Claim], db: Session) -> str:
         # Third date field (optional)
         SubElement(claim_elem, "dateOfService").text = ""
         
-        SubElement(claim_elem, "specialtyAttended").text = claim.specialty_attended or "OPDC"
+        SubElement(claim_elem, "specialtyAttended").text = resolve_specialty_attended(
+            claim.specialty_attended,
+            claim.principal_gdrg,
+        )
         
         # ALWAYS use claim detail tables (claim_diagnoses, etc.) - already eager-loaded by caller
         # Pre-compute: Check if claim has been edited (any claim detail table entry exists)

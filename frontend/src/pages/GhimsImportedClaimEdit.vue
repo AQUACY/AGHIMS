@@ -692,8 +692,17 @@
           </div>
         </q-card-section>
         <q-card-section v-if="!selectedApplyTemplate">
+          <q-banner
+            v-if="!templatesHaveExactMatch && (matchedTemplates || []).length"
+            dense
+            rounded
+            class="bg-orange-1 text-orange-10 q-mb-md"
+          >
+            <template #avatar><q-icon name="info" color="orange" /></template>
+            No templates are mapped to this diagnosis. You can still choose any template below and pick its investigations and medicines.
+          </q-banner>
           <div v-if="!(matchedTemplates || []).length" class="text-grey-7">
-            No matching templates. Create one from Claims → Diagnosis Templates, or Save as template from this claim.
+            No templates available. Create one from Claims → Diagnosis Templates, or Save as template from this claim.
           </div>
           <q-list v-else bordered separator>
             <q-item
@@ -707,6 +716,8 @@
                 <q-item-label>{{ t.name }}</q-item-label>
                 <q-item-label caption>
                   {{ (t.investigations || []).length }} investigations · {{ (t.medicines || []).length }} medicines
+                  <span v-if="matchedTemplateIds.has(t.id)" class="text-positive"> · matched</span>
+                  <span v-else class="text-orange-8"> · not mapped to this diagnosis</span>
                 </q-item-label>
               </q-item-section>
               <q-item-section side>
@@ -794,7 +805,7 @@ import {
   medicineFromTemplateItem,
   serializeInvestigationForTemplate,
   serializeMedicineForTemplate,
-  templateNeedsItemPicker,
+  mergeMatchedAndAllTemplates,
 } from '../utils/claimDiagnosisTemplates';
 import {
   asMedicineList,
@@ -903,6 +914,8 @@ const savingTemplate = ref(false);
 const showApplyTemplateDialog = ref(false);
 const showSaveTemplateDialog = ref(false);
 const matchedTemplates = ref([]);
+const matchedTemplateIds = ref(new Set());
+const templatesHaveExactMatch = ref(false);
 const selectedApplyTemplate = ref(null);
 const selectedApplyInvIndexes = ref([]);
 const selectedApplyMedIndexes = ref([]);
@@ -1310,7 +1323,10 @@ async function onDiagnosisSelect(index, val) {
 function specialtyFromGdrg(code) {
   const raw = String(code || '').trim().toUpperCase();
   if (!raw) return '';
-  return raw.slice(0, 4);
+  const prefix = raw.slice(0, 4);
+  // ZOOM* GDRGs (e.g. dressings) always use OPDC specialty for ClaimIT
+  if (prefix === 'ZOOM') return 'OPDC';
+  return prefix;
 }
 
 function syncSpecialtyFromPrincipalDiagnosis() {
@@ -1347,7 +1363,7 @@ function moveDiagnosisToFirst(index) {
   list.unshift(row);
 }
 
-function reorderDiagnosesWithPrincipalFirst() {
+function reorderDiagnosesWithPrincipalFirst({ syncSpecialty = false } = {}) {
   const list = payload.diagnoses || [];
   if (!list.length) {
     principalDiagnosisIndex.value = -1;
@@ -1361,7 +1377,12 @@ function reorderDiagnosesWithPrincipalFirst() {
   const idx = list.findIndex((d) => String(d?.gdrgCode || '').trim() === principalGdrg);
   if (idx > 0) moveDiagnosisToFirst(idx);
   principalDiagnosisIndex.value = idx >= 0 ? 0 : -1;
-  syncSpecialtyFromPrincipalDiagnosis();
+  if (syncSpecialty) {
+    syncSpecialtyFromPrincipalDiagnosis();
+  } else if (String(payload.specialtyAttended || '').trim().toUpperCase() === 'ZOOM') {
+    // Legacy claims may still have ZOOM stored — normalize to OPDC
+    payload.specialtyAttended = 'OPDC';
+  }
 }
 
 function setPrincipalDiagnosis(index, checked) {
@@ -1441,23 +1462,15 @@ async function openApplyTemplate() {
   loadingTemplates.value = true;
   selectedApplyTemplate.value = null;
   try {
-    const res = await claimsAPI.matchDiagnosisTemplates(snap);
-    matchedTemplates.value = res.data || [];
-    if (
-      matchedTemplates.value.length === 1
-      && !templateNeedsItemPicker(matchedTemplates.value[0])
-    ) {
-      const t = matchedTemplates.value[0];
-      selectedApplyTemplate.value = t;
-      selectedApplyInvIndexes.value = Array.from({ length: (t.investigations || []).length }, (_, i) => i);
-      selectedApplyMedIndexes.value = Array.from({ length: (t.medicines || []).length }, (_, i) => i);
-      confirmApplyTemplate();
-      return;
-    }
+    const [matchRes, listRes] = await Promise.all([
+      claimsAPI.matchDiagnosisTemplates(snap),
+      claimsAPI.listDiagnosisTemplates({ active_only: true }),
+    ]);
+    const merged = mergeMatchedAndAllTemplates(matchRes.data || [], listRes.data || []);
+    matchedTemplates.value = merged.templates;
+    matchedTemplateIds.value = merged.matchedIds;
+    templatesHaveExactMatch.value = merged.hasExactMatch;
     showApplyTemplateDialog.value = true;
-    if (matchedTemplates.value.length === 1) {
-      selectApplyTemplate(matchedTemplates.value[0]);
-    }
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load templates' });
   } finally {
@@ -1465,21 +1478,38 @@ async function openApplyTemplate() {
   }
 }
 
-function selectApplyTemplate(t) {
+function applySelectTemplate(t) {
   selectedApplyTemplate.value = t;
   const invCount = (t.investigations || []).length;
   const medCount = (t.medicines || []).length;
   selectedApplyInvIndexes.value = Array.from({ length: invCount }, (_, i) => i);
   selectedApplyMedIndexes.value = Array.from({ length: medCount }, (_, i) => i);
-  if (!templateNeedsItemPicker(t)) {
-    confirmApplyTemplate();
+}
+
+function selectApplyTemplate(t) {
+  if (!t) return;
+  if (matchedTemplateIds.value.has(t.id)) {
+    applySelectTemplate(t);
+    return;
   }
+  $q.dialog({
+    title: 'Template not mapped to this diagnosis',
+    message:
+      'This template does not map to the selected diagnosis. You can still go ahead and choose it, then pick which investigations and medicines to add.',
+    cancel: { label: 'Cancel', flat: true },
+    ok: { label: 'Continue', color: 'primary', unelevated: true },
+    persistent: true,
+  }).onOk(() => {
+    applySelectTemplate(t);
+  });
 }
 
 function closeApplyTemplate() {
   showApplyTemplateDialog.value = false;
   selectedApplyTemplate.value = null;
   matchedTemplates.value = [];
+  matchedTemplateIds.value = new Set();
+  templatesHaveExactMatch.value = false;
 }
 
 function confirmApplyTemplate() {
@@ -2411,8 +2441,13 @@ watch(
   () => {
     if (principalDiagnosisIndex.value < 0) return;
     const row = payload.diagnoses[principalDiagnosisIndex.value];
-    payload.principalGDRG = row?.gdrgCode || '';
-    syncSpecialtyFromPrincipalDiagnosis();
+    const nextPrincipal = row?.gdrgCode || '';
+    const prevPrincipal = String(payload.principalGDRG || '');
+    payload.principalGDRG = nextPrincipal;
+    // Only auto-fill specialty when the principal GDRG itself changes — never on save/reorder noise
+    if (String(nextPrincipal).trim() !== String(prevPrincipal).trim()) {
+      syncSpecialtyFromPrincipalDiagnosis();
+    }
   },
   { deep: true }
 );

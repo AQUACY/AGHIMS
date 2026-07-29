@@ -3,11 +3,14 @@
 const { configure } = require('quasar/wrappers');
 
 module.exports = configure(function (ctx) {
+  // Hosted at https://claims.aquacy.me (domain root). Never use /frontend/.
+  // Do not set PUBLIC_PATH=/ in Git Bash on Windows — it mangles paths.
   const publicPath =
     process.env.PUBLIC_PATH != null && String(process.env.PUBLIC_PATH).trim() !== ''
       ? String(process.env.PUBLIC_PATH).trim()
       : '/';
 
+  // Live API is currently at app.aquacy.me (api.aquacy.me serves HTML, not FastAPI).
   const apiBaseUrl =
     process.env.API_BASE_URL != null && String(process.env.API_BASE_URL).trim() !== ''
       ? String(process.env.API_BASE_URL).trim()

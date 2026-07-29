@@ -155,7 +155,7 @@ def _normalize_duration_for_export(duration: str) -> str:
 
 
 def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
-    from app.utils.ghims_card import is_ghana_card, resolve_claimit_member_no
+    from app.utils.ghims_card import is_ghana_card, resolve_claimit_member_no, resolve_specialty_attended
 
     root = ET.Element("claims")
     for payload in payloads:
@@ -181,6 +181,11 @@ def build_claims_xml_from_payloads(payloads: List[Dict[str, Any]]) -> str:
         elif ghana_card and hin and not is_ghana_card(hin):
             # Already converted on the sheet — memberNo should already be HIN
             export_payload["memberNo"] = raw_member or hin
+
+        export_payload["specialtyAttended"] = resolve_specialty_attended(
+            export_payload.get("specialtyAttended"),
+            export_payload.get("principalGDRG"),
+        )
 
         for tag in simple_tags:
             ET.SubElement(claim_el, tag).text = str(export_payload.get(tag, "") or "")

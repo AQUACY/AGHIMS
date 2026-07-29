@@ -33,7 +33,7 @@ from app.services.cxf_claims import (
 )
 from app.services.claim_nhia_ccc import fetch_ccc_preview_for_claim, fetch_ccc_preview_for_ghims_payload
 from app.services.nhia_integration import NhiaIntegrationError, lookup_member_by_hin
-from app.utils.ghims_card import is_ghana_card, normalize_ghana_card, needs_hin_conversion
+from app.utils.ghims_card import is_ghana_card, normalize_ghana_card, needs_hin_conversion, resolve_specialty_attended
 from app.models.product_price import ProductPrice
 from app.services.claim_amount_service import (
     get_claim_amount_from_price_list,
@@ -636,7 +636,10 @@ def create_claim(
             includes_pharmacy=has_pharmacy,
             type_of_attendance=claim_data.type_of_attendance,
             service_outcome="DISC",
-            specialty_attended=claim_data.specialty_attended,
+            specialty_attended=resolve_specialty_attended(
+                claim_data.specialty_attended,
+                principal_gdrg,
+            ),
             principal_gdrg=principal_gdrg,
             status=ClaimStatus.DRAFT.value,
             created_by=get_effective_creator_id(db, current_user)
@@ -861,7 +864,10 @@ def create_claim(
             includes_pharmacy=has_pharmacy,
             type_of_attendance=claim_data.type_of_attendance,
             service_outcome="DISC",
-            specialty_attended=claim_data.specialty_attended,
+            specialty_attended=resolve_specialty_attended(
+                claim_data.specialty_attended,
+                principal_gdrg,
+            ),
             principal_gdrg=principal_gdrg,
             status=ClaimStatus.DRAFT.value,
             created_by=get_effective_creator_id(db, current_user)
@@ -1252,7 +1258,10 @@ def regenerate_claim(
     claim.physician_id = claim_data.physician_id
     claim.type_of_service = claim_data.type_of_service
     claim.type_of_attendance = claim_data.type_of_attendance
-    claim.specialty_attended = claim_data.specialty_attended
+    claim.specialty_attended = resolve_specialty_attended(
+        claim_data.specialty_attended,
+        principal_gdrg,
+    )
     claim.includes_pharmacy = has_pharmacy
     claim.principal_gdrg = principal_gdrg
     claim.member_no = patient.insurance_id  # Update member number
@@ -3702,7 +3711,10 @@ def update_claim(
     claim.physician_id = claim_data.physician_id
     claim.type_of_service = claim_data.type_of_service
     claim.type_of_attendance = claim_data.type_of_attendance
-    claim.specialty_attended = claim_data.specialty_attended
+    claim.specialty_attended = resolve_specialty_attended(
+        claim_data.specialty_attended,
+        getattr(claim_data, "principal_gdrg", None) or claim.principal_gdrg,
+    )
     
     db.commit()
     db.refresh(claim)
@@ -3731,7 +3743,10 @@ def update_claim_detailed(
     claim.physician_id = claim_data.physician_id
     claim.type_of_service = claim_data.type_of_service
     claim.type_of_attendance = claim_data.type_of_attendance
-    claim.specialty_attended = claim_data.specialty_attended
+    claim.specialty_attended = resolve_specialty_attended(
+        claim_data.specialty_attended,
+        claim_data.principal_gdrg or claim.principal_gdrg,
+    )
     claim.service_outcome = claim_data.service_outcome or "DISC"
     claim.is_unbundled = claim_data.is_unbundled
     claim.principal_gdrg = claim_data.principal_gdrg or None
@@ -4445,6 +4460,10 @@ def _reorder_ghims_diagnoses_principal_first(payload: dict) -> None:
 
 def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
     normalized_payload = dict(payload or {})
+    normalized_payload["specialtyAttended"] = resolve_specialty_attended(
+        normalized_payload.get("specialtyAttended"),
+        normalized_payload.get("principalGDRG"),
+    )
     diagnoses = normalized_payload.get("diagnoses")
     if isinstance(diagnoses, list):
         for idx, diag in enumerate(diagnoses):

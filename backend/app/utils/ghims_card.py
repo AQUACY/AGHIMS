@@ -65,6 +65,24 @@ def needs_hin_conversion(
     return not hin_val or is_ghana_card(hin_val)
 
 
+def resolve_specialty_attended(
+    specialty: Optional[str] = None,
+    principal_gdrg: Optional[str] = None,
+) -> str:
+    """
+    Specialty for ClaimIT XML / claim storage.
+    Prefer the saved specialty when set. ZOOM is never a valid specialty
+    (ZOOM* GDRGs such as dressings use OPDC).
+    """
+    spec = (specialty or "").strip().upper()
+    principal = (principal_gdrg or "").strip().upper()
+    if spec and spec != "ZOOM":
+        return spec
+    if spec == "ZOOM" or principal.startswith("ZOOM"):
+        return "OPDC"
+    return spec or "OPDC"
+
+
 def ghims_card_numbers_enabled() -> bool:
     return bool(getattr(settings, "GHIMS_CARD_NUMBERS_ENABLED", False))
 
