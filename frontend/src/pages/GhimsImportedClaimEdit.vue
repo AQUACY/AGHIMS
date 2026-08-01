@@ -731,11 +731,45 @@
           <div class="text-caption text-grey-7 q-mb-sm">Unticked items will not be added to the claim.</div>
           <div v-if="(applyInvChoices || []).length" class="q-mb-md">
             <div class="text-weight-medium q-mb-xs">Investigations</div>
+            <q-input
+              v-model="applyTemplateServiceDate"
+              type="date"
+              filled
+              dense
+              class="q-mb-sm"
+              label="Investigation service date"
+              hint="Used for all selected investigations"
+            />
             <q-option-group v-model="selectedApplyInvIndexes" :options="applyInvChoices" type="checkbox" color="primary" />
           </div>
           <div v-if="(applyMedChoices || []).length">
             <div class="text-weight-medium q-mb-xs">Medicines</div>
-            <q-option-group v-model="selectedApplyMedIndexes" :options="applyMedChoices" type="checkbox" color="primary" />
+            <div class="text-caption text-grey-7 q-mb-sm">Set a date for each medicine you tick.</div>
+            <div
+              v-for="opt in applyMedChoices"
+              :key="`apply-med-${opt.value}`"
+              class="row items-center q-col-gutter-sm q-mb-sm"
+            >
+              <div class="col-auto">
+                <q-checkbox
+                  :model-value="selectedApplyMedIndexes.includes(opt.value)"
+                  @update:model-value="(v) => toggleApplyMed(opt.value, v)"
+                />
+              </div>
+              <div class="col">
+                <div class="text-body2">{{ opt.label }}</div>
+              </div>
+              <div class="col-12 col-sm-4">
+                <q-input
+                  v-model="applyMedServiceDates[opt.value]"
+                  type="date"
+                  filled
+                  dense
+                  label="Date"
+                  :disable="!selectedApplyMedIndexes.includes(opt.value)"
+                />
+              </div>
+            </div>
           </div>
         </q-card-section>
         <q-card-actions align="right">
@@ -917,6 +951,8 @@ const matchedTemplates = ref([]);
 const matchedTemplateIds = ref(new Set());
 const templatesHaveExactMatch = ref(false);
 const selectedApplyTemplate = ref(null);
+const applyTemplateServiceDate = ref('');
+const applyMedServiceDates = ref([]);
 const selectedApplyInvIndexes = ref([]);
 const selectedApplyMedIndexes = ref([]);
 const selectedSaveInvIndexes = ref([]);
@@ -1480,10 +1516,25 @@ async function openApplyTemplate() {
 
 function applySelectTemplate(t) {
   selectedApplyTemplate.value = t;
+  const defaultDate = firstClaimServiceDate();
+  applyTemplateServiceDate.value = defaultDate;
   const invCount = (t.investigations || []).length;
   const medCount = (t.medicines || []).length;
   selectedApplyInvIndexes.value = Array.from({ length: invCount }, (_, i) => i);
   selectedApplyMedIndexes.value = Array.from({ length: medCount }, (_, i) => i);
+  applyMedServiceDates.value = Array.from({ length: medCount }, () => defaultDate);
+}
+
+function toggleApplyMed(index, checked) {
+  const set = new Set(selectedApplyMedIndexes.value || []);
+  if (checked) set.add(index);
+  else set.delete(index);
+  selectedApplyMedIndexes.value = [...set].sort((a, b) => a - b);
+  if (checked && !String(applyMedServiceDates.value[index] || '').trim()) {
+    const dates = [...(applyMedServiceDates.value || [])];
+    dates[index] = applyTemplateServiceDate.value || firstClaimServiceDate();
+    applyMedServiceDates.value = dates;
+  }
 }
 
 function selectApplyTemplate(t) {
@@ -1507,6 +1558,8 @@ function selectApplyTemplate(t) {
 function closeApplyTemplate() {
   showApplyTemplateDialog.value = false;
   selectedApplyTemplate.value = null;
+  applyTemplateServiceDate.value = '';
+  applyMedServiceDates.value = [];
   matchedTemplates.value = [];
   matchedTemplateIds.value = new Set();
   templatesHaveExactMatch.value = false;
@@ -1515,16 +1568,28 @@ function closeApplyTemplate() {
 function confirmApplyTemplate() {
   const t = selectedApplyTemplate.value;
   if (!t) return;
-  const serviceDate = firstClaimServiceDate();
   const invs = t.investigations || [];
   const meds = t.medicines || [];
   const pickInv = new Set(selectedApplyInvIndexes.value || []);
   const pickMed = new Set(selectedApplyMedIndexes.value || []);
+  const invServiceDate = String(applyTemplateServiceDate.value || firstClaimServiceDate() || '').trim();
+
+  if (pickInv.size && !invServiceDate) {
+    $q.notify({ type: 'warning', message: 'Choose a service date for investigations' });
+    return;
+  }
+  for (const i of pickMed) {
+    const medDate = String(applyMedServiceDates.value?.[i] || '').trim();
+    if (!medDate) {
+      $q.notify({ type: 'warning', message: 'Set a date for each selected medicine' });
+      return;
+    }
+  }
 
   for (const i of pickInv) {
     const item = invs[i];
     if (!item) continue;
-    const row = investigationFromTemplateItem(item, serviceDate);
+    const row = investigationFromTemplateItem(item, invServiceDate);
     if (!row.gdrgCode && !row._serviceName) continue;
     // Skip exact duplicate gdrg already present
     const exists = (payload.investigations || []).some(
@@ -1535,7 +1600,8 @@ function confirmApplyTemplate() {
   for (const i of pickMed) {
     const item = meds[i];
     if (!item) continue;
-    const row = medicineFromTemplateItem(item, serviceDate);
+    const medDate = String(applyMedServiceDates.value?.[i] || '').trim();
+    const row = medicineFromTemplateItem(item, medDate);
     if (!row.medicineCode && !row._serviceName) continue;
     const exists = (payload.medicines || []).some(
       (x) => String(x.medicineCode || '').trim() === row.medicineCode && row.medicineCode

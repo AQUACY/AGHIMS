@@ -749,11 +749,12 @@ export const priceListAPI = {
     }
     return api.get('/price-list/icd10/search', { params });
   },
-  searchPriceItems: (searchTerm = null, serviceType = null, fileType = null) => {
+  searchPriceItems: (searchTerm = null, serviceType = null, fileType = null, statusFilter = 'active') => {
     const params = {};
     if (searchTerm) params.search_term = searchTerm;
     if (serviceType) params.service_type = serviceType;
     if (fileType) params.file_type = fileType;
+    if (statusFilter) params.status_filter = statusFilter;
     return api.get('/price-list/search', { params });
   },
   getDrgCodesFromIcd10: (icd10Code) => {
@@ -799,12 +800,13 @@ export const priceListAPI = {
     }
     return api.get('/price-list/drg-codes/search', { params });
   },
-  search: (searchTerm, serviceType, fileType) => 
+  search: (searchTerm, serviceType, fileType, statusFilter = 'active') => 
     api.get('/price-list/search', { 
       params: { 
         search_term: searchTerm || undefined,
         service_type: serviceType || undefined,
-        file_type: fileType || undefined
+        file_type: fileType || undefined,
+        status_filter: statusFilter || 'active',
       } 
     }),
   getServiceTypes: () => api.get('/price-list/service-types'),

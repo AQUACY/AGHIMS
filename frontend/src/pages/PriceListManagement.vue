@@ -26,8 +26,8 @@
           />
           <q-file
             v-model="priceListFile"
-            label="Select Excel File (.xlsx, .xls)"
-            accept=".xlsx,.xls"
+            label="Select Excel or CSV (.xlsx, .xls, .csv)"
+            accept=".xlsx,.xls,.csv"
             class="col-12 col-md-6"
             filled
           >
@@ -68,16 +68,15 @@
               • <strong>NHIA Claim Co-Payment:</strong> Top-up amount that insured patients pay (in addition to what NHIA covers)<br/>
               <br/>
               <strong>For Product (Medication) files:</strong><br/>
-              • <strong>Product N:</strong> Product name with embedded medication code, e.g., "Allopurinol (300 mg) (ALLOPUTA2 | Allopurinol )"<br/>
-              • The medication code (e.g., ALLOPUTA2) is automatically extracted from the Product Name column<br/>
-              • <strong>Sub Categ:</strong> Sub category columns (may appear twice)<br/>
-              • <strong>Product ID:</strong> Product identifier<br/>
-              • <strong>Formulati:</strong> Formulation type<br/>
-              • <strong>Strength:</strong> Medication strength<br/>
-              • <strong>Base Rate:</strong> What cash patients pay<br/>
-              • <strong>NHIA App:</strong> Amount NHIA covers/approves<br/>
-              • <strong>Claim Am, NHIA Clain, Bill Effecti:</strong> Additional claim and billing fields<br/>
-              • <strong>Insurance Covered:</strong> "yes" or "no" - If "no", product will always charge base_rate regardless of patient insurance status<br/>
+              • <strong>Medication Code:</strong> Preferred matching key (e.g., ALLOPUTA2)<br/>
+              • <strong>Product N:</strong> Optional embedded form, e.g., "Allopurinol (300 mg) (ALLOPUTA2 | Allopurinol )"<br/>
+              • <strong>Product Name:</strong> Clean product name (used when Medication Code is present)<br/>
+              • <strong>Sub Category 1 / 2:</strong> e.g. 4 / Pharmacy<br/>
+              • <strong>Formulation / Strength:</strong> Medication form and strength<br/>
+              • <strong>Base Rate:</strong> Cash patient price<br/>
+              • <strong>Claim Amount:</strong> NHIA claim amount<br/>
+              • <strong>Insurance Covered:</strong> "yes" or "no"<br/>
+              • After upload you get a pass/fail report (created, updated, and failed rows with reasons)<br/>
               <br/>
               <strong>Note:</strong> For insured patients on procedures/surgeries, they pay the Co-Payment amount, and NHIA covers the NHIA App amount.<br/>
               For products (medications) with insurance_covered="yes", insured patients pay the Co-Payment (if available) or 0. Products with insurance_covered="no" always charge base_rate to all patients.<br/>
@@ -95,6 +94,64 @@
         </div>
       </q-card-section>
     </q-card>
+
+    <!-- Price list upload report -->
+    <q-dialog v-model="showUploadReport" persistent>
+      <q-card style="min-width: 720px; max-width: 90vw">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Price List Upload Report</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section v-if="lastUploadReport">
+          <q-banner
+            rounded
+            class="q-mb-md"
+            :class="(lastUploadReport.failed_count || 0) > 0 ? 'bg-orange-1' : 'bg-green-1'"
+          >
+            <div class="text-body2">
+              <div><strong>{{ lastUploadReport.message }}</strong></div>
+              <div>File type: {{ lastUploadReport.file_type }}</div>
+              <div>Passed: {{ lastUploadReport.count || 0 }}
+                (created: {{ lastUploadReport.created || 0 }},
+                updated: {{ lastUploadReport.updated || 0 }})</div>
+              <div>Failed: {{ lastUploadReport.failed_count || 0 }}</div>
+            </div>
+          </q-banner>
+
+          <div v-if="(lastUploadReport.failed || []).length" class="q-mb-md">
+            <div class="text-subtitle2 q-mb-sm">Failed rows</div>
+            <q-table
+              flat
+              bordered
+              dense
+              :rows="lastUploadReport.failed"
+              :columns="uploadFailColumns"
+              row-key="row"
+              :pagination="{ rowsPerPage: 10 }"
+            />
+          </div>
+
+          <div v-if="(lastUploadReport.passed || []).length">
+            <div class="text-subtitle2 q-mb-sm">Passed rows</div>
+            <q-table
+              flat
+              bordered
+              dense
+              :rows="lastUploadReport.passed"
+              :columns="uploadPassColumns"
+              row-key="medication_code"
+              :pagination="{ rowsPerPage: 10 }"
+            />
+          </div>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Close" color="primary" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <!-- Upload ICD-10 Mapping -->
     <q-card class="q-mb-md glass-card" flat>
@@ -160,7 +217,7 @@
             v-model="searchTerm"
             filled
             label="Search by G-DRG Code or Service Name"
-            class="col-12 col-md-4"
+            class="col-12 col-md-3"
             clearable
             @keyup.enter="searchItems"
             @clear="searchItems"
@@ -182,10 +239,21 @@
             v-model="searchFileType"
             :options="['All', ...fileTypes]"
             label="Filter by File Type"
-            class="col-12 col-md-3"
+            class="col-12 col-md-2"
             filled
             clearable
             @update:model-value="searchItems"
+          />
+          <q-select
+            v-model="searchStatusFilter"
+            :options="statusFilterOptions"
+            emit-value
+            map-options
+            label="Status"
+            class="col-12 col-md-2"
+            filled
+            @update:model-value="searchItems"
+            hint="Active, archived, or all"
           />
           <q-btn
             color="primary"
@@ -256,6 +324,14 @@
                 :label="props.value && props.value.toLowerCase() === 'no' ? 'No' : 'Yes'"
               />
               <span v-else class="text-grey">N/A</span>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-is_active="props">
+            <q-td :props="props">
+              <q-badge
+                :color="props.value ? 'positive' : 'grey'"
+                :label="props.value ? 'Active' : 'Archived'"
+              />
             </q-td>
           </template>
           <template v-slot:no-data>
@@ -441,20 +517,43 @@ const downloadingCSV = ref(false);
 const icd10MappingFile = ref(null);
 const uploadingIcd10 = ref(false);
 const icd10UploadResults = ref(null);
+const showUploadReport = ref(false);
+const lastUploadReport = ref(null);
 const searchTerm = ref('');
 const searchServiceType = ref(null);
 const searchFileType = ref(null);
+const searchStatusFilter = ref('active');
 const loading = ref(false);
 const serviceTypeOptions = ref([]);
 
 const fileTypes = ['procedure', 'surgery', 'product', 'unmapped_drg'];
+const statusFilterOptions = [
+  { label: 'Active', value: 'active' },
+  { label: 'Archived', value: 'archived' },
+  { label: 'All', value: 'all' },
+];
 const priceListItems = ref([]);
+
+const uploadFailColumns = [
+  { name: 'row', label: 'Row', field: 'row', align: 'left' },
+  { name: 'medication_code', label: 'Code', field: 'medication_code', align: 'left' },
+  { name: 'product_name', label: 'Name', field: 'product_name', align: 'left' },
+  { name: 'reason', label: 'Reason', field: 'reason', align: 'left' },
+];
+
+const uploadPassColumns = [
+  { name: 'row', label: 'Row', field: 'row', align: 'left' },
+  { name: 'medication_code', label: 'Code', field: 'medication_code', align: 'left' },
+  { name: 'product_name', label: 'Name', field: 'product_name', align: 'left' },
+  { name: 'action', label: 'Action', field: 'action', align: 'left' },
+];
 
 const priceColumns = [
   { name: 'file_type', label: 'File Type', field: 'file_type', align: 'left', sortable: true },
   { name: 'g_drg_code', label: 'Code (G-DRG/Medication)', field: 'g_drg_code', align: 'left', sortable: true },
   { name: 'service_name', label: 'Name (Service/Product)', field: 'service_name', align: 'left', sortable: true },
   { name: 'service_type', label: 'Category/Dept', field: 'service_type', align: 'left', sortable: true },
+  { name: 'is_active', label: 'Status', field: 'is_active', align: 'center', sortable: true },
   { name: 'base_rate', label: 'Base Rate (Cash)', field: 'base_rate', align: 'right', sortable: true },
   { name: 'claim_amount', label: 'Claim Amount', field: 'claim_amount', align: 'right', sortable: true },
   { name: 'nhia_app', label: 'NHIA App', field: 'nhia_app', align: 'right', sortable: true },
@@ -509,7 +608,8 @@ const uploadPriceList = async () => {
     const result = await billingStore.uploadPriceList(uploadFileType.value, priceListFile.value);
     priceListFile.value = null;
     uploadFileType.value = '';
-    // Reload price list items
+    lastUploadReport.value = result || null;
+    showUploadReport.value = true;
     await searchItems();
   } catch (error) {
     // Error handled in store
@@ -523,7 +623,13 @@ const searchItems = async () => {
   try {
     const serviceType = searchServiceType.value || null;
     const fileType = searchFileType.value === 'All' || !searchFileType.value ? null : searchFileType.value;
-    const items = await billingStore.searchPriceItems(searchTerm.value || '', serviceType, fileType);
+    const statusFilter = searchStatusFilter.value || 'active';
+    const items = await billingStore.searchPriceItems(
+      searchTerm.value || '',
+      serviceType,
+      fileType,
+      statusFilter
+    );
     priceListItems.value = items;
     // Update service type options for autocomplete
     const allServiceTypes = [...new Set(items.map(item => item.service_type).filter(Boolean))];

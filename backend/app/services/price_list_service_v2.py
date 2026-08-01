@@ -20,29 +20,27 @@ def extract_medication_code_from_product_name(product_name: str) -> tuple:
     - "Allopurinol (300 mg) (ALLOPUTA2 | Allopurinol )" -> ("ALLOPUTA2", "Allopurinol (300 mg)")
     - "Amino Acid Solution (AMIACIIN1 | Amino Acid Solution )" -> ("AMIACIIN1", "Amino Acid Solution")
     - "Product Name (CODE | Product Name )" -> ("CODE", "Product Name")
-    
+    - Nested parens after the pipe are supported, e.g.
+      "Cotrimoxazole Tablet (400+80) mg (COTRIMTA1 | Cotrimoxazole Tablet (400+80) mg)"
+
     Returns: (medication_code, clean_product_name)
     """
     import re
-    
+
     if not product_name:
         return None, None
-    
+
     product_name = product_name.strip()
-    
-    # Pattern: (MEDICATION_CODE | Product Name ) at the end
-    # Medication code is alphanumeric (uppercase letters and numbers, typically 5-15 chars)
-    # Pattern matches: (CODE | anything )
-    pattern = r'\(([A-Z0-9]{3,20})\s*\|\s*[^)]+\)\s*$'
-    match = re.search(pattern, product_name)
-    
-    if match:
+
+    # Prefer the last "(CODE |" occurrence so nested parentheses inside the
+    # trailing label (e.g. "(400+80) mg") do not break extraction.
+    pipe_matches = list(re.finditer(r'\(([A-Z0-9]{3,20})\s*\|\s*', product_name))
+    if pipe_matches:
+        match = pipe_matches[-1]
         medication_code = match.group(1).strip()
-        # Remove the medication code part from the product name to get clean name
-        # Remove: (CODE | anything ) at the end
-        clean_name = re.sub(r'\s*\([A-Z0-9]+\s*\|\s*[^)]+\)\s*$', '', product_name).strip()
-        return medication_code, clean_name
-    
+        clean_name = product_name[: match.start()].strip()
+        return medication_code, clean_name or product_name
+
     # Try alternative pattern: just (CODE) at the end if pipe pattern not found
     alt_pattern = r'\(([A-Z0-9]{3,20})\)\s*$'
     alt_match = re.search(alt_pattern, product_name)
@@ -50,175 +48,253 @@ def extract_medication_code_from_product_name(product_name: str) -> tuple:
         medication_code = alt_match.group(1).strip()
         clean_name = re.sub(r'\s*\([A-Z0-9]+\)\s*$', '', product_name).strip()
         return medication_code, clean_name
-    
+
     # If pattern not found, return None for code, full name as product name
     return None, product_name
 
 
-def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[Dict]:
+def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> Dict:
     """
-    Parse product/medication Excel file with product-specific columns
-    Columns: Sr.No., Sub Categ (twice), Product ID, Product N, Formulati,
-    Strength, Base Rate, NHIA App, Claim Am, NHIA Clain, Bill Effecti
+    Parse product/medication Excel/CSV with product-specific columns.
+
+    Returns:
+        {
+          "items": [parsed item dicts],
+          "failed": [{"row": int, "product_name": str, "medication_code": str|None, "reason": str}]
+        }
     """
     items = []
-    
+    failed = []
+
     # Map product-specific columns
     sr_no_col = None
     sub_categ_1_col = None
     sub_categ_2_col = None
     product_id_col = None
-    product_name_col = None
+    product_n_col = None          # "Product N" with embedded code
+    product_name_only_col = None  # clean "Product Name"
+    medication_code_col = None    # dedicated "Medication Code"
     formulation_col = None
     strength_col = None
     base_rate_col = None
     nhia_app_col = None
     claim_amount_col = None
     nhia_claim_col = None
-    nhia_co_pay_col = None  # NHIA Claim Co-Payment column
+    nhia_co_pay_col = None
     bill_effective_col = None
     insurance_covered_col = None
-    
-    # Map columns based on original and normalized names
+
     for i, orig_col in enumerate(original_columns):
         col = df.columns[i]
         col_lower = col.lower()
         orig_col_lower = str(orig_col).strip().lower()
-        
-        # Sr.No.
+
         if 'sr_no' in col_lower or 'sr.' in orig_col_lower:
             sr_no_col = col
-        
-        # Sub Category (first one)
+
         elif ('sub_categ' in col_lower or 'subcategory' in col_lower) and not sub_categ_1_col:
             sub_categ_1_col = col
-        
-        # Sub Category (second one)
+
         elif ('sub_categ' in col_lower or 'subcategory' in col_lower) and sub_categ_1_col:
             sub_categ_2_col = col
-        
-        # Product ID
+
         elif 'product_id' in col_lower or 'productid' in col_lower:
             product_id_col = col
-        
-        # Product Name (Product N)
-        elif 'product_n' in col_lower or ('product' in orig_col_lower and 'n' in orig_col_lower and len(orig_col_lower) < 12):
-            product_name_col = col
-        
-        # Formulation
+
+        # IMPORTANT: do not treat "product_name" as "product_n"
+        # ('product_n' is a substring of 'product_name')
+        elif col_lower == 'product_n' or orig_col_lower in ('product n', 'product_n'):
+            product_n_col = col
+
+        elif col_lower == 'product_name' or orig_col_lower in ('product name', 'product_name'):
+            product_name_only_col = col
+
+        elif (
+            ('medication' in col_lower and 'code' in col_lower)
+            or orig_col_lower in ('medication code', 'medication_code')
+        ):
+            medication_code_col = col
+
         elif 'formulati' in col_lower or 'formulation' in col_lower:
             formulation_col = col
-        
-        # Strength
+
         elif 'strength' in col_lower:
             strength_col = col
-        
-        # Base Rate
+
         elif 'base_rate' in col_lower or (orig_col_lower.startswith('base') and 'rate' in orig_col_lower):
             base_rate_col = col
-        
-        # NHIA App
+
         elif 'nhia_app' in col_lower or 'nhia_approved' in col_lower or \
              (orig_col_lower.startswith('nhia') and ('app' in orig_col_lower or 'approved' in orig_col_lower)):
             nhia_app_col = col
-        
-        # Claim Amount
+
         elif 'claim_am' in col_lower or 'claim_amount' in col_lower or \
              (orig_col_lower.startswith('claim') and 'am' in orig_col_lower):
             claim_amount_col = col
-        
-        # NHIA Claim (string field)
-        elif 'nhia_clain' in col_lower or ('nhia' in orig_col_lower and 'clain' in orig_col_lower and 'co' not in orig_col_lower and 'pay' not in orig_col_lower):
+
+        elif 'nhia_clain' in col_lower or (
+            'nhia' in orig_col_lower and 'clain' in orig_col_lower
+            and 'co' not in orig_col_lower and 'pay' not in orig_col_lower
+        ):
             nhia_claim_col = col
-        
-        # NHIA Claim Co-Payment (numeric field)
-        elif ('nhia_claim' in col_lower or 'nhia_co' in col_lower or 
-              'co_payment' in col_lower or 'copayment' in col_lower or
-              ('nhia' in orig_col_lower and ('claim' in orig_col_lower or 'co' in orig_col_lower or 'pay' in orig_col_lower))):
-            nhia_co_pay_col = col
-        
-        # Bill Effective
+
+        elif (
+            'nhia_claim' in col_lower or 'nhia_co' in col_lower
+            or 'co_payment' in col_lower or 'copayment' in col_lower
+            or (
+                'nhia' in orig_col_lower
+                and ('claim' in orig_col_lower or 'co' in orig_col_lower or 'pay' in orig_col_lower)
+                and 'clain' not in orig_col_lower
+            )
+        ):
+            # Avoid stealing plain "NHIA Claim" when "NHIA Claim Co-Payment" exists:
+            # if column is exactly nhia_claim / "nhia claim", treat as string claim field.
+            if col_lower in ('nhia_claim',) or orig_col_lower in ('nhia claim', 'nhia_claim'):
+                if not nhia_claim_col:
+                    nhia_claim_col = col
+            else:
+                nhia_co_pay_col = col
+
         elif 'bill_effecti' in col_lower or 'bill_effective' in col_lower:
             bill_effective_col = col
-        
-        # Insurance Covered - Check multiple variations
+
         elif 'insurance_covered' in col_lower or 'insurancecovered' in col_lower or \
              'insurance_cover' in col_lower or 'insurance cover' in col_lower or \
              (orig_col_lower.startswith('insurance') and 'covered' in orig_col_lower) or \
              (orig_col_lower.startswith('insurance') and 'cover' in orig_col_lower):
             insurance_covered_col = col
-    
-    # Validate required columns
-    if not product_name_col:
-        raise ValueError("Missing required column: Product N (Product Name)")
-    
-    # Debug: Print detected columns
-    print(f"DEBUG: Detected columns for product price list:")
-    print(f"  - Product Name: {product_name_col}")
+
+        # Legacy truncated "Product N" style headers without colliding with Product Name
+        elif (
+            product_n_col is None
+            and product_name_only_col is None
+            and 'product' in orig_col_lower
+            and orig_col_lower.startswith('product')
+            and len(orig_col_lower) < 12
+            and 'id' not in orig_col_lower
+            and 'name' not in orig_col_lower
+        ):
+            product_n_col = col
+
+    product_name_col = product_n_col or product_name_only_col
+    if not product_name_col and not medication_code_col:
+        raise ValueError(
+            "Missing required columns: need 'Product N' / 'Product Name', "
+            "or a 'Medication Code' column."
+        )
+
+    print("DEBUG: Detected columns for product price list:")
+    print(f"  - Product N: {product_n_col}")
+    print(f"  - Product Name: {product_name_only_col}")
+    print(f"  - Medication Code: {medication_code_col}")
     print(f"  - Insurance Covered: {insurance_covered_col}")
     print(f"  - Base Rate: {base_rate_col}")
     print(f"  - All columns: {list(df.columns)}")
-    
-    # Process rows
+
     for idx, row in df.iterrows():
-        # Skip empty rows or header rows
-        if pd.isna(row[product_name_col]) or str(row[product_name_col]).strip() == '':
+        row_num = int(idx) + 2  # Excel-style (header is row 1)
+
+        # Resolve display / source name
+        name_from_n = None
+        name_from_only = None
+        if product_n_col and product_n_col in df.columns and not pd.isna(row[product_n_col]):
+            name_from_n = str(row[product_n_col]).strip()
+        if product_name_only_col and product_name_only_col in df.columns and not pd.isna(row[product_name_only_col]):
+            name_from_only = str(row[product_name_only_col]).strip()
+
+        product_name_raw = name_from_n or name_from_only or ''
+        if not product_name_raw or product_name_raw.lower() in ('product n', 'product name', 'name', 'nan'):
+            # Allow rows that only have medication code + empty name? still skip empty
+            code_only = None
+            if medication_code_col and medication_code_col in df.columns and not pd.isna(row[medication_code_col]):
+                code_only = str(row[medication_code_col]).strip()
+            if not code_only:
+                continue
+            failed.append({
+                "row": row_num,
+                "product_name": "",
+                "medication_code": code_only,
+                "reason": "Missing product name (Product N / Product Name)",
+            })
             continue
-        
-        product_name_raw = str(row[product_name_col]).strip()
-        if product_name_raw.lower() in ['product n', 'product name', 'name', 'nan']:
-            continue
-        
-        # Extract medication code from product name
-        medication_code, clean_product_name = extract_medication_code_from_product_name(product_name_raw)
-        
+
+        # Medication code resolution order:
+        # 1) dedicated Medication Code column
+        # 2) extract from Product N (preferred) then Product Name
+        # 3) Product ID fallback
+        medication_code = None
+        if medication_code_col and medication_code_col in df.columns and not pd.isna(row[medication_code_col]):
+            code_val = str(row[medication_code_col]).strip()
+            if code_val and code_val.lower() not in ('nan', 'none', 'medication code'):
+                medication_code = code_val.upper()
+
         if not medication_code:
-            # If no medication code found, try to use product ID as fallback
+            for candidate in (name_from_n, name_from_only):
+                if not candidate:
+                    continue
+                extracted, _ = extract_medication_code_from_product_name(candidate)
+                if extracted:
+                    medication_code = extracted
+                    break
+
+        if not medication_code:
             if product_id_col and product_id_col in df.columns and not pd.isna(row[product_id_col]):
                 medication_code = str(row[product_id_col]).strip()
             else:
-                # Skip rows without medication code
-                print(f"Warning: Could not extract medication code from: {product_name_raw}")
+                failed.append({
+                    "row": row_num,
+                    "product_name": product_name_raw,
+                    "medication_code": None,
+                    "reason": (
+                        "Could not find medication code. Provide a 'Medication Code' column "
+                        "or embed code in Product N as '(CODE | Name)'."
+                    ),
+                })
                 continue
-        
-        # Build item dictionary
+
+        # Prefer clean Product Name for storage; else Product N without code suffix
+        if name_from_only:
+            stored_name = name_from_only
+        else:
+            _, clean = extract_medication_code_from_product_name(product_name_raw)
+            stored_name = clean or product_name_raw
+
         item = {
             'medication_code': medication_code,
-            'product_name': product_name_raw,  # Keep full original name
+            'product_name': stored_name,
+            '_source_row': row_num,
         }
-        
-        # Optional fields
+
         if sr_no_col and sr_no_col in df.columns and not pd.isna(row[sr_no_col]):
             item['sr_no'] = str(row[sr_no_col]).strip()
         else:
             item['sr_no'] = None
-        
+
         if sub_categ_1_col and sub_categ_1_col in df.columns and not pd.isna(row[sub_categ_1_col]):
             item['sub_category_1'] = str(row[sub_categ_1_col]).strip()
         else:
             item['sub_category_1'] = None
-        
+
         if sub_categ_2_col and sub_categ_2_col in df.columns and not pd.isna(row[sub_categ_2_col]):
             item['sub_category_2'] = str(row[sub_categ_2_col]).strip()
         else:
             item['sub_category_2'] = None
-        
+
         if product_id_col and product_id_col in df.columns and not pd.isna(row[product_id_col]):
             item['product_id'] = str(row[product_id_col]).strip()
         else:
             item['product_id'] = None
-        
+
         if formulation_col and formulation_col in df.columns and not pd.isna(row[formulation_col]):
             item['formulation'] = str(row[formulation_col]).strip()
         else:
             item['formulation'] = None
-        
+
         if strength_col and strength_col in df.columns and not pd.isna(row[strength_col]):
             item['strength'] = str(row[strength_col]).strip()
         else:
             item['strength'] = None
-        
-        # Base Rate (cash price)
+
         item['base_rate'] = 0.0
         if base_rate_col and base_rate_col in df.columns:
             try:
@@ -227,8 +303,7 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
                     item['base_rate'] = float(val)
             except (ValueError, TypeError):
                 item['base_rate'] = 0.0
-        
-        # NHIA App (insured price)
+
         item['nhia_app'] = None
         if nhia_app_col and nhia_app_col in df.columns:
             try:
@@ -237,8 +312,7 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
                     item['nhia_app'] = float(val)
             except (ValueError, TypeError):
                 item['nhia_app'] = None
-        
-        # Claim Amount
+
         item['claim_amount'] = None
         if claim_amount_col and claim_amount_col in df.columns:
             try:
@@ -247,121 +321,103 @@ def parse_product_excel(df: pd.DataFrame, original_columns: List[str]) -> List[D
                     item['claim_amount'] = float(val)
             except (ValueError, TypeError):
                 item['claim_amount'] = None
-        
-        # NHIA Claim (string field)
+
         if nhia_claim_col and nhia_claim_col in df.columns and not pd.isna(row[nhia_claim_col]):
             item['nhia_claim'] = str(row[nhia_claim_col]).strip()
         else:
             item['nhia_claim'] = None
-        
-        # NHIA Claim Co-Payment (numeric field - preserve 0 as 0.0, not None)
-        item['nhia_claim_co_payment'] = 0.0  # Default to 0.0 instead of None
+
+        item['nhia_claim_co_payment'] = 0.0
         if nhia_co_pay_col and nhia_co_pay_col in df.columns:
             try:
                 val = row[nhia_co_pay_col]
                 if pd.notna(val):
-                    # Convert to float and preserve 0 as 0.0
-                    co_payment_val = float(val)
-                    item['nhia_claim_co_payment'] = co_payment_val  # This will be 0.0 if value is 0
-                # If pd.isna(val), keep default 0.0
+                    item['nhia_claim_co_payment'] = float(val)
             except (ValueError, TypeError):
-                # If conversion fails, keep default 0.0
                 item['nhia_claim_co_payment'] = 0.0
-        
-        # Bill Effective
+
         if bill_effective_col and bill_effective_col in df.columns and not pd.isna(row[bill_effective_col]):
             item['bill_effective'] = str(row[bill_effective_col]).strip()
         else:
             item['bill_effective'] = None
-        
-        # Insurance Covered (default to "yes" if not specified)
+
         if insurance_covered_col and insurance_covered_col in df.columns:
             insurance_val_raw = row[insurance_covered_col]
-            # Check if value is NaN or empty
             if pd.isna(insurance_val_raw) or (isinstance(insurance_val_raw, str) and insurance_val_raw.strip() == ''):
-                item['insurance_covered'] = 'yes'  # Default to "yes" if empty
+                item['insurance_covered'] = 'yes'
             else:
-                insurance_val = str(insurance_val_raw).strip()
-                insurance_val_lower = insurance_val.lower()
-                # Check for "no" variations (case-insensitive) - be explicit
+                insurance_val_lower = str(insurance_val_raw).strip().lower()
                 if insurance_val_lower in ['no', 'n', 'false', '0', 'f']:
                     item['insurance_covered'] = 'no'
-                    print(f"DEBUG: Row {idx+1}: Set insurance_covered='no' from value '{insurance_val}'")
                 elif insurance_val_lower in ['yes', 'y', 'true', '1', 't']:
                     item['insurance_covered'] = 'yes'
-                    print(f"DEBUG: Row {idx+1}: Set insurance_covered='yes' from value '{insurance_val}'")
                 else:
-                    # If value exists but is not recognized, default to "yes" for backward compatibility
-                    print(f"Warning: Row {idx+1}: Unrecognized insurance_covered value '{insurance_val}' for product {item.get('medication_code', 'N/A')}, defaulting to 'yes'")
                     item['insurance_covered'] = 'yes'
         else:
-            # If column doesn't exist, default to "yes"
-            if idx < 3:  # Only print for first few rows
-                print(f"DEBUG: Row {idx+1}: Insurance Covered column not found, defaulting to 'yes'")
-            item['insurance_covered'] = 'yes'  # Default to "yes" if column not found
-        
+            item['insurance_covered'] = 'yes'
+
         items.append(item)
-    
-    if not items:
-        raise ValueError("No valid items found in the Excel file. Please check the file format.")
-    
-    return items
 
+    if not items and not failed:
+        raise ValueError("No valid items found in the file. Please check the file format.")
 
-def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Dict]:
+    return {"items": items, "failed": failed}
+
+def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> Dict:
     """
-    Parse Excel file and return list of price items with ALL columns preserved
-    File types: procedure, surgery, product, unmapped_drg
-    
-    For procedure/surgery/unmapped_drg:
-    Expected columns: Sr.No., G-DRG Code, Service Ty, Service Type, Service ID, 
-    Service Name, Base Rate, Claim Amount, NHIA App, NHIA Claim Co-Payment, Clinic Bill Effective
-    
-    For product:
-    Expected columns: Sr.No., Sub Categ (twice), Product ID, Product N, Formulati,
-    Strength, Base Rate, NHIA App, Claim Am, NHIA Clain, Bill Effecti
+    Parse Excel/CSV file and return price items with ALL columns preserved.
+
+    Returns:
+        {
+          "items": [...],
+          "failed": [...]   # parse-time failures (mainly products)
+        }
     """
     import io
-    # Read file content into BytesIO to avoid seekable() issues with SpooledTemporaryFile
-    # The file.file is a SpooledTemporaryFile which may not have seekable() in some Python versions
     file_content = file.file.read()
-    file.file.seek(0)  # Reset file pointer for potential reuse
-    df = pd.read_excel(io.BytesIO(file_content))
-    
+    file.file.seek(0)
+
+    filename = (file.filename or "").lower()
+    if filename.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(file_content))
+    else:
+        df = pd.read_excel(io.BytesIO(file_content))
+
     # Normalize column names (handle variations)
     original_columns = df.columns.tolist()
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_').str.replace('-', '_')
-    
+
     # If file_type is explicitly "product", always use product parsing
     if file_type == "product":
         try:
             return parse_product_excel(df, original_columns)
         except Exception as e:
-            # If product parsing fails, provide helpful error
-            raise ValueError(f"Error parsing product file: {str(e)}. Make sure the file has 'Product N' (Product Name) column with medication codes.")
-    
+            raise ValueError(
+                f"Error parsing product file: {str(e)}. "
+                "Make sure the file has 'Product N' / 'Product Name' and/or 'Medication Code'."
+            )
+
     # Check if this is a product file (has Product N, Product ID, Sub Categ columns)
-    # Check in both normalized and original column names
     is_product_file = any(
-        'product_n' in col or 
-        'product_id' in col or 
-        'sub_categ' in col or
-        ('product' in col and 'n' in col and len(col) < 12)
+        col in ('product_n', 'product_id', 'product_name', 'medication_code')
+        or col.startswith('sub_categ')
         for col in df.columns
     ) or any(
-        ('product' in str(col).lower() and ('n' in str(col).lower() or 'id' in str(col).lower())) or
-        ('sub' in str(col).lower() and 'categ' in str(col).lower())
+        ('product' in str(col).lower() and ('n' in str(col).lower() or 'id' in str(col).lower() or 'name' in str(col).lower()))
+        or ('sub' in str(col).lower() and 'categ' in str(col).lower())
+        or ('medication' in str(col).lower() and 'code' in str(col).lower())
         for col in original_columns
     )
-    
-    # If detected as product file, use product-specific parsing
+
     if is_product_file:
         try:
             return parse_product_excel(df, original_columns)
         except Exception as e:
-            # If product parsing fails, provide helpful error
-            raise ValueError(f"Error parsing product file: {str(e)}. Make sure the file has 'Product N' (Product Name) column with medication codes.")
-    
+            raise ValueError(
+                f"Error parsing product file: {str(e)}. "
+                "Make sure the file has 'Product N' / 'Product Name' and/or 'Medication Code'."
+            )
+
     # Otherwise, use procedure/surgery/unmapped_drg parsing
     items = []
     
@@ -562,8 +618,8 @@ def parse_excel_price_list_complete(file: UploadFile, file_type: str) -> List[Di
     
     if not items:
         raise ValueError("No valid items found in the Excel file. Please check the file format.")
-    
-    return items
+
+    return {"items": items, "failed": []}
 
 
 def upload_procedure_prices(db: Session, items: List[Dict]):
@@ -614,85 +670,129 @@ def upload_surgery_prices(db: Session, items: List[Dict]):
     db.commit()
 
 
-def upload_product_prices(db: Session, items: List[Dict]):
-    """Upload product price list items to database"""
+def upload_product_prices(db: Session, items: List[Dict]) -> Dict:
+    """
+    Upload product price list items to database.
+
+    Returns report:
+      {created: int, updated: int, failed: [...], passed: [...]}
+    """
+    created = 0
+    updated = 0
+    failed = []
+    passed = []
+
     if not items:
-        return
-    
+        return {"created": 0, "updated": 0, "failed": [], "passed": []}
+
+    valid_fields = {
+        'sr_no', 'sub_category_1', 'sub_category_2', 'product_id',
+        'product_name', 'medication_code', 'formulation', 'strength',
+        'base_rate', 'nhia_app', 'claim_amount', 'nhia_claim', 'bill_effective',
+        'insurance_covered',
+        'g_drg_code', 'service_name', 'service_type', 'service_id',
+        'service_ty', 'nhia_claim_co_payment', 'clinic_bill_effective'
+    }
+
     for item_data in items:
+        # Copy so we can safely pop metadata without mutating caller unexpectedly across retries
+        row = dict(item_data)
+        source_row = row.pop('_source_row', None)
+        medication_code = row.get('medication_code') or row.get('g_drg_code')
+        product_name = row.get('product_name')
+
         try:
-            # Products use medication_code instead of g_drg_code
-            medication_code = item_data.get('medication_code')
             if not medication_code:
-                # Try g_drg_code as fallback for backward compatibility
-                medication_code = item_data.get('g_drg_code')
-            
-            if not medication_code:
-                print(f"Warning: Skipping item without medication_code. Keys: {list(item_data.keys())}")
+                failed.append({
+                    "row": source_row,
+                    "product_name": product_name,
+                    "medication_code": None,
+                    "reason": "Missing medication_code",
+                })
                 continue
-            
-            # Make sure medication_code is in the item_data for model creation
-            item_data['medication_code'] = medication_code
-            
-            # For backward compatibility with old table structure:
-            # Set g_drg_code to medication_code (old tables may have NOT NULL constraint)
-            item_data['g_drg_code'] = medication_code
-            # Set service_name to product_name (old tables may have NOT NULL constraint)
-            if 'product_name' in item_data:
-                item_data['service_name'] = item_data['product_name']
-            
-            # Set other service-related fields to None (they're nullable in old structure)
-            item_data['service_type'] = None
-            item_data['service_id'] = None
-            item_data['service_ty'] = None
-            # Preserve nhia_claim_co_payment from item_data if it exists, otherwise default to 0.0
-            if 'nhia_claim_co_payment' not in item_data or item_data['nhia_claim_co_payment'] is None:
-                item_data['nhia_claim_co_payment'] = 0.0
-            item_data['clinic_bill_effective'] = None
-                
-            existing = (
-                db.query(ProductPrice)
-                .filter(ProductPrice.medication_code == medication_code)
-                .first()
-            )
-            
-            if existing:
-                # Update existing item
-                for key, value in item_data.items():
-                    if hasattr(existing, key):  # Only update fields that exist in the model
-                        setattr(existing, key, value)
-                existing.is_active = True
-            else:
-                # Create new item - include valid fields AND legacy fields for backward compatibility
-                valid_fields = {
-                    'sr_no', 'sub_category_1', 'sub_category_2', 'product_id', 
-                    'product_name', 'medication_code', 'formulation', 'strength',
-                    'base_rate', 'nhia_app', 'claim_amount', 'nhia_claim', 'bill_effective',
-                    'insurance_covered',  # New field for insurance coverage
-                    # Legacy fields for backward compatibility with existing table structure
-                    'g_drg_code', 'service_name', 'service_type', 'service_id', 
-                    'service_ty', 'nhia_claim_co_payment', 'clinic_bill_effective'
-                }
-                filtered_data = {k: v for k, v in item_data.items() if k in valid_fields}
-                
-                # Ensure service_name is set (database may require it)
-                if 'service_name' not in filtered_data or filtered_data['service_name'] is None:
-                    filtered_data['service_name'] = filtered_data.get('product_name', '')
-                
-                # Verify required fields
-                if 'medication_code' not in filtered_data:
-                    raise ValueError(f"Missing medication_code in item: {item_data}")
-                if 'product_name' not in filtered_data:
-                    raise ValueError(f"Missing product_name in item: {item_data}")
-                
-                new_item = ProductPrice(**filtered_data)
-                db.add(new_item)
+
+            if not product_name:
+                failed.append({
+                    "row": source_row,
+                    "product_name": product_name,
+                    "medication_code": medication_code,
+                    "reason": "Missing product_name",
+                })
+                continue
+
+            row['medication_code'] = medication_code
+            row['g_drg_code'] = medication_code
+            row['service_name'] = product_name
+            row['service_type'] = None
+            row['service_id'] = None
+            row['service_ty'] = None
+            if row.get('nhia_claim_co_payment') is None:
+                row['nhia_claim_co_payment'] = 0.0
+            row['clinic_bill_effective'] = None
+
+            # Savepoint so one bad row does not wipe prior successful rows
+            nested = db.begin_nested()
+            try:
+                existing = (
+                    db.query(ProductPrice)
+                    .filter(ProductPrice.medication_code == medication_code)
+                    .first()
+                )
+
+                if existing:
+                    for key, value in row.items():
+                        if hasattr(existing, key):
+                            setattr(existing, key, value)
+                    existing.is_active = True
+                    action = "updated"
+                    updated += 1
+                else:
+                    filtered_data = {k: v for k, v in row.items() if k in valid_fields}
+                    if not filtered_data.get('service_name'):
+                        filtered_data['service_name'] = filtered_data.get('product_name', '')
+                    new_item = ProductPrice(**filtered_data)
+                    db.add(new_item)
+                    action = "created"
+                    created += 1
+
+                nested.commit()
+            except Exception:
+                nested.rollback()
+                raise
+
+            passed.append({
+                "row": source_row,
+                "product_name": product_name,
+                "medication_code": medication_code,
+                "action": action,
+            })
         except Exception as e:
-            print(f"Error processing product item: {item_data}")
-            print(f"Error: {str(e)}")
-            raise
-    
-    db.commit()
+            failed.append({
+                "row": source_row,
+                "product_name": product_name,
+                "medication_code": medication_code,
+                "reason": str(e),
+            })
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        for p in passed:
+            failed.append({
+                "row": p.get("row"),
+                "product_name": p.get("product_name"),
+                "medication_code": p.get("medication_code"),
+                "reason": f"Commit failed: {str(e)}",
+            })
+        return {"created": 0, "updated": 0, "failed": failed, "passed": []}
+
+    return {
+        "created": created,
+        "updated": updated,
+        "failed": failed,
+        "passed": passed,
+    }
 
 
 def upload_unmapped_drg_prices(db: Session, items: List[Dict]):
@@ -1091,16 +1191,32 @@ def get_surgery_price(db: Session, g_drg_code: str, is_insured: bool = False, se
     return 0.0
 
 
-def search_price_items_all_tables(db: Session, search_term: str = None, service_type: str = None, file_type: str = None):
+def search_price_items_all_tables(
+    db: Session,
+    search_term: str = None,
+    service_type: str = None,
+    file_type: str = None,
+    status_filter: str = "active",
+):
     """
     Search price list items across all tables
     file_type: procedure, surgery, product, unmapped_drg, or None (search all)
+    status_filter: "active" (default), "archived", or "all"
     """
     results = []
-    
+    status = (status_filter or "active").strip().lower()
+
+    def apply_active_filter(query, model):
+        if status == "archived":
+            return query.filter(model.is_active == False)
+        if status == "all":
+            return query
+        # default: active only
+        return query.filter(model.is_active == True)
+
     # Determine which tables to search
     if file_type == 'procedure' or file_type is None:
-        query = db.query(ProcedurePrice).filter(ProcedurePrice.is_active == True)
+        query = apply_active_filter(db.query(ProcedurePrice), ProcedurePrice)
         if search_term:
             query = query.filter(
                 (ProcedurePrice.g_drg_code.contains(search_term)) |
@@ -1109,9 +1225,9 @@ def search_price_items_all_tables(db: Session, search_term: str = None, service_
         if service_type:
             query = query.filter(ProcedurePrice.service_type == service_type)
         results.extend([('procedure', item) for item in query.all()])
-    
+
     if file_type == 'surgery' or file_type is None:
-        query = db.query(SurgeryPrice).filter(SurgeryPrice.is_active == True)
+        query = apply_active_filter(db.query(SurgeryPrice), SurgeryPrice)
         if search_term:
             query = query.filter(
                 (SurgeryPrice.g_drg_code.contains(search_term)) |
@@ -1120,9 +1236,9 @@ def search_price_items_all_tables(db: Session, search_term: str = None, service_
         if service_type:
             query = query.filter(SurgeryPrice.service_type == service_type)
         results.extend([('surgery', item) for item in query.all()])
-    
+
     if file_type == 'product' or file_type is None:
-        query = db.query(ProductPrice).filter(ProductPrice.is_active == True)
+        query = apply_active_filter(db.query(ProductPrice), ProductPrice)
         if search_term:
             query = query.filter(
                 (ProductPrice.medication_code.contains(search_term)) |
@@ -1137,9 +1253,9 @@ def search_price_items_all_tables(db: Session, search_term: str = None, service_
                 (func.lower(ProductPrice.sub_category_2) == func.lower(service_type))
             )
         results.extend([('product', item) for item in query.all()])
-    
+
     if file_type == 'unmapped_drg' or file_type is None:
-        query = db.query(UnmappedDRGPrice).filter(UnmappedDRGPrice.is_active == True)
+        query = apply_active_filter(db.query(UnmappedDRGPrice), UnmappedDRGPrice)
         if search_term:
             query = query.filter(
                 (UnmappedDRGPrice.g_drg_code.contains(search_term)) |
@@ -1148,6 +1264,6 @@ def search_price_items_all_tables(db: Session, search_term: str = None, service_
         if service_type:
             query = query.filter(UnmappedDRGPrice.service_type == service_type)
         results.extend([('unmapped_drg', item) for item in query.all()])
-    
+
     return results
 
