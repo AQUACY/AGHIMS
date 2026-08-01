@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Tuple, Dict
 from datetime import datetime, date, timedelta
 from app.core.database import get_db
-from app.core.dependencies import require_role, require_module_permission
+from app.core.dependencies import require_role, require_module_permission, require_admin_or_super_admin
 from app.core.audit import get_effective_creator_id
 from app.models.user import User
 from app.models.encounter import Encounter
@@ -4749,7 +4749,7 @@ def flag_ghims_import_item(
 def delete_ghims_import_batch(
     batch_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    current_user: User = Depends(require_admin_or_super_admin()),
     _module_check: User = Depends(require_module_permission("claims", "delete")),
 ):
     batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()

@@ -30,9 +30,30 @@
                 · {{ b.pharmacy_vetted_count || 0 }} pharmacy-vetted · {{ b.doctor_vetted_count || 0 }} doctor-vetted
               </q-item-label>
             </q-item-section>
-            <q-item-section side class="row items-center q-gutter-sm">
-              <q-btn flat dense round icon="chevron_right" @click="openBatch(b.id)" />
-              <q-btn flat dense round color="negative" icon="delete" @click="deleteBatch(b)" />
+            <q-item-section side>
+              <div class="row items-center no-wrap q-gutter-md">
+                <template v-if="canDeleteImportBatch">
+                  <q-btn
+                    flat
+                    dense
+                    round
+                    color="negative"
+                    icon="delete"
+                    @click.stop="deleteBatch(b)"
+                  >
+                    <q-tooltip>Delete import</q-tooltip>
+                  </q-btn>
+                  <q-separator vertical inset />
+                </template>
+                <q-btn
+                  flat
+                  dense
+                  color="primary"
+                  icon-right="chevron_right"
+                  label="Open"
+                  @click.stop="openBatch(b.id)"
+                />
+              </div>
             </q-item-section>
           </q-item>
         </q-list>
@@ -359,6 +380,7 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import { useAuthStore } from '../stores/auth';
 import { setGhimsNavIds } from '../utils/claimNav';
 import {
   isClaimExportable,
@@ -379,6 +401,11 @@ import {
 const $route = useRoute();
 const $router = useRouter();
 const $q = useQuasar();
+const authStore = useAuthStore();
+const canDeleteImportBatch = computed(() => {
+  const roles = (authStore.allUserRoles || []).map((r) => String(r || '').trim());
+  return roles.includes('Admin') || authStore.isSuperAdmin;
+});
 const uploadFile = ref(null);
 const uploading = ref(false);
 const exporting = ref(false);
@@ -951,6 +978,10 @@ async function handleExportError(e) {
 }
 
 function deleteBatch(batch) {
+  if (!canDeleteImportBatch.value) {
+    $q.notify({ type: 'negative', message: 'Only Admin can delete imports' });
+    return;
+  }
   $q.dialog({ title: 'Delete Imported XML', message: `Delete ${batch.file_name}?`, cancel: true, persistent: true }).onOk(async () => {
     try { await claimsAPI.deleteGhimsImportBatch(batch.id); await loadBatches(); $q.notify({ type: 'positive', message: 'Import deleted' }); }
     catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to delete import' }); }

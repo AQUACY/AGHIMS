@@ -1,0 +1,64 @@
+Product N,Medication Code,Product Name,Sub Category 1,Sub Category 2,Product ID,Formulation,Strength,Base Rate,NHIA App,NHIA Claim Co-Payment,Claim Amount,NHIA Claim,Bill Effective,Insurance Covered,Is Active
+"Adrenaline Injection 1:10,000 (ADRENAIN2 | Adrenaline Injection 1:10,000)",ADRENAIN2,"Adrenaline Injection 1:10,000",4,Pharmacy,,Injection,"1:10,000",0.0,,0.0,6.55,,01-03-2025,yes,True
+Amitriptyline Tablet 10 mg (AMITRITA1 | Amitriptyline Tablet 10 mg),AMITRITA1,Amitriptyline Tablet 10 mg,4,Pharmacy,,Tablet,10 mg,0.0,,0.0,0.66,,01-03-2025,yes,True
+Amoxicillin 250 mg Dispersible Tablet (AMOXICDT1 | Amoxicillin 250 mg Dispersible Tablet),AMOXICDT1,Amoxicillin 250 mg Dispersible Tablet,4,Pharmacy,,Tablet,250 mg,0.0,,0.0,1.87,,01-03-2025,yes,True
+Atenolol + Hydrochlorthiazide Tablet 100 mg + 25 mg (ATEHYDTA2 | Atenolol + Hydrochlorthiazide Tablet 100 mg + 25 mg),ATEHYDTA2,Atenolol + Hydrochlorthiazide Tablet 100 mg + 25 mg,4,Pharmacy,,Tablet,100 mg + 25 mg,0.0,,0.0,1.2,,01-03-2025,yes,True
+Atenolol Injection 500 microgram/10 mL (ATENOLIN1 | Atenolol Injection 500 microgram/10 mL),ATENOLIN1,Atenolol Injection 500 microgram/10 mL,4,Pharmacy,,Injection,500 microgram/10 mL,0.0,,0.0,8.98,,01-03-2025,yes,True
+Atenolol Tablet 25 mg (ATENOLTA1 | Atenolol Tablet 25 mg),ATENOLTA1,Atenolol Tablet 25 mg,4,Pharmacy,,Tablet,25 mg,0.0,,0.0,1.1,,01-03-2025,yes,True
+Atenolol Tablet 100 mg (ATENOLTA3 | Atenolol Tablet 100 mg),ATENOLTA3,Atenolol Tablet 100 mg,4,Pharmacy,,Tablet,100 mg,0.0,,0.0,1.1,,01-03-2025,yes,True
+Atorvastatin Tablet 10 mg (ATORVATA1 | Atorvastatin Tablet 10 mg),ATORVATA1,Atorvastatin Tablet 10 mg,4,Pharmacy,,Tablet,10 mg,0.0,,0.0,0.23,,01-03-2025,yes,True
+Atorvastatin Tablet 20 mg (ATORVATA2 | Atorvastatin Tablet 20 mg),ATORVATA2,Atorvastatin Tablet 20 mg,4,Pharmacy,,Tablet,20 mg,0.0,,0.0,0.3,,01-03-2025,yes,True
+Azithromycin Oral Suspension 200 mg/5 mL/30mL (AZITHRSU2 | Azithromycin Oral Suspension 200 mg/5 mL/30mL),AZITHRSU2,Azithromycin Oral Suspension 200 mg/5 mL/30mL,4,Pharmacy,,Suspension,200 mg/5 mL,0.0,,0.0,40.13,,01-03-2025,yes,True
+Benzylpenicillin Injection 5 MU (BENZYLIN2 | Benzylpenicillin Injection 5 MU),BENZYLIN2,Benzylpenicillin Injection 5 MU,4,Pharmacy,,Injection,5 MU,0.0,,0.0,11.0,,01-03-2025,yes,True
+Bisoprolol Tablet 5 mg (BISOPRTA1 | Bisoprolol Tablet 5 mg),BISOPRTA1,Bisoprolol Tablet 5 mg,4,Pharmacy,,Tablet,5 mg,0.0,,0.0,0.98,,01-03-2025,yes,True
+Cefuroxime Injection 1.5 g (CEFUROIN2 | Cefuroxime Injection 1.5 g),CEFUROIN2,Cefuroxime Injection 1.5 g,4,Pharmacy,,Injection,1.5 g,0.0,,0.0,35.42,,01-03-2025,yes,True
+Cefuroxime Tablet 125 mg (CEFUROTA1 | Cefuroxime Tablet 125 mg),CEFUROTA1,Cefuroxime Tablet 125 mg,4,Pharmacy,,Tablet,125 mg,0.0,,0.0,4.29,,01-03-2025,yes,True
+Celecoxib Tablet 100 mg (CELECOTA1 | Celecoxib Tablet 100 mg),CELECOTA1,Celecoxib Tablet 100 mg,4,Pharmacy,,Tablet,100 mg,0.0,,0.0,1.32,,01-03-2025,yes,True
+Ciprofloxacin Tablet 250 mg (CIPROFTA1 | Ciprofloxacin Tablet 250 mg),CIPROFTA1,Ciprofloxacin Tablet 250 mg,4,Pharmacy,,Tablet,250 mg,0.0,,0.0,0.61,,01-03-2025,yes,True
+Clotrimazole Pessary 200 mg (CLOTRIVP2 | Clotrimazole Pessary 200 mg),CLOTRIVP2,Clotrimazole Pessary 200 mg,4,Pharmacy,,Pessary,200 mg,0.0,,0.0,24.2,,01-03-2025,yes,True
+Amoxicillin + Clavulanic Acid Tablet 875 mg + 125 mg (COAMOXTA2 | Amoxicillin + Clavulanic Acid Tablet 875 mg + 125 mg),COAMOXTA2,Amoxicillin + Clavulanic Acid Tablet 875 mg + 125 mg,4,Pharmacy,,Tablet,875 mg + 125 mg,0.0,,0.0,2.98,,01-03-2025,yes,True
+Cotrimoxazole Tablet (400+80) mg (COTRIMTA1 | Cotrimoxazole Tablet (400+80) mg),COTRIMTA1,Cotrimoxazole Tablet (400+80) mg,4,Pharmacy,,Tablet,(400+80) mg,0.0,,0.0,0.23,,01-03-2025,yes,True
+Cyclopentolate Eye Drops 1% (CYCLOPID1 | Cyclopentolate Eye Drops 1%),CYCLOPID1,Cyclopentolate Eye Drops 1%,4,Pharmacy,,Drops,1%,0.0,,0.0,42.13,,01-03-2025,yes,True
+Dexamethasone Injection 8 mg/2 mL (DEXAMEIN2 | Dexamethasone Injection 8 mg/2 mL),DEXAMEIN2,Dexamethasone Injection 8 mg/2 mL,4,Pharmacy,,Injection,8 mg/2 mL,0.0,,0.0,2.2,,01-03-2025,yes,True
+Dextrose Infusion 10% (500 mL) (DEXTROIN4 | Dextrose Infusion 10% (500 mL)),DEXTROIN4,Dextrose Infusion 10% (500 mL),4,Pharmacy,,Infusion,10%,0.0,,0.0,14.2,,01-03-2025,yes,True
+Esomeprazole Capsule 20 mg (ESOMEPCA1 | Esomeprazole Capsule 20 mg),ESOMEPCA1,Esomeprazole Capsule 20 mg,4,Pharmacy,,Capsule,20 mg,0.0,,0.0,1.98,,01-03-2025,yes,True
+Esomeprazole Capsule 40 mg (ESOMEPCA2 | Esomeprazole Capsule 40 mg),ESOMEPCA2,Esomeprazole Capsule 40 mg,4,Pharmacy,,Capsule,40 mg,0.0,,0.0,3.4,,01-03-2025,yes,True
+Ferric Ammonium Citrate Mixture (FAC) (FEAMCISU1 | Ferric Ammonium Citrate Mixture (FAC)),FEAMCISU1,Ferric Ammonium Citrate Mixture (FAC),4,Pharmacy,,Mixture,,0.0,,0.0,7.48,,01-03-2025,yes,True
+Ferrous Sulphate (BPC) Syrup 60 mg/5 mL (FERSULSY1 | Ferrous Sulphate (BPC) Syrup 60 mg/5 mL),FERSULSY1,Ferrous Sulphate (BPC) Syrup 60 mg/5 mL,4,Pharmacy,,Syrup,60 mg/5 mL,0.0,,0.0,18.7,,01-03-2025,yes,True
+Ferrous Sulphate Tablet 60 mg (Elemental Iron) (FERSULTA1 | Ferrous Sulphate Tablet 60 mg (Elemental Iron)),FERSULTA1,Ferrous Sulphate Tablet 60 mg (Elemental Iron),4,Pharmacy,,Tablet,60 mg,0.0,,0.0,0.11,,01-03-2025,yes,True
+Fluconazole Capsule 200 mg (FLUCONCA2 | Fluconazole Capsule 200 mg),FLUCONCA2,Fluconazole Capsule 200 mg,4,Pharmacy,,Capsule,200 mg,0.0,,0.0,8.8,,01-03-2025,yes,True
+Fluconazole Tablet 50 mg (FLUCONTA1 | Fluconazole Tablet 50 mg),FLUCONTA1,Fluconazole Tablet 50 mg,4,Pharmacy,,Tablet,50 mg,0.0,,0.0,27.72,,01-03-2025,yes,True
+Gelatin Infusion (Succinylated Gelatin) (GELATIIN1 | Gelatin Infusion (Succinylated Gelatin)),GELATIIN1,Gelatin Infusion (Succinylated Gelatin),4,Pharmacy,,Infusion,,0.0,,0.0,82.61,,01-03-2025,yes,True
+Glimepiride Tablet 1 mg (GLIMEPTA1 | Glimepiride Tablet 1 mg),GLIMEPTA1,Glimepiride Tablet 1 mg,4,Pharmacy,,Tablet,1 mg,0.0,,0.0,1.1,,01-03-2025,yes,True
+Glimepiride Tablet 3 mg (GLIMEPTA3 | Glimepiride Tablet 3 mg),GLIMEPTA3,Glimepiride Tablet 3 mg,4,Pharmacy,,Tablet,3 mg,0.0,,0.0,1.57,,01-03-2025,yes,True
+Glimepiride Tablet 4 mg (GLIMEPTA4 | Glimepiride Tablet 4 mg),GLIMEPTA4,Glimepiride Tablet 4 mg,4,Pharmacy,,Tablet,4 mg,0.0,,0.0,0.24,,01-03-2025,yes,True
+Human Immune Tetanus Globulins Injection 500 IU/mL (HUIMTEIN2 | Human Immune Tetanus Globulins Injection 500 IU/mL),HUIMTEIN2,Human Immune Tetanus Globulins Injection 500 IU/mL,4,Pharmacy,,Injection,500 IU,0.0,,0.0,42.85,,01-03-2025,yes,True
+Intralipid Solution (for TPN) (INTRALSO1 | Intralipid Solution (for TPN)),INTRALSO1,Intralipid Solution (for TPN),4,Pharmacy,,Solution,,0.0,,0.0,165.0,,01-03-2025,yes,True
+Iron Sucrose Injection 20 mg/mL (IROSUCIN1 | Iron Sucrose Injection 20 mg/mL),IROSUCIN1,Iron Sucrose Injection 20 mg/mL,4,Pharmacy,,Injection,20 mg,0.0,,0.0,60.5,,01-03-2025,yes,True
+Isophane Insulin Injection (HM) 100 units/mL in 10 mL (ISOINSIN1 | Isophane Insulin Injection (HM) 100 units/mL in 10 mL),ISOINSIN1,Isophane Insulin Injection (HM) 100 units/mL in 10 mL,4,Pharmacy,,Injection,100 units,0.0,,0.0,100.1,,01-03-2025,yes,True
+Lamotrigine Tablet 100 mg (LAMOTRTA1 | Lamotrigine Tablet 100 mg),LAMOTRTA1,Lamotrigine Tablet 100 mg,4,Pharmacy,,Tablet,100 mg,0.0,,0.0,2.05,,01-03-2025,yes,True
+Levofloxacin infusion 500mg (LEVOFLIN1 | Levofloxacin infusion 500mg),LEVOFLIN1,Levofloxacin infusion 500mg,4,Pharmacy,,Infusion,500mg,0.0,,0.0,189.64,,01-03-2025,yes,True
+Lisinopril + Hydrochlorthiazide Tablet (10 mg + 12.5 mg) (LISHYDTA1 | Lisinopril + Hydrochlorthiazide Tablet (10 mg + 12.5 mg)),LISHYDTA1,Lisinopril + Hydrochlorthiazide Tablet (10 mg + 12.5 mg),4,Pharmacy,,Tablet,(10 mg + 12.5 mg),0.0,,0.0,1.26,,01-03-2025,yes,True
+Lisinopril Tablet 2.5 mg (LISINOTA1 | Lisinopril Tablet 2.5 mg),LISINOTA1,Lisinopril Tablet 2.5 mg,4,Pharmacy,,Tablet,2.5 mg,0.0,,0.0,0.47,,01-03-2025,yes,True
+Lisinopril Tablet 20 mg (LISINOTA4 | Lisinopril Tablet 20 mg),LISINOTA4,Lisinopril Tablet 20 mg,4,Pharmacy,,Tablet,20 mg,0.0,,0.0,0.9,,01-03-2025,yes,True
+Losartan Tablet 25 mg (LOSARTTA1 | Losartan Tablet 25 mg),LOSARTTA1,Losartan Tablet 25 mg,4,Pharmacy,,Tablet,25 mg,0.0,,0.0,1.32,,01-03-2025,yes,True
+Losartan Tablet 100 mg (LOSARTTA3 | Losartan Tablet 100 mg),LOSARTTA3,Losartan Tablet 100 mg,4,Pharmacy,,Tablet,100 mg,0.0,,0.0,0.54,,01-03-2025,yes,True
+Magnesium Trisilicate Mixture (MAGTRIMI1 | Magnesium Trisilicate Mixture),MAGTRIMI1,Magnesium Trisilicate Mixture,4,Pharmacy,,Mixture,,0.0,,0.0,7.7,,01-03-2025,yes,True
+Magnesium Trisilicate Tablet 500 mg (MAGTRITA1 | Magnesium Trisilicate Tablet 500 mg),MAGTRITA1,Magnesium Trisilicate Tablet 500 mg,4,Pharmacy,,Tablet,500 mg,0.0,,0.0,3.58,,01-03-2025,yes,True
+Magnesium Trisilicate + Aluminium Hydroxide Tablet (MATRALTA1 | Magnesium Trisilicate + Aluminium Hydroxide Tablet),MATRALTA1,Magnesium Trisilicate + Aluminium Hydroxide Tablet,4,Pharmacy,,Tablet,,0.0,,0.0,0.22,,01-03-2025,yes,True
+Metronidazole Suppository 500 mg (METRONRE1 | Metronidazole Suppository 500 mg),METRONRE1,Metronidazole Suppository 500 mg,4,Pharmacy,,Suppository,500 mg,0.0,,0.0,15.95,,01-03-2025,yes,True
+Metronidazole Suspension 100 mg/5 mL (as benzoate) (METRONSU1 | Metronidazole Suspension 100 mg/5 mL (as benzoate)),METRONSU1,Metronidazole Suspension 100 mg/5 mL (as benzoate),4,Pharmacy,,Suspension,100 mg/5 mL,0.0,,0.0,10.92,,01-03-2025,yes,True
+Morphine Injection 10 mg/mL (Preservative Free) (MORPHIIN2 | Morphine Injection 10 mg/mL (Preservative Free)),MORPHIIN2,Morphine Injection 10 mg/mL (Preservative Free),4,Pharmacy,,Injection,10 mg,0.0,,0.0,39.55,,01-03-2025,yes,True
+Nifedipine Capsule 10 mg (NIFEDICA1 | Nifedipine Capsule 10 mg),NIFEDICA1,Nifedipine Capsule 10 mg,4,Pharmacy,,Capsule,10 mg,0.0,,0.0,1.21,,01-03-2025,yes,True
+Nifedipine Tablet 10 mg (slow release) (NIFEDITA1 | Nifedipine Tablet 10 mg (slow release)),NIFEDITA1,Nifedipine Tablet 10 mg (slow release),4,Pharmacy,,Tablet,10 mg,0.0,,0.0,1.1,,01-03-2025,yes,True
+Olanzapine Tablet 10 mg (OLANZATA1 | Olanzapine Tablet 10 mg),OLANZATA1,Olanzapine Tablet 10 mg,4,Pharmacy,,Tablet,10 mg,0.0,,0.0,1.63,,01-03-2025,yes,True
+Paracetamol Suppository 500 mg (PARACERE3 | Paracetamol Suppository 500 mg),PARACERE3,Paracetamol Suppository 500 mg,4,Pharmacy,,Suppository,500 mg,0.0,,0.0,2.41,,01-03-2025,yes,True
+Phenobarbital Elixir 15 mg/5 mL (PHENOBEL1 | Phenobarbital Elixir 15 mg/5 mL),PHENOBEL1,Phenobarbital Elixir 15 mg/5 mL,4,Pharmacy,,Elixir,15 mg/5 mL,0.0,,0.0,60.5,,01-03-2025,yes,True
+Povidone Iodine Ointment 10% (POVIDOOI1 | Povidone Iodine Ointment 10%),POVIDOOI1,Povidone Iodine Ointment 10%,4,Pharmacy,,Ointment,10%,0.0,,0.0,28.88,,01-03-2025,yes,True
+Prednisolone 5mg Dispersible Tablets (PREDNIDT1 | Prednisolone 5mg Dispersible Tablets),PREDNIDT1,Prednisolone 5mg Dispersible Tablets,4,Pharmacy,,Tablet,5mg,0.0,,0.0,0.28,,01-03-2025,yes,True
+Prednisolone Oral Solution 5mg/5ml (PREDNISY1 | Prednisolone Oral Solution 5mg/5ml),PREDNISY1,Prednisolone Oral Solution 5mg/5ml,4,Pharmacy,,Solution,5mg/5ml,0.0,,0.0,62.7,,01-03-2025,yes,True
+Salbutamol Nebules 5 mg (SALBUTGA3 | Salbutamol Nebules 5 mg),SALBUTGA3,Salbutamol Nebules 5 mg,4,Pharmacy,,Nebules,5 mg,0.0,,0.0,17.6,,01-03-2025,yes,True
+Salbutamol Sulphate Injection 500 microgram/mL in 1mL (SALSULIN1 | Salbutamol Sulphate Injection 500 microgram/mL in 1mL),SALSULIN1,Salbutamol Sulphate Injection 500 microgram/mL in 1mL,4,Pharmacy,,Injection,500 microgram,0.0,,0.0,16.5,,01-03-2025,yes,True
+Sodium Chloride Infusion 0.45% (250 mL) (SODCHLIN1 | Sodium Chloride Infusion 0.45% (250 mL)),SODCHLIN1,Sodium Chloride Infusion 0.45% (250 mL),4,Pharmacy,,Infusion,0.45%,0.0,,0.0,48.38,,01-03-2025,yes,True
+Spironolactone Tablet 50 mg (SPIRONTA2 | Spironolactone Tablet 50 mg),SPIRONTA2,Spironolactone Tablet 50 mg,4,Pharmacy,,Tablet,50 mg,0.0,,0.0,1.45,,01-03-2025,yes,True
+Tamsulosin Capsule 400 microgram (TAMSULCA1 | Tamsulosin Capsule 400 microgram),TAMSULCA1,Tamsulosin Capsule 400 microgram,4,Pharmacy,,Capsule,400 microgram,0.0,,0.0,2.18,,01-03-2025,yes,True

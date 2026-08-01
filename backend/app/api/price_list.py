@@ -573,41 +573,78 @@ async def upload_price_list_file(
     _module_check: User = Depends(require_module_permission("price_list", "create")),
     current_user: User = Depends(require_role(["Admin", "Billing", "Pharmacy Head", "Store Manager"]))
 ):
-    """Upload Excel price list file by file type"""
-    # Validate file type
+    """Upload Excel/CSV price list file by file type"""
     valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
     if file_type not in valid_types:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid file type. Must be one of: {', '.join(valid_types)}"
         )
-    
-    # Validate file type
-    if not file.filename.endswith(('.xlsx', '.xls')):
+
+    filename = (file.filename or "").lower()
+    if not filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(
             status_code=400,
-            detail="File must be an Excel file (.xlsx or .xls)"
+            detail="File must be an Excel (.xlsx, .xls) or CSV (.csv) file"
         )
-    
+
     try:
-        # Parse Excel file (extracts all columns, uses Service Type as category)
-        # The parse function handles file reading internally to avoid seekable() issues
-        items = parse_excel_price_list_complete(file, file_type)
-        
-        # Upload to appropriate table based on file type
+        parsed = parse_excel_price_list_complete(file, file_type)
+        items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
+        parse_failed = parsed.get("failed", []) if isinstance(parsed, dict) else []
+
+        upload_report = {
+            "created": 0,
+            "updated": 0,
+            "failed": [],
+            "passed": [],
+        }
+
         if file_type == "procedure":
             upload_procedure_prices(db, items)
+            upload_report["created"] = len(items)
+            upload_report["passed"] = [
+                {"medication_code": i.get("g_drg_code"), "product_name": i.get("service_name"), "action": "upserted"}
+                for i in items
+            ]
         elif file_type == "surgery":
             upload_surgery_prices(db, items)
+            upload_report["created"] = len(items)
+            upload_report["passed"] = [
+                {"medication_code": i.get("g_drg_code"), "product_name": i.get("service_name"), "action": "upserted"}
+                for i in items
+            ]
         elif file_type == "product":
-            upload_product_prices(db, items)
+            upload_report = upload_product_prices(db, items)
         elif file_type == "unmapped_drg":
             upload_unmapped_drg_prices(db, items)
-        
+            upload_report["created"] = len(items)
+            upload_report["passed"] = [
+                {"medication_code": i.get("g_drg_code"), "product_name": i.get("service_name"), "action": "upserted"}
+                for i in items
+            ]
+
+        all_failed = list(parse_failed) + list(upload_report.get("failed") or [])
+        passed_count = len(upload_report.get("passed") or [])
+        failed_count = len(all_failed)
+        created = upload_report.get("created", 0)
+        updated = upload_report.get("updated", 0)
+
+        message = (
+            f"Upload complete: {passed_count} passed"
+            f" ({created} created, {updated} updated)"
+            f", {failed_count} failed"
+        )
+
         return {
-            "message": f"Successfully uploaded {len(items)} items to {file_type} table",
+            "message": message,
             "file_type": file_type,
-            "count": len(items)
+            "count": passed_count,
+            "created": created,
+            "updated": updated,
+            "failed_count": failed_count,
+            "passed": upload_report.get("passed") or [],
+            "failed": all_failed,
         }
     except Exception as e:
         raise HTTPException(
@@ -621,12 +658,23 @@ def search_price_items_endpoint(
     search_term: Optional[str] = None,
     service_type: Optional[str] = None,  # Service Type (department/clinic) filter
     file_type: Optional[str] = None,  # Filter by file type: procedure, surgery, product, unmapped_drg
+    status_filter: Optional[str] = "active",  # active | archived | all
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Nurse", "PA"])),
     _module_check: User = Depends(require_module_permission("price_list", "read"))
 ):
     """Search price list items across all tables"""
-    results = search_price_items_all_tables(db, search_term, service_type, file_type)
+    allowed_status = {"active", "archived", "all"}
+    status = (status_filter or "active").strip().lower()
+    if status not in allowed_status:
+        raise HTTPException(
+            status_code=400,
+            detail="status_filter must be one of: active, archived, all",
+        )
+
+    results = search_price_items_all_tables(
+        db, search_term, service_type, file_type, status_filter=status
+    )
     
     # Format results
     formatted_results = []

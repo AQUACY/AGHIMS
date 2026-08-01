@@ -13,12 +13,25 @@ export const useBillingStore = defineStore('billing', {
     async uploadPriceList(fileType, file) {
       try {
         const response = await priceListAPI.upload(fileType, file);
+        const data = response.data || {};
+        const failedCount = data.failed_count || (data.failed || []).length || 0;
+        const created = data.created ?? 0;
+        const updated = data.updated ?? 0;
+        const passed = data.count ?? 0;
+
         Notify.create({
-          type: 'positive',
-          message: `Successfully uploaded ${response.data.count} items to ${response.data.file_type} table`,
+          type: failedCount > 0 ? 'warning' : 'positive',
+          message:
+            data.message ||
+            `Upload complete: ${passed} passed (${created} created, ${updated} updated), ${failedCount} failed`,
+          caption:
+            failedCount > 0
+              ? 'Open the upload report for failed row details'
+              : undefined,
           position: 'top',
+          timeout: failedCount > 0 ? 8000 : 4000,
         });
-        return response.data;
+        return data;
       } catch (error) {
         Notify.create({
           type: 'negative',
@@ -29,9 +42,9 @@ export const useBillingStore = defineStore('billing', {
       }
     },
 
-    async searchPriceItems(searchTerm, serviceType = null, fileType = null) {
+    async searchPriceItems(searchTerm, serviceType = null, fileType = null, statusFilter = 'active') {
       try {
-        const response = await priceListAPI.search(searchTerm, serviceType, fileType);
+        const response = await priceListAPI.search(searchTerm, serviceType, fileType, statusFilter);
         this.priceListItems = response.data;
         return response.data;
       } catch (error) {
