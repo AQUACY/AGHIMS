@@ -1,340 +1,329 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Lab Services</div>
-
-    <!-- Filters and Search -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="row q-gutter-md q-mb-md">
-          <!-- Search by Card Number or Name -->
-          <q-input
-            v-model="searchTerm"
-            filled
-            label="Search by Card Number or Patient Name"
-            class="col-12 col-md-4"
-            @keyup.enter="loadRequests"
-            :clearable="!filtersLocked"
-            :disable="filtersLocked"
-            @clear="loadRequests"
-          >
-            <template v-slot:prepend>
-              <q-icon name="search" />
-            </template>
-            <template v-slot:hint v-if="filtersLocked">
-              <span class="text-warning">Locked - unlock to change</span>
-            </template>
-          </q-input>
-
-          <!-- Date Range Filters -->
-          <q-input
-            v-model="startDate"
-            filled
-            label="Start Date"
-            type="date"
-            class="col-12 col-md-3"
-            @update:model-value="loadRequests"
-            :clearable="!filtersLocked"
-            :disable="filtersLocked"
-            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show from beginning'"
-          >
-            <template v-slot:prepend>
-              <q-icon name="event" />
-            </template>
-          </q-input>
-          
-          <q-input
-            v-model="endDate"
-            filled
-            label="End Date"
-            type="date"
-            class="col-12 col-md-3"
-            @update:model-value="loadRequests"
-            :clearable="!filtersLocked"
-            :disable="filtersLocked"
-            :hint="filtersLocked ? 'Locked - unlock to change' : 'Leave empty to show until today'"
-          >
-            <template v-slot:prepend>
-              <q-icon name="event" />
-            </template>
-          </q-input>
-
-          <!-- Status Filter -->
-          <q-select
-            v-model="statusFilter"
-            filled
-            :options="statusOptions"
-            label="Status"
-            class="col-12 col-md-3"
-            @update:model-value="loadRequests"
-            clearable
-          >
-            <template v-slot:prepend>
-              <q-icon name="filter_list" />
-            </template>
-          </q-select>
-
-          <!-- Lock Filter Button -->
-          <q-btn
-            :color="filtersLocked ? 'positive' : 'grey'"
-            :icon="filtersLocked ? 'lock' : 'lock_open'"
-            :label="filtersLocked ? 'Unlock Filters' : 'Lock Filters'"
-            @click="toggleFilterLock"
-            class="col-12 col-md-2"
-            outline
-          >
-            <q-tooltip>
-              {{ filtersLocked ? 'Filters are locked. Click to unlock and clear.' : 'Lock current filters (client and date) to persist across refreshes' }}
-            </q-tooltip>
-          </q-btn>
-          
-          <!-- Refresh Button -->
-          <q-btn
-            color="primary"
-            icon="refresh"
-            label="Refresh"
-            @click="loadRequests"
-            :loading="loadingRequests"
-            class="col-12 col-md-2"
-          />
-        </div>
-        
-        <!-- Locked Filter Indicator -->
-        <div v-if="filtersLocked" class="q-mt-md">
-          <q-banner class="bg-positive text-white">
-            <template v-slot:avatar>
-              <q-icon name="lock" />
-            </template>
-            <div class="text-weight-bold">Filters Locked</div>
-            <div class="text-caption">
-              <span v-if="lockedSearchTerm">Client: {{ lockedSearchTerm }}</span>
-              <span v-if="lockedSearchTerm && (lockedStartDate || lockedEndDate)"> • </span>
-              <span v-if="lockedStartDate || lockedEndDate">
-                Date Range: {{ formatLockedDate(lockedStartDate) || 'Beginning' }} - {{ formatLockedDate(lockedEndDate) || 'Today' }}
-              </span>
-            </div>
-            <template v-slot:action>
-              <q-btn flat label="Unlock" @click="unlockFilters" />
-            </template>
-          </q-banner>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Lab Requests Table -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Lab Requests</div>
-          <q-space />
-          <q-btn
-            v-if="selectedInvestigations.length > 0 && (authStore.userRole === 'Lab' || authStore.userRole === 'Lab Head' || authStore.userRole === 'Admin')"
-            color="positive"
-            icon="check"
-            :label="`Confirm Selected (${selectedInvestigations.length})`"
-            @click="bulkConfirmInvestigations"
-            :loading="bulkConfirming"
-            class="q-mr-md"
-          />
-          <q-badge color="primary" :label="`${requests.length} request(s)`" />
-        </div>
-        <q-table
-          :rows="requests"
-          :columns="requestColumns"
-          row-key="id"
-          flat
-          :loading="loadingRequests"
-          :pagination="{ rowsPerPage: 20 }"
-          v-model:selected="selectedInvestigations"
-          selection="multiple"
+  <q-page class="hms-page">
+    <HmsPageHeader title="Laboratory" subtitle="Confirm requests and enter lab results.">
+      <template #actions>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          :disabled="filtersLocked"
+          @click="setTodayRange"
         >
-          <template v-slot:top-row>
-            <q-tr>
-              <q-td auto-width>
-                <q-checkbox
-                  :model-value="allSelected"
-                  @update:model-value="selectAll"
-                  indeterminate-icon="remove"
-                />
-              </q-td>
-              <q-td colspan="100%">
-                <div class="text-caption text-grey-7">
-                  Select investigations to confirm multiple at once
-                </div>
-              </q-td>
-            </q-tr>
-          </template>
-          <template v-slot:body-cell-selection="props">
-            <q-td :props="props">
+          Today
+        </HmsButton>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          :loading="loadingRequests"
+          @click="loadRequests"
+        >
+          Refresh
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div class="diag-toolbar">
+      <div class="toolbar-meta">
+        <FlaskConical :size="15" />
+        <span>{{ requests.length }} request{{ requests.length === 1 ? '' : 's' }}</span>
+        <HmsBadge v-if="filtersLocked" tone="success">Locked</HmsBadge>
+      </div>
+      <div class="toolbar-controls">
+        <input
+          v-model="searchTerm"
+          type="search"
+          class="tool-input tool-input--search"
+          placeholder="Search card or name…"
+          :disabled="filtersLocked"
+          @keyup.enter="loadRequests"
+        />
+        <input
+          v-model="startDate"
+          type="date"
+          class="tool-input"
+          title="Start date"
+          :disabled="filtersLocked"
+          @change="loadRequests"
+        />
+        <input
+          v-model="endDate"
+          type="date"
+          class="tool-input"
+          title="End date"
+          :disabled="filtersLocked"
+          @change="loadRequests"
+        />
+        <select
+          v-model="statusFilter"
+          class="tool-input"
+          @change="loadRequests"
+        >
+          <option value="">All statuses</option>
+          <option
+            v-for="opt in statusOptions"
+            :key="opt.value"
+            :value="opt.value"
+          >
+            {{ opt.label }}
+          </option>
+        </select>
+        <HmsButton
+          :variant="filtersLocked ? 'healthcare' : 'secondary'"
+          size="sm"
+          @click="toggleFilterLock"
+        >
+          {{ filtersLocked ? 'Unlock' : 'Lock' }}
+        </HmsButton>
+      </div>
+    </div>
+
+    <div v-if="filtersLocked" class="diag-lock-banner">
+      <div>
+        <div class="lock-title">Filters locked</div>
+        <div class="lock-sub">
+          <span v-if="lockedSearchTerm">Client: {{ lockedSearchTerm }}</span>
+          <span v-if="lockedSearchTerm && (lockedStartDate || lockedEndDate)"> · </span>
+          <span v-if="lockedStartDate || lockedEndDate">
+            {{ formatLockedDate(lockedStartDate) || 'Beginning' }} – {{ formatLockedDate(lockedEndDate) || 'Today' }}
+          </span>
+        </div>
+      </div>
+      <HmsButton variant="ghost" size="sm" @click="unlockFilters">Unlock</HmsButton>
+    </div>
+
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Lab Requests</div>
+          <div class="panel-sub">{{ requests.length }} request{{ requests.length === 1 ? '' : 's' }}</div>
+        </div>
+        <div class="panel-actions">
+          <HmsButton
+            v-if="selectedInvestigations.length > 0 && (authStore.userRole === 'Lab' || authStore.userRole === 'Lab Head' || authStore.userRole === 'Admin')"
+            variant="primary"
+            size="sm"
+            :loading="bulkConfirming"
+            @click="bulkConfirmInvestigations"
+          >
+            Confirm selected ({{ selectedInvestigations.length }})
+          </HmsButton>
+        </div>
+      </div>
+      <q-table
+        class="diag-table"
+        :rows="requests"
+        :columns="requestColumns"
+        row-key="id"
+        flat
+        dense
+        :loading="loadingRequests"
+        :pagination="{ rowsPerPage: 20 }"
+        v-model:selected="selectedInvestigations"
+        selection="multiple"
+      >
+        <template v-slot:top-row>
+          <q-tr>
+            <q-td auto-width>
               <q-checkbox
-                v-if="props.row.status === 'requested'"
-                :model-value="props.selected"
-                @update:model-value="props.select"
+                :model-value="allSelected"
+                @update:model-value="selectAll"
+                indeterminate-icon="remove"
               />
             </q-td>
-          </template>
-          <template v-slot:body-cell-status="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getStatusColor(props.value)"
-                :label="props.value"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-source="props">
-            <q-td :props="props">
-              <q-badge
-                v-if="props.value === 'inpatient'"
-                color="purple"
-                label="IPD"
-              />
-              <q-badge
-                v-else
-                color="blue"
-                label="OPD"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-ward="props">
-            <q-td :props="props">
-              <span v-if="props.row.source === 'inpatient'">
-                {{ props.row.ward || 'N/A' }}
-                <span v-if="props.row.bed_number"> / Bed {{ props.row.bed_number }}</span>
-              </span>
-              <span v-else class="text-grey-6">-</span>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-encounter_date="props">
-            <q-td :props="props">
-              {{ formatDate(props.value || props.row.created_at) }}
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <div class="row q-gutter-xs">
-                <q-btn
-                  size="sm"
-                  color="info"
-                  icon="visibility"
-                  flat
-                  round
-                  @click="viewRemarks(props.row)"
-                >
-                  <q-tooltip>View Remarks/Notes</q-tooltip>
-                </q-btn>
-                <q-btn
-                  size="sm"
-                  color="purple"
-                  icon="description"
-                  flat
-                  round
-                  @click="viewDoctorNotes(props.row)"
-                >
-                  <q-tooltip>View Doctor Notes / Treatment Plan</q-tooltip>
-                </q-btn>
-                <q-btn
-                  v-if="props.row.status === 'requested'"
-                  size="sm"
-                  color="primary"
-                  label="Confirm"
-                  @click="confirmInvestigation(props.row)"
-                  :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null"
-                />
-                <q-btn
-                  v-if="props.row.status === 'confirmed'"
-                  size="sm"
-                  color="positive"
-                  label="Add Results"
-                  @click="navigateToResultPage(props.row)"
-                />
-                <q-btn
-                  v-if="props.row.status === 'completed'"
-                  size="sm"
-                  color="info"
-                  label="View Results"
-                  @click="navigateToResultPage(props.row)"
-                />
-                <q-btn
-                  v-if="props.row.status === 'confirmed' && authStore.userRole === 'Admin'"
-                  size="sm"
-                  color="orange"
-                  label="Revert to Requested"
-                  @click="revertToRequested(props.row)"
-                  :loading="revertingToRequestedId === props.row.id"
-                />
-                <q-btn
-                  v-if="props.row.status === 'completed' && (authStore.userRole === 'Admin' || authStore.userRole === 'Lab Head')"
-                  size="sm"
-                  color="warning"
-                  label="Revert to Confirmed"
-                  @click="revertInvestigationStatus(props.row)"
-                  :loading="revertingId === props.row.id"
-                />
+            <q-td colspan="100%">
+              <div class="select-hint">
+                Select investigations to confirm multiple at once
               </div>
             </q-td>
-          </template>
-        </q-table>
-        <div v-if="!loadingRequests && requests.length === 0" class="text-center text-grey-7 q-pa-md">
-          No lab requests found for the selected filters
-        </div>
-      </q-card-section>
-    </q-card>
+          </q-tr>
+        </template>
+        <template v-slot:body-cell-selection="props">
+          <q-td :props="props">
+            <q-checkbox
+              v-if="props.row.status === 'requested'"
+              :model-value="props.selected"
+              @update:model-value="props.select"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-patient_name="props">
+          <q-td :props="props">
+            <div class="patient-cell">
+              <div class="avatar">{{ patientInitials(props.row) }}</div>
+              <div>
+                <div class="name">{{ props.row.patient_name || '—' }}</div>
+                <div class="sub mono">{{ props.row.patient_card_number || '—' }}</div>
+              </div>
+            </div>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-patient_card_number="props">
+          <q-td :props="props">
+            <span class="mono">{{ props.value }}</span>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-status="props">
+          <q-td :props="props">
+            <HmsBadge :tone="statusTone(props.value)">{{ props.value }}</HmsBadge>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-source="props">
+          <q-td :props="props">
+            <HmsBadge :tone="props.value === 'inpatient' ? 'healthcare' : 'info'">
+              {{ props.value === 'inpatient' ? 'IPD' : 'OPD' }}
+            </HmsBadge>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-ward="props">
+          <q-td :props="props">
+            <span v-if="props.row.source === 'inpatient'">
+              {{ props.row.ward || 'N/A' }}
+              <span v-if="props.row.bed_number"> / Bed {{ props.row.bed_number }}</span>
+            </span>
+            <span v-else class="text-muted">-</span>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-encounter_date="props">
+          <q-td :props="props">
+            {{ formatDate(props.value || props.row.created_at) }}
+          </q-td>
+        </template>
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <div class="row-actions">
+              <q-btn
+                size="sm"
+                color="info"
+                icon="visibility"
+                flat
+                round
+                dense
+                @click="viewRemarks(props.row)"
+              >
+                <q-tooltip>View Remarks/Notes</q-tooltip>
+              </q-btn>
+              <q-btn
+                size="sm"
+                color="purple"
+                icon="description"
+                flat
+                round
+                dense
+                @click="viewDoctorNotes(props.row)"
+              >
+                <q-tooltip>View Doctor Notes / Treatment Plan</q-tooltip>
+              </q-btn>
+              <HmsButton
+                v-if="props.row.status === 'requested'"
+                variant="primary"
+                size="sm"
+                :loading="confirmingId === props.row.id"
+                :disabled="confirmingId !== null"
+                @click="confirmInvestigation(props.row)"
+              >
+                Confirm
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'confirmed'"
+                variant="healthcare"
+                size="sm"
+                @click="navigateToResultPage(props.row)"
+              >
+                Add Results
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'completed'"
+                variant="secondary"
+                size="sm"
+                @click="navigateToResultPage(props.row)"
+              >
+                View Results
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'confirmed' && authStore.userRole === 'Admin'"
+                variant="outline"
+                size="sm"
+                :loading="revertingToRequestedId === props.row.id"
+                @click="revertToRequested(props.row)"
+              >
+                Revert to Requested
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'completed' && (authStore.userRole === 'Admin' || authStore.userRole === 'Lab Head')"
+                variant="outline"
+                size="sm"
+                :loading="revertingId === props.row.id"
+                @click="revertInvestigationStatus(props.row)"
+              >
+                Revert to Confirmed
+              </HmsButton>
+            </div>
+          </q-td>
+        </template>
+      </q-table>
+      <div v-if="!loadingRequests && requests.length === 0" class="empty-hint">
+        No lab requests found for the selected filters
+      </div>
+    </section>
 
     <!-- Lab Results Table -->
-    <q-card v-if="selectedEncounterId && confirmedInvestigations.length > 0" class="q-mb-md">
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Lab Results</div>
-        <q-table
-          :rows="labResults"
-          :columns="labResultColumns"
-          row-key="investigation_id"
-          flat
-          :loading="loadingResults"
-        >
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <div class="row q-gutter-xs">
-                <q-btn
-                  size="sm"
-                  color="info"
-                  icon="visibility"
-                  flat
-                  round
-                  @click="viewRemarksForLabResult(props.row)"
-                >
-                  <q-tooltip>View Remarks/Notes</q-tooltip>
-                </q-btn>
-                <q-btn
-                  size="sm"
-                  color="primary"
-                  :label="props.row.id ? 'Edit' : 'Add Results'"
-                  @click="openResultDialog(props.row)"
-                  :disable="!canAddResults(props.row)"
-                >
-                  <q-tooltip v-if="!canAddResults(props.row)">
-                    Bill must be paid before adding results
-                  </q-tooltip>
-                  <q-tooltip v-else>
-                    {{ props.row.id ? 'Edit results' : 'Add results' }}
-                  </q-tooltip>
-                </q-btn>
-                <q-btn
-                  v-if="props.row.attachment_path"
-                  size="sm"
-                  color="secondary"
-                  icon="download"
-                  flat
-                  round
-                  @click="downloadAttachment(props.row)"
-                >
-                  <q-tooltip>Download Attachment</q-tooltip>
-                </q-btn>
-              </div>
-            </q-td>
-          </template>
-        </q-table>
-      </q-card-section>
-    </q-card>
+    <section
+      v-if="selectedEncounterId && confirmedInvestigations.length > 0"
+      class="diag-panel"
+    >
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Lab Results</div>
+          <div class="panel-sub">Encounter results entry</div>
+        </div>
+      </div>
+      <q-table
+        class="diag-table"
+        :rows="labResults"
+        :columns="labResultColumns"
+        row-key="investigation_id"
+        flat
+        dense
+        :loading="loadingResults"
+      >
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <div class="row-actions">
+              <q-btn
+                size="sm"
+                color="info"
+                icon="visibility"
+                flat
+                round
+                dense
+                @click="viewRemarksForLabResult(props.row)"
+              >
+                <q-tooltip>View Remarks/Notes</q-tooltip>
+              </q-btn>
+              <HmsButton
+                variant="primary"
+                size="sm"
+                :disabled="!canAddResults(props.row)"
+                @click="openResultDialog(props.row)"
+              >
+                {{ props.row.id ? 'Edit' : 'Add Results' }}
+              </HmsButton>
+              <q-btn
+                v-if="props.row.attachment_path"
+                size="sm"
+                color="secondary"
+                icon="download"
+                flat
+                round
+                dense
+                @click="downloadAttachment(props.row)"
+              >
+                <q-tooltip>Download Attachment</q-tooltip>
+              </q-btn>
+            </div>
+          </q-td>
+        </template>
+      </q-table>
+    </section>
 
     <!-- Lab Result Dialog -->
     <q-dialog v-model="showResultDialog">
@@ -479,9 +468,13 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import { FlaskConical } from 'lucide-vue-next';
 import { consultationAPI, patientsAPI, encountersAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { getApplicationTodaySync } from '../utils/dateUtils';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -494,7 +487,7 @@ const loadingRequests = ref(false);
 const searchTerm = ref('');
 const startDate = ref('');
 const endDate = ref('');
-const statusFilter = ref(null);
+const statusFilter = ref('');
 
 // Filter lock functionality
 const filtersLocked = ref(false);
@@ -588,6 +581,28 @@ const getStatusColor = (status) => {
     completed: 'green',
   };
   return colors[status] || 'grey';
+};
+
+const statusTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s === 'requested') return 'warning';
+  if (s === 'confirmed') return 'info';
+  if (s === 'completed') return 'success';
+  if (s === 'cancelled' || s === 'rejected') return 'critical';
+  return 'muted';
+};
+
+const patientInitials = (row) => {
+  const parts = String(row?.patient_name || '?').trim().split(/\s+/);
+  const a = (parts[0] || '?')[0] || '?';
+  const b = (parts[1] || '')[0] || '';
+  return `${a}${b}`.toUpperCase();
+};
+
+const setTodayRange = () => {
+  if (filtersLocked.value) return;
+  initializeDateRange();
+  loadRequests();
 };
 
 const confirmedInvestigations = computed(() => {
@@ -1815,3 +1830,173 @@ onMounted(() => {
   autoLoadFromRoute();
 });
 </script>
+
+<style scoped>
+.diag-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+}
+.toolbar-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+}
+.toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.tool-input {
+  height: 2.15rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-primary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  padding: 0 0.7rem;
+}
+.tool-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tool-input--search {
+  min-width: 11rem;
+}
+.diag-lock-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  background: var(--hms-success-muted);
+}
+.lock-title {
+  font-weight: 700;
+  color: var(--hms-success);
+  font-size: var(--hms-text-sm);
+}
+.lock-sub {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-secondary);
+}
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.panel-sub {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+.diag-table {
+  background: transparent;
+}
+.diag-table :deep(thead tr),
+.diag-table :deep(.q-table__top) {
+  background: transparent;
+}
+.diag-table :deep(th) {
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  font-weight: 700;
+}
+.select-hint {
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.empty-hint {
+  text-align: center;
+  color: var(--hms-text-muted);
+  padding: 1.25rem 1rem;
+  font-size: var(--hms-text-sm);
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: center;
+}
+.patient-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.avatar {
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(219, 39, 119, 0.14));
+  color: var(--hms-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 750;
+  flex-shrink: 0;
+}
+.name {
+  font-weight: 700;
+  color: var(--hms-text-primary);
+}
+.sub {
+  margin-top: 0.1rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.mono {
+  font-family: var(--hms-font-mono);
+  font-size: 0.75rem;
+}
+.text-muted {
+  color: var(--hms-text-muted);
+}
+@media (max-width: 720px) {
+  .toolbar-controls {
+    width: 100%;
+  }
+  .tool-input {
+    flex: 1;
+    min-width: 0;
+  }
+}
+</style>

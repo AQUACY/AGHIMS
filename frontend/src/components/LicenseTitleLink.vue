@@ -6,7 +6,7 @@
     no-caps
     icon="verified_user"
     label="License"
-    class="glass-button q-mr-sm"
+    class="header-ghost-btn"
     :to="{ name: 'LicenseSetup' }"
   >
     <q-tooltip>Installation license status and activation</q-tooltip>

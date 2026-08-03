@@ -17,5 +17,5 @@ import {Notify,Dialog,Loading} from 'quasar'
 
 
 
-export default { config: {"dark":"auto"},plugins: {Notify,Dialog,Loading} }
+export default { config: {"dark":true},plugins: {Notify,Dialog,Loading} }
 

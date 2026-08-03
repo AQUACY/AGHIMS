@@ -1,22 +1,42 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat dense icon="arrow_back" :to="backLink" />
-      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Oxygen</div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Oxygen">
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push(backLink)">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="visit && visit.client_name" class="claim-hero">
+      <div class="claim-hero__main">
+        <div class="claim-hero__avatar" aria-hidden="true">{{ visitInitials }}</div>
+        <div>
+          <h2 class="claim-hero__name">{{ visit.client_name }}</h2>
+          <div class="claim-hero__meta">
+            <span v-if="visit.external_card_number" class="mono">{{ visit.external_card_number }}</span>
+            <span v-if="visit.external_visit_number" class="mono">Visit {{ visit.external_visit_number }}</span>
+            <span v-if="visit.status">{{ visit.status }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <q-card v-if="visitClosed" class="glass-card q-mb-md" flat>
-      <q-card-section>
+
+    <section v-if="visitClosed" class="diag-panel">
+      <div class="panel-body">
         <q-banner class="bg-warning/20 text-warning rounded-borders">
           This visit is closed. You cannot add or remove oxygen services.
         </q-banner>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Added to bill -->
-    <q-card v-if="addedItems.length > 0" class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Added to client's bill</div>
+    <section v-if="addedItems.length > 0" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Added to client's bill</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-expansion-item
           v-for="group in addedGroups"
           :key="group.key"
@@ -72,14 +92,18 @@
             </q-item>
           </q-list>
         </q-expansion-item>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Search and add -->
-    <q-card class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add oxygen service</div>
-        <div class="text-caption glass-text-muted q-mb-sm">Type to search oxygen services, then select to add to this visit.</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Search and add oxygen service</div>
+          <div class="panel-sub">Type to search oxygen services, then select to add to this visit.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-input
           v-model="searchText"
           filled
@@ -102,22 +126,24 @@
               <q-item-label caption>{{ proc.g_drg_code }} · GH¢ {{ formatPrice(copaymentPrice(proc)) }} copay</q-item-label>
             </q-item-section>
             <q-item-section side>
-              <q-btn flat dense size="sm" label="Add" class="glass-button" @click.stop="selectSearchResult(proc)" />
+              <HmsButton variant="soft" size="sm" @click.stop="selectSearchResult(proc)">Add</HmsButton>
             </q-item-section>
           </q-item>
         </q-list>
         <div v-else-if="searchText.trim() && !loadingProcedures" class="text-caption text-grey-7">
           {{ filteredSearchOptions.length === 0 ? 'No matching oxygen services.' : '' }}
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Oxygen add dialog: start & end date/time (billed hourly) -->
     <q-dialog v-model="showOxygenDialog" persistent>
-      <q-card class="glass-card" style="min-width: 360px;">
-        <q-card-section>
-          <div class="text-h6 glass-text">Add oxygen — start & end time</div>
-          <div class="text-caption glass-text-muted q-mb-md">Oxygen is billed hourly. Enter when the service started and ended.</div>
+      <q-card class="diag-panel" style="min-width: 360px; margin: 0;">
+        <q-card-section class="panel-head" style="padding: 1rem 1.2rem;">
+          <div class="panel-title">Add oxygen — start & end time</div>
+          <div class="panel-sub">Oxygen is billed hourly. Enter when the service started and ended.</div>
+        </q-card-section>
+        <q-card-section class="panel-body">
           <template v-if="selectedProcForDialog">
             <div class="text-subtitle2 q-mb-sm">{{ selectedProcForDialog.service_name }}</div>
             <q-input
@@ -142,27 +168,34 @@
             </div>
           </template>
         </q-card-section>
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" color="grey" v-close-popup />
-          <q-btn unelevated label="Add to bill" color="primary" :disable="!canSubmitOxygenDialog" @click="submitOxygenDialog" />
+        <q-card-actions align="right" class="q-pa-md">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="primary" size="sm" :disabled="!canSubmitOxygenDialog" @click="submitOxygenDialog">Add to bill</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
 
     <!-- Regularly requested (card list) -->
-    <div class="text-subtitle1 text-weight-medium glass-text q-mb-md q-ma-md">Regularly requested (cards)</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Regularly requested</div>
+          <div class="panel-sub">Tap a card to add it to this visit.</div>
+        </div>
+      </div>
+      <div class="panel-body">
     <div v-if="loadingProcedures || loadingActive" class="row q-col-gutter-md ">
-      <q-card v-for="i in 4" :key="i" class="col-12 col-sm-6 col-md-4 glass-card q-ma-md" flat>
+      <q-card v-for="i in 4" :key="i" class="col-12 col-sm-6 col-md-4 procedure-card" flat>
         <q-card-section class="text-center">
           <q-skeleton type="text" width="80%" class="q-mx-auto" />
           <q-skeleton type="text" width="50%" class="q-mx-auto q-mt-sm" />
         </q-card-section>
       </q-card>
     </div>
-    <div v-else-if="procedures.length === 0" class="text-body2 glass-text-muted">
+    <div v-else-if="procedures.length === 0" class="text-body2">
       No oxygen services in additional services. Add them under Consultation → Additional services.
     </div>
-    <div v-else-if="activeProcedures.length === 0" class="text-body2 glass-text-muted">
+    <div v-else-if="activeProcedures.length === 0" class="text-body2">
       No oxygen services are on the card list yet. Nurse/Doctor/PA can add regularly requested ones below. Use "Search and add" above to add any oxygen service to the visit.
     </div>
     <div v-else class="row q-col-gutter-md q-ma-md">
@@ -177,28 +210,33 @@
       >
         <q-card-section class="text-center q-pa-md">
           <q-icon name="air" size="32px" class="text-primary" />
-          <div class="text-subtitle2 q-mt-sm text-weight-medium glass-text">{{ proc.service_name }}</div>
+          <div class="text-subtitle2 q-mt-sm text-weight-medium">{{ proc.service_name }}</div>
           <div class="text-caption text-grey-7">{{ proc.g_drg_code }}</div>
           <div class="text-caption q-mt-xs">Copayment: GH¢ {{ formatPrice(copaymentPrice(proc)) }}</div>
-          <q-btn
+          <HmsButton
             v-if="!visitClosed"
-            flat
-            dense
+            variant="soft"
             size="sm"
-            label="Add to bill"
-            class="glass-button q-mt-sm"
+            class="q-mt-sm"
             @click.stop="addProcedure(proc)"
-          />
+            >Add to bill</HmsButton>
           <q-badge v-else-if="addedCount(proc) > 0" color="positive" :label="addedCount(proc) > 1 ? `Added (${addedCount(proc)})` : 'Added'" class="q-mt-sm" />
         </q-card-section>
       </q-card>
     </div>
 
+      </div>
+    </section>
+
     <!-- Nurse/Doctor/PA: manage card list -->
-    <q-card v-if="canManageActive" class="glass-card q-mt-xl" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Manage card list (Nurse / Doctor / PA)</div>
-        <div class="text-caption glass-text-muted q-mb-md">Oxygen services on the card list appear above. Add or remove them here.</div>
+    <section v-if="canManageActive" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Manage card list (Nurse / Doctor / PA)</div>
+          <div class="panel-sub">Oxygen services on the card list appear above. Add or remove them here.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md q-mb-md">
           <div class="col-12 col-md-6">
             <q-select
@@ -237,8 +275,8 @@
           </q-chip>
         </div>
         <div v-else class="text-caption text-grey-7">No oxygen services on the card list yet.</div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
   </q-page>
 </template>
 
@@ -249,6 +287,8 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI, consultationAPI } from '../../services/api';
 import { isCompanionBillItemPaid, companionBillPaidLabel } from '../../utils/companionBillItemPaid.js';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
 
 const route = useRoute();
 const $q = useQuasar();
@@ -258,6 +298,15 @@ const backLink = computed(() => ({ name: 'CompanionVisitDetail', params: { id: v
 
 const visit = ref(null);
 const visitClosed = computed(() => visit.value?.status === 'closed');
+
+const visitInitials = computed(() => {
+  const name = (visit.value?.client_name || '').trim();
+  if (!name) return '?';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+});
+
 const procedures = ref([]);
 const addedItems = ref([]);
 const activeCodes = ref([]);

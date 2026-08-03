@@ -1,65 +1,52 @@
 <template>
   <div class="app-background" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'"></div>
   <q-layout view="hHh lpR fFf" class="layout-glass">
-    <q-header elevated class="glass-header text-white">
-      <q-toolbar>
+    <q-header class="glass-header hms-app-header">
+      <q-toolbar class="hms-toolbar">
         <q-btn
           flat
           dense
           round
           icon="menu"
-          class="q-mr-sm"
+          class="header-icon-btn"
           @click="drawerOpen = !drawerOpen"
         >
           <q-tooltip>{{ drawerOpen ? 'Hide Sidebar' : 'Show Sidebar' }}</q-tooltip>
         </q-btn>
-        <q-toolbar-title class="text-weight-bold row items-center no-wrap q-gutter-sm">
-          <img src="../../public/logos/ghana-health-service-logo.png" :alt="facilityStore.displayName" width="32px" height="32px" />
-          <span class="ellipsis">{{ facilityStore.displayName }} — Companion</span>
-          <q-badge
-            v-if="facilityStore.facilityCodeDisplay"
-            color="amber-8"
-            text-color="black"
-            class="text-caption"
-          >
-            {{ facilityStore.facilityCodeDisplay }}
-          </q-badge>
-        </q-toolbar-title>
-        <q-badge color="deep-purple-8" text-color="white" class="q-mr-md">
-          Current Mode: Companion
-        </q-badge>
+        <div class="header-brand">
+          <img
+            src="../../public/logos/ghana-health-service-logo.png"
+            :alt="facilityStore.displayName"
+            class="header-logo"
+            width="28"
+            height="28"
+          />
+          <span class="header-title ellipsis">{{ facilityStore.displayName }}</span>
+        </div>
+        <span class="mode-chip">Companion</span>
         <LicenseTitleLink />
         <q-space />
-        <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
-          <q-icon name="schedule" size="sm" />
-          <span class="text-caption text-weight-medium" :class="sessionTimeLeftMinutes < 5 ? 'text-negative' : 'text-white'">
+        <div v-if="sessionTimeLeft" class="q-mr-sm row items-center q-gutter-xs">
+          <q-icon name="schedule" size="sm" class="text-secondary" />
+          <span
+            class="text-caption text-weight-medium"
+            :class="sessionTimeLeftMinutes < 5 ? 'text-negative' : 'text-secondary'"
+          >
             {{ formatTimeLeft(sessionTimeLeft) }}
           </span>
         </div>
-        <q-btn
-          flat
-          icon="swap_horiz"
-          label="Switch Mode"
-          class="q-mr-sm glass-button"
-          @click="switchMode"
-        >
-          <q-tooltip>Switch application mode</q-tooltip>
+        <q-btn flat dense no-caps class="header-ghost-btn gt-sm" @click="switchMode">
+          Switch mode
+        </q-btn>
+        <q-btn flat dense no-caps class="header-ghost-btn gt-md" @click="goToProfile">
+          {{ authStore.userName }}
         </q-btn>
         <q-btn
           flat
-          :label="authStore.userName"
-          class="q-mr-md text-weight-medium glass-button"
-          @click="goToProfile"
-          style="text-transform: none;"
-        >
-          <q-tooltip>Click to view profile and change password</q-tooltip>
-        </q-btn>
-        <q-btn
-          flat
-          round
           dense
+          round
           icon="notifications"
-          class="q-mr-sm glass-button"
+          class="header-icon-btn"
           @click="showNotifications = true"
         >
           <q-badge
@@ -73,21 +60,17 @@
         </q-btn>
         <q-btn
           flat
-          round
           dense
+          round
           :icon="themeStore.isDark ? 'light_mode' : 'dark_mode'"
-          class="q-mr-sm glass-button"
+          class="header-icon-btn"
           @click="themeStore.toggleTheme()"
         >
-          <q-tooltip>Toggle {{ themeStore.isDark ? 'Light' : 'Dark' }} Mode</q-tooltip>
+          <q-tooltip>Toggle {{ themeStore.isDark ? 'Light' : 'Dark' }} mode</q-tooltip>
         </q-btn>
-        <q-btn
-          flat
-          icon="logout"
-          label="Logout"
-          class="glass-button"
-          @click="handleLogout"
-        />
+        <q-btn flat dense no-caps class="header-ghost-btn header-logout" @click="handleLogout">
+          Logout
+        </q-btn>
       </q-toolbar>
     </q-header>
 
@@ -477,42 +460,43 @@ watch(() => authStore.token, (token) => {
   position: relative;
 }
 
+.mode-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-size: var(--hms-text-xs);
+  font-weight: 650;
+  color: var(--hms-accent);
+  background: var(--hms-accent-muted);
+  border: 1px solid var(--hms-border);
+  white-space: nowrap;
+}
+
 .glass-nav-list {
-  padding: 8px;
+  padding: 0.65rem;
 }
 
 .glass-nav-item {
-  margin: 4px 0;
-  border-radius: 12px;
-  transition: all 0.3s ease;
-  background: rgba(255, 255, 255, 0.05);
+  margin: 0.2rem 0;
+  border-radius: var(--hms-radius-lg);
+  transition:
+    background var(--hms-duration-fast) var(--hms-ease-out),
+    transform var(--hms-duration-fast) var(--hms-ease-out);
+  background: transparent;
+  color: var(--hms-text-primary);
 }
 
 .glass-nav-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateX(4px);
+  background: var(--hms-surface-hover);
+  transform: none;
 }
 
 .glass-nav-active {
-  background: rgba(46, 139, 87, 0.3) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 215, 0, 0.5);
-  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.3);
-}
-
-.body--dark .glass-nav-item {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.body--dark .glass-nav-item:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.body--dark .glass-nav-active {
-  background: rgba(46, 139, 87, 0.25) !important;
-  border: 1px solid rgba(255, 215, 0, 0.4);
-  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.4);
+  background: var(--hms-accent-muted) !important;
+  border: 1px solid transparent;
+  box-shadow: none;
+  color: var(--hms-accent);
 }
 
 .q-drawer {

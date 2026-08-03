@@ -1,53 +1,54 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h5 q-mb-md text-weight-bold glass-text">
-      Create service (Records)
-    </div>
-    <div class="text-body2 glass-text-muted q-mb-lg">
-      Enter the card number and visit number from the government system. The client has no generated ID in our system — everything comes from the external application.
-    </div>
-    <q-card class="glass-card" flat style="max-width: 520px;">
-      <q-card-section>
-        <q-form @submit="onSubmit" class="q-gutter-md">
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Create service"
+      subtitle="Enter the card number and visit number from the government system. Identity is external — no generated client ID in AGHIMS."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push({ name: 'CompanionVisitList' })">
+          Back
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <section class="diag-panel create-form-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Service details</div>
+          <div class="panel-sub">Card + visit number uniquely identify the visit.</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <q-form @submit="onSubmit" class="q-gutter-md create-form">
           <q-input
             v-model="form.external_card_number"
             filled
             label="Card number (from government system)"
             :rules="[(v) => !!((v || '').trim()) || 'Required']"
-            class="glass-text"
           />
           <q-input
             v-model="form.external_visit_number"
             filled
             label="Visit number (from government system)"
             :rules="[(v) => !!((v || '').trim()) || 'Required']"
-            class="glass-text"
           />
           <q-input
             v-model="form.client_name"
             filled
             label="Client name (optional)"
             hint="For display only; identity is by card + visit number"
-            class="glass-text"
           />
           <div class="row q-gutter-sm q-mt-md">
-            <q-btn
-              unelevated
-              type="submit"
-              label="Create service"
-              class="glass-button"
-              :loading="loading"
-            />
-            <q-btn
-              flat
-              label="Cancel"
-              class="glass-button"
-              :to="{ name: 'CompanionVisitList' }"
-            />
+            <HmsButton variant="primary" type="submit" :loading="loading">
+              Create service
+            </HmsButton>
+            <HmsButton variant="ghost" @click="$router.push({ name: 'CompanionVisitList' })">
+              Cancel
+            </HmsButton>
           </div>
         </q-form>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
   </q-page>
 </template>
 
@@ -56,6 +57,8 @@ import { ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { companionVisitsAPI } from '../../services/api';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -157,3 +160,13 @@ const onSubmit = async () => {
   }
 };
 </script>
+
+<style scoped>
+.create-form-panel {
+  max-width: 560px;
+}
+
+.create-form {
+  max-width: 100%;
+}
+</style>

@@ -1,28 +1,62 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat dense icon="arrow_back" :to="{ name: 'CompanionVisitDetail', params: { id } }" />
-      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Inventory debit</div>
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Inventory debit"
+      subtitle="Build a list of products used on this companion visit, then save."
+    >
+      <template #actions>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          @click="$router.push({ name: 'CompanionVisitDetail', params: { id } })"
+        >
+          Back
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <q-banner v-if="visit && visit.status !== 'open'" class="bg-warning/20 text-warning q-mb-md rounded-borders">
+    <q-banner
+      v-if="visit && visit.status !== 'open'"
+      class="soft-banner soft-banner--warn q-mb-md"
+      rounded
+    >
+      <template #avatar>
+        <q-icon name="lock" color="warning" />
+      </template>
       This visit is closed — you cannot record new debits or change saved lines.
     </q-banner>
 
-    <q-card v-if="visit" class="glass-card q-mb-md" flat>
-      <q-card-section class="text-body2 glass-text-muted">
-        Card <strong class="glass-text">{{ visit.external_card_number }}</strong> · Visit
-        <strong class="glass-text">{{ visit.external_visit_number }}</strong>
-        <span v-if="visit.client_name"> · {{ visit.client_name }}</span>
-      </q-card-section>
-    </q-card>
-
-    <q-card v-if="canRecord && visit && visit.status === 'open'" class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Build a list, then save</div>
-        <div class="text-caption text-grey-7 q-mb-md">
-          Add one or more lines below. Tick “On client bill” for lines that should appear on the copayment bill — no separate step.
+    <div v-if="visit" class="claim-hero">
+      <div class="claim-hero__main">
+        <div class="claim-hero__avatar" aria-hidden="true">{{ visitInitials }}</div>
+        <div>
+          <h2 class="claim-hero__name">{{ visit.client_name || 'Companion client' }}</h2>
+          <div class="claim-hero__meta">
+            <span class="mono">{{ visit.external_card_number }}</span>
+            <span>Visit {{ visit.external_visit_number }}</span>
+            <span v-if="debits.length">{{ debits.length }} debit{{ debits.length === 1 ? '' : 's' }}</span>
+          </div>
         </div>
+      </div>
+      <div class="claim-hero__aside">
+        <div class="claim-hero__badges">
+          <HmsBadge :tone="visit.status === 'open' ? 'success' : 'muted'">
+            {{ visit.status }}
+          </HmsBadge>
+        </div>
+      </div>
+    </div>
+
+    <section v-if="canRecord && visit && visit.status === 'open'" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Build a list, then save</div>
+          <div class="panel-sub">
+            Add one or more lines below. Tick “On client bill” for lines that should appear on the copayment bill — no separate step.
+          </div>
+        </div>
+      </div>
+      <div class="panel-body">
 
         <div class="row q-col-gutter-md q-mb-md">
           <div class="col-12 col-md-6">
@@ -57,7 +91,7 @@
         </q-banner>
 
         <div v-if="form.requesting_department" class="q-mb-md">
-          <div class="text-body2 text-weight-medium glass-text q-mb-sm">Items in this department</div>
+          <div class="text-body2 text-weight-medium q-mb-sm">Items in this department</div>
           <q-input
             v-model="stockFilter"
             dense
@@ -84,7 +118,7 @@
             @update:selected="onStockSelectionChange"
             :rows-per-page-options="[10, 15, 25]"
             :pagination="{ rowsPerPage: 10 }"
-            class="stock-table"
+            class="stock-table diag-table"
           >
             <template v-slot:body-cell-quantity="props">
               <q-td :props="props">
@@ -150,7 +184,7 @@
         </q-form>
 
         <div v-if="pendingLines.length > 0" class="q-mb-md">
-          <div class="text-subtitle2 glass-text q-mb-sm">Ready to save ({{ pendingLines.length }})</div>
+          <div class="text-subtitle2 q-mb-sm">Ready to save ({{ pendingLines.length }})</div>
           <q-table
             flat
             bordered
@@ -160,6 +194,7 @@
             row-key="_localId"
             :pagination="{ rowsPerPage: 15 }"
             :rows-per-page-options="[10, 15, 25]"
+            class="diag-table"
           >
             <template v-slot:body-cell-quantity="props">
               <q-td :props="props">
@@ -203,20 +238,26 @@
             Check the department name matches ward stock exactly. Add stock via a pharmacy requisition if needed.
           </div>
         </q-expansion-item>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Recorded debits for this visit</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Recorded debits for this visit</div>
+          <div class="panel-sub">{{ debits.length }} line{{ debits.length === 1 ? '' : 's' }} on file</div>
+        </div>
+      </div>
+      <div class="table-wrap">
         <q-table
           :rows="debits"
           :columns="columns"
           row-key="id"
           flat
-          bordered
+          dense
           :loading="loading"
           :rows-per-page-options="[10, 25, 50]"
+          class="diag-table"
         >
           <template v-slot:body-cell-charged="props">
             <q-td :props="props">
@@ -270,14 +311,19 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <q-dialog v-model="editDebitOpen">
-      <q-card class="glass-card" style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Edit debit</div>
-          <div class="text-caption text-grey-7">{{ editDebitRow?.product_name }}</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-head-row">
+            <div>
+              <div class="dialog-title">Edit debit</div>
+              <div class="dialog-sub">{{ editDebitRow?.product_name }}</div>
+            </div>
+            <q-btn icon="close" flat round dense v-close-popup />
+          </div>
         </q-card-section>
         <q-card-section class="q-gutter-md">
           <q-input v-model.number="editForm.quantity" type="number" step="any" filled label="Quantity" min="0.01" />
@@ -299,6 +345,9 @@ import { useQuasar } from 'quasar';
 import { companionVisitsAPI, wardsAPI } from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { useAppModeStore } from '../../stores/appMode';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
+import HmsBadge from '../../components/ui/HmsBadge.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -342,6 +391,14 @@ const canRecord = computed(() => authStore.canAccess(['Nurse', 'Doctor', 'PA', '
 const canCharge = computed(() =>
   authStore.canAccess(['Billing', 'Nurse', 'Doctor', 'PA', 'Pharmacy', 'Pharmacy Head', 'Admin'])
 );
+
+const visitInitials = computed(() => {
+  const name = (visit.value?.client_name || '').trim();
+  if (!name) return 'CV';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+});
 
 const selectedOutOfStock = computed(() => {
   if (pickedAvailability.value == null) return false;
@@ -721,15 +778,37 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
+.soft-banner--warn {
+  border-color: color-mix(in srgb, var(--hms-warning, #d97706) 28%, var(--hms-border));
+  background: color-mix(in srgb, var(--hms-warning, #d97706) 10%, var(--hms-surface));
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.companion-dialog-card {
+  border-radius: 1.25rem;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  box-shadow: var(--hms-shadow-lg);
+  overflow: hidden;
 }
-.body--light .glass-text {
-  color: rgba(0, 0, 0, 0.87) !important;
+.companion-dialog-head {
+  border-bottom: 1px solid var(--hms-border);
+  background: linear-gradient(180deg, var(--hms-surface) 0%, transparent 100%);
+}
+.dialog-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.dialog-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+}
+.dialog-sub {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
 }
 .stock-table :deep(.q-table__top) {
   padding: 0;

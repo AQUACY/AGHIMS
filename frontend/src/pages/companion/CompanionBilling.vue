@@ -1,15 +1,27 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Billing</div>
-    <div class="text-body2 glass-text-muted q-mb-lg">Search by card or visit number, select a service (visit), then view the bill and record payment.</div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Companion billing"
+      subtitle="Search by card or visit number, select a service (visit), then view the bill and record payment."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.push('/companion')">
+          Back
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
 
     <!-- Create visit from GHIMS government export -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-sm glass-text">Create service from GHIMS export</div>
-        <div class="text-body2 glass-text-muted q-mb-md">
-          Upload an OPD billing export or an in-patient invoice from GHIMS. The system creates the companion visit, adds lines that match the co-payment price list, and saves the government snapshot so “check vs government OPD” or “IPD invoice” works when you open the bill again.
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Create service from GHIMS export</div>
+          <div class="panel-sub">
+            Upload an OPD billing export or an in-patient invoice from GHIMS. The system creates the companion visit, adds lines that match the co-payment price list, and saves the government snapshot so “check vs government OPD” or “IPD invoice” works when you open the bill again.
+          </div>
         </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <q-file
             v-model="createFromExportFile"
@@ -30,13 +42,18 @@
             @click="submitCreateFromExport"
           />
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Search visits -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Search service (visit)</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Search service (visit)</div>
+          <div class="panel-sub">Filter by card number, visit number, or status.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <q-input
             v-model="filters.card_number"
@@ -76,13 +93,18 @@
             @click="loadVisits"
           />
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Visit selection -->
-    <q-card v-if="visits.length > 0" class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-subtitle1 q-mb-sm">Select a visit to view and bill</div>
+    <section v-if="visits.length > 0" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Select a visit</div>
+          <div class="panel-sub">{{ visits.length }} result{{ visits.length === 1 ? '' : 's' }}</div>
+        </div>
+      </div>
+      <div class="table-wrap">
         <q-table
           :rows="visits"
           :columns="visitColumns"
@@ -90,7 +112,7 @@
           flat
           dense
           :rows-per-page-options="[5, 10, 25]"
-          class="glass-table"
+          class="diag-table"
         >
           <template v-slot:body-cell-created_at="props">
             <q-td :props="props">{{ formatDate(props.row.created_at) }}</q-td>
@@ -109,44 +131,52 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
-    <div v-else-if="searched && !loadingVisits" class="text-grey-7 q-mb-md">No visits found. Try different filters or create a service first.</div>
+      </div>
+    </section>
+    <div v-else-if="searched && !loadingVisits" class="empty-hint q-mb-md">No visits found. Try different filters or create a service first.</div>
 
     <!-- Selected visit & bill -->
     <template v-if="selectedVisit">
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div>
-              <div class="text-h6 glass-text">Client / Visit</div>
-              <div class="text-body2">
-                Card: {{ selectedVisit.external_card_number }} · Visit: {{ selectedVisit.external_visit_number }}
-                <span v-if="selectedVisit.client_name"> · {{ selectedVisit.client_name }}</span>
-              </div>
-              <div class="q-mt-xs">
-                <q-badge :color="selectedVisit.status === 'closed' ? 'grey' : 'primary'">
-                  {{ selectedVisit.status }}
-                </q-badge>
-                <q-badge v-if="selectedVisit.undertaking_status === 'pending'" color="orange" class="q-ml-sm">
-                  Undertaking pending
-                </q-badge>
-                <q-badge v-if="selectedVisit.undertaking_status === 'approved'" color="teal" class="q-ml-sm">
-                  Undertaking approved
-                </q-badge>
-                <span v-if="(selectedVisit.undertaking_status === 'pending' || selectedVisit.undertaking_status === 'approved') && selectedVisit.undertaking_deposit_amount != null" class="q-ml-sm text-body2">
-                  Part payment: GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount) }}
-                </span>
-                <div v-if="selectedVisit.undertaking_status === 'approved' && selectedVisit.undertaking_approved_by_name" class="q-mt-xs text-body2 text-grey-8">
-                  Approved by <strong>{{ selectedVisit.undertaking_approved_by_name }}</strong> on {{ formatDate(selectedVisit.undertaking_approved_at) }}
-                </div>
-                <div v-if="selectedVisit.undertaking_unapproved_by_name" class="q-mt-xs text-body2 text-grey-8">
-                  Unapproved by <strong>{{ selectedVisit.undertaking_unapproved_by_name }}</strong> on {{ formatDate(selectedVisit.undertaking_unapproved_at) }}
-                </div>
-              </div>
+      <div class="claim-hero">
+        <div class="claim-hero__main">
+          <div class="claim-hero__avatar" aria-hidden="true">{{ visitInitials }}</div>
+          <div>
+            <h2 class="claim-hero__name">{{ selectedVisit.client_name || 'Companion client' }}</h2>
+            <div class="claim-hero__meta">
+              <span class="mono">{{ selectedVisit.external_card_number }}</span>
+              <span>Visit {{ selectedVisit.external_visit_number }}</span>
+              <span
+                v-if="billItems.length > 0"
+                class="mono"
+              >Balance GH¢ {{ formatPrice(pendingBalance) }}</span>
             </div>
-            <q-space />
-            <div class="row q-gutter-sm no-wrap">
+            <div class="claim-hero__badges q-mt-sm">
+              <HmsBadge :tone="selectedVisit.status === 'closed' ? 'muted' : 'info'">
+                {{ selectedVisit.status }}
+              </HmsBadge>
+              <HmsBadge v-if="selectedVisit.undertaking_status === 'pending'" tone="warning">
+                Undertaking pending
+              </HmsBadge>
+              <HmsBadge v-if="selectedVisit.undertaking_status === 'approved'" tone="success">
+                Undertaking approved
+              </HmsBadge>
+              <span
+                v-if="(selectedVisit.undertaking_status === 'pending' || selectedVisit.undertaking_status === 'approved') && selectedVisit.undertaking_deposit_amount != null"
+                class="text-caption text-grey-8"
+              >
+                Part payment: GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount) }}
+              </span>
+            </div>
+            <div v-if="selectedVisit.undertaking_status === 'approved' && selectedVisit.undertaking_approved_by_name" class="q-mt-xs text-caption text-grey-8">
+              Approved by <strong>{{ selectedVisit.undertaking_approved_by_name }}</strong> on {{ formatDate(selectedVisit.undertaking_approved_at) }}
+            </div>
+            <div v-if="selectedVisit.undertaking_unapproved_by_name" class="q-mt-xs text-caption text-grey-8">
+              Unapproved by <strong>{{ selectedVisit.undertaking_unapproved_by_name }}</strong> on {{ formatDate(selectedVisit.undertaking_unapproved_at) }}
+            </div>
+          </div>
+        </div>
+        <div class="claim-hero__aside hero-actions-wrap">
+          <div class="row q-gutter-sm no-wrap flex-wrap">
               <q-btn
                 v-if="canCloseVisit"
                 unelevated
@@ -223,24 +253,27 @@
               >
                 <q-tooltip>Remove this service and all bill lines and saved government imports (cannot undo).</q-tooltip>
               </q-btn>
-            </div>
-            <q-btn flat dense icon="close" label="Clear" @click="clearSelection" />
+              <q-btn flat dense icon="close" label="Clear" @click="clearSelection" />
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </div>
 
-      <q-card v-if="selectedVisit && canMarkPaid" class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="text-subtitle1 text-weight-bold glass-text">Admission deposit</div>
-          <div class="text-caption text-grey-7 q-mt-xs">
-            Amount taken on admission or at the start of the visit (with a physical receipt). When you record payment for services, you can draw from this pool:
-            each line receives a synthetic receipt like
-            <span v-if="admissionDepositReceiptBase" class="text-weight-medium text-grey-9">{{ admissionDepositReceiptBase }}-1</span>
-            <span v-else class="text-weight-medium text-grey-9">(receipt)-1</span>, <span class="text-weight-medium text-grey-9">-2</span>, …
-            If services exceed the pool, turn off “Pay from admission deposit” and record the usual receipt for the difference.
-            If the bill is lower than the deposit, the unused balance can be refunded at discharge.
+      <section v-if="selectedVisit && canMarkPaid" class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Admission deposit</div>
+            <div class="panel-sub">
+              Amount taken on admission or at the start of the visit (with a physical receipt). When you record payment for services, you can draw from this pool:
+              each line receives a synthetic receipt like
+              <span v-if="admissionDepositReceiptBase" class="text-weight-medium">{{ admissionDepositReceiptBase }}-1</span>
+              <span v-else class="text-weight-medium">(receipt)-1</span>, <span class="text-weight-medium">-2</span>, …
+              If services exceed the pool, turn off “Pay from admission deposit” and record the usual receipt for the difference.
+              If the bill is lower than the deposit, the unused balance can be refunded at discharge.
+            </div>
           </div>
-          <div v-if="selectedVisit.status === 'open'" class="row q-mt-md items-center q-col-gutter-md flex-wrap">
+        </div>
+        <div class="panel-body">
+          <div v-if="selectedVisit.status === 'open'" class="row items-center q-col-gutter-md flex-wrap">
             <div class="col-auto text-body2">
               On file: <strong>GH¢ {{ formatPrice(admissionDepositCap) }}</strong>
               <span v-if="admissionDepositReceiptBase" class="text-grey-7"> · Bank/cash receipt <strong>{{ admissionDepositReceiptBase }}</strong></span>
@@ -256,35 +289,33 @@
               @click="openAdmissionDepositDialog"
             />
           </div>
-          <div v-else class="text-body2 text-grey-7 q-mt-sm">
+          <div v-else class="text-body2 text-grey-7">
             Deposit was GH¢ {{ formatPrice(admissionDepositCap) }}<span v-if="admissionDepositReceiptBase"> ({{ admissionDepositReceiptBase }})</span>.
           </div>
           <q-banner
             v-if="admissionDepositRefundHint"
             rounded
-            class="bg-teal-1 text-dark q-mt-sm"
+            class="soft-banner q-mt-sm"
             dense
           >
             {{ admissionDepositRefundHint }}
           </q-banner>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div>
-              <div class="text-h6 glass-text">Bill items</div>
-              <div class="text-caption text-grey-7">Sections: Drugs, Investigations, Scans, X-rays, Surgeries (day &amp; major), Dressing / Treatment room, Oxygen, Inpatient.</div>
-            </div>
-            <q-space />
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Bill items</div>
+            <div class="panel-sub">Sections: Drugs, Investigations, Scans, X-rays, Surgeries (day &amp; major), Dressing / Treatment room, Oxygen, Inpatient.</div>
+          </div>
+          <div class="panel-actions row q-gutter-sm flex-wrap items-center">
             <q-btn
               v-if="selectedVisit"
               flat
               color="primary"
               icon="fact_check"
               label="Check vs Government OPD Excel"
-              class="q-mr-sm"
               @click="showReconcileDialog = true"
             />
             <q-btn
@@ -293,7 +324,6 @@
               color="primary"
               icon="description"
               label="Check vs Government IPD invoice"
-              class="q-mr-sm"
               @click="showIpdReconcileDialog = true"
             />
             <q-btn
@@ -302,7 +332,7 @@
               color="primary"
               icon="add"
               label="Add inpatient fee"
-              class="glass-button q-mr-md"
+              class="glass-button"
               @click="openAddInpatientFeeDialog"
             />
             <q-btn
@@ -311,34 +341,33 @@
               color="primary"
               icon="print"
               label="Print paid receipt (all sections)"
-              class="q-mr-sm"
               @click="printPaidReceiptForAllSections"
             />
-            <div v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'" class="text-caption text-grey-7">
-              Payments are grouped by category (one receipt per category by default). You can still override receipts per item.
-              Use an admission deposit from the card above to pay lines without a separate cash receipt until the pool runs out.
-            </div>
-            <div v-if="selectedVisit && selectedVisit.status === 'closed' && !canAdmin" class="text-caption text-grey-7">
-              This visit is closed. Only Admin can reopen or edit.
-            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'" class="text-caption text-grey-7 q-mb-md">
+            Payments are grouped by category (one receipt per category by default). You can still override receipts per item.
+            Use an admission deposit from the card above to pay lines without a separate cash receipt until the pool runs out.
+          </div>
+          <div v-if="selectedVisit && selectedVisit.status === 'closed' && !canAdmin" class="text-caption text-grey-7 q-mb-md">
+            This visit is closed. Only Admin can reopen or edit.
           </div>
           <q-linear-progress v-if="loadingItems" indeterminate class="q-mb-md" />
           <div v-else-if="billItems.length > 0">
-            <q-card
+            <section
               v-for="group in groupedBillItems"
               :key="group.key"
-              class="q-mb-md glass-card"
-              flat
+              class="diag-panel bill-group-panel"
             >
-              <q-card-section class="q-pb-sm">
-                <div class="row items-center">
-                  <div>
-                    <div class="text-subtitle1 text-weight-bold">{{ group.title }}</div>
-                    <div class="text-caption text-grey-7">
-                      Total: GH¢ {{ formatPrice(group.total) }} · Unpaid: GH¢ {{ formatPrice(group.unpaidTotal) }}
-                    </div>
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">{{ group.title }}</div>
+                  <div class="panel-sub">
+                    Total: GH¢ {{ formatPrice(group.total) }} · Unpaid: GH¢ {{ formatPrice(group.unpaidTotal) }}
                   </div>
-                  <q-space />
+                </div>
+                <div class="panel-actions row q-gutter-sm">
                   <q-btn
                     v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open'"
                     unelevated
@@ -355,19 +384,18 @@
                     color="primary"
                     icon="print"
                     label="Print paid"
-                    class="q-ml-sm"
                     @click="printPaidReceiptForGroup(group)"
                   />
                 </div>
-              </q-card-section>
-              <q-card-section class="q-pt-none">
+              </div>
+              <div class="table-wrap">
                 <q-table
                   :rows="group.items"
                   :columns="billColumns"
                   row-key="id"
                   flat
                   dense
-                  class="glass-table"
+                  class="diag-table"
                   selection="multiple"
                   v-model:selected="selectedRowsByCategory[group.key]"
                   :rows-per-page-options="[0]"
@@ -478,29 +506,27 @@
                     </q-td>
                   </template>
                 </q-table>
-              </q-card-section>
-            </q-card>
+              </div>
+            </section>
           </div>
-          <div v-else class="text-grey-7 text-center q-pa-lg">No items on this visit. Add lab, scan, X-ray, drugs, surgeries, or dressing room services from the visit detail page.</div>
+          <div v-else class="empty-hint">No items on this visit. Add lab, scan, X-ray, drugs, surgeries, or dressing room services from the visit detail page.</div>
 
           <!-- Pending from Government (not yet added) -->
-          <q-card
+          <section
             v-if="pendingGovItems.length > 0"
-            class="q-mt-md glass-card"
-            flat
+            class="diag-panel q-mt-md"
           >
-            <q-card-section>
-              <div class="row items-center">
-                <div>
-                  <div class="text-h6 glass-text">Pending from Government</div>
-                  <div class="text-caption text-grey-7">
-                    These services are in the imported GHIMS export but not yet in the bill. Click Confirm to add automatically (price list match + export qty).
-                  </div>
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Pending from Government</div>
+                <div class="panel-sub">
+                  These services are in the imported GHIMS export but not yet in the bill. Click Confirm to add automatically (price list match + export qty).
                 </div>
-                <q-space />
               </div>
+            </div>
+            <div class="table-wrap">
               <q-table
-                class="glass-table q-mt-md"
+                class="diag-table"
                 :rows="pendingGovItems"
                 :columns="pendingGovCols"
                 row-key="key"
@@ -527,8 +553,8 @@
                   </q-tr>
                 </template>
               </q-table>
-            </q-card-section>
-          </q-card>
+            </div>
+          </section>
 
           <div v-if="billItems.length > 0" class="row q-mt-lg justify-end column items-end">
             <div class="text-caption text-grey-7 q-mb-xs self-end">Tap an amount to open receipt view (lines, receipts, who recorded payment).</div>
@@ -587,15 +613,15 @@
               </q-btn>
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
     </template>
 
     <!-- Reconcile with government OPD Excel export -->
     <q-dialog v-model="showReconcileDialog" persistent>
-      <q-card style="min-width: 720px; max-width: 95vw">
-        <q-card-section>
-          <div class="text-h6">Check billing vs government OPD export</div>
+      <q-card class="companion-dialog-card" style="min-width: 720px; max-width: 95vw">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Check billing vs government OPD export</div>
           <div v-if="selectedVisit" class="text-caption text-grey-7 q-mt-sm">
             This will only work if the file matches this visit:
             claim_no = {{ selectedVisit.external_visit_number }} and patient_no = {{ selectedVisit.external_card_number }}.
@@ -777,9 +803,9 @@
 
     <!-- Reconcile with government IPD (in-patient) invoice -->
     <q-dialog v-model="showIpdReconcileDialog" persistent>
-      <q-card style="min-width: 720px; max-width: 95vw">
-        <q-card-section>
-          <div class="text-h6">Check billing vs government IPD invoice</div>
+      <q-card class="companion-dialog-card" style="min-width: 720px; max-width: 95vw">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Check billing vs government IPD invoice</div>
           <div v-if="selectedVisit" class="text-caption text-grey-7 q-mt-sm">
             Upload the IPD invoice for this visit, or re-import when new data is added on GHIMS.
           </div>
@@ -932,9 +958,9 @@
 
     <!-- Add a missing government service to Companion bill -->
     <q-dialog v-model="showAddMissingDialog" persistent>
-      <q-card style="min-width: 420px; max-width: 90vw">
-        <q-card-section>
-          <div class="text-h6">Add missing service</div>
+      <q-card class="companion-dialog-card" style="min-width: 420px; max-width: 90vw">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Add missing service</div>
           <div class="text-caption text-grey-7 q-mt-sm">
             Service: <strong>{{ addMissingRow?.description || '—' }}</strong> · Qty: {{ addMissingQty }}
           </div>
@@ -994,9 +1020,9 @@
 
     <!-- Price suggestions dialog (officer confirms match) -->
     <q-dialog v-model="showPriceSuggestDialog" persistent>
-      <q-card style="min-width: 760px; max-width: 95vw">
-        <q-card-section>
-          <div class="text-h6">Match service to price list</div>
+      <q-card class="companion-dialog-card" style="min-width: 760px; max-width: 95vw">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Match service to price list</div>
           <div class="text-caption text-grey-7 q-mt-sm">
             Government: <strong>{{ priceSuggestRow?.description || '—' }}</strong> · Qty: {{ priceSuggestQty }}
           </div>
@@ -1067,9 +1093,9 @@
 
     <!-- Pay dialog: category receipt + optional per-item overrides + payment method -->
     <q-dialog v-model="showMarkPaidDialog" persistent>
-      <q-card style="min-width: 520px; max-width: 90vw">
-        <q-card-section>
-          <div class="text-h6">Pay {{ payDialogTitle }}</div>
+      <q-card class="companion-dialog-card" style="min-width: 520px; max-width: 90vw">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Pay {{ payDialogTitle }}</div>
           <div class="text-caption text-grey-7 q-mt-sm">
             By default, one receipt number will be used for all selected items in this category. You can override per item if needed.
           </div>
@@ -1171,9 +1197,9 @@
 
     <!-- Admission deposit: amount + physical receipt -->
     <q-dialog v-model="showAdmissionDepositDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Admission deposit</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Admission deposit</div>
           <div class="text-caption text-grey-7 q-mt-sm">
             Total amount received on admission (or at visit). Save the same receipt number you used at the desk; it is the base for synthetic line receipts when paying from the pool.
           </div>
@@ -1212,9 +1238,9 @@
 
     <!-- Add inpatient fee dialog -->
     <q-dialog v-model="showAddInpatientFeeDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Add inpatient fee</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Add inpatient fee</div>
           <div class="text-caption text-grey-7 q-mt-sm">Add a line item for inpatient fee. Visit must be open.</div>
         </q-card-section>
         <q-card-section>
@@ -1253,9 +1279,9 @@
 
     <!-- Edit inpatient fee dialog -->
     <q-dialog v-model="showEditInpatientFeeDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Edit inpatient fee</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Edit inpatient fee</div>
           <div class="text-caption text-grey-7 q-mt-sm">Change amount or description. Only unpaid items can be edited.</div>
         </q-card-section>
         <q-card-section>
@@ -1294,9 +1320,9 @@
 
     <!-- Request undertaking dialog -->
     <q-dialog v-model="showRequestUndertakingDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Request undertaking</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Request undertaking</div>
           <div class="text-caption text-grey-7 q-mt-sm">
             The client may pay a part payment now (on their behalf), then enters an undertaking to settle the remainder later.
             Optionally record the part payment (not mapped to individual lines).
@@ -1336,9 +1362,9 @@
 
     <!-- Edit undertaking dialog: change part payment or cancel -->
     <q-dialog v-model="showEditUndertakingDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Edit undertaking</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Edit undertaking</div>
           <div class="text-caption text-grey-7 q-mt-sm">Change the part payment amount or cancel the undertaking if the client has settled the bill in full.</div>
         </q-card-section>
         <q-card-section>
@@ -1376,9 +1402,9 @@
 
     <!-- Approve undertaking: Management sees amount, time, officer -->
     <q-dialog v-model="showApproveUndertakingDialog" persistent>
-      <q-card style="min-width: 400px">
-        <q-card-section>
-          <div class="text-h6">Approve undertaking</div>
+      <q-card class="companion-dialog-card" style="min-width: 400px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Approve undertaking</div>
           <div class="text-caption text-grey-7 q-mt-sm">Review and approve. The visit can then be closed even with unpaid items.</div>
           <q-card v-if="selectedVisit" flat bordered class="q-mt-md q-pa-md">
             <div class="text-body2"><strong>Part payment:</strong> GH¢ {{ formatPrice(selectedVisit.undertaking_deposit_amount || 0) }}</div>
@@ -1402,9 +1428,9 @@
 
     <!-- Unapprove undertaking: Admin only, reason required -->
     <q-dialog v-model="showUnapproveUndertakingDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Unapprove undertaking</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Unapprove undertaking</div>
           <div class="text-caption text-grey-7 q-mt-sm">Admin only. Provide a reason for auditing. This will set the undertaking back to Pending.</div>
         </q-card-section>
         <q-card-section>
@@ -1433,9 +1459,9 @@
 
     <!-- Reopen visit dialog (Admin only, reason required) -->
     <q-dialog v-model="showReopenDialog" persistent>
-      <q-card style="min-width: 360px">
-        <q-card-section>
-          <div class="text-h6">Reopen visit</div>
+      <q-card class="companion-dialog-card" style="min-width: 360px">
+        <q-card-section class="companion-dialog-head">
+          <div class="dialog-title">Reopen visit</div>
           <div class="text-caption text-grey-7 q-mt-sm">Only Admin can reopen. A reason is required for auditing.</div>
         </q-card-section>
         <q-card-section>
@@ -1480,6 +1506,9 @@ import { useAuthStore } from '../../stores/auth';
 import { useFacilityStore } from '../../stores/facility';
 import { companionVisitsAPI, billingAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
+import HmsBadge from '../../components/ui/HmsBadge.vue';
 
 const $q = useQuasar();
 const authStore = useAuthStore();
@@ -1688,6 +1717,15 @@ const canAdmin = computed(() => authStore.canAccess(['Admin']));
 const isSuperAdmin = computed(() => Boolean(authStore.user?.is_super_admin));
 const canEditDeleteInpatient = computed(() => authStore.canAccess(['Admin']));
 const canReopenVisitRole = computed(() => authStore.canAccess(['Admin']));
+
+const visitInitials = computed(() => {
+  const name = (selectedVisit.value?.client_name || '').trim();
+  if (!name) return 'CB';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+});
+
 /** Same rules as service list / API: open visit → Records, Billing, or Admin. */
 const canDeleteVisit = computed(() => {
   if (!selectedVisit.value) return false;
@@ -3242,5 +3280,35 @@ async function confirmGovItem(row) {
 }
 .receipt-amount-hit:focus {
   outline: 2px solid var(--q-primary);
+}
+.hero-actions-wrap {
+  max-width: 100%;
+}
+.bill-group-panel {
+  margin-bottom: 0.85rem;
+  box-shadow: var(--hms-shadow-sm);
+}
+.companion-dialog-card {
+  border-radius: 1.25rem;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  box-shadow: var(--hms-shadow-lg);
+  overflow: hidden;
+}
+.companion-dialog-head {
+  border-bottom: 1px solid var(--hms-border);
+  background: linear-gradient(180deg, var(--hms-surface) 0%, transparent 100%);
+}
+.dialog-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+}
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
 }
 </style>

@@ -1,132 +1,139 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Inventory"
-        @click="$router.push('/inventory-mode')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">Department/Unit Stock</div>
-    </div>
-    
-    <q-banner class="glass-card q-pa-md q-mb-md">
-      <template v-slot:avatar>
-        <q-icon name="info" color="primary" />
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Department stock"
+      subtitle="View available inventory stock for each department or unit."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/inventory-mode')">Back</HmsButton>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          @click="$router.push({ name: 'PharmacyRequisitions' })"
+        >
+          Requisitions
+        </HmsButton>
+        <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadWardStock">
+          Refresh
+        </HmsButton>
       </template>
-      <span v-if="isIcUnitOnly">You can only view stock for department(s) where you are in-charge or deputy.</span>
-      <span v-else>View available inventory stock for each department/unit. Store managers and store department heads may review all units for their assigned stores.</span>
-    </q-banner>
+    </HmsPageHeader>
 
-    <!-- Filters and Actions -->
-    <div class="row q-gutter-md q-mb-md">
-      <q-select
-        v-model="selectedWard"
-        :options="wardOptions"
-        label="Select Department/Unit"
-        filled
-        class="col-12 col-md-3"
-        :disable="isIcUnitOnly && wardOptions.length <= 1"
-        @update:model-value="loadWardStock"
-      />
-      <q-select
-        v-model="selectedStore"
-        :options="storeOptions"
-        label="Filter by Store"
-        filled
-        clearable
-        emit-value
-        map-options
-        class="col-12 col-md-3"
-        @update:model-value="loadWardStock"
-        :disable="hasStoreAssignment && userStoreIds.length > 0"
-      >
-        <template v-slot:prepend>
-          <q-icon name="store" />
-        </template>
-      </q-select>
-      <q-input
-        v-model="productSearch"
-        label="Search Product"
-        filled
-        clearable
-        class="col-12 col-md-3"
-        @input="loadWardStock"
-      >
-        <template v-slot:prepend>
-          <q-icon name="search" />
-        </template>
-      </q-input>
-      <q-btn
-        flat
-        icon="refresh"
-        label="Refresh"
-        @click="loadWardStock"
-        :loading="loading"
-        class="col-12 col-md-2"
-      />
-      <q-btn
-        color="primary"
-        icon="arrow_back"
-        label="Back to Requisitions"
-        @click="$router.push({ name: 'PharmacyRequisitions' })"
-        class="col-12 col-md-3"
-      />
+    <div class="soft-banner q-pa-md q-mb-md">
+      <div class="row items-start no-wrap q-gutter-sm">
+        <q-icon name="info" color="primary" size="20px" class="q-mt-xs" />
+        <div class="panel-sub" style="margin-top: 0; max-width: none">
+          <span v-if="isIcUnitOnly">You can only view stock for department(s) where you are in-charge or deputy.</span>
+          <span v-else>View available inventory stock for each department/unit. Store managers and store department heads may review all units for their assigned stores.</span>
+        </div>
+      </div>
     </div>
 
-    <!-- Stock Summary -->
-    <q-card class="q-mb-md glass-card" flat v-if="selectedWard">
-      <q-card-section>
-        <div class="row q-gutter-md">
-          <q-card class="col-12 col-md-3">
-            <q-card-section>
-              <div class="text-caption text-grey-7">Total Items</div>
-              <div class="text-h5 text-weight-bold">{{ stockItems.length }}</div>
-            </q-card-section>
-          </q-card>
-          <q-card class="col-12 col-md-3">
-            <q-card-section>
-              <div class="text-caption text-grey-7">In Stock</div>
-              <div class="text-h5 text-weight-bold text-positive">
-                {{ stockItems.filter(item => item.quantity > 0).length }}
-              </div>
-            </q-card-section>
-          </q-card>
-          <q-card class="col-12 col-md-3">
-            <q-card-section>
-              <div class="text-caption text-grey-7">Out of Stock</div>
-              <div class="text-h5 text-weight-bold text-negative">
-                {{ stockItems.filter(item => item.quantity <= 0).length }}
-              </div>
-            </q-card-section>
-          </q-card>
-          <q-card class="col-12 col-md-3">
-            <q-card-section>
-              <div class="text-caption text-grey-7">Low Stock (< 10)</div>
-              <div class="text-h5 text-weight-bold text-warning">
-                {{ stockItems.filter(item => item.quantity > 0 && item.quantity < 10).length }}
-              </div>
-            </q-card-section>
-          </q-card>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Department, store, and product search</div>
         </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Stock Table -->
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          Stock Items
-          <q-badge color="primary" class="q-ml-sm">{{ filteredStock.length }}</q-badge>
+      </div>
+      <div class="panel-body">
+        <div class="row q-col-gutter-md items-end">
+          <div class="col-12 col-md-3">
+            <q-select
+              v-model="selectedWard"
+              :options="wardOptions"
+              label="Select Department/Unit"
+              filled
+              dense
+              :disable="isIcUnitOnly && wardOptions.length <= 1"
+              @update:model-value="loadWardStock"
+            />
+          </div>
+          <div class="col-12 col-md-3">
+            <q-select
+              v-model="selectedStore"
+              :options="storeOptions"
+              label="Filter by Store"
+              filled
+              dense
+              clearable
+              emit-value
+              map-options
+              @update:model-value="loadWardStock"
+              :disable="hasStoreAssignment && userStoreIds.length > 0"
+            >
+              <template v-slot:prepend>
+                <q-icon name="store" />
+              </template>
+            </q-select>
+          </div>
+          <div class="col-12 col-md-3">
+            <q-input
+              v-model="productSearch"
+              label="Search Product"
+              filled
+              dense
+              clearable
+              @input="loadWardStock"
+            >
+              <template v-slot:prepend>
+                <q-icon name="search" />
+              </template>
+            </q-input>
+          </div>
         </div>
+      </div>
+    </section>
 
+    <div v-if="selectedWard" class="claim-kpi-grid kpi-4">
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">Total items</div>
+        </div>
+        <div class="claim-kpi__value">{{ stockItems.length }}</div>
+      </div>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">In stock</div>
+        </div>
+        <div class="claim-kpi__value text-positive">
+          {{ stockItems.filter(item => item.quantity > 0).length }}
+        </div>
+      </div>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">Out of stock</div>
+        </div>
+        <div class="claim-kpi__value text-negative">
+          {{ stockItems.filter(item => item.quantity <= 0).length }}
+        </div>
+      </div>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">Low stock (&lt; 10)</div>
+        </div>
+        <div class="claim-kpi__value text-warning">
+          {{ stockItems.filter(item => item.quantity > 0 && item.quantity < 10).length }}
+        </div>
+      </div>
+    </div>
+
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Stock items</div>
+          <div class="panel-sub">{{ filteredStock.length }} matching item(s)</div>
+        </div>
+      </div>
+      <div class="panel-body table-wrap">
         <q-table
+          class="diag-table"
           :rows="filteredStock"
           :columns="columns"
           :loading="loading"
           row-key="id"
           flat
+          dense
           :pagination="{ rowsPerPage: 50 }"
         >
           <template v-slot:body-cell-quantity="props">
@@ -139,15 +146,15 @@
           </template>
 
           <template v-slot:no-data>
-            <div class="full-width row flex-center text-grey-6 q-gutter-sm">
+            <div class="full-width row flex-center text-grey-6 q-gutter-sm q-pa-md">
               <q-icon name="inventory_2" size="2em" />
               <span v-if="!selectedWard">Please select a department/unit to view stock</span>
               <span v-else>No stock items found</span>
             </div>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
   </q-page>
 </template>
 
@@ -157,9 +164,15 @@ import { useAuthStore } from '../stores/auth';
 import { Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, wardsAPI, storesAPI, storeStaffAssignmentsAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 export default {
   name: 'WardStock',
+  components: {
+    HmsPageHeader,
+    HmsButton,
+  },
   setup() {
     const authStore = useAuthStore();
     
@@ -350,12 +363,22 @@ export default {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+.stat-top {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.kpi-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 960px) {
+  .kpi-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .kpi-4 {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
-

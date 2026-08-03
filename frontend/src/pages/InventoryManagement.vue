@@ -1,35 +1,33 @@
 <template>
-  <q-page class="q-pa-md inventory-dashboard-page">
+  <q-page class="hms-page inventory-dashboard-page">
     <LicenseStatusBanner />
 
-    <div class="row items-end q-col-gutter-md q-mb-lg">
-      <div class="col-12 col-md-8">
-        <div class="text-h4 text-weight-bold glass-text">Inventory dashboard</div>
-        <div class="text-body2 text-secondary q-mt-xs">
-          Stock levels, usage, requisitions, and trends.
-          <template v-if="canFilterDashboardStores || canFilterDashboardDepartments">
-            Use the filters below (Management / Admin / Pharmacy-wide roles).
-          </template>
-          <template v-else>
-            Scoped to your assigned store or department; filters are fixed.
-          </template>
+    <HmsPageHeader
+      title="Inventory"
+      subtitle="Stock levels, usage, requisitions, and trends across stores and departments."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadDashboard">
+          Refresh
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">
+            <template v-if="canFilterDashboardStores || canFilterDashboardDepartments">
+              Scope by store, department, and period (Management / Admin / Pharmacy-wide roles).
+            </template>
+            <template v-else>
+              Scoped to your assigned store or department; filters are fixed.
+            </template>
+          </div>
         </div>
       </div>
-      <div class="col-12 col-md-4 row justify-end">
-        <q-btn
-          flat
-          icon="refresh"
-          label="Refresh"
-          :loading="loading"
-          @click="loadDashboard"
-          class="glass-button"
-        />
-      </div>
-    </div>
-
-    <!-- Filters -->
-    <q-card class="glass-card q-mb-lg" flat bordered>
-      <q-card-section>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <div class="col-12 col-sm-6 col-md-3">
             <q-select
@@ -75,7 +73,7 @@
             />
           </div>
         </div>
-        <div v-if="dash" class="text-caption text-grey-7 q-mt-sm">
+        <div v-if="dash" class="filter-meta">
           Showing
           <template v-if="dash.store_name"><strong>{{ dash.store_name }}</strong> store</template>
           <template v-else>all stores (approved stock)</template>
@@ -84,68 +82,76 @@
           <template v-else>all departments</template>
           · last <strong>{{ dash.period_days }}</strong> days
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
-    <q-banner v-if="loadError" class="bg-negative text-white q-mb-md" rounded>
+    <div v-if="loadError" class="error-banner" role="alert">
       {{ loadError }}
-    </q-banner>
+    </div>
 
-    <!-- KPIs -->
-    <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
-      <div v-if="showStoreStockKpi" class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Store stock (qty)</div>
-            <div class="text-h6 text-weight-bold glass-text">{{ formatNum(dash.kpis.approved_store_stock_qty) }}</div>
-            <div class="text-caption">{{ dash.kpis.approved_store_stock_lines }} lines</div>
-          </q-card-section>
-        </q-card>
+    <div v-if="dash && !loading" class="claim-kpi-grid inv-kpi-grid">
+      <div v-if="showStoreStockKpi" class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-accent); background: var(--hms-accent-muted)">
+            <Package :size="18" />
+          </div>
+          <div class="claim-kpi__label">Store stock (qty)</div>
+        </div>
+        <div class="claim-kpi__value">{{ formatNum(dash.kpis.approved_store_stock_qty) }}</div>
+        <div class="claim-kpi__meta">{{ dash.kpis.approved_store_stock_lines }} lines</div>
       </div>
-      <div class="col-6 col-sm-4 col-md-2" v-if="dash.kpis.ward_stock_total_qty != null">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Dept ward stock</div>
-            <div class="text-h6 text-weight-bold glass-text">{{ formatNum(dash.kpis.ward_stock_total_qty) }}</div>
-            <div class="text-caption">{{ dash.kpis.ward_stock_lines }} lines</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="dash.kpis.ward_stock_total_qty != null" class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-healthcare); background: var(--hms-healthcare-muted)">
+            <Warehouse :size="18" />
+          </div>
+          <div class="claim-kpi__label">Dept ward stock</div>
+        </div>
+        <div class="claim-kpi__value">{{ formatNum(dash.kpis.ward_stock_total_qty) }}</div>
+        <div class="claim-kpi__meta">{{ dash.kpis.ward_stock_lines }} lines</div>
       </div>
-      <div class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Req. pending</div>
-            <div class="text-h6 text-weight-bold text-warning">{{ dash.kpis.requisitions_pending }}</div>
-            <div class="text-caption">{{ dash.kpis.requisitions_in_flight }} in flight</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-warning); background: var(--hms-warning-muted)">
+            <Clock :size="18" />
+          </div>
+          <div class="claim-kpi__label">Req. pending</div>
+        </div>
+        <div class="claim-kpi__value">{{ dash.kpis.requisitions_pending }}</div>
+        <div class="claim-kpi__meta">{{ dash.kpis.requisitions_in_flight }} in flight</div>
       </div>
-      <div class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Req. (period)</div>
-            <div class="text-h6 text-weight-bold glass-text">{{ dash.kpis.requisitions_created_period }}</div>
-            <div class="text-caption">{{ dash.kpis.requisitions_fulfilled_period }} fulfilled</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-info); background: var(--hms-info-muted)">
+            <ClipboardList :size="18" />
+          </div>
+          <div class="claim-kpi__label">Req. (period)</div>
+        </div>
+        <div class="claim-kpi__value">{{ dash.kpis.requisitions_created_period }}</div>
+        <div class="claim-kpi__meta">{{ dash.kpis.requisitions_fulfilled_period }} fulfilled</div>
       </div>
-      <div class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Usage (units)</div>
-            <div class="text-h6 text-weight-bold text-primary">{{ formatNum(dash.kpis.debit_units_period) }}</div>
-            <div class="text-caption">{{ dash.kpis.debit_events_period }} debits</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-success); background: var(--hms-success-muted)">
+            <Activity :size="18" />
+          </div>
+          <div class="claim-kpi__label">Usage (units)</div>
+        </div>
+        <div class="claim-kpi__value">{{ formatNum(dash.kpis.debit_units_period) }}</div>
+        <div class="claim-kpi__meta">{{ dash.kpis.debit_events_period }} debits</div>
       </div>
     </div>
 
-    <!-- Charts -->
     <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
       <div class="col-12 col-lg-6">
-        <q-card class="glass-card chart-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Usage trend (inventory debits)</div>
+        <section class="diag-panel chart-card">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Usage trend (inventory debits)</div>
+              <div class="panel-sub">Units debited per day (IPD + Companion)</div>
+            </div>
+          </div>
+          <div class="panel-body">
             <div class="chart-area usage-chart">
               <div
                 v-for="(p, idx) in dash.series"
@@ -160,14 +166,18 @@
                 <span v-if="idx % labelStep === 0" class="chart-label">{{ shortDate(p.date) }}</span>
               </div>
             </div>
-            <div class="text-caption text-grey-7 q-mt-sm">Units debited per day (IPD + Companion)</div>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
       </div>
       <div class="col-12 col-lg-6">
-        <q-card class="glass-card chart-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Requisitions trend</div>
+        <section class="diag-panel chart-card">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Requisitions trend</div>
+              <div class="panel-sub">Created vs fulfilled per day</div>
+            </div>
+          </div>
+          <div class="panel-body">
             <div class="chart-area req-chart">
               <div
                 v-for="(p, idx) in dash.series"
@@ -189,47 +199,56 @@
                 <span v-if="idx % labelStep === 0" class="chart-label">{{ shortDate(p.date) }}</span>
               </div>
             </div>
-            <div class="row q-gutter-md text-caption q-mt-sm">
+            <div class="chart-legend">
               <span><span class="legend-dot created" /> Created</span>
               <span><span class="legend-dot fulfilled" /> Fulfilled</span>
             </div>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
       </div>
     </div>
 
-    <!-- Top products + Activity -->
     <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
       <div class="col-12 col-lg-6">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Top products (period)</div>
-            <div v-if="!dash.top_products.length" class="text-grey-7 text-caption">No product movement in this period.</div>
-            <div v-for="tp in dash.top_products" :key="tp.product_code" class="top-product-row q-mb-sm">
-              <div class="row items-center no-wrap q-gutter-sm">
-                <div class="col ellipsis text-body2">{{ tp.product_name }}</div>
-                <div class="col-auto text-caption text-grey-7">{{ tp.product_code }}</div>
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Top products (period)</div>
+              <div class="panel-sub">Highest debit and requisition volume</div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div v-if="!dash.top_products.length" class="empty-hint">No product movement in this period.</div>
+            <div v-for="tp in dash.top_products" :key="tp.product_code" class="top-product-row">
+              <div class="top-product-head">
+                <div class="top-product-name">{{ tp.product_name }}</div>
+                <div class="top-product-code">{{ tp.product_code }}</div>
               </div>
               <q-linear-progress
                 :value="topProductRatio(tp)"
                 color="primary"
-                track-color="grey-8"
+                track-color="grey-4"
                 size="8px"
                 rounded
                 class="q-mt-xs"
               />
-              <div class="text-caption text-grey-7">
+              <div class="top-product-meta">
                 Debits {{ formatNum(tp.debit_qty) }} · Req. {{ formatNum(tp.requisition_requested_qty) }}
               </div>
             </div>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
       </div>
       <div class="col-12 col-lg-6">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Recent activity</div>
-            <q-list bordered separator class="rounded-borders">
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Recent activity</div>
+              <div class="panel-sub">Latest requisitions and debits</div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <q-list bordered separator class="activity-list">
               <q-item v-for="(ev, i) in dash.recent_events" :key="i" dense>
                 <q-item-section avatar>
                   <q-icon :name="eventIcon(ev.kind)" :color="eventColor(ev.kind)" size="sm" />
@@ -239,97 +258,48 @@
                   <q-item-label caption>{{ ev.detail }}</q-item-label>
                 </q-item-section>
                 <q-item-section side>
-                  <span class="text-caption">{{ formatEventTime(ev.at) }}</span>
+                  <span class="activity-time">{{ formatEventTime(ev.at) }}</span>
                 </q-item-section>
               </q-item>
             </q-list>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
       </div>
     </div>
 
     <q-inner-loading :showing="loading" color="primary" />
 
-    <!-- Quick links -->
-    <div class="text-h6 glass-text q-mb-md q-mt-xl">Quick links</div>
-    <div class="text-subtitle2 text-secondary q-mb-md">Open a module to work with inventory</div>
-    <div class="row q-col-gutter-md">
-      <div v-if="canAccessRequisitions" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/requisitions')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="shopping_cart" size="56px" color="primary" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Requisitions</div>
-              <div class="text-caption text-secondary">Request and track store supplies</div>
-            </div>
-          </q-card-section>
-        </q-card>
+    <section class="inv-workspace">
+      <div class="group-bar">
+        <div>
+          <h2 class="group-title">Quick links</h2>
+          <p class="group-note">Open a module to work with inventory</p>
+        </div>
       </div>
-      <div v-if="canAccessRequisitions" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/reports')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="assessment" size="56px" color="cyan" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Reports</div>
-              <div class="text-caption text-secondary">Requisitions &amp; store stock CSV</div>
-            </div>
-          </q-card-section>
-        </q-card>
+      <div class="module-grid">
+        <HmsCard
+          v-for="mod in quickLinkModules"
+          :key="mod.path"
+          dense
+          hoverable
+          class="module-card"
+          role="button"
+          tabindex="0"
+          @click="navigateToModule(mod.path)"
+          @keydown.enter="navigateToModule(mod.path)"
+          @keydown.space.prevent="navigateToModule(mod.path)"
+        >
+          <div class="module-icon" :style="{ color: mod.color, background: mod.bg }">
+            <component :is="mod.icon" :size="20" />
+          </div>
+          <div class="module-copy">
+            <div class="module-title">{{ mod.title }}</div>
+            <div v-if="mod.hint" class="module-hint">{{ mod.hint }}</div>
+          </div>
+          <ArrowRight :size="16" class="module-arrow" />
+        </HmsCard>
       </div>
-      <div v-if="canAccessDepartmentStock" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/ward-stock')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="warehouse" size="56px" color="secondary" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Department / ward stock</div>
-              <div class="text-caption text-secondary">Unit-level stock</div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-      <div v-if="canAccessStoreStock" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/store-stock')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="inventory" size="56px" color="purple" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Store stock</div>
-              <div class="text-caption text-secondary">Central store batches &amp; approval</div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-      <div v-if="canAccessInventoryDebits" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/inventory-debits')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="remove_shopping_cart" size="56px" color="teal" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Inventory debits</div>
-              <div class="text-caption text-secondary">Release &amp; ward usage</div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-      <div v-if="canAccessStoreManagement" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/store-management')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="store" size="56px" color="accent" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Store management</div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-      <div v-if="canAccessDepartmentManagement" class="col-12 col-md-6 col-lg-3">
-        <q-card class="glass-card module-card cursor-pointer" flat bordered @click="navigateToModule('/inventory-mode/ward-management')">
-          <q-card-section class="q-pa-lg">
-            <div class="column items-center text-center">
-              <q-icon name="meeting_room" size="56px" color="orange" class="q-mb-md" />
-              <div class="text-subtitle1 text-weight-bold glass-text q-mb-xs">Department management</div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-    </div>
+    </section>
   </q-page>
 </template>
 
@@ -337,6 +307,23 @@
 import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '../stores/auth';
 import LicenseStatusBanner from '../components/LicenseStatusBanner.vue';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsCard from '../components/ui/HmsCard.vue';
+import {
+  Package,
+  Warehouse,
+  Clock,
+  ClipboardList,
+  Activity,
+  ShoppingCart,
+  BarChart3,
+  Boxes,
+  PackageMinus,
+  Store,
+  DoorOpen,
+  ArrowRight,
+} from 'lucide-vue-next';
 import { useRouter } from 'vue-router';
 import { inventoryAnalyticsAPI, storesAPI, wardsAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';
@@ -410,6 +397,75 @@ const hasAnyAccess = computed(() => {
     canAccessDepartmentManagement.value ||
     canAccessInventoryDebits.value
   );
+});
+
+const quickLinkModules = computed(() => {
+  const all = [
+    {
+      show: canAccessRequisitions.value,
+      title: 'Requisitions',
+      hint: 'Request and track store supplies',
+      path: '/inventory-mode/requisitions',
+      icon: ShoppingCart,
+      color: 'var(--hms-accent)',
+      bg: 'var(--hms-accent-muted)',
+    },
+    {
+      show: canAccessRequisitions.value,
+      title: 'Reports',
+      hint: 'Requisitions & store stock CSV',
+      path: '/inventory-mode/reports',
+      icon: BarChart3,
+      color: 'var(--hms-info)',
+      bg: 'var(--hms-info-muted)',
+    },
+    {
+      show: canAccessDepartmentStock.value,
+      title: 'Department / ward stock',
+      hint: 'Unit-level stock',
+      path: '/inventory-mode/ward-stock',
+      icon: Warehouse,
+      color: 'var(--hms-healthcare)',
+      bg: 'var(--hms-healthcare-muted)',
+    },
+    {
+      show: canAccessStoreStock.value,
+      title: 'Store stock',
+      hint: 'Central store batches & approval',
+      path: '/inventory-mode/store-stock',
+      icon: Boxes,
+      color: 'var(--hms-accent)',
+      bg: 'var(--hms-accent-muted)',
+    },
+    {
+      show: canAccessInventoryDebits.value,
+      title: 'Inventory debits',
+      hint: 'Release & ward usage',
+      path: '/inventory-mode/inventory-debits',
+      icon: PackageMinus,
+      color: 'var(--hms-success)',
+      bg: 'var(--hms-success-muted)',
+    },
+    {
+      show: canAccessStoreManagement.value,
+      title: 'Store management',
+      hint: 'Configure central stores',
+      path: '/inventory-mode/store-management',
+      icon: Store,
+      color: 'var(--hms-warning)',
+      bg: 'var(--hms-warning-muted)',
+    },
+    {
+      show: canAccessDepartmentManagement.value,
+      title: 'Department management',
+      hint: 'Configure departments and wards',
+      path: '/inventory-mode/ward-management',
+      icon: DoorOpen,
+      color: 'var(--hms-info)',
+      bg: 'var(--hms-info-muted)',
+    },
+  ];
+  return all.filter((m) => m.show);
 });
 
 const maxUsage = computed(() => {
@@ -577,15 +633,31 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
+.stat-top {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.92);
+.filter-meta {
+  margin-top: 0.75rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
 }
-.kpi-card {
-  min-height: 88px;
+.error-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-critical-muted);
+  color: var(--hms-critical);
+  font-size: var(--hms-text-sm);
+}
+.inv-kpi-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.claim-kpi__meta {
+  margin-top: -0.35rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
 }
 .chart-card {
   min-height: 280px;
@@ -613,7 +685,7 @@ onMounted(async () => {
   width: 100%;
   max-width: 10px;
   border-radius: 4px 4px 0 0;
-  background: var(--q-primary);
+  background: var(--hms-accent, var(--q-primary));
   opacity: 0.95;
   min-height: 4px;
 }
@@ -645,6 +717,14 @@ onMounted(async () => {
 .mini-bar.fulfilled {
   background: #66bb6a;
 }
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.65rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
 .legend-dot {
   display: inline-block;
   width: 10px;
@@ -663,23 +743,126 @@ onMounted(async () => {
   position: absolute;
   bottom: 0;
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--hms-text-muted);
   transform: rotate(-45deg);
   transform-origin: top left;
   white-space: nowrap;
 }
 .top-product-row {
   max-width: 100%;
+  margin-bottom: 0.75rem;
+}
+.top-product-row:last-child {
+  margin-bottom: 0;
+}
+.top-product-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.top-product-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-primary);
+}
+.top-product-code {
+  flex-shrink: 0;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+  font-family: var(--hms-font-mono);
+}
+.top-product-meta {
+  margin-top: 0.25rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.activity-list {
+  border-radius: var(--hms-radius-lg);
+  border-color: var(--hms-border) !important;
+  background: var(--hms-surface);
+}
+.activity-time {
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.inv-workspace {
+  margin-top: 0.5rem;
+  padding: 1.15rem 1.2rem 1.25rem;
+  border-radius: 1.25rem;
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+}
+.group-bar {
+  margin-bottom: 0.95rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.group-title {
+  margin: 0;
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+}
+.group-note {
+  margin: 0.2rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
 }
 .module-card {
-  transition: transform 0.2s, box-shadow 0.2s;
-  height: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 92px;
+  background: var(--hms-surface) !important;
+  box-shadow: none !important;
 }
-.module-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.module-icon {
+  width: 2.55rem;
+  height: 2.55rem;
+  border-radius: var(--hms-radius-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
-.body--light .glass-text {
-  color: rgba(0, 0, 0, 0.87) !important;
+.module-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.module-hint {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  line-height: 1.4;
+}
+.module-arrow {
+  color: var(--hms-text-muted);
+  transition: transform var(--hms-duration-fast) var(--hms-ease-out), color var(--hms-duration-fast) var(--hms-ease-out);
+}
+.module-card:hover .module-arrow {
+  color: var(--hms-accent);
+  transform: translateX(3px);
+}
+@media (max-width: 720px) {
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+  .inv-workspace {
+    padding: 1rem;
+  }
 }
 </style>

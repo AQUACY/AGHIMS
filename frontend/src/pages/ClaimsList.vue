@@ -1,73 +1,58 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat round dense icon="arrow_back" to="/claims" />
-      <div class="text-h4 q-ml-sm text-weight-bold glass-text">Claims</div>
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Claims list" subtitle="Finalized encounters, generate claims, and export XML for ClaimIT.">
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
 
     <!-- Export by Date Range -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Export Claims by Date Range</div>
-        <div class="row q-gutter-md">
-          <q-input
-            v-model="exportStartDate"
-            filled
-            type="date"
-            label="Start Date"
-            class="col-12 col-md-4"
-          />
-          <q-input
-            v-model="exportEndDate"
-            filled
-            type="date"
-            label="End Date"
-            class="col-12 col-md-4"
-          />
-          <q-btn
-            color="primary"
-            label="Export XML"
-            @click="exportByDateRange"
-            :loading="exporting"
-            :disable="!exportStartDate || !exportEndDate"
-            class="col-12 col-md-4 glass-button"
-          />
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Export by date range</div>
+          <div class="panel-sub">Download finalized claims XML for ClaimIT</div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+      <div class="panel-body export-row">
+        <input v-model="exportStartDate" type="date" class="tool-input" title="Start date" />
+        <input v-model="exportEndDate" type="date" class="tool-input" title="End date" />
+        <HmsButton
+          variant="primary"
+          size="sm"
+          :loading="exporting"
+          :disabled="!exportStartDate || !exportEndDate"
+          @click="exportByDateRange"
+        >
+          Export XML
+        </HmsButton>
+      </div>
+    </section>
 
     <!-- Claim Actions -->
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Finalized Encounters</div>
-          <q-space />
-          <q-btn
-            :icon="filtersLocked ? 'lock' : 'lock_open'"
-            :color="filtersLocked ? 'positive' : 'grey'"
-            flat
-            round
-            dense
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Finalized encounters</div>
+          <div class="panel-sub">Filter, vet status, generate, and export selected claims</div>
+        </div>
+        <div class="panel-actions">
+          <HmsButton
+            :variant="filtersLocked ? 'healthcare' : 'secondary'"
             size="sm"
             @click="toggleFiltersLock"
-            class="q-mr-sm"
           >
-            <q-tooltip>
-              {{ filtersLocked ? 'Filters are locked - click to unlock' : 'Click to lock filters' }}
-            </q-tooltip>
-          </q-btn>
-          <q-btn-toggle
-            v-model="claimType"
-            toggle-color="primary"
-            :options="[
-              { label: 'OPD', value: 'opd' },
-              { label: 'IPD', value: 'ipd' },
-              { label: 'Other', value: 'other' },
-              { label: 'All', value: null }
-            ]"
-            size="sm"
-          />
+            {{ filtersLocked ? 'Unlock' : 'Lock' }}
+          </HmsButton>
+          <div class="module-seg" role="tablist" aria-label="Claim type">
+            <button type="button" class="seg-btn" :class="{ active: claimType === 'opd' }" @click="claimType = 'opd'">OPD</button>
+            <button type="button" class="seg-btn" :class="{ active: claimType === 'ipd' }" @click="claimType = 'ipd'">IPD</button>
+            <button type="button" class="seg-btn" :class="{ active: claimType === 'other' }" @click="claimType = 'other'">Other</button>
+            <button type="button" class="seg-btn" :class="{ active: claimType === null }" @click="claimType = null">All</button>
+          </div>
         </div>
+      </div>
+      <div class="panel-body">
 
         <div v-if="totalRevenue != null" class="text-subtitle1 text-primary q-mb-md">
           Total claim revenue ({{ pagination.rowsNumber }} matching, this page): {{ formatCurrency(totalRevenue) }}
@@ -150,19 +135,8 @@
             emit-value
             map-options
           />
-          <q-btn
-            color="primary"
-            label="Search"
-            @click="searchEncounter"
-            class="col-12 col-md-1 glass-button"
-          />
-          <q-btn
-            color="secondary"
-            label="Clear Filters"
-            @click="clearFilters"
-            class="col-12 col-md-1 glass-button"
-            outline
-          />
+          <HmsButton variant="primary" size="sm" @click="searchEncounter">Search</HmsButton>
+          <HmsButton variant="secondary" size="sm" @click="clearFilters">Clear</HmsButton>
         </div>
 
         <div class="row q-gutter-sm q-mb-sm items-center">
@@ -181,26 +155,28 @@
           <span class="text-caption text-teal">
             Pharmacy vetted: {{ pagePharmacyVettedCount }} · Doctor vetted: {{ pageDoctorVettedCount }}
           </span>
-          <q-btn
-            color="primary"
-            label="Export selected"
-            icon="download"
-            :disable="selectedRows.length === 0"
+          <HmsButton
+            variant="primary"
+            size="sm"
+            :disabled="selectedRows.length === 0"
             :loading="exportingSelected"
             @click="exportSelectedClaims"
-            class="glass-button"
-          />
+          >
+            Export selected
+          </HmsButton>
           <span v-if="selectedRows.length > 0" class="text-caption text-grey">
             {{ selectedRows.length }} selected
           </span>
         </div>
 
         <q-table
+          class="diag-table"
           v-model:selected="selectedRows"
           :rows="sortedEncounters"
           :columns="columns"
           row-key="id"
           flat
+          dense
           selection="multiple"
           :loading="loading"
           v-model:pagination="pagination"
@@ -216,24 +192,19 @@
           </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
-              <q-badge
-                :color="getStatusColor(props.value)"
-                :label="props.value"
-              />
+              <HmsBadge :tone="statusTone(props.value)">{{ props.value }}</HmsBadge>
             </q-td>
           </template>
           <template v-slot:body-cell-claim_status="props">
             <q-td :props="props">
               <div class="column q-gutter-xs items-center">
-                <q-badge
-                  v-if="props.row.claim_status"
-                  :color="getStatusColor(props.row.claim_status)"
-                  :label="vetStatusLabel(props.row.claim_status)"
-                />
-                <span v-else class="text-grey">—</span>
-                <div class="row q-gutter-xs justify-center">
-                  <q-badge v-if="props.row.pharmacy_vetted" dense color="teal" label="Pharm" />
-                  <q-badge v-if="props.row.doctor_vetted" dense color="indigo" label="Dr" />
+                <HmsBadge v-if="props.row.claim_status" :tone="statusTone(props.row.claim_status)">
+                  {{ vetStatusLabel(props.row.claim_status) }}
+                </HmsBadge>
+                <span v-else class="text-muted">—</span>
+                <div class="badge-row justify-center">
+                  <HmsBadge v-if="props.row.pharmacy_vetted" tone="healthcare">Pharm</HmsBadge>
+                  <HmsBadge v-if="props.row.doctor_vetted" tone="info">Dr</HmsBadge>
                 </div>
               </div>
             </q-td>
@@ -304,9 +275,8 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
-
+      </div>
+    </section>
   </q-page>
 </template>
 
@@ -317,6 +287,9 @@ import { encountersAPI, claimsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import { useRouter } from 'vue-router';
 import { setClaimsNavIds } from '../utils/claimNav';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 import {
   isClaimExportable,
   confirmExportWithVettingWarning,
@@ -505,6 +478,16 @@ const columns = [
 ];
 
 const getStatusColor = (status) => vetStatusColor(status);
+
+const statusTone = (status) => {
+  const color = String(getStatusColor(status) || '').toLowerCase();
+  if (['positive', 'green', 'teal'].includes(color)) return 'success';
+  if (['negative', 'red'].includes(color)) return 'critical';
+  if (['warning', 'orange', 'amber'].includes(color)) return 'warning';
+  if (['info', 'blue', 'primary', 'indigo'].includes(color)) return 'info';
+  if (['purple', 'deep-purple'].includes(color)) return 'healthcare';
+  return 'muted';
+};
 
 const pagePharmacyVettedCount = computed(() =>
   (sortedEncounters.value || []).filter((r) => isPharmacyVettedStatus(r)).length
@@ -947,3 +930,45 @@ onMounted(async () => {
 });
 </script>
 
+<style scoped>
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem; padding: 0.85rem 1rem; border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.panel-body { padding: 0.95rem 1rem; }
+.module-seg {
+  display: inline-flex; padding: 0.22rem; border-radius: 999px;
+  border: 1px solid var(--hms-border); background: var(--hms-surface); gap: 0.15rem;
+}
+.seg-btn {
+  border: 0; background: transparent; color: var(--hms-text-secondary); font-family: inherit;
+  font-size: var(--hms-text-sm); font-weight: 650; padding: 0.4rem 0.85rem;
+  border-radius: 999px; cursor: pointer;
+  transition: background var(--hms-duration-fast) var(--hms-ease-out), color var(--hms-duration-fast) var(--hms-ease-out);
+}
+.seg-btn.active { background: var(--hms-panel-bg); color: var(--hms-accent); box-shadow: var(--hms-shadow-sm); }
+.badge-row { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.text-muted { color: var(--hms-text-muted); }
+.export-row { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+.tool-input {
+  height: 2.25rem; border-radius: 999px; border: 1px solid var(--hms-border);
+  background: var(--hms-surface); color: var(--hms-text-primary); font-family: inherit;
+  font-size: var(--hms-text-sm); padding: 0 0.9rem;
+}
+.tool-input:focus {
+  outline: none;
+  border-color: var(--hms-accent);
+  background: var(--hms-panel-bg);
+  box-shadow: 0 0 0 3px var(--hms-accent-muted);
+}
+</style>

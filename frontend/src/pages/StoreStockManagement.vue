@@ -1,34 +1,38 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Inventory"
-        @click="$router.push('/inventory-mode')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">Store Stock Management</div>
-    </div>
-    <q-banner class="glass-card q-pa-md q-mb-md">
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Store stock"
+      subtitle="Add batches, track expiry, and approve stock before it is available for requisitions."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/inventory-mode')">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <q-banner dense rounded class="soft-banner q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      Manage stock for stores. Store Managers add stock with batch numbers and expiry dates. Department Heads approve stock before it becomes available for requisitions.
+      Store Managers add stock with batch numbers and expiry dates. Department Heads approve stock before it becomes available for requisitions.
     </q-banner>
 
-    <q-tabs v-model="activeTab" class="q-mb-md">
+    <q-tabs v-model="activeTab" dense align="left" class="stock-tabs q-mb-md">
       <q-tab name="stock" label="Stock Management" icon="inventory" />
       <q-tab name="vendors" label="Vendors" icon="store" />
     </q-tabs>
 
     <!-- Stock Management Tab -->
-    <q-tab-panels v-model="activeTab" animated>
-      <q-tab-panel name="stock">
+    <q-tab-panels v-model="activeTab" animated class="stock-panels">
+      <q-tab-panel name="stock" class="q-pa-none">
         <!-- Add Stock Form -->
-        <q-card class="q-mb-md glass-card" flat v-if="canAddStock">
-          <q-card-section>
-            <div class="text-h6 q-mb-md glass-text">Add New Stock</div>
+        <section class="diag-panel" v-if="canAddStock">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Add new stock</div>
+              <div class="panel-sub">Batch, expiry, vendor, and quantity for a store product</div>
+            </div>
+          </div>
+          <div class="panel-body">
             <q-form @submit="addStock" ref="stockFormRef">
               <div class="row q-gutter-md">
                 <q-select
@@ -146,30 +150,29 @@
                   type="textarea"
                   class="col-12"
                 />
-                <div class="col-12">
-                  <q-btn
-                    type="submit"
-                    color="primary"
-                    label="Add Stock"
-                    :loading="addingStock"
-                    icon="add"
-                  />
-                  <q-btn
-                    flat
-                    label="Reset"
-                    @click="resetStockForm"
-                    class="q-ml-sm"
-                  />
+                <div class="col-12 row q-gutter-sm items-center">
+                  <HmsButton type="submit" variant="primary" size="sm" :loading="addingStock">
+                    Add Stock
+                  </HmsButton>
+                  <HmsButton variant="ghost" size="sm" @click="resetStockForm">Reset</HmsButton>
                 </div>
               </div>
             </q-form>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
 
         <!-- Stock List -->
-        <q-card class="glass-card" flat>
-          <q-card-section>
-            <div class="text-h6 q-mb-md glass-text">Stock List</div>
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Stock list</div>
+              <div class="panel-sub">Filter by store, status, or product code</div>
+            </div>
+            <div class="panel-actions">
+              <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadStock">Refresh</HmsButton>
+            </div>
+          </div>
+          <div class="panel-body">
             <div class="row q-gutter-md q-mb-md">
               <q-select
                 v-model="filters.store_id"
@@ -197,23 +200,15 @@
                 class="col-12 col-md-3"
                 @update:model-value="loadStock"
               />
-              <div class="col-12 col-md-3">
-                <q-btn
-                  color="primary"
-                  label="Refresh"
-                  @click="loadStock"
-                  icon="refresh"
-                  :loading="loading"
-                />
-              </div>
             </div>
             <q-table
               :rows="stockList"
               :columns="stockColumns"
               :loading="loading"
               row-key="id"
+              flat
               :pagination="{ rowsPerPage: 20 }"
-              class="glass-card"
+              class="diag-table"
             >
               <template v-slot:body-cell-status="props">
                 <q-td :props="props">
@@ -266,16 +261,21 @@
                 </q-td>
               </template>
             </q-table>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
       </q-tab-panel>
 
       <!-- Vendors Tab -->
-      <q-tab-panel name="vendors">
+      <q-tab-panel name="vendors" class="q-pa-none">
         <!-- Add Vendor Form -->
-        <q-card class="q-mb-md glass-card" flat>
-          <q-card-section>
-            <div class="text-h6 q-mb-md glass-text">Add New Vendor</div>
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Add new vendor</div>
+              <div class="panel-sub">Suppliers used when receiving store stock</div>
+            </div>
+          </div>
+          <div class="panel-body">
             <q-form @submit="createVendor" ref="vendorFormRef">
               <div class="row q-gutter-md">
                 <q-input
@@ -324,30 +324,31 @@
                   label="Active"
                   class="col-12"
                 />
-                <div class="col-12">
-                  <q-btn
-                    type="submit"
-                    color="primary"
-                    label="Create Vendor"
-                    :loading="creatingVendor"
-                    icon="add"
-                  />
-                  <q-btn
-                    flat
-                    label="Reset"
-                    @click="resetVendorForm"
-                    class="q-ml-sm"
-                  />
+                <div class="col-12 row q-gutter-sm items-center">
+                  <HmsButton type="submit" variant="primary" size="sm" :loading="creatingVendor">
+                    Create Vendor
+                  </HmsButton>
+                  <HmsButton variant="ghost" size="sm" @click="resetVendorForm">Reset</HmsButton>
                 </div>
               </div>
             </q-form>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
 
         <!-- Vendors List -->
-        <q-card class="glass-card" flat>
-          <q-card-section>
-            <div class="text-h6 q-mb-md glass-text">Vendors List</div>
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Vendors list</div>
+              <div class="panel-sub">Search and manage supplier records</div>
+            </div>
+            <div class="panel-actions">
+              <HmsButton variant="secondary" size="sm" :loading="loadingVendors" @click="loadVendors">
+                Refresh
+              </HmsButton>
+            </div>
+          </div>
+          <div class="panel-body">
             <div class="row q-gutter-md q-mb-md">
               <q-input
                 v-model="vendorSearch"
@@ -357,23 +358,15 @@
                 class="col-12 col-md-6"
                 @update:model-value="loadVendors"
               />
-              <div class="col-12 col-md-6">
-                <q-btn
-                  color="primary"
-                  label="Refresh"
-                  @click="loadVendors"
-                  icon="refresh"
-                  :loading="loadingVendors"
-                />
-              </div>
             </div>
             <q-table
               :rows="vendorsList"
               :columns="vendorColumns"
               :loading="loadingVendors"
               row-key="id"
+              flat
               :pagination="{ rowsPerPage: 20 }"
-              class="glass-card"
+              class="diag-table"
             >
               <template v-slot:body-cell-is_active="props">
                 <q-td :props="props">
@@ -402,16 +395,16 @@
                 </q-td>
               </template>
             </q-table>
-          </q-card-section>
-        </q-card>
+          </div>
+        </section>
       </q-tab-panel>
     </q-tab-panels>
 
     <!-- Approve Stock Dialog -->
     <q-dialog v-model="showApproveDialog">
       <q-card style="min-width: 400px">
-        <q-card-section>
-          <div class="text-h6">Approve Stock</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Approve stock</div>
         </q-card-section>
         <q-card-section>
           <div class="q-mb-md">
@@ -434,8 +427,8 @@
     <!-- Reject Stock Dialog -->
     <q-dialog v-model="showRejectDialog">
       <q-card style="min-width: 400px">
-        <q-card-section>
-          <div class="text-h6">Reject Stock</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Reject stock</div>
         </q-card-section>
         <q-card-section>
           <div class="q-mb-md">
@@ -466,8 +459,8 @@
     <!-- Edit Stock Dialog -->
     <q-dialog v-model="showEditStockDialog">
       <q-card style="min-width: 600px; max-width: 800px">
-        <q-card-section>
-          <div class="text-h6">Edit Stock</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Edit stock</div>
         </q-card-section>
         <q-card-section>
           <q-form @submit="updateStock" ref="editStockFormRef">
@@ -555,9 +548,9 @@
                 class="col-12"
               />
             </div>
-            <q-card-actions align="right" class="q-mt-md">
-              <q-btn flat label="Cancel" v-close-popup />
-              <q-btn color="primary" label="Update" type="submit" :loading="updatingStock" />
+            <q-card-actions align="right" class="q-mt-md dialog-actions">
+              <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+              <HmsButton variant="primary" size="sm" type="submit" :loading="updatingStock">Update</HmsButton>
             </q-card-actions>
           </q-form>
         </q-card-section>
@@ -567,8 +560,8 @@
     <!-- Edit Vendor Dialog -->
     <q-dialog v-model="showEditVendorDialog">
       <q-card style="min-width: 500px">
-        <q-card-section>
-          <div class="text-h6">Edit Vendor</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Edit vendor</div>
         </q-card-section>
         <q-card-section>
           <q-form @submit="updateVendor" ref="editVendorFormRef">
@@ -618,9 +611,9 @@
               label="Active"
               class="q-mb-md"
             />
-            <q-card-actions align="right">
-              <q-btn flat label="Cancel" v-close-popup />
-              <q-btn color="primary" label="Update" type="submit" :loading="updatingVendor" />
+            <q-card-actions align="right" class="dialog-actions">
+              <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+              <HmsButton variant="primary" size="sm" type="submit" :loading="updatingVendor">Update</HmsButton>
             </q-card-actions>
           </q-form>
         </q-card-section>
@@ -636,7 +629,8 @@ import { useAuthStore } from '../stores/auth';
 import { useRouter } from 'vue-router';
 import { vendorsAPI, storeStockAPI, storesAPI, priceListAPI, storeStaffAssignmentsAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';
-
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 const $q = useQuasar();
 const router = useRouter();
 const authStore = useAuthStore();
@@ -1284,12 +1278,31 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+.stock-tabs {
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  padding: 0.15rem;
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.stock-panels {
+  background: transparent;
+}
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.dialog-head {
+  border-bottom: 1px solid var(--hms-border);
+}
+.dialog-title {
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.dialog-actions {
+  gap: 0.5rem;
 }
 </style>
 

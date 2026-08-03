@@ -1,54 +1,48 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Admission Manager"
-        @click="goBack"
-        class="q-mr-md"
-      />
-      <div class="text-h5 text-weight-bold glass-text">
-        Nurse Mid Documentation
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Nurse mid documentation"
+      subtitle="Nursing and midwifery documentation for this admission."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="goBack">Back to manager</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="patientInfo" class="ipd-patient-hero">
+      <div class="ipd-hero-main">
+        <div class="ipd-hero-avatar">{{ nmdPatientInitials(patientInfo) }}</div>
+        <div>
+          <h1 class="ipd-hero-name">{{ nmdPatientDisplayName(patientInfo) }}</h1>
+          <div class="ipd-hero-meta">
+            <span class="mono">{{ patientInfo.patient_card_number }}</span>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.ward || '—' }}</span>
+            <template v-if="patientInfo.bed_number">
+              <span class="sep">·</span>
+              <span>Bed {{ patientInfo.bed_number }}</span>
+            </template>
+            <template v-if="patientInfo.patient_gender">
+              <span class="sep">·</span>
+              <span>{{ patientInfo.patient_gender }}</span>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 text-weight-bold glass-text q-mb-sm">
-          Patient Information
-        </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-6">
-            <div class="text-body2">
-              <strong>Name:</strong> {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
-            </div>
-            <div class="text-body2">
-              <strong>Card Number:</strong> {{ patientInfo.patient_card_number }}
-            </div>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="text-body2">
-              <strong>Ward:</strong> {{ patientInfo.ward }}
-            </div>
-            <div class="text-body2" v-if="patientInfo.bed_number">
-              <strong>Bed:</strong> {{ patientInfo.bed_number }}
-            </div>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <q-card class="glass-card" flat bordered>
-      <q-card-section>
-        <q-expansion-item
-          v-model="formExpanded"
-          expand-separator
-          icon="description"
-          label="Nurse Mid Documentation Form"
-          header-class="text-h6 text-weight-bold glass-text"
-        >
-          <q-form @submit="saveDocumentation" class="q-gutter-md q-pa-md">
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Nurse Mid Documentation Form</h2>
+      </div>
+      <q-expansion-item
+        v-model="formExpanded"
+        expand-separator
+        icon="description"
+        label="Open form"
+        header-class="text-weight-medium"
+      >
+        <q-form @submit="saveDocumentation" class="q-gutter-md q-pa-md">
           <!-- Patient Problems / Diagnosis -->
           <div>
             <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
@@ -331,89 +325,84 @@
 
           <q-separator class="q-my-md" />
 
-            <q-card-actions align="right">
-              <q-btn flat label="Cancel" color="primary" @click="resetForm" />
-              <q-btn
-                flat
-                :label="editingDocId ? 'Update Documentation' : 'Save Documentation'"
-                color="positive"
-                type="submit"
-                :loading="saving"
-              />
-            </q-card-actions>
-          </q-form>
-        </q-expansion-item>
-      </q-card-section>
-    </q-card>
+          <div class="row justify-end q-gutter-sm">
+            <HmsButton variant="secondary" type="button" @click="resetForm">
+              Cancel
+            </HmsButton>
+            <HmsButton variant="primary" type="submit" :loading="saving">
+              {{ editingDocId ? 'Update Documentation' : 'Save Documentation' }}
+            </HmsButton>
+          </div>
+        </q-form>
+      </q-expansion-item>
+    </section>
 
     <!-- Previous Documentation List -->
-    <q-card v-if="previousDocumentations.length > 0" class="glass-card q-mt-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 text-weight-bold glass-text q-mb-md">
-          Previous Nurse Mid Documentations
-        </div>
-        <q-list bordered separator>
-          <q-item
-            v-for="doc in previousDocumentations"
-            :key="doc.id"
-            class="q-pa-md"
-          >
-            <q-item-section>
-              <q-item-label class="text-weight-bold">
-                <div class="row items-center justify-between">
-                  <div>
-                    Created by: {{ doc.created_by_name || 'Unknown' }} on {{ formatDateTime(doc.created_at) }}
-                  </div>
-                  <q-btn
-                    v-if="canEditDocumentation(doc)"
-                    flat
-                    dense
-                    icon="edit"
-                    label="Edit"
-                    color="primary"
-                    size="sm"
-                    @click="editDocumentation(doc)"
-                  />
+    <section v-if="previousDocumentations.length > 0" class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Previous Nurse Mid Documentations</h2>
+      </div>
+      <q-list bordered separator>
+        <q-item
+          v-for="doc in previousDocumentations"
+          :key="doc.id"
+          class="q-pa-md"
+        >
+          <q-item-section>
+            <q-item-label class="text-weight-bold">
+              <div class="row items-center justify-between">
+                <div>
+                  Created by: {{ doc.created_by_name || 'Unknown' }} on {{ formatDateTime(doc.created_at) }}
                 </div>
-              </q-item-label>
-              <q-item-label caption>
-                <div class="q-mt-sm">
-                  <div v-if="doc.patient_problems_diagnosis" class="q-mb-sm">
-                    <strong>Patient Problems / Diagnosis:</strong>
-                    <div class="q-ml-md">{{ doc.patient_problems_diagnosis }}</div>
-                  </div>
-                  <div v-if="doc.aim_of_care" class="q-mb-sm">
-                    <strong>Aim of Care / Objectives / Outcome Criteria:</strong>
-                    <div class="q-ml-md">{{ doc.aim_of_care }}</div>
-                  </div>
-                  <div v-if="doc.nursing_assessment" class="q-mb-sm">
-                    <strong>Nursing Assessment:</strong>
-                    <div class="q-ml-md">{{ doc.nursing_assessment }}</div>
-                  </div>
-                  <div v-if="doc.nursing_orders" class="q-mb-sm">
-                    <strong>Nursing Orders:</strong>
-                    <div class="q-ml-md">{{ doc.nursing_orders }}</div>
-                  </div>
-                  <div v-if="doc.nursing_intervention" class="q-mb-sm">
-                    <strong>Nursing Intervention:</strong>
-                    <div class="q-ml-md">{{ doc.nursing_intervention }}</div>
-                  </div>
-                  <div v-if="doc.evaluation" class="q-mb-sm">
-                    <strong>Evaluation:</strong>
-                    <div class="q-ml-md">{{ doc.evaluation }}</div>
-                  </div>
-                  <!-- Backward compatibility: show old documentation field if new fields are empty -->
-                  <div v-if="doc.documentation && !doc.patient_problems_diagnosis && !doc.aim_of_care" class="q-mb-sm">
-                    <strong>Documentation:</strong>
-                    <div class="q-ml-md">{{ doc.documentation }}</div>
-                  </div>
+                <q-btn
+                  v-if="canEditDocumentation(doc)"
+                  flat
+                  dense
+                  icon="edit"
+                  label="Edit"
+                  color="primary"
+                  size="sm"
+                  @click="editDocumentation(doc)"
+                />
+              </div>
+            </q-item-label>
+            <q-item-label caption>
+              <div class="q-mt-sm">
+                <div v-if="doc.patient_problems_diagnosis" class="q-mb-sm">
+                  <strong>Patient Problems / Diagnosis:</strong>
+                  <div class="q-ml-md">{{ doc.patient_problems_diagnosis }}</div>
                 </div>
-              </q-item-label>
-            </q-item-section>
-          </q-item>
-        </q-list>
-      </q-card-section>
-    </q-card>
+                <div v-if="doc.aim_of_care" class="q-mb-sm">
+                  <strong>Aim of Care / Objectives / Outcome Criteria:</strong>
+                  <div class="q-ml-md">{{ doc.aim_of_care }}</div>
+                </div>
+                <div v-if="doc.nursing_assessment" class="q-mb-sm">
+                  <strong>Nursing Assessment:</strong>
+                  <div class="q-ml-md">{{ doc.nursing_assessment }}</div>
+                </div>
+                <div v-if="doc.nursing_orders" class="q-mb-sm">
+                  <strong>Nursing Orders:</strong>
+                  <div class="q-ml-md">{{ doc.nursing_orders }}</div>
+                </div>
+                <div v-if="doc.nursing_intervention" class="q-mb-sm">
+                  <strong>Nursing Intervention:</strong>
+                  <div class="q-ml-md">{{ doc.nursing_intervention }}</div>
+                </div>
+                <div v-if="doc.evaluation" class="q-mb-sm">
+                  <strong>Evaluation:</strong>
+                  <div class="q-ml-md">{{ doc.evaluation }}</div>
+                </div>
+                <!-- Backward compatibility: show old documentation field if new fields are empty -->
+                <div v-if="doc.documentation && !doc.patient_problems_diagnosis && !doc.aim_of_care" class="q-mb-sm">
+                  <strong>Documentation:</strong>
+                  <div class="q-ml-md">{{ doc.documentation }}</div>
+                </div>
+              </div>
+            </q-item-label>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </section>
   </q-page>
 </template>
 
@@ -421,6 +410,8 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { consultationAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
@@ -428,6 +419,17 @@ const $q = useQuasar();
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+
+const nmdPatientInitials = (info) => {
+  if (!info) return '?';
+  const a = (info.patient_name || '').trim().charAt(0);
+  const b = (info.patient_surname || '').trim().charAt(0);
+  return ((a + b) || '?').toUpperCase();
+};
+const nmdPatientDisplayName = (info) => {
+  if (!info) return '';
+  return [info.patient_name, info.patient_surname, info.patient_other_names].filter(Boolean).join(' ');
+};
 
 const wardAdmissionId = computed(() => parseInt(route.params.id));
 const patientInfo = ref(null);
@@ -800,6 +802,95 @@ onMounted(() => {
 
 
 <style scoped>
+.am-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.am-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.ipd-patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.ipd-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.ipd-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.ipd-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.ipd-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.ipd-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ipd-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.ipd-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+@media (max-width: 720px) {
+  .ipd-patient-hero { position: static; }
+}
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 /* Light mode adjustments */
 .body--light .glass-text {
   color: rgba(0, 0, 0, 0.87) !important;

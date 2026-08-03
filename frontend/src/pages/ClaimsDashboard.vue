@@ -1,35 +1,41 @@
 <template>
-  <q-page class="q-pa-md claims-dashboard-page">
-    <div class="row items-end q-col-gutter-md q-mb-lg">
-      <div class="col-12 col-md-8">
-        <div class="text-h4 text-weight-bold glass-text">Claims dashboard</div>
-        <div class="text-body2 text-secondary q-mt-xs">
-          Monthly overview and submission advice. Default is previous month; lock keeps your selection on next open.
+  <q-page class="hms-page claims-dashboard-page">
+    <HmsPageHeader
+      title="Claims dashboard"
+      subtitle="Monthly overview and submission advice. Default is previous month; lock keeps your selection on next open."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
+        <HmsButton :variant="filtersLocked ? 'healthcare' : 'secondary'" size="sm" @click="toggleLock">
+          {{ filtersLocked ? 'Unlock' : 'Lock' }}
+        </HmsButton>
+        <HmsButton
+          v-if="trendStartMonth || trendEndMonth"
+          variant="ghost"
+          size="sm"
+          @click="resetTrendRange"
+        >
+          Reset trend
+        </HmsButton>
+        <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadDashboard">
+          Refresh
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Source, month, and optional trend range</div>
+        </div>
+        <div class="panel-actions">
+          <HmsButton variant="ghost" size="sm" @click="resetToPreviousMonth">
+            Reset to previous month
+          </HmsButton>
         </div>
       </div>
-      <div class="col-12 col-md-4 row justify-end q-gutter-sm">
-        <q-btn
-          flat
-          :icon="filtersLocked ? 'lock' : 'lock_open'"
-          :label="filtersLocked ? 'Locked' : 'Lock'"
-          :color="filtersLocked ? 'positive' : 'grey'"
-          @click="toggleLock"
-          class="glass-button"
-        />
-        <q-btn
-          v-if="trendStartMonth || trendEndMonth"
-          flat
-          icon="restart_alt"
-          label="Reset trend"
-          @click="resetTrendRange"
-          class="glass-button"
-        />
-        <q-btn flat icon="refresh" label="Refresh" :loading="loading" @click="loadDashboard" class="glass-button" />
-      </div>
-    </div>
-
-    <q-card class="glass-card q-mb-lg" flat bordered>
-      <q-card-section>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <div class="col-12 col-sm-6 col-md-3">
             <q-select
@@ -77,63 +83,58 @@
               clearable
             />
           </div>
-          <div class="col-12 col-md-6 row items-center justify-end">
-            <q-btn
-              outline
-              color="secondary"
-              label="Reset to previous month"
-              @click="resetToPreviousMonth"
-              class="q-mt-sm"
-            />
-          </div>
         </div>
 
-        <div v-if="dash" class="text-caption text-grey-7 q-mt-sm">
+        <div v-if="dash" class="filter-meta">
           Showing <strong>{{ dash.month }}</strong> · <strong>{{ dash.source }}</strong> claims
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
-    <q-banner v-if="loadError" class="bg-negative text-white q-mb-md" rounded>
+    <div v-if="loadError" class="error-banner" role="alert">
       {{ loadError }}
-    </q-banner>
+    </div>
 
-    <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
-      <div class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Total volume</div>
-            <div class="text-h6 text-weight-bold glass-text">{{ formatInt(dash.kpis.total_volume) }}</div>
-          </q-card-section>
-        </q-card>
+    <div v-if="dash && !loading" class="claim-kpi-grid">
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-accent); background: var(--hms-accent-muted)">
+            <FileStack :size="18" />
+          </div>
+          <div class="claim-kpi__label">Total volume</div>
+        </div>
+        <div class="claim-kpi__value">{{ formatInt(dash.kpis.total_volume) }}</div>
       </div>
-      <div class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Total cost</div>
-            <div class="text-h6 text-weight-bold glass-text">{{ formatMoney(dash.kpis.total_cost) }}</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-healthcare); background: var(--hms-healthcare-muted)">
+            <BadgeDollarSign :size="18" />
+          </div>
+          <div class="claim-kpi__label">Total cost</div>
+        </div>
+        <div class="claim-kpi__value">{{ formatMoney(dash.kpis.total_cost) }}</div>
       </div>
-      <div class="col-6 col-sm-4 col-md-2">
-        <q-card class="kpi-card glass-card" flat bordered>
-          <q-card-section class="q-pa-sm">
-            <div class="text-caption text-grey-7">Avg. cost / claim</div>
-            <div class="text-h6 text-weight-bold glass-text">{{ formatMoney(dash.kpis.avg_cost_per_claim) }}</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__icon" style="color: var(--hms-info); background: var(--hms-info-muted)">
+            <ChartLine :size="18" />
+          </div>
+          <div class="claim-kpi__label">Avg. cost / claim</div>
+        </div>
+        <div class="claim-kpi__value">{{ formatMoney(dash.kpis.avg_cost_per_claim) }}</div>
       </div>
     </div>
 
     <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
       <div class="col-12 col-lg-7">
-        <q-card class="glass-card chart-card" flat bordered>
-          <q-card-section>
-            <div class="row items-center q-mb-md">
-              <div class="text-subtitle1 text-weight-medium glass-text">Claims trend (6 months)</div>
-              <q-space />
-              <div class="text-caption text-grey-7">Hover for details</div>
+        <section class="diag-panel chart-card">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Claims trend (6 months)</div>
+              <div class="panel-sub">Hover for details</div>
             </div>
+          </div>
+          <div class="panel-body">
             <ApexChart
               v-if="trendSeries.length"
               type="line"
@@ -141,15 +142,19 @@
               :options="trendOptions"
               :series="trendSeries"
             />
-            <div v-else class="text-caption text-grey-7">No trend data available.</div>
-          </q-card-section>
-        </q-card>
+            <div v-else class="empty-hint">No trend data available.</div>
+          </div>
+        </section>
       </div>
 
       <div class="col-12 col-lg-5">
-        <q-card class="glass-card chart-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-sm">Top diagnoses (month)</div>
+        <section class="diag-panel chart-card">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Top diagnoses (month)</div>
+            </div>
+          </div>
+          <div class="panel-body">
             <ApexChart
               v-if="dxSeries.length"
               type="bar"
@@ -157,26 +162,27 @@
               :options="dxOptions"
               :series="dxSeries"
             />
-            <div v-else class="text-caption text-grey-7">No diagnosis summary available for this source/month yet.</div>
-          </q-card-section>
-        </q-card>
+            <div v-else class="empty-hint">No diagnosis summary available for this source/month yet.</div>
+          </div>
+        </section>
       </div>
     </div>
 
     <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
       <div class="col-12 col-lg-6">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-sm">
-              Submission advice: multiple ANC/PNC attendance
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Submission advice: multiple ANC/PNC attendance</div>
+              <div class="panel-sub">
+                Some clients may attend multiple times, but insurance may pay only once. Consider OPDC where applicable.
+              </div>
             </div>
-            <div class="text-caption text-grey-7 q-mb-md">
-              Some clients (ANC/PNC) may attend multiple times, but insurance may pay only once. Consider changing other services to
-              <strong>OPDC</strong> where applicable.
-            </div>
-
+          </div>
+          <div class="panel-body">
             <q-table
               v-if="dash.advice?.multiple_attendance?.length"
+              class="diag-table"
               :rows="dash.advice.multiple_attendance"
               :columns="multiAttendanceColumns"
               row-key="member_no"
@@ -195,21 +201,23 @@
                 </q-td>
               </template>
             </q-table>
-            <div v-else class="text-caption text-grey-7">No multiple attendance candidates found for this month.</div>
-          </q-card-section>
-        </q-card>
+            <div v-else class="empty-hint">No multiple attendance candidates found for this month.</div>
+          </div>
+        </section>
       </div>
 
       <div class="col-12 col-lg-6">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-sm">Potential duplicates</div>
-            <div class="text-caption text-grey-7 q-mb-md">
-              Heuristic duplicate groups. Review and correct if needed, or leave as-is.
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Potential duplicates</div>
+              <div class="panel-sub">Heuristic duplicate groups. Review and correct if needed, or leave as-is.</div>
             </div>
-
+          </div>
+          <div class="panel-body">
             <q-table
               v-if="dash.advice?.potential_duplicates?.length"
+              class="diag-table"
               :rows="dash.advice.potential_duplicates"
               :columns="dupColumns"
               row-key="key"
@@ -228,17 +236,21 @@
                 </q-td>
               </template>
             </q-table>
-            <div v-else class="text-caption text-grey-7">No potential duplicates detected for this month.</div>
-          </q-card-section>
-        </q-card>
+            <div v-else class="empty-hint">No potential duplicates detected for this month.</div>
+          </div>
+        </section>
       </div>
     </div>
 
     <div v-if="dash && !loading" class="row q-col-gutter-md q-mb-lg">
       <div class="col-12">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium glass-text q-mb-sm">Top prescribed medicines (month)</div>
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Top prescribed medicines (month)</div>
+            </div>
+          </div>
+          <div class="panel-body">
             <ApexChart
               v-if="medSeries.length"
               type="bar"
@@ -246,9 +258,9 @@
               :options="medOptions"
               :series="medSeries"
             />
-            <div v-else class="text-caption text-grey-7">No medicines summary available for this source/month yet.</div>
-          </q-card-section>
-        </q-card>
+            <div v-else class="empty-hint">No medicines summary available for this source/month yet.</div>
+          </div>
+        </section>
       </div>
     </div>
   </q-page>
@@ -256,6 +268,9 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import { FileStack, BadgeDollarSign, ChartLine } from 'lucide-vue-next';
 import { claimsAnalyticsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import VueApexCharts from 'vue3-apexcharts';
@@ -532,21 +547,49 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(10px);
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.92);
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
 }
-.kpi-card {
-  min-height: 78px;
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.panel-body { padding: 1rem; }
+.stat-top {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
 }
-.chart-card {
-  min-height: 280px;
+.filter-meta {
+  margin-top: 0.75rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
 }
-.body--light .glass-text {
-  color: rgba(0, 0, 0, 0.87) !important;
+.error-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-critical-muted);
+  color: var(--hms-critical);
+  font-size: var(--hms-text-sm);
+}
+.chart-card { min-height: 280px; }
+.empty-hint {
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+  padding: 0.5rem 0;
 }
 </style>
 

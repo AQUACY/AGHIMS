@@ -1,76 +1,67 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Patient Registration</div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Patient Registration"
+      subtitle="Search an existing record or register a new patient."
+    />
 
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Search Existing Patient</div>
-        <div class="row q-gutter-md">
-          <q-input
-            v-model="cardNumber"
-            filled
-            label="Card Number"
-            class="col-12 col-md-8"
-            @keyup.enter="searchPatient"
-          />
-          <q-btn
-            color="primary"
-            label="Search"
-            @click="searchPatient"
-            class="col-12 col-md-4 glass-button"
-            :loading="searching"
-          />
+    <HmsCard class="reg-panel q-mb-md">
+      <div class="reg-panel-head">
+        <div>
+          <h2 class="hms-section-title">Search existing patient</h2>
+          <p class="section-hint">Look up by facility card number before creating a duplicate record.</p>
         </div>
-      </q-card-section>
+      </div>
+      <div class="search-row">
+        <q-input
+          v-model="cardNumber"
+          filled
+          dense
+          label="Card number"
+          class="search-input"
+          @keyup.enter="searchPatient"
+        />
+        <HmsButton variant="primary" size="md" :loading="searching" @click="searchPatient">
+          Search
+        </HmsButton>
+      </div>
 
-      <q-card-section v-if="patientsStore.currentPatient">
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Existing Patient Found</div>
-          <q-space />
-          <q-btn
-            color="secondary"
-            icon="edit"
-            label="Edit Patient"
-            @click="editPatient"
-            class="q-mr-sm glass-button"
-          />
-          <q-btn
-            color="primary"
-            icon="visibility"
-            label="View Profile"
-            @click="viewPatientProfile"
-            class="glass-button"
-          />
+      <div v-if="patientsStore.currentPatient" class="found-block">
+        <div class="found-head">
+          <h3 class="found-title">Existing patient found</h3>
+          <div class="found-actions">
+            <HmsButton variant="secondary" size="sm" @click="editPatient">Edit</HmsButton>
+            <HmsButton variant="soft" size="sm" @click="viewPatientProfile">View profile</HmsButton>
+          </div>
         </div>
-        <q-banner class="glass-card q-pa-md">
-          <div class="text-body1 glass-text">
-            <strong>Name:</strong> {{ patientsStore.currentPatient.name }}
-            {{ patientsStore.currentPatient.surname }}
+        <div class="found-grid">
+          <div>
+            <div class="hms-field-label">Name</div>
+            <div class="hms-field-value">
+              {{ patientsStore.currentPatient.name }}
+              {{ patientsStore.currentPatient.surname }}
+            </div>
           </div>
-          <div class="text-body1 glass-text">
-            <strong>Card Number:</strong> {{ patientsStore.currentPatient.card_number }}
+          <div>
+            <div class="hms-field-label">Card number</div>
+            <div class="hms-field-value mono">{{ patientsStore.currentPatient.card_number }}</div>
           </div>
-          <div
-            v-if="patientsStore.currentPatient.legacy_card_number"
-            class="text-body1 glass-text"
-          >
-            <strong>Previous HMS Card:</strong> {{ patientsStore.currentPatient.legacy_card_number }}
+          <div v-if="patientsStore.currentPatient.legacy_card_number">
+            <div class="hms-field-label">Previous HMS card</div>
+            <div class="hms-field-value mono">{{ patientsStore.currentPatient.legacy_card_number }}</div>
           </div>
-          <div class="text-body1 glass-text">
-            <strong>Gender:</strong> {{ patientsStore.currentPatient.gender }}
+          <div>
+            <div class="hms-field-label">Sex</div>
+            <div class="hms-field-value">{{ patientsStore.currentPatient.gender }}</div>
           </div>
-        </q-banner>
-        <div class="row q-mt-md q-gutter-sm">
-           <q-btn
-             color="primary"
-             icon="add"
-             label="Create New Encounter"
-             @click="createEncounterForExisting"
-             class="glass-button"
-           />
-         </div>
-       </q-card-section>
-     </q-card>
+        </div>
+        <div class="found-cta">
+          <HmsButton variant="healthcare" size="sm" @click="createEncounterForExisting">
+            Create new encounter
+          </HmsButton>
+        </div>
+      </div>
+    </HmsCard>
 
      <!-- Create Encounter Dialog -->
      <q-dialog v-model="showEncounterDialog" persistent>
@@ -179,8 +170,9 @@
     <q-card class="q-mt-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-md glass-text">New Patient Registration</div>
+        <p class="section-hint">Complete required demographics. Insurance fields appear when NHIS is enabled.</p>
         <q-form @submit="onSubmit" class="q-gutter-md">
-          <q-banner v-if="ghimsCardMode" rounded class="bg-blue-1 q-mb-sm">
+          <q-banner v-if="ghimsCardMode" rounded class="hms-info-banner q-mb-sm">
             <template v-slot:avatar>
               <q-icon name="badge" color="primary" />
             </template>
@@ -674,7 +666,9 @@ import { useQuasar } from 'quasar';
 import { priceListAPI } from '../services/api';
 import { applyNhiaDataToForm, canFetchNhiaCcc, isWithinBabyWindow, firstNameFromFullName, babyNameFromFirstName } from '../utils/nhiaForm';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
-
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsCard from '../components/ui/HmsCard.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 const $q = useQuasar();
 const router = useRouter();
 const patientsStore = usePatientsStore();
@@ -1357,4 +1351,106 @@ onMounted(async () => {
   }
 });
 </script>
+
+<style scoped>
+.section-hint {
+  margin: 0.3rem 0 0;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-sm);
+}
+
+.reg-panel {
+  padding: 1.15rem 1.25rem;
+}
+
+.reg-panel-head {
+  margin-bottom: 0.95rem;
+}
+
+.search-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.search-input {
+  flex: 1;
+  min-width: min(220px, 100%);
+}
+
+.found-block {
+  margin-top: 1.1rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--hms-border);
+}
+
+.found-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.found-title {
+  margin: 0;
+  font-size: var(--hms-text-lg);
+  font-weight: 700;
+  color: var(--hms-text-primary);
+}
+
+.found-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.found-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.found-cta {
+  margin-top: 1rem;
+}
+
+.mono {
+  font-family: var(--hms-font-mono);
+  font-size: 0.85em;
+}
+
+.hms-info-banner {
+  background: var(--hms-accent-muted) !important;
+  color: var(--hms-text-primary) !important;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: var(--hms-radius-lg);
+}
+
+@media (max-width: 720px) {
+  .search-row {
+    flex-direction: column;
+  }
+
+  .found-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .found-actions {
+    width: 100%;
+  }
+
+  .found-actions :deep(.hms-btn) {
+    flex: 1;
+  }
+}
+
+@media (max-width: 480px) {
+  .found-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
 

@@ -1,72 +1,90 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <div>
-        <div class="text-h4 text-weight-bold glass-text">Diagnosis Templates</div>
-        <div class="text-caption text-grey-7">
-          Save investigations &amp; medicines for a principal diagnosis (e.g. Malaria → B/F + Artesunate). Apply them on claim sheets.
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Diagnosis templates"
+      subtitle="Save investigations & medicines for a principal diagnosis (e.g. Malaria → B/F + Artesunate). Apply them on claim sheets."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
+        <HmsButton variant="primary" size="sm" @click="openCreate">New template</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Search and show active templates</div>
         </div>
       </div>
-      <q-space />
-      <q-btn flat color="secondary" icon="arrow_back" label="Claims home" @click="$router.push('/claims')" class="q-mr-sm" />
-      <q-btn color="primary" icon="add" label="New template" @click="openCreate" />
-    </div>
+      <div class="panel-body filter-row">
+        <q-input
+          v-model="search"
+          filled
+          dense
+          debounce="300"
+          clearable
+          placeholder="Search templates..."
+          class="filter-search"
+          @update:model-value="load"
+        >
+          <template #append><q-icon name="search" /></template>
+        </q-input>
+        <q-toggle v-model="activeOnly" label="Active only" @update:model-value="load" />
+      </div>
+    </section>
 
-    <q-card flat bordered class="q-mb-md">
-      <q-card-section class="row q-col-gutter-md items-center">
-        <div class="col-12 col-md-6">
-          <q-input v-model="search" filled dense debounce="300" clearable placeholder="Search templates..." @update:model-value="load">
-            <template #append><q-icon name="search" /></template>
-          </q-input>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Templates</div>
+          <div class="panel-sub">{{ templates.length }} template(s)</div>
         </div>
-        <div class="col-12 col-md-3">
-          <q-toggle v-model="activeOnly" label="Active only" @update:model-value="load" />
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <q-card flat bordered>
-      <q-table
-        :rows="templates"
-        :columns="columns"
-        row-key="id"
-        flat
-        :loading="loading"
-        :rows-per-page-options="[10, 25, 50]"
-      >
-        <template #body-cell-match="props">
-          <q-td :props="props">
-            <div class="text-caption">
-              <div v-if="props.row.match_diagnosis"><strong>Dx:</strong> {{ props.row.match_diagnosis }}</div>
-              <div v-if="props.row.match_icd10"><strong>ICD:</strong> {{ props.row.match_icd10 }}</div>
-              <div v-if="props.row.match_gdrg_prefix"><strong>GDRG:</strong> {{ props.row.match_gdrg_prefix }}*</div>
-              <div v-if="props.row.match_keywords"><strong>Keywords:</strong> {{ props.row.match_keywords }}</div>
-            </div>
-          </q-td>
-        </template>
-        <template #body-cell-counts="props">
-          <q-td :props="props">
-            {{ (props.row.investigations || []).length }} inv · {{ (props.row.medicines || []).length }} meds
-          </q-td>
-        </template>
-        <template #body-cell-actions="props">
-          <q-td :props="props">
-            <q-btn flat dense size="sm" color="primary" icon="edit" label="Edit" @click="openEdit(props.row)" />
-            <q-btn flat dense size="sm" color="negative" icon="delete" label="Delete" @click="confirmDelete(props.row)" />
-          </q-td>
-        </template>
-      </q-table>
-    </q-card>
+      </div>
+      <div class="panel-body table-wrap">
+        <q-table
+          class="diag-table"
+          :rows="templates"
+          :columns="columns"
+          row-key="id"
+          flat
+          :loading="loading"
+          :rows-per-page-options="[10, 25, 50]"
+        >
+          <template #body-cell-match="props">
+            <q-td :props="props">
+              <div class="text-caption">
+                <div v-if="props.row.match_diagnosis"><strong>Dx:</strong> {{ props.row.match_diagnosis }}</div>
+                <div v-if="props.row.match_icd10"><strong>ICD:</strong> {{ props.row.match_icd10 }}</div>
+                <div v-if="props.row.match_gdrg_prefix"><strong>GDRG:</strong> {{ props.row.match_gdrg_prefix }}*</div>
+                <div v-if="props.row.match_keywords"><strong>Keywords:</strong> {{ props.row.match_keywords }}</div>
+              </div>
+            </q-td>
+          </template>
+          <template #body-cell-counts="props">
+            <q-td :props="props">
+              {{ (props.row.investigations || []).length }} inv · {{ (props.row.medicines || []).length }} meds
+            </q-td>
+          </template>
+          <template #body-cell-actions="props">
+            <q-td :props="props">
+              <HmsButton variant="ghost" size="sm" @click="openEdit(props.row)">Edit</HmsButton>
+              <HmsButton variant="danger" size="sm" @click="confirmDelete(props.row)">Delete</HmsButton>
+            </q-td>
+          </template>
+        </q-table>
+      </div>
+    </section>
 
     <q-dialog v-model="showDialog" persistent>
-      <q-card style="min-width: 720px; max-width: 920px">
-        <q-card-section>
-          <div class="text-h6">{{ editingId ? 'Edit template' : 'New diagnosis template' }}</div>
+      <q-card class="tpl-dialog">
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">{{ editingId ? 'Edit template' : 'New diagnosis template' }}</div>
         </q-card-section>
-        <q-card-section class="q-gutter-md" style="max-height: 70vh; overflow: auto">
+        <q-card-section class="q-gutter-md dialog-body">
           <q-input v-model="form.name" filled label="Template name *" hint="e.g. Malaria OPD" />
           <q-input v-model="form.description" filled type="textarea" autogrow label="Description" />
-          <div class="text-subtitle2">Match when principal diagnosis is…</div>
+          <div class="section-label">Match when principal diagnosis is…</div>
           <div class="row q-col-gutter-sm">
             <q-input v-model="form.match_diagnosis" filled dense label="Diagnosis contains" class="col-12 col-md-6" hint="e.g. Malaria" />
             <q-input v-model="form.match_icd10" filled dense label="ICD-10 exact" class="col-12 col-md-3" />
@@ -75,9 +93,9 @@
           </div>
 
           <div class="row items-center">
-            <div class="text-subtitle2">Investigations</div>
+            <div class="section-label">Investigations</div>
             <q-space />
-            <q-btn flat dense color="primary" icon="add" label="Add" @click="form.investigations.push({ gdrgCode: '', serviceName: '' })" />
+            <HmsButton variant="ghost" size="sm" @click="form.investigations.push({ gdrgCode: '', serviceName: '' })">Add</HmsButton>
           </div>
           <div v-for="(inv, i) in form.investigations" :key="`inv-${i}`" class="row q-col-gutter-sm q-mb-xs items-center">
             <q-input v-model="inv.gdrgCode" filled dense label="G-DRG" class="col-12 col-md-3" />
@@ -86,9 +104,15 @@
           </div>
 
           <div class="row items-center q-mt-md">
-            <div class="text-subtitle2">Medicines</div>
+            <div class="section-label">Medicines</div>
             <q-space />
-            <q-btn flat dense color="primary" icon="add" label="Add" @click="form.medicines.push({ medicineCode: '', serviceName: '', dispensedQty: '1', dose: '', frequency: '', duration: '' })" />
+            <HmsButton
+              variant="ghost"
+              size="sm"
+              @click="form.medicines.push({ medicineCode: '', serviceName: '', dispensedQty: '1', dose: '', frequency: '', duration: '' })"
+            >
+              Add
+            </HmsButton>
           </div>
           <div v-for="(m, i) in form.medicines" :key="`med-${i}`" class="row q-col-gutter-sm q-mb-sm items-center">
             <q-input v-model="m.medicineCode" filled dense label="Code" class="col-12 col-md-2" />
@@ -103,9 +127,9 @@
           <q-toggle v-model="form.is_shared" label="Share with other claims users" />
           <q-toggle v-model="form.is_active" label="Active" />
         </q-card-section>
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="primary" label="Save" :loading="saving" @click="save" />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="primary" size="sm" :loading="saving" @click="save">Save</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -116,6 +140,8 @@
 import { ref, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 const loading = ref(false);
@@ -251,3 +277,43 @@ function confirmDelete(row) {
 
 onMounted(load);
 </script>
+
+<style scoped>
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-body { padding: 1rem; }
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+.filter-search { flex: 1 1 16rem; max-width: 28rem; }
+.table-wrap { padding: 0; overflow-x: auto; }
+.tpl-dialog {
+  min-width: min(920px, 96vw);
+  max-width: 920px;
+  border-radius: var(--hms-radius-xl);
+}
+.dialog-head { border-bottom: 1px solid var(--hms-border); }
+.dialog-title { font-size: var(--hms-text-lg); font-weight: 750; color: var(--hms-text-primary); }
+.dialog-body { max-height: 70vh; overflow: auto; }
+.dialog-actions { padding: 0.75rem 1rem 1rem; gap: 0.5rem; }
+.section-label { font-size: var(--hms-text-sm); font-weight: 650; color: var(--hms-text-primary); }
+</style>

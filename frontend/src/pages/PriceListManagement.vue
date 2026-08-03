@@ -1,18 +1,23 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Price List Management</div>
-    <q-banner class="glass-card q-pa-md q-mb-md">
-      <template v-slot:avatar>
-        <q-icon name="info" color="primary" />
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Price list"
+      subtitle="Upload and manage service, product, medication, and surgery tariffs. DRG codes uploaded here feed diagnoses selection in consultations."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.back()">Back</HmsButton>
       </template>
-      Upload and manage services, products, medications, and surgery codes with their prices.
-      DRG codes can be uploaded here for diagnoses selection in consultations.
-    </q-banner>
+    </HmsPageHeader>
 
     <!-- Upload Price List -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Upload Price List</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Upload price list</div>
+          <div class="panel-sub">Excel or CSV tariffs by file type (procedure, surgery, product, unmapped DRG)</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-gutter-md">
           <q-select
             v-model="uploadFileType"
@@ -35,27 +40,29 @@
               <q-icon name="attach_file" />
             </template>
           </q-file>
-          <div class="col-12 col-md-3 q-gutter-sm">
-            <q-btn
-              color="primary"
-              label="Upload"
-              @click="uploadPriceList"
+          <div class="col-12 col-md-3 upload-actions">
+            <HmsButton
+              variant="primary"
+              size="sm"
               :loading="uploading"
-              :disable="!priceListFile || !uploadFileType"
-              icon="upload"
-            />
-            <q-btn
-              color="secondary"
-              label="Download CSV"
-              @click="downloadCSV"
+              :disabled="!priceListFile || !uploadFileType"
+              @click="uploadPriceList"
+            >
+              Upload
+            </HmsButton>
+            <HmsButton
+              variant="secondary"
+              size="sm"
               :loading="downloadingCSV"
-              :disable="!uploadFileType"
-              icon="download"
-            />
+              :disabled="!uploadFileType"
+              @click="downloadCSV"
+            >
+              Download CSV
+            </HmsButton>
           </div>
         </div>
         <div class="q-mt-md">
-          <q-banner class="bg-grey-2">
+          <q-banner class="bg-grey-2 format-banner">
             <div class="text-caption">
               <strong>Excel File Format:</strong><br/>
               <strong>For Procedure/Surgery/Unmapped DRG files:</strong><br/>
@@ -92,8 +99,8 @@
             </div>
           </q-banner>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Price list upload report -->
     <q-dialog v-model="showUploadReport" persistent>
@@ -154,9 +161,14 @@
     </q-dialog>
 
     <!-- Upload ICD-10 Mapping -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Upload ICD-10 to DRG Code Mapping</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Upload ICD-10 to DRG mapping</div>
+          <div class="panel-sub">CSV maps ICD-10 codes to existing DRG codes without changing prices</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-banner rounded class="bg-blue-1 q-mb-md">
           <div class="text-body2">
             <strong>CSV Format:</strong> Upload a CSV file mapping ICD-10 codes to DRG codes.<br/>
@@ -164,7 +176,7 @@
             <strong>Note:</strong> This will create mappings between ICD-10 codes and existing DRG codes without modifying any prices.
           </div>
         </q-banner>
-        <div class="row q-gutter-md">
+        <div class="row q-gutter-md items-center">
           <q-file
             v-model="icd10MappingFile"
             label="Select CSV File"
@@ -177,20 +189,22 @@
               <q-icon name="attach_file" />
             </template>
           </q-file>
-          <q-btn
-            color="secondary"
-            label="Upload ICD-10 Mapping"
-            @click="uploadIcd10Mapping"
-            :loading="uploadingIcd10"
-            :disable="!icd10MappingFile"
-            class="col-12 col-md-4"
-            icon="upload"
-          />
+          <div class="col-12 col-md-4">
+            <HmsButton
+              variant="secondary"
+              size="sm"
+              :loading="uploadingIcd10"
+              :disabled="!icd10MappingFile"
+              @click="uploadIcd10Mapping"
+            >
+              Upload ICD-10 Mapping
+            </HmsButton>
+          </div>
         </div>
-        
+
         <!-- ICD-10 Upload Results -->
         <div v-if="icd10UploadResults" class="q-mt-md">
-          <q-banner 
+          <q-banner
             :class="icd10UploadResults.imported > 0 ? 'bg-green-1' : 'bg-red-1'"
             rounded
             class="q-mb-md"
@@ -205,13 +219,21 @@
             </div>
           </q-banner>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Search and View Price List -->
-    <q-card>
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Price List Items</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Price list items</div>
+          <div class="panel-sub">Search, filter, and edit tariffs by code, department, and file type</div>
+        </div>
+        <HmsButton variant="primary" size="sm" @click="openAddDialog">
+          Add New Price
+        </HmsButton>
+      </div>
+      <div class="panel-body">
         <div class="row q-gutter-md q-mb-md">
           <q-input
             v-model="searchTerm"
@@ -255,23 +277,13 @@
             @update:model-value="searchItems"
             hint="Active, archived, or all"
           />
-          <q-btn
-            color="primary"
-            label="Search"
-            @click="searchItems"
-            icon="search"
-            class="col-12 col-md-2"
-          />
+          <div class="col-12 col-md-2 flex items-center">
+            <HmsButton variant="secondary" size="sm" @click="searchItems">
+              Search
+            </HmsButton>
+          </div>
         </div>
 
-        <div class="row q-mb-md q-gutter-sm">
-          <q-btn
-            color="positive"
-            label="Add New Price"
-            icon="add"
-            @click="openAddDialog"
-          />
-        </div>
         <q-table
           :rows="priceListItems"
           :columns="priceColumns"
@@ -318,7 +330,7 @@
           </template>
           <template v-slot:body-cell-insurance_covered="props">
             <q-td :props="props">
-              <q-badge 
+              <q-badge
                 v-if="props.row.file_type === 'product' || props.row.file_type === 'procedure'"
                 :color="props.value && props.value.toLowerCase() === 'no' ? 'negative' : 'positive'"
                 :label="props.value && props.value.toLowerCase() === 'no' ? 'No' : 'Yes'"
@@ -341,12 +353,12 @@
             </div>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
     <!-- Add Price Dialog -->
     <q-dialog v-model="showAddDialog">
       <q-card style="min-width: 600px; max-width: 800px">
-        <q-card-section>
+        <q-card-section class="dialog-head">
           <div class="text-h6">Add New Price Item</div>
         </q-card-section>
         <q-card-section>
@@ -416,7 +428,7 @@
     <!-- Edit Price Dialog -->
     <q-dialog v-model="showEditDialog">
       <q-card style="min-width: 700px; max-width: 900px">
-        <q-card-section>
+        <q-card-section class="dialog-head">
           <div class="text-h6">Edit Price Item</div>
         </q-card-section>
         <q-card-section class="q-pt-none">
@@ -499,6 +511,8 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
 import { useRouter } from 'vue-router';
 import { priceListAPI } from '../services/api';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -959,4 +973,48 @@ const uploadIcd10Mapping = async () => {
   }
 };
 </script>
+
+<style scoped>
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.panel-sub {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.panel-body {
+  padding: 1rem;
+}
+.upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.format-banner {
+  border-radius: var(--hms-radius-lg);
+}
+.dialog-head {
+  border-bottom: 1px solid var(--hms-border);
+}
+</style>
 
