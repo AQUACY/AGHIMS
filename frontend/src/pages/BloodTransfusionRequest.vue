@@ -1,253 +1,209 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back"
-        @click="$router.back()"
-        class="q-mr-md"
-      />
-      <div>
-        <div class="text-h4 text-weight-bold glass-text">
-          Blood Transfusion Request
-        </div>
-        <div v-if="patientInfo?.card_number" class="text-subtitle1 text-grey-4 q-mt-xs">
-          Card Number: <span class="text-weight-bold">{{ patientInfo.card_number }}</span>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Blood transfusion request"
+      subtitle="Request and track blood products for this admission."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.back()">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="patientInfo" class="ipd-patient-hero">
+      <div class="ipd-hero-main">
+        <div class="ipd-hero-avatar">{{ btrPatientInitials(patientInfo) }}</div>
+        <div>
+          <h1 class="ipd-hero-name">{{ patientInfo.patient_name }}</h1>
+          <div class="ipd-hero-meta">
+            <span class="mono">{{ patientInfo.card_number }}</span>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.ward || '—' }}</span>
+            <span class="sep">·</span>
+            <span>{{ bloodRequests.length }} blood requests</span>
+            <template v-if="bloodRequests.length > 0 && bloodRequests[0].blood_type">
+              <span class="sep">·</span>
+              <span>Last type {{ bloodRequests[0].blood_type }}</span>
+            </template>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Patient Info Card -->
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-sm">
-          <q-icon name="person" color="primary" class="q-mr-sm" />
-          Patient Information
-        </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Patient Name</div>
-            <div class="text-body1 text-weight-bold">{{ patientInfo.patient_name }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Card Number</div>
-            <div class="text-body1 text-weight-bold text-primary">{{ patientInfo.card_number }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Ward</div>
-            <div class="text-body1 text-weight-bold">{{ patientInfo.ward }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Blood Requests</div>
-            <div class="text-body1 text-weight-bold text-positive">{{ bloodRequests.length }}</div>
-          </div>
-          <div class="col-12 col-md-3" v-if="bloodRequests.length > 0 && bloodRequests[0].blood_type">
-            <div class="text-caption text-grey-7">Last Request Blood Type</div>
-            <q-badge
-              color="red"
-              text-color="white"
-              :label="bloodRequests[0].blood_type"
-              class="text-weight-bold text-h6 q-pa-sm"
-            />
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
     <!-- Request Blood Form -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          <q-icon name="bloodtype" color="red" class="q-mr-sm" />
-          Request Blood Transfusion
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Request Blood Transfusion</h2>
+      </div>
+      <div class="row q-col-gutter-md">
+        <div class="col-12 col-md-6">
+          <q-select
+            v-model="requestForm.transfusion_type_id"
+            :options="transfusionTypeOptions"
+            filled
+            label="Transfusion Type *"
+            hint="Select type of blood transfusion (e.g., Packed Cells, Whole Blood)"
+            :rules="[val => !!val || 'Transfusion type is required']"
+            emit-value
+            map-options
+            option-label="label"
+            option-value="value"
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.label }}</q-item-label>
+                  <q-item-label caption>
+                    Price: GHS {{ scope.opt.price?.toFixed(2) || '0.00' }} / {{ scope.opt.unit_type }}
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
         </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-6">
-            <q-select
-              v-model="requestForm.transfusion_type_id"
-              :options="transfusionTypeOptions"
-              filled
-              label="Transfusion Type *"
-              hint="Select type of blood transfusion (e.g., Packed Cells, Whole Blood)"
-              :rules="[val => !!val || 'Transfusion type is required']"
-              emit-value
-              map-options
-              option-label="label"
-              option-value="value"
-            >
-              <template v-slot:option="scope">
-                <q-item v-bind="scope.itemProps">
-                  <q-item-section>
-                    <q-item-label>{{ scope.opt.label }}</q-item-label>
-                    <q-item-label caption>
-                      Price: GHS {{ scope.opt.price?.toFixed(2) || '0.00' }} / {{ scope.opt.unit_type }}
-                    </q-item-label>
-                  </q-item-section>
-                </q-item>
-              </template>
-            </q-select>
-          </div>
-          <div class="col-12 col-md-6">
-            <q-select
-              v-model="requestForm.blood_type"
-              :options="bloodTypeOptions"
-              filled
-              label="Patient Blood Type *"
-              hint="Select patient's blood type (from sample test)"
-              :rules="[val => !!val || 'Blood type is required']"
-              emit-value
-              map-options
-            >
-              <template v-slot:option="scope">
-                <q-item v-bind="scope.itemProps">
-                  <q-item-section>
-                    <q-item-label class="text-weight-bold">{{ scope.opt.label }}</q-item-label>
-                    <q-item-label caption v-if="scope.opt.description">
-                      {{ scope.opt.description }}
-                    </q-item-label>
-                  </q-item-section>
-                </q-item>
-              </template>
-            </q-select>
-          </div>
-          <div class="col-12 col-md-6">
-            <q-input
-              v-model.number="requestForm.quantity"
-              filled
-              type="number"
-              step="0.1"
-              min="0.1"
-              label="Quantity *"
-              hint="Number of units requested"
-              :rules="[
-                val => !!val || 'Quantity is required',
-                val => val > 0 || 'Quantity must be greater than 0'
-              ]"
-            />
-          </div>
-          <div class="col-12">
-            <q-input
-              v-model="requestForm.request_reason"
-              filled
-              type="textarea"
-              label="Request Reason (optional)"
-              hint="Reason for blood transfusion request"
-              rows="3"
-            />
-          </div>
-          <div class="col-12 flex items-end q-gutter-sm">
-            <q-btn
-              flat
-              icon="send"
-              label="Submit Request"
-              color="red"
-              @click="submitRequest"
-              :loading="submitting"
-              :disable="!requestForm.transfusion_type_id || !requestForm.blood_type || !requestForm.quantity"
-            />
-            <q-btn
-              flat
-              icon="refresh"
-              label="Clear"
-              color="grey"
-              @click="clearForm"
-            />
-          </div>
+        <div class="col-12 col-md-6">
+          <q-select
+            v-model="requestForm.blood_type"
+            :options="bloodTypeOptions"
+            filled
+            label="Patient Blood Type *"
+            hint="Select patient's blood type (from sample test)"
+            :rules="[val => !!val || 'Blood type is required']"
+            emit-value
+            map-options
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label class="text-weight-bold">{{ scope.opt.label }}</q-item-label>
+                  <q-item-label caption v-if="scope.opt.description">
+                    {{ scope.opt.description }}
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
         </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Blood Requests History -->
-    <q-card class="glass-card" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">
-            Blood Requests History ({{ bloodRequests.length }})
-          </div>
-          <q-space />
-          <q-btn
-            flat
-            icon="refresh"
-            label="Refresh"
-            color="primary"
-            @click="loadBloodRequests"
-            :loading="loading"
+        <div class="col-12 col-md-6">
+          <q-input
+            v-model.number="requestForm.quantity"
+            filled
+            type="number"
+            step="0.1"
+            min="0.1"
+            label="Quantity *"
+            hint="Number of units requested"
+            :rules="[
+              val => !!val || 'Quantity is required',
+              val => val > 0 || 'Quantity must be greater than 0'
+            ]"
           />
         </div>
-        <q-table
-          :rows="bloodRequests"
-          :columns="columns"
-          row-key="id"
-          :loading="loading"
-          flat
-          bordered
-          :rows-per-page-options="[10, 20, 50]"
-        >
-          <template v-slot:body-cell-status="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getStatusColor(props.value)"
-                :label="props.value"
+        <div class="col-12">
+          <q-input
+            v-model="requestForm.request_reason"
+            filled
+            type="textarea"
+            label="Request Reason (optional)"
+            hint="Reason for blood transfusion request"
+            rows="3"
+          />
+        </div>
+        <div class="col-12 flex items-end q-gutter-sm">
+          <HmsButton
+            variant="danger"
+            :loading="submitting"
+            :disabled="!requestForm.transfusion_type_id || !requestForm.blood_type || !requestForm.quantity"
+            @click="submitRequest"
+          >
+            Submit Request
+          </HmsButton>
+          <HmsButton variant="secondary" @click="clearForm">
+            Clear
+          </HmsButton>
+        </div>
+      </div>
+    </section>
+
+    <!-- Blood Requests History -->
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Blood Requests History ({{ bloodRequests.length }})</h2>
+        <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadBloodRequests">
+          Refresh
+        </HmsButton>
+      </div>
+      <q-table
+        :rows="bloodRequests"
+        :columns="columns"
+        row-key="id"
+        :loading="loading"
+        flat
+        bordered
+        :rows-per-page-options="[10, 20, 50]"
+      >
+        <template v-slot:body-cell-status="props">
+          <q-td :props="props">
+            <q-badge
+              :color="getStatusColor(props.value)"
+              :label="props.value"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-blood_type="props">
+          <q-td :props="props" class="text-center">
+            <q-badge
+              v-if="props.value"
+              color="red"
+              text-color="white"
+              :label="props.value"
+              class="text-weight-bold"
+              style="font-size: 16px; padding: 8px 16px; min-width: 50px;"
+            />
+            <q-badge
+              v-else
+              color="orange"
+              text-color="white"
+              label="Not Set"
+              class="text-caption"
+              style="padding: 6px 12px;"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-total_price="props">
+          <q-td :props="props">
+            <span class="text-weight-bold">GHS {{ props.value?.toFixed(2) || '0.00' }}</span>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <div class="row q-gutter-xs">
+              <q-btn
+                v-if="props.row.status === 'pending'"
+                flat
+                dense
+                icon="edit"
+                color="primary"
+                label="Edit"
+                size="sm"
+                @click="editRequest(props.row)"
+                :loading="processingId === props.row.id"
               />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-blood_type="props">
-            <q-td :props="props" class="text-center">
-              <q-badge
-                v-if="props.value"
-                color="red"
-                text-color="white"
-                :label="props.value"
-                class="text-weight-bold"
-                style="font-size: 16px; padding: 8px 16px; min-width: 50px;"
+              <q-btn
+                v-if="props.row.status === 'pending'"
+                flat
+                dense
+                icon="cancel"
+                color="negative"
+                label="Cancel"
+                size="sm"
+                @click="cancelRequest(props.row)"
+                :loading="processingId === props.row.id"
               />
-              <q-badge
-                v-else
-                color="orange"
-                text-color="white"
-                label="Not Set"
-                class="text-caption"
-                style="padding: 6px 12px;"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-total_price="props">
-            <q-td :props="props">
-              <span class="text-weight-bold">GHS {{ props.value?.toFixed(2) || '0.00' }}</span>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <div class="row q-gutter-xs">
-                <q-btn
-                  v-if="props.row.status === 'pending'"
-                  flat
-                  dense
-                  icon="edit"
-                  color="primary"
-                  label="Edit"
-                  size="sm"
-                  @click="editRequest(props.row)"
-                  :loading="processingId === props.row.id"
-                />
-                <q-btn
-                  v-if="props.row.status === 'pending'"
-                  flat
-                  dense
-                  icon="cancel"
-                  color="negative"
-                  label="Cancel"
-                  size="sm"
-                  @click="cancelRequest(props.row)"
-                  :loading="processingId === props.row.id"
-                />
-              </div>
-            </q-td>
-          </template>
-        </q-table>
-      </q-card-section>
-    </q-card>
+            </div>
+          </q-td>
+        </template>
+      </q-table>
+    </section>
 
     <!-- Edit Request Dialog -->
     <q-dialog v-model="showEditDialog">
@@ -340,6 +296,8 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { consultationAPI } from '../services/api';
 
 const route = useRoute();
@@ -350,6 +308,14 @@ const wardAdmissionId = computed(() => parseInt(route.params.id));
 const encounterId = computed(() => route.query.encounter_id ? parseInt(route.query.encounter_id) : null);
 
 const patientInfo = ref(null);
+
+const btrPatientInitials = (info) => {
+  if (!info?.patient_name) return '?';
+  const parts = String(info.patient_name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+};
 const bloodRequests = ref([]);
 const loading = ref(false);
 const submitting = ref(false);
@@ -672,6 +638,95 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.am-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.am-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.ipd-patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.ipd-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.ipd-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.ipd-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.ipd-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.ipd-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ipd-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.ipd-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+@media (max-width: 720px) {
+  .ipd-patient-hero { position: static; }
+}
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 .glass-text {
   color: rgba(255, 255, 255, 0.9);
 }

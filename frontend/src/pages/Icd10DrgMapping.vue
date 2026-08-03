@@ -1,35 +1,17 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <div class="text-h4 text-weight-bold glass-text">
-        ICD-10 DRG Mapping Management
-      </div>
-      <q-space />
-      <q-btn
-        flat
-        icon="download"
-        label="Download CSV"
-        color="secondary"
-        @click="downloadMappings"
-        class="q-mr-sm"
-      />
-      <q-btn
-        flat
-        icon="upload"
-        label="Upload File"
-        color="secondary"
-        @click="triggerFileUpload"
-        class="q-mr-sm"
-      />
-      <q-btn
-        flat
-        icon="add"
-        label="Add New Mapping"
-        color="primary"
-        @click="openDialog(null)"
-      />
-    </div>
-    
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="ICD-10 DRG mapping"
+      subtitle="Search, upload, and maintain ICD-10 to DRG code mappings for claims and consultations."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.back()">Back</HmsButton>
+        <HmsButton variant="secondary" size="sm" @click="downloadMappings">Download CSV</HmsButton>
+        <HmsButton variant="secondary" size="sm" @click="triggerFileUpload">Upload File</HmsButton>
+        <HmsButton variant="primary" size="sm" @click="openDialog(null)">Add New Mapping</HmsButton>
+      </template>
+    </HmsPageHeader>
+
     <!-- Hidden file input for upload -->
     <input
       ref="fileInput"
@@ -40,8 +22,14 @@
     />
 
     <!-- Search and Filters -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Search codes and descriptions; toggle inactive or unmapped rows</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md">
           <div class="col-12 col-md-5">
             <q-input
@@ -71,7 +59,7 @@
               @update:model-value="loadMappings"
             />
           </div>
-          <div class="col-12 col-md-4 flex items-center">
+          <div class="col-12 col-md-3 flex items-center">
             <q-select
               v-model="pagination.rowsPerPage"
               :options="rowsPerPageOptions"
@@ -87,12 +75,18 @@
             />
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Mappings Table -->
-    <q-card class="glass-card" flat bordered>
-      <q-card-section>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Mappings</div>
+          <div class="panel-sub">Edit or delete ICD-10 ↔ DRG rows</div>
+        </div>
+      </div>
+      <div class="panel-body table-wrap">
         <q-table
           :rows="mappings"
           :columns="columns"
@@ -101,20 +95,19 @@
           :loading="loading"
           :pagination="pagination"
           @request="onRequest"
-          class="glass-table"
           :rows-per-page-options="[25, 50, 100, 200, 500, 0]"
         >
           <template v-slot:body-cell-drg_code="props">
             <q-td :props="props">
-              <q-badge 
-                v-if="props.value && props.value.trim() !== ''" 
-                color="primary" 
-                :label="props.value" 
+              <q-badge
+                v-if="props.value && props.value.trim() !== ''"
+                color="primary"
+                :label="props.value"
               />
-              <q-badge 
-                v-else 
-                color="orange" 
-                label="Unmapped" 
+              <q-badge
+                v-else
+                color="orange"
+                label="Unmapped"
                 class="text-white"
               />
             </q-td>
@@ -165,14 +158,14 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Add/Edit Dialog -->
     <q-dialog v-model="showDialog" persistent>
       <q-card style="min-width: 600px; max-width: 800px;">
-        <q-card-section>
-          <div class="text-h6 glass-text">
+        <q-card-section class="dialog-head">
+          <div class="text-h6">
             {{ editingMapping ? 'Edit ICD-10 DRG Mapping' : 'Add New ICD-10 DRG Mapping' }}
           </div>
           <div v-if="!editingMapping" class="text-caption text-grey-7 q-mt-xs">
@@ -336,6 +329,8 @@
 import { ref, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { priceListAPI } from '../services/api';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 
@@ -830,18 +825,41 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
 }
-
-.glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
 }
-
-.glass-table {
-  background: transparent;
+.panel-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.panel-sub {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.panel-body {
+  padding: 1rem;
+}
+.table-wrap {
+  padding-top: 0.5rem;
+  overflow-x: auto;
+}
+.dialog-head {
+  border-bottom: 1px solid var(--hms-border);
 }
 </style>
 

@@ -1,231 +1,251 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat round dense icon="arrow_back" @click="$router.push('/claims')" />
-      <div class="text-h4 q-ml-sm text-weight-bold glass-text">CFX Convert &amp; Diff</div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="CFX convert & diff"
+      subtitle="Convert ClaimIT CFX packages to GHIMS XML, or compare a GHIMS XML export against a CFX to find claims missing from ClaimIT."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div class="tool-seg" role="tablist" aria-label="CFX tools">
+      <button type="button" class="seg-btn" :class="{ active: tab === 'convert' }" @click="tab = 'convert'">
+        Convert CFX → XML
+      </button>
+      <button type="button" class="seg-btn" :class="{ active: tab === 'diff' }" @click="tab = 'diff'">
+        Compare XML vs CFX
+      </button>
     </div>
-    <p class="text-body2 text-grey-8 q-mb-md">
-      Convert ClaimIT CFX packages to GHIMS XML, or compare a GHIMS XML export against a CFX to find claims missing from ClaimIT.
-    </p>
 
-    <q-tabs v-model="tab" dense class="text-primary q-mb-md" active-color="primary" indicator-color="primary" align="left">
-      <q-tab name="convert" icon="transform" label="Convert CFX → XML" />
-      <q-tab name="diff" icon="compare_arrows" label="Compare XML vs CFX" />
-    </q-tabs>
-
-    <q-tab-panels v-model="tab" animated class="bg-transparent">
-      <!-- Convert -->
-      <q-tab-panel name="convert" class="q-pa-none">
-        <q-card flat bordered class="glass-card">
-          <q-card-section>
-            <div class="text-h6 q-mb-sm">Convert CFX to claims XML</div>
-            <div class="text-caption text-grey-7 q-mb-md">
-              Upload a ClaimIT .cxf file. The output follows the same &lt;claims&gt;/&lt;claim&gt; structure used by Import GHIMS XML.
+    <template v-if="tab === 'convert'">
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Convert CFX to claims XML</div>
+            <div class="panel-sub">
+              Upload a ClaimIT .cxf file. Output follows the same claims structure used by Import GHIMS XML.
             </div>
-            <div class="row q-col-gutter-md items-center">
-              <q-file
-                v-model="convertFile"
-                label="Select CFX file"
-                accept=".cxf,application/octet-stream"
-                outlined
-                dense
-                clearable
-                class="col-12 col-md-6"
-                @update:model-value="onConvertFileChange"
-              />
-              <q-btn
-                color="secondary"
-                outline
-                label="Preview"
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="row q-col-gutter-md items-center">
+            <q-file
+              v-model="convertFile"
+              label="Select CFX file"
+              accept=".cxf,application/octet-stream"
+              outlined
+              dense
+              clearable
+              class="col-12 col-md-6"
+              @update:model-value="onConvertFileChange"
+            />
+            <div class="col-12 col-md-6 action-row">
+              <HmsButton
+                variant="secondary"
+                size="sm"
                 :loading="previewing"
-                :disable="!convertFile"
+                :disabled="!convertFile"
                 @click="previewCxf"
-              />
-              <q-btn
-                color="primary"
-                label="Download XML"
-                icon="download"
+              >
+                Preview
+              </HmsButton>
+              <HmsButton
+                variant="primary"
+                size="sm"
                 :loading="converting"
-                :disable="!convertFile"
+                :disabled="!convertFile"
                 @click="downloadConvertedXml"
-              />
+              >
+                Download XML
+              </HmsButton>
             </div>
-
-            <div v-if="convertPreview" class="q-mt-lg">
-              <div class="row q-gutter-sm q-mb-sm">
-                <q-chip color="primary" text-color="white" icon="folder">
-                  {{ convertPreview.claim_count }} claim(s)
-                </q-chip>
-                <q-chip
-                  v-for="(count, status) in (convertPreview.status_counts || {})"
-                  :key="status"
-                  outline
-                  color="positive"
-                >
-                  {{ status }}: {{ count }}
-                </q-chip>
-              </div>
-              <div v-if="convertPreview.meta?.dateGenerated" class="text-caption text-grey-7">
-                Generated: {{ convertPreview.meta.dateGenerated }}
-                <span v-if="convertPreview.meta.signedByName"> · Signed by {{ convertPreview.meta.signedByName }}</span>
-              </div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </q-tab-panel>
-
-      <!-- Diff -->
-      <q-tab-panel name="diff" class="q-pa-none">
-        <q-card flat bordered class="glass-card q-mb-md">
-          <q-card-section>
-            <div class="text-h6 q-mb-sm">Compare GHIMS XML vs ClaimIT CFX</div>
-            <div class="text-caption text-grey-7 q-mb-md">
-              Claims are matched primarily by claim check code (CCC), with hospital record number as a tie-break.
-              Download the XML claims that exist in the GHIMS file but were not found in the CFX.
-            </div>
-            <div class="row q-col-gutter-md items-end">
-              <q-file
-                v-model="diffXmlFile"
-                label="GHIMS / claims XML"
-                accept=".xml,text/xml,application/xml"
-                outlined
-                dense
-                clearable
-                class="col-12 col-md-5"
-              />
-              <q-file
-                v-model="diffCxfFile"
-                label="ClaimIT CFX"
-                accept=".cxf,application/octet-stream"
-                outlined
-                dense
-                clearable
-                class="col-12 col-md-5"
-              />
-              <q-btn
-                color="primary"
-                label="Compare"
-                icon="compare_arrows"
-                :loading="diffing"
-                :disable="!diffXmlFile || !diffCxfFile"
-                @click="runDiff"
-              />
-            </div>
-          </q-card-section>
-        </q-card>
-
-        <template v-if="diffResult">
-          <div class="row q-gutter-sm q-mb-md">
-            <q-chip color="blue-grey" text-color="white">XML: {{ diffResult.summary.xml_total }}</q-chip>
-            <q-chip color="blue-grey" text-color="white">CFX: {{ diffResult.summary.cxf_total }}</q-chip>
-            <q-chip color="positive" text-color="white">Matched: {{ diffResult.summary.matched }}</q-chip>
-            <q-chip color="orange" text-color="white">
-              Matched with diffs: {{ diffResult.summary.matched_with_differences }}
-            </q-chip>
-            <q-chip color="negative" text-color="white">
-              Missing from CFX: {{ diffResult.summary.xml_only }}
-            </q-chip>
-            <q-chip outline color="grey-8">
-              Only in CFX: {{ diffResult.summary.cxf_only }}
-            </q-chip>
           </div>
 
-          <div class="row q-gutter-md q-mb-md">
-            <q-btn
-              color="negative"
-              icon="download"
-              :label="`Download ${diffResult.summary.xml_only} missing claim(s) as XML`"
-              :loading="downloadingMissing"
-              :disable="!diffResult.summary.xml_only"
-              @click="downloadMissing"
+          <div v-if="convertPreview" class="preview-block">
+            <div class="chip-row">
+              <span class="meta-chip">{{ convertPreview.claim_count }} claim(s)</span>
+              <span
+                v-for="(count, status) in (convertPreview.status_counts || {})"
+                :key="status"
+                class="meta-chip soft"
+              >
+                {{ status }}: {{ count }}
+              </span>
+            </div>
+            <div v-if="convertPreview.meta?.dateGenerated" class="preview-meta">
+              Generated: {{ convertPreview.meta.dateGenerated }}
+              <span v-if="convertPreview.meta.signedByName"> · Signed by {{ convertPreview.meta.signedByName }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <template v-else>
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Compare GHIMS XML vs ClaimIT CFX</div>
+            <div class="panel-sub">
+              Matched primarily by claim check code (CCC), with hospital record number as a tie-break.
+            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="row q-col-gutter-md items-end">
+            <q-file
+              v-model="diffXmlFile"
+              label="GHIMS / claims XML"
+              accept=".xml,text/xml,application/xml"
+              outlined
+              dense
+              clearable
+              class="col-12 col-md-5"
+            />
+            <q-file
+              v-model="diffCxfFile"
+              label="ClaimIT CFX"
+              accept=".cxf,application/octet-stream"
+              outlined
+              dense
+              clearable
+              class="col-12 col-md-5"
+            />
+            <div class="col-12 col-md-2">
+              <HmsButton
+                variant="primary"
+                size="sm"
+                :loading="diffing"
+                :disabled="!diffXmlFile || !diffCxfFile"
+                @click="runDiff"
+              >
+                Compare
+              </HmsButton>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <template v-if="diffResult">
+        <div class="chip-row q-mb-md">
+          <span class="meta-chip">XML: {{ diffResult.summary.xml_total }}</span>
+          <span class="meta-chip">CFX: {{ diffResult.summary.cxf_total }}</span>
+          <span class="meta-chip ok">Matched: {{ diffResult.summary.matched }}</span>
+          <span class="meta-chip warn">Matched with diffs: {{ diffResult.summary.matched_with_differences }}</span>
+          <span class="meta-chip bad">Missing from CFX: {{ diffResult.summary.xml_only }}</span>
+          <span class="meta-chip soft">Only in CFX: {{ diffResult.summary.cxf_only }}</span>
+        </div>
+
+        <div class="q-mb-md">
+          <HmsButton
+            variant="danger"
+            size="sm"
+            :loading="downloadingMissing"
+            :disabled="!diffResult.summary.xml_only"
+            @click="downloadMissing"
+          >
+            Download {{ diffResult.summary.xml_only }} missing claim(s) as XML
+          </HmsButton>
+        </div>
+
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Missing from CFX (in XML only)</div>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <q-table
+              class="diag-table"
+              flat
+              dense
+              :rows="diffResult.xml_only"
+              :columns="missingColumns"
+              row-key="claimID"
+              :pagination="{ rowsPerPage: 25 }"
             />
           </div>
+        </section>
 
-          <q-card flat bordered class="glass-card q-mb-md">
-            <q-card-section>
-              <div class="text-subtitle1 q-mb-sm">Missing from CFX (in XML only)</div>
-              <q-table
-                flat
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Matched claims</div>
+            </div>
+            <div class="panel-actions">
+              <q-toggle
+                v-model="showOnlyDiffs"
                 dense
-                :rows="diffResult.xml_only"
-                :columns="missingColumns"
-                row-key="claimID"
-                :pagination="{ rowsPerPage: 25 }"
+                label="Show only rows with differences"
+                color="orange"
               />
-            </q-card-section>
-          </q-card>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <q-table
+              class="diag-table"
+              flat
+              dense
+              :rows="filteredMatched"
+              :columns="matchedColumns"
+              row-key="claimID"
+              :pagination="{ rowsPerPage: 25 }"
+            >
+              <template #body-cell-has_differences="props">
+                <q-td :props="props">
+                  <q-badge
+                    :color="props.row.has_differences ? 'orange' : 'positive'"
+                    :label="props.row.has_differences ? `${props.row.difference_count} diff(s)` : 'Identical'"
+                  />
+                </q-td>
+              </template>
+              <template #body-cell-actions="props">
+                <q-td :props="props">
+                  <HmsButton
+                    v-if="props.row.has_differences"
+                    variant="ghost"
+                    size="sm"
+                    @click="openDiffDetail(props.row)"
+                  >
+                    View diffs
+                  </HmsButton>
+                </q-td>
+              </template>
+            </q-table>
+          </div>
+        </section>
 
-          <q-card flat bordered class="glass-card q-mb-md">
-            <q-card-section>
-              <div class="row items-center q-mb-sm">
-                <div class="text-subtitle1">Matched claims</div>
-                <q-space />
-                <q-toggle
-                  v-model="showOnlyDiffs"
-                  dense
-                  label="Show only rows with differences"
-                  color="orange"
-                />
-              </div>
-              <q-table
-                flat
-                dense
-                :rows="filteredMatched"
-                :columns="matchedColumns"
-                row-key="claimID"
-                :pagination="{ rowsPerPage: 25 }"
-              >
-                <template #body-cell-has_differences="props">
-                  <q-td :props="props">
-                    <q-badge
-                      :color="props.row.has_differences ? 'orange' : 'positive'"
-                      :label="props.row.has_differences ? `${props.row.difference_count} diff(s)` : 'Identical'"
-                    />
-                  </q-td>
-                </template>
-                <template #body-cell-actions="props">
-                  <q-td :props="props">
-                    <q-btn
-                      v-if="props.row.has_differences"
-                      flat
-                      dense
-                      size="sm"
-                      color="primary"
-                      label="View diffs"
-                      @click="openDiffDetail(props.row)"
-                    />
-                  </q-td>
-                </template>
-              </q-table>
-            </q-card-section>
-          </q-card>
-
-          <q-card flat bordered class="glass-card">
-            <q-card-section>
-              <div class="text-subtitle1 q-mb-sm">Only in CFX</div>
-              <q-table
-                flat
-                dense
-                :rows="diffResult.cxf_only"
-                :columns="cxfOnlyColumns"
-                row-key="guid"
-                :pagination="{ rowsPerPage: 25 }"
-              />
-            </q-card-section>
-          </q-card>
-        </template>
-      </q-tab-panel>
-    </q-tab-panels>
+        <section class="diag-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Only in CFX</div>
+            </div>
+          </div>
+          <div class="panel-body table-wrap">
+            <q-table
+              class="diag-table"
+              flat
+              dense
+              :rows="diffResult.cxf_only"
+              :columns="cxfOnlyColumns"
+              row-key="guid"
+              :pagination="{ rowsPerPage: 25 }"
+            />
+          </div>
+        </section>
+      </template>
+    </template>
 
     <q-dialog v-model="diffDetailOpen" maximized>
-      <q-card>
-        <q-card-section class="row items-center">
-          <div class="text-h6">
-            Differences — {{ diffDetailRow?.claimID }}
-            <span class="text-caption text-grey-7 q-ml-sm">CCC {{ diffDetailRow?.claimCheckCode || '-' }}</span>
+      <q-card class="diff-dialog">
+        <q-card-section class="dialog-head row items-center">
+          <div>
+            <div class="dialog-title">Differences — {{ diffDetailRow?.claimID }}</div>
+            <div class="dialog-sub">CCC {{ diffDetailRow?.claimCheckCode || '-' }}</div>
           </div>
           <q-space />
-          <q-btn flat round dense icon="close" v-close-popup />
+          <HmsButton variant="ghost" size="sm" v-close-popup>Close</HmsButton>
         </q-card-section>
         <q-separator />
         <q-card-section>
@@ -255,6 +275,8 @@
 import { ref, computed } from 'vue';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 
@@ -458,6 +480,72 @@ function formatDiffValue(val) {
 </script>
 
 <style scoped>
+.tool-seg {
+  display: inline-flex;
+  padding: 0.2rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: 999px;
+  background: var(--hms-panel-bg);
+  gap: 0.15rem;
+}
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.seg-btn.active {
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-actions { display: flex; align-items: center; gap: 0.5rem; }
+.panel-body { padding: 1rem; }
+.table-wrap { padding: 0; overflow-x: auto; }
+.action-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.preview-block { margin-top: 1rem; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  font-size: var(--hms-text-xs);
+  font-weight: 650;
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+.meta-chip.soft { background: rgba(100, 116, 139, 0.12); color: var(--hms-text-secondary); }
+.meta-chip.ok { background: var(--hms-success-muted); color: var(--hms-success); }
+.meta-chip.warn { background: var(--hms-warning-muted); color: var(--hms-warning); }
+.meta-chip.bad { background: var(--hms-danger-muted, rgba(220, 38, 38, 0.12)); color: var(--hms-danger, #b91c1c); }
+.preview-meta { margin-top: 0.5rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.diff-dialog { border-radius: 0; }
+.dialog-head { padding: 0.85rem 1rem; }
+.dialog-title { font-size: var(--hms-text-lg); font-weight: 750; color: var(--hms-text-primary); }
+.dialog-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
 .diff-cell {
   white-space: pre-wrap;
   word-break: break-word;

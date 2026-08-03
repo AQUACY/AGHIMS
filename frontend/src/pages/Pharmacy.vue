@@ -1,513 +1,477 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Pharmacy Services</div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Pharmacy" subtitle="Confirm prescriptions and dispense medications.">
+      <template #actions>
+        <HmsButton variant="healthcare" size="sm" @click="openDirectPrescriptionDialog">
+          Direct prescription
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
 
     <!-- Patient Search -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Search Patient</div>
-        <div class="row q-gutter-md">
-          <q-input
-            v-model="cardNumber"
-            filled
-            label="Patient Card Number"
-            class="col-12 col-md-6"
-            @keyup.enter="searchPatient"
-            :disable="loadingPatient"
-          />
-          <q-btn
-            color="primary"
-            label="Search"
-            @click="searchPatient"
-            class="col-12 col-md-3 glass-button"
-            :loading="loadingPatient"
-          />
-          <q-btn
-            color="positive"
-            icon="shopping_cart"
-            label="Direct Prescription"
-            @click="openDirectPrescriptionDialog"
-            class="col-12 col-md-3"
-          />
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Search patient</div>
+          <div class="panel-sub">Load encounters, admissions, and prescriptions by card number.</div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+      <div class="panel-body search-body">
+        <input
+          v-model="cardNumber"
+          type="search"
+          class="tool-input tool-input--search tool-input--grow"
+          placeholder="Patient card number"
+          :disabled="loadingPatient"
+          @keyup.enter="searchPatient"
+        />
+        <HmsButton
+          variant="primary"
+          size="sm"
+          :loading="loadingPatient"
+          @click="searchPatient"
+        >
+          Search
+        </HmsButton>
+      </div>
+    </section>
 
-    <!-- Patient Info & Encounter Selection -->
-    <q-card v-if="patient" class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div>
-            <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
-            <div class="text-grey-7">Card: {{ patient.card_number }}</div>
-            <div class="text-grey-7" v-if="patient.age">
-              Age: {{ patient.age }}
-            </div>
-            <div class="text-grey-7" v-if="patient.insurance_id">
-              Insurance: {{ patient.insurance_id }}
-            </div>
-            <div v-if="patientBillInfo.totalAmount !== null" class="text-body2 q-mt-xs" :class="patientBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
-              <q-icon name="receipt" size="14px" class="q-mr-xs" />
-              <span 
-                @click="openBillItemsDialog" 
-                style="cursor: pointer; text-decoration: underline;"
-                class="text-primary"
-              >
-                Total Bills: GHC {{ patientBillInfo.totalAmount.toFixed(2) }} 
-                <span v-if="patientBillInfo.remainingBalance > 0" class="text-negative">
-                  | Outstanding: GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}
-                </span>
-                <span v-else>
-                  | Outstanding: GHC 0.00
-                </span>
-              </span>
-              <q-tooltip>Click to view all bill items</q-tooltip>
-            </div>
+    <!-- Patient Info & Service Selection -->
+    <div v-if="patient" class="patient-hero">
+      <div class="hero-main">
+        <div class="hero-avatar">{{ patientInitials }}</div>
+        <div class="hero-text">
+          <div class="hero-name-row">
+            <h1 class="hero-name">{{ patientDisplayName }}</h1>
+            <HmsBadge v-if="patient.insured" tone="success">Insured</HmsBadge>
+            <HmsBadge v-else tone="warning">Cash</HmsBadge>
+            <HmsBadge v-if="serviceType === 'opd'" tone="info">OPD</HmsBadge>
+            <HmsBadge v-else-if="serviceType === 'ipd'" tone="healthcare">IPD</HmsBadge>
           </div>
-          <q-space />
-          <q-btn
-            flat
-            icon="refresh"
-            label="Clear"
-            @click="clearSearch"
-          />
+          <div class="hero-meta">
+            <span class="mono">{{ patient.card_number }}</span>
+            <template v-if="patient.age">
+              <span class="sep">·</span>
+              <span>Age {{ patient.age }}</span>
+            </template>
+            <template v-if="patient.insurance_id">
+              <span class="sep">·</span>
+              <span>Ins {{ patient.insurance_id }}</span>
+            </template>
+          </div>
         </div>
+      </div>
+      <div class="hero-actions">
+        <button
+          v-if="patientBillInfo.totalAmount !== null"
+          type="button"
+          class="balance-pill"
+          :class="patientBillInfo.remainingBalance > 0 ? 'due' : 'ok'"
+          @click="openBillItemsDialog"
+        >
+          <span class="balance-label">Balance</span>
+          <span class="balance-value">GHC {{ (patientBillInfo.remainingBalance || 0).toFixed(2) }}</span>
+        </button>
+        <HmsButton variant="ghost" size="sm" @click="clearSearch">Clear</HmsButton>
+      </div>
+    </div>
 
-        <!-- Service Selection: OPD or IPD -->
-        <div class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm glass-text">Select Service Type:</div>
-          
-          <!-- OPD Section -->
-          <div v-if="todaysEncounters.length > 0 || oldEncounters.length > 0" class="q-mb-md">
-            <div class="text-weight-medium q-mb-sm">OPD Services</div>
-            
-        <!-- Today's Encounters - Show ALL encounters from today -->
-            <div v-if="todaysEncounters.length > 0" class="q-mb-sm">
-              <div class="text-subtitle2 q-mb-xs text-grey-7">Today's Services ({{ todaysEncounters.length }})</div>
-              <div class="q-gutter-sm">
-                <q-card 
-                  v-for="encounter in todaysEncounters"
-                  :key="encounter.id"
-                  flat 
-                  bordered 
-                  clickable
-                  :class="{ 'bg-blue-1': serviceType === 'opd' && selectedEncounterId === encounter.id }"
-                  @click="selectOPDEncounter(encounter.id)"
-                  style="cursor: pointer; background-color: rgba(46, 139, 87, 0.1);"
-                >
-                  <q-card-section>
-                    <div class="row items-center">
-                      <div class="col">
-                        <div class="text-weight-bold">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
-                        <div class="text-caption text-grey-7 q-mt-xs">
-                          {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
-                        </div>
-                      </div>
-                      <q-badge color="green" label="Today" />
-                    </div>
-                  </q-card-section>
-                </q-card>
-              </div>
-            </div>
+    <section v-if="patient" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Select service</div>
+          <div class="panel-sub">Choose an OPD encounter or IPD admission to manage prescriptions.</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <!-- OPD Section -->
+        <div v-if="todaysEncounters.length > 0 || oldEncounters.length > 0" class="service-block">
+          <div class="service-label">OPD services</div>
 
-        <!-- Old Encounters - Collapsible -->
-            <div v-if="oldEncounters.length > 0">
-          <q-expansion-item
-            v-model="oldEncountersExpanded"
-            icon="history"
-                :label="`Previous OPD Services (${oldEncounters.length})`"
-                header-class="text-subtitle2"
-            class="q-mb-sm"
-          >
-            <div class="q-gutter-sm q-pa-sm">
-              <q-card
-                v-for="encounter in oldEncounters"
+          <div v-if="todaysEncounters.length > 0" class="service-group">
+            <div class="service-group-title">Today ({{ todaysEncounters.length }})</div>
+            <div class="service-list">
+              <button
+                v-for="encounter in todaysEncounters"
                 :key="encounter.id"
-                flat
-                bordered
-                clickable
-                    :class="{ 'bg-blue-1': serviceType === 'opd' && selectedEncounterId === encounter.id }"
-                    @click="selectOPDEncounter(encounter.id)"
-                style="cursor: pointer;"
+                type="button"
+                class="service-card"
+                :class="{ active: serviceType === 'opd' && selectedEncounterId === encounter.id }"
+                @click="selectOPDEncounter(encounter.id)"
               >
-                <q-card-section class="q-pa-sm">
-                  <div class="row items-center">
-                    <div class="col">
-                      <div class="text-weight-medium">Encounter #{{ encounter.id }} - {{ getEncounterProcedures(encounter) }}</div>
-                      <div class="text-caption text-grey-7 q-mt-xs">
-                        {{ formatDate(encounter.created_at) }} - Status: {{ encounter.status }}
-                      </div>
-                    </div>
-                    <q-icon name="chevron_right" color="grey-6" />
+                <div class="service-card-main">
+                  <div class="service-card-title">
+                    Encounter #{{ encounter.id }} · {{ getEncounterProcedures(encounter) }}
                   </div>
-                </q-card-section>
-              </q-card>
+                  <div class="service-card-sub">
+                    {{ formatDate(encounter.created_at) }} · {{ encounter.status }}
+                  </div>
+                </div>
+                <HmsBadge tone="success">Today</HmsBadge>
+              </button>
             </div>
-          </q-expansion-item>
-            </div>
-        </div>
+          </div>
 
-          <!-- IPD Section -->
-          <div v-if="wardAdmissions.length > 0" class="q-mb-md">
-            <div class="text-weight-medium q-mb-sm">IPD Services</div>
-            <div class="q-gutter-sm">
-              <q-card
-                v-for="admission in wardAdmissions"
-                :key="admission.id"
-                flat
-                bordered
-                clickable
-                :class="{ 'bg-purple-1': serviceType === 'ipd' && selectedWardAdmissionId === admission.id }"
-                @click="selectIPDAdmission(admission.id)"
-                style="cursor: pointer;"
-              >
-                <q-card-section class="q-pa-sm">
-                  <div class="row items-center">
-                    <div class="col">
-                      <div class="text-weight-medium">Ward: {{ admission.ward }}</div>
-                      <div class="text-caption text-grey-7 q-mt-xs">
-                        <span v-if="admission.bed_number">Bed: {{ admission.bed_number }} | </span>
-                        Admitted: {{ formatDate(admission.admitted_at) }}
-                      </div>
-                    </div>
-                    <q-badge color="purple" label="IPD" />
-                    <q-icon name="chevron_right" color="grey-6" />
-                  </div>
-                </q-card-section>
-              </q-card>
-            </div>
-            
-            <!-- Clinical Reviews Selection (shown after IPD admission is selected) -->
-            <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviewsWithPrescriptions.length > 0" class="q-mt-md">
-              <div class="text-weight-medium q-mb-sm">Select Clinical Review:</div>
-              <div class="q-gutter-sm">
-                <q-card
-                  v-for="review in clinicalReviewsWithPrescriptions"
-                  :key="review.id"
-                  flat
-                  bordered
-                  clickable
-                  :class="{ 'bg-blue-1': selectedClinicalReviewId === review.id }"
-                  @click="selectClinicalReview(review.id)"
-                  style="cursor: pointer;"
+          <div v-if="oldEncounters.length > 0" class="service-group">
+            <q-expansion-item
+              v-model="oldEncountersExpanded"
+              icon="history"
+              :label="`Previous OPD services (${oldEncounters.length})`"
+              header-class="pharm-expansion"
+              class="q-mb-sm"
+            >
+              <div class="service-list q-pa-sm">
+                <button
+                  v-for="encounter in oldEncounters"
+                  :key="encounter.id"
+                  type="button"
+                  class="service-card"
+                  :class="{ active: serviceType === 'opd' && selectedEncounterId === encounter.id }"
+                  @click="selectOPDEncounter(encounter.id)"
                 >
-                  <q-card-section class="q-pa-sm">
-                    <div class="row items-center">
-                      <div class="col">
-                        <div class="text-weight-medium">
-                          Clinical Review #{{ clinicalReviewsWithPrescriptions.indexOf(review) + 1 }}
-                        </div>
-                        <div class="text-caption text-grey-7 q-mt-xs">
-                          Reviewed by: {{ review.reviewed_by_name || 'N/A' }} | 
-                          {{ formatDateTime(review.reviewed_at || review.created_at) }}
-                        </div>
-                        <div v-if="review.review_notes" class="text-caption text-grey-6 q-mt-xs" style="max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                          {{ review.review_notes }}
-                        </div>
-                      </div>
-                      <q-badge 
-                        color="primary" 
-                        :label="`${getPrescriptionCountForReview(review.id)} medication(s)`" 
-                      />
-                      <q-icon name="chevron_right" color="grey-6" />
+                  <div class="service-card-main">
+                    <div class="service-card-title">
+                      Encounter #{{ encounter.id }} · {{ getEncounterProcedures(encounter) }}
                     </div>
-                  </q-card-section>
-                </q-card>
+                    <div class="service-card-sub">
+                      {{ formatDate(encounter.created_at) }} · {{ encounter.status }}
+                    </div>
+                  </div>
+                </button>
               </div>
-            </div>
-            <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviews.length > 0 && clinicalReviewsWithPrescriptions.length === 0" class="text-caption text-warning q-mt-md">
-              No clinical reviews with medications found. Medications will appear here once they are added to a clinical review.
-            </div>
-          </div>
-
-          <div v-if="(todaysEncounters.length === 0 && oldEncounters.length === 0) && wardAdmissions.length === 0" class="text-grey-7 q-mt-md">
-            No active services found for this patient
+            </q-expansion-item>
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+
+        <!-- IPD Section -->
+        <div v-if="wardAdmissions.length > 0" class="service-block">
+          <div class="service-label">IPD services</div>
+          <div class="service-list">
+            <button
+              v-for="admission in wardAdmissions"
+              :key="admission.id"
+              type="button"
+              class="service-card"
+              :class="{ active: serviceType === 'ipd' && selectedWardAdmissionId === admission.id }"
+              @click="selectIPDAdmission(admission.id)"
+            >
+              <div class="service-card-main">
+                <div class="service-card-title">Ward {{ admission.ward }}</div>
+                <div class="service-card-sub">
+                  <span v-if="admission.bed_number">Bed {{ admission.bed_number }} · </span>
+                  Admitted {{ formatDate(admission.admitted_at) }}
+                </div>
+              </div>
+              <HmsBadge tone="healthcare">IPD</HmsBadge>
+            </button>
+          </div>
+
+          <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviewsWithPrescriptions.length > 0" class="service-group q-mt-md">
+            <div class="service-group-title">Clinical reviews</div>
+            <div class="service-list">
+              <button
+                v-for="review in clinicalReviewsWithPrescriptions"
+                :key="review.id"
+                type="button"
+                class="service-card"
+                :class="{ active: selectedClinicalReviewId === review.id }"
+                @click="selectClinicalReview(review.id)"
+              >
+                <div class="service-card-main">
+                  <div class="service-card-title">
+                    Clinical review #{{ clinicalReviewsWithPrescriptions.indexOf(review) + 1 }}
+                  </div>
+                  <div class="service-card-sub">
+                    {{ review.reviewed_by_name || 'N/A' }} · {{ formatDateTime(review.reviewed_at || review.created_at) }}
+                  </div>
+                  <div v-if="review.review_notes" class="service-card-notes">{{ review.review_notes }}</div>
+                </div>
+                <HmsBadge tone="info">{{ getPrescriptionCountForReview(review.id) }} meds</HmsBadge>
+              </button>
+            </div>
+          </div>
+          <div v-if="serviceType === 'ipd' && selectedWardAdmissionId && clinicalReviews.length > 0 && clinicalReviewsWithPrescriptions.length === 0" class="empty-hint">
+            No clinical reviews with medications found. Medications will appear here once they are added to a clinical review.
+          </div>
+        </div>
+
+        <div v-if="(todaysEncounters.length === 0 && oldEncounters.length === 0) && wardAdmissions.length === 0" class="empty-hint">
+          No active services found for this patient
+        </div>
+      </div>
+    </section>
 
     <!-- Diagnoses -->
-    <q-card v-if="(selectedEncounterId || selectedWardAdmissionId) && diagnoses.length > 0" class="q-mb-md">
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Diagnoses</div>
-        <div class="row q-gutter-md">
-          <div
-            v-for="diagnosis in diagnoses"
-            :key="diagnosis.id"
-            class="col-12 col-md-6"
-          >
-            <q-card flat bordered>
-              <q-card-section>
-                <div class="row items-center">
-                  <div class="col">
-                    <div class="text-weight-bold">{{ diagnosis.diagnosis }}</div>
-                    <div class="text-grey-7 text-caption q-mt-xs">
-                      <span v-if="diagnosis.icd10">ICD-10: {{ diagnosis.icd10 }}</span>
-                      <span v-if="diagnosis.gdrg_code"> | G-DRG: {{ diagnosis.gdrg_code }}</span>
-                    </div>
-                  </div>
-                  <div class="col-auto">
-                    <q-badge
-                      v-if="diagnosis.is_chief"
-                      color="primary"
-                      label="Chief"
-                    />
-                    <q-badge
-                      :color="diagnosis.is_provisional ? 'orange' : 'green'"
-                      :label="diagnosis.is_provisional ? 'Provisional' : 'Final'"
-                      class="q-ml-xs"
-                    />
-                  </div>
-                </div>
-              </q-card-section>
-            </q-card>
+    <section v-if="(selectedEncounterId || selectedWardAdmissionId) && diagnoses.length > 0" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Diagnoses</div>
+          <div class="panel-sub">{{ diagnoses.length }} recorded</div>
+        </div>
+      </div>
+      <div class="panel-body dx-grid">
+        <div v-for="diagnosis in diagnoses" :key="diagnosis.id" class="dx-card">
+          <div class="dx-main">
+            <div class="dx-name">{{ diagnosis.diagnosis }}</div>
+            <div class="dx-meta">
+              <span v-if="diagnosis.icd10">ICD-10 {{ diagnosis.icd10 }}</span>
+              <span v-if="diagnosis.gdrg_code"> · G-DRG {{ diagnosis.gdrg_code }}</span>
+            </div>
+          </div>
+          <div class="badge-row">
+            <HmsBadge v-if="diagnosis.is_chief" tone="accent">Chief</HmsBadge>
+            <HmsBadge :tone="diagnosis.is_provisional ? 'warning' : 'success'">
+              {{ diagnosis.is_provisional ? 'Provisional' : 'Final' }}
+            </HmsBadge>
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Vitals - OPD -->
-    <q-card v-if="serviceType === 'opd' && selectedEncounterId && vitals" class="q-mb-md">
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Vitals</div>
-        <div class="row q-gutter-md">
-          <div v-if="vitals.bp" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Blood Pressure</div>
-            <div class="text-body1 text-weight-medium">{{ vitals.bp }}</div>
-          </div>
-          <div v-if="vitals.temperature" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Temperature</div>
-            <div class="text-body1 text-weight-medium">{{ vitals.temperature }}°C</div>
-          </div>
-          <div v-if="vitals.pulse" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Pulse</div>
-            <div class="text-body1 text-weight-medium">{{ vitals.pulse }} bpm</div>
-          </div>
-          <div v-if="vitals.weight" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Weight</div>
-            <div class="text-body1 text-weight-medium">{{ vitals.weight }} kg</div>
-          </div>
-          <div v-if="vitals.height" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Height</div>
-            <div class="text-body1 text-weight-medium">{{ vitals.height }} cm</div>
-          </div>
+    <section v-if="serviceType === 'opd' && selectedEncounterId && vitals" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Vitals</div>
+          <div class="panel-sub" v-if="vitals.recorded_by_name">Recorded by {{ vitals.recorded_by_name }}</div>
         </div>
-        <div v-if="vitals.remarks" class="q-mt-md">
-          <div class="text-grey-7 text-caption">Remarks</div>
-          <div class="text-body2">{{ vitals.remarks }}</div>
+      </div>
+      <div class="panel-body vitals-grid">
+        <div v-if="vitals.bp" class="vital-item">
+          <div class="vital-label">Blood pressure</div>
+          <div class="vital-value">{{ vitals.bp }}</div>
         </div>
-        <div v-if="vitals.recorded_by_name" class="q-mt-md">
-          <div class="text-grey-7 text-caption">Recorded By</div>
-          <div class="text-body2 text-weight-medium">{{ vitals.recorded_by_name }}</div>
+        <div v-if="vitals.temperature" class="vital-item">
+          <div class="vital-label">Temperature</div>
+          <div class="vital-value">{{ vitals.temperature }}°C</div>
         </div>
-      </q-card-section>
-    </q-card>
+        <div v-if="vitals.pulse" class="vital-item">
+          <div class="vital-label">Pulse</div>
+          <div class="vital-value">{{ vitals.pulse }} bpm</div>
+        </div>
+        <div v-if="vitals.weight" class="vital-item">
+          <div class="vital-label">Weight</div>
+          <div class="vital-value">{{ vitals.weight }} kg</div>
+        </div>
+        <div v-if="vitals.height" class="vital-item">
+          <div class="vital-label">Height</div>
+          <div class="vital-value">{{ vitals.height }} cm</div>
+        </div>
+        <div v-if="vitals.remarks" class="vital-item vital-item--wide">
+          <div class="vital-label">Remarks</div>
+          <div class="vital-value vital-value--sm">{{ vitals.remarks }}</div>
+        </div>
+      </div>
+    </section>
 
     <!-- Vitals - IPD (Most Recent) -->
-    <q-card v-if="serviceType === 'ipd' && selectedWardAdmissionId && latestInpatientVital" class="q-mb-md">
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Latest Vitals</div>
-        <div class="row q-gutter-md">
-          <div v-if="latestInpatientVital.blood_pressure_systolic || latestInpatientVital.blood_pressure_diastolic" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Blood Pressure</div>
-            <div class="text-body1 text-weight-medium">
-              {{ latestInpatientVital.blood_pressure_systolic }}/{{ latestInpatientVital.blood_pressure_diastolic }} mmHg
-            </div>
-          </div>
-          <div v-if="latestInpatientVital.temperature" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Temperature</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.temperature }}°C</div>
-          </div>
-          <div v-if="latestInpatientVital.pulse" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Pulse</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.pulse }} bpm</div>
-          </div>
-          <div v-if="latestInpatientVital.respiratory_rate" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Respiratory Rate</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.respiratory_rate }} /min</div>
-          </div>
-          <div v-if="latestInpatientVital.oxygen_saturation" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Oxygen Saturation</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.oxygen_saturation }}%</div>
-          </div>
-          <div v-if="latestInpatientVital.weight" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Weight</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.weight }} kg</div>
-          </div>
-          <div v-if="latestInpatientVital.height" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">Height</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.height }} cm</div>
-          </div>
-          <div v-if="latestInpatientVital.bmi" class="col-12 col-md-3">
-            <div class="text-grey-7 text-caption">BMI</div>
-            <div class="text-body1 text-weight-medium">{{ latestInpatientVital.bmi }}</div>
+    <section v-if="serviceType === 'ipd' && selectedWardAdmissionId && latestInpatientVital" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Latest vitals</div>
+          <div class="panel-sub" v-if="latestInpatientVital.recorded_by_name">
+            {{ latestInpatientVital.recorded_by_name }}
+            <span v-if="latestInpatientVital.recorded_at"> · {{ formatDate(latestInpatientVital.recorded_at) }}</span>
           </div>
         </div>
-        <div v-if="latestInpatientVital.notes" class="q-mt-md">
-          <div class="text-grey-7 text-caption">Notes</div>
-          <div class="text-body2">{{ latestInpatientVital.notes }}</div>
+      </div>
+      <div class="panel-body vitals-grid">
+        <div v-if="latestInpatientVital.blood_pressure_systolic || latestInpatientVital.blood_pressure_diastolic" class="vital-item">
+          <div class="vital-label">Blood pressure</div>
+          <div class="vital-value">
+            {{ latestInpatientVital.blood_pressure_systolic }}/{{ latestInpatientVital.blood_pressure_diastolic }} mmHg
+          </div>
         </div>
-        <div v-if="latestInpatientVital.recorded_by_name" class="q-mt-md">
-          <div class="text-grey-7 text-caption">Recorded By</div>
-          <div class="text-body2 text-weight-medium">{{ latestInpatientVital.recorded_by_name }}</div>
-          <div class="text-caption text-grey-6">{{ formatDate(latestInpatientVital.recorded_at) }}</div>
+        <div v-if="latestInpatientVital.temperature" class="vital-item">
+          <div class="vital-label">Temperature</div>
+          <div class="vital-value">{{ latestInpatientVital.temperature }}°C</div>
         </div>
-      </q-card-section>
-    </q-card>
+        <div v-if="latestInpatientVital.pulse" class="vital-item">
+          <div class="vital-label">Pulse</div>
+          <div class="vital-value">{{ latestInpatientVital.pulse }} bpm</div>
+        </div>
+        <div v-if="latestInpatientVital.respiratory_rate" class="vital-item">
+          <div class="vital-label">Respiratory rate</div>
+          <div class="vital-value">{{ latestInpatientVital.respiratory_rate }} /min</div>
+        </div>
+        <div v-if="latestInpatientVital.oxygen_saturation" class="vital-item">
+          <div class="vital-label">SpO₂</div>
+          <div class="vital-value">{{ latestInpatientVital.oxygen_saturation }}%</div>
+        </div>
+        <div v-if="latestInpatientVital.weight" class="vital-item">
+          <div class="vital-label">Weight</div>
+          <div class="vital-value">{{ latestInpatientVital.weight }} kg</div>
+        </div>
+        <div v-if="latestInpatientVital.height" class="vital-item">
+          <div class="vital-label">Height</div>
+          <div class="vital-value">{{ latestInpatientVital.height }} cm</div>
+        </div>
+        <div v-if="latestInpatientVital.bmi" class="vital-item">
+          <div class="vital-label">BMI</div>
+          <div class="vital-value">{{ latestInpatientVital.bmi }}</div>
+        </div>
+        <div v-if="latestInpatientVital.notes" class="vital-item vital-item--wide">
+          <div class="vital-label">Notes</div>
+          <div class="vital-value vital-value--sm">{{ latestInpatientVital.notes }}</div>
+        </div>
+      </div>
+    </section>
 
-    <!-- No Diagnoses/Vitals Message -->
-    <q-card v-if="(selectedEncounterId || selectedWardAdmissionId) && !loadingData && diagnoses.length === 0 && !vitals && !latestInpatientVital" class="q-mb-md">
-      <q-card-section class="text-center text-grey-7">
-        No diagnoses or vitals recorded yet
-      </q-card-section>
-    </q-card>
+    <section
+      v-if="(selectedEncounterId || selectedWardAdmissionId) && !loadingData && diagnoses.length === 0 && !vitals && !latestInpatientVital"
+      class="diag-panel"
+    >
+      <div class="empty-hint">No diagnoses or vitals recorded yet</div>
+    </section>
 
     <!-- Payment Information Section -->
-    <q-card v-if="selectedEncounterId && currentEncounter" class="q-mb-md glass-card">
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Payment Information</div>
-        <div class="row q-gutter-md">
-          <div class="col-12 col-md-6">
-            <div class="text-subtitle2 q-mb-xs text-grey-7">Insurance Status</div>
-            <div class="row items-center q-gutter-sm">
-              <q-badge 
-                :color="isInsuredEncounter ? 'green' : 'orange'" 
-                :label="isInsuredEncounter ? 'Insured (NHIA)' : 'Cash/Carry'"
-                class="text-weight-bold"
-              />
-              <span v-if="isInsuredEncounter && currentEncounter.ccc_number" class="text-body2 text-grey-7">
-                CCC: {{ currentEncounter.ccc_number }}
-              </span>
-            </div>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="text-subtitle2 q-mb-xs text-grey-7">Confirmed Prescriptions Summary</div>
-            <div class="text-body1">
-              <div v-if="loadingPrescriptionCosts" class="text-grey-6">
-                <q-spinner size="sm" class="q-mr-xs" />
-                Calculating costs...
-              </div>
-              <div v-else>
-                <div class="text-weight-bold text-h6" :class="prescriptionTotalAmount > 0 ? 'text-primary' : 'text-grey-6'">
-                  ₵{{ prescriptionTotalAmount.toFixed(2) }}
-                </div>
-                <div class="text-caption text-grey-7 q-mt-xs">
-                  {{ confirmedPrescriptionsCount }} confirmed prescription(s)
-                </div>
-              </div>
-            </div>
-          </div>
+    <section v-if="selectedEncounterId && currentEncounter" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Payment information</div>
+          <div class="panel-sub">Confirmed prescription costs for this encounter</div>
         </div>
-        <div v-if="prescriptionTotalAmount > 0" class="q-mt-md q-pt-md" style="border-top: 1px solid rgba(255,255,255,0.1);">
-          <div class="text-subtitle2 q-mb-xs text-grey-7">Payment Note</div>
-          <div class="text-body2">
-            <span v-if="isInsuredEncounter" class="text-info">
-              This is an insured encounter. The patient will pay the co-payment amount shown above.
-            </span>
-            <span v-else class="text-warning">
-              This is a cash/carry encounter. The patient will pay the full amount shown above.
+      </div>
+      <div class="panel-body payment-grid">
+        <div>
+          <div class="vital-label">Insurance status</div>
+          <div class="badge-row q-mt-xs">
+            <HmsBadge :tone="isInsuredEncounter ? 'success' : 'warning'">
+              {{ isInsuredEncounter ? 'Insured (NHIA)' : 'Cash / carry' }}
+            </HmsBadge>
+            <span v-if="isInsuredEncounter && currentEncounter.ccc_number" class="mono text-muted">
+              CCC {{ currentEncounter.ccc_number }}
             </span>
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+        <div>
+          <div class="vital-label">Confirmed prescriptions</div>
+          <div v-if="loadingPrescriptionCosts" class="text-muted q-mt-xs">Calculating costs…</div>
+          <div v-else class="q-mt-xs">
+            <div class="total-value" :class="prescriptionTotalAmount > 0 ? '' : 'text-muted'">
+              ₵{{ prescriptionTotalAmount.toFixed(2) }}
+            </div>
+            <div class="panel-sub">{{ confirmedPrescriptionsCount }} confirmed</div>
+          </div>
+        </div>
+        <div v-if="prescriptionTotalAmount > 0" class="payment-note">
+          <span v-if="isInsuredEncounter">Insured encounter — patient pays the co-payment amount above.</span>
+          <span v-else>Cash / carry encounter — patient pays the full amount above.</span>
+        </div>
+      </div>
+    </section>
 
     <!-- Prescriptions Table -->
-    <q-card v-if="selectedEncounterId || selectedWardAdmissionId">
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6">Prescriptions</div>
-          <q-space />
-          <!-- Filter Toggle -->
-          <q-btn-toggle
-            v-model="prescriptionFilter"
-            toggle-color="primary"
-            :options="[
-              { label: 'All', value: 'all' },
-              { label: 'New Prescriptions', value: 'new' }
-            ]"
-            class="q-mr-md"
-          />
-          <q-badge v-if="isFinalized" color="orange" label="Encounter Finalized" />
-          <q-btn
-            v-if="newlyDispensedPrescriptions.size > 0"
-            color="positive"
-            icon="print"
-            label="Print Newly Dispensed"
-            @click="printNewlyDispensed"
-            :disable="(serviceType === 'opd' && !selectedEncounterId) || (serviceType === 'ipd' && !selectedWardAdmissionId) || !patient"
-            class="q-mr-sm"
-          />
-          <q-btn
-            color="secondary"
-            icon="print"
-            label="Print Bill Card"
-            @click="printBillCard"
-            :disable="(serviceType === 'opd' && !selectedEncounterId) || (serviceType === 'ipd' && !selectedWardAdmissionId) || !patient"
-            class="q-mr-sm"
-          />
-          <q-btn
-            v-if="serviceType === 'opd'"
-            color="primary"
-            icon="add"
-            label="Add Prescription"
-            @click="openAddPrescriptionDialog"
-            :disable="!selectedEncounterId"
-            class="q-mr-sm"
-          />
-          <q-btn
-            v-if="serviceType === 'ipd'"
-            color="primary"
-            icon="add"
-            label="Add Medication"
-            @click="openAddPrescriptionDialog"
-            :disable="!selectedWardAdmissionId"
-            class="q-mr-sm"
-          />
-          <q-btn
-            v-if="serviceType === 'opd'"
-            color="secondary"
-            icon="local_pharmacy"
-            label="Add External Prescription"
-            @click="openAddExternalPrescriptionDialog"
-            :disable="!selectedEncounterId"
-          />
-          <q-btn
-            v-if="serviceType === 'ipd'"
-            color="secondary"
-            icon="local_pharmacy"
-            label="Add External Prescription"
-            @click="openAddExternalPrescriptionDialog"
-            :disable="!selectedWardAdmissionId"
-          />
-          <q-btn
-            v-if="serviceType === 'opd' && externalPrescriptions.length > 0"
-            color="accent"
-            icon="print"
-            label="Print External Prescriptions"
-            @click="printExternalPrescriptions"
-            :disable="!selectedEncounterId || !patient"
-            class="q-ml-sm"
-          />
-          <q-btn
-            v-if="serviceType === 'ipd' && externalPrescriptions.length > 0"
-            color="accent"
-            icon="print"
-            label="Print External Prescriptions"
-            @click="printExternalPrescriptions"
-            :disable="!selectedWardAdmissionId || !patient"
-            class="q-ml-sm"
-          />
+    <section v-if="selectedEncounterId || selectedWardAdmissionId" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Prescriptions</div>
+          <div class="panel-sub">Confirm, dispense, and print for the selected service</div>
         </div>
+        <div class="panel-actions">
+          <div class="module-seg" role="tablist" aria-label="Prescription filter">
+            <button
+              type="button"
+              class="seg-btn"
+              :class="{ active: prescriptionFilter === 'all' }"
+              @click="prescriptionFilter = 'all'"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              class="seg-btn"
+              :class="{ active: prescriptionFilter === 'new' }"
+              @click="prescriptionFilter = 'new'"
+            >
+              New
+            </button>
+          </div>
+          <HmsBadge v-if="isFinalized" tone="warning">Finalized</HmsBadge>
+          <HmsButton
+            v-if="newlyDispensedPrescriptions.size > 0"
+            variant="healthcare"
+            size="sm"
+            :disabled="(serviceType === 'opd' && !selectedEncounterId) || (serviceType === 'ipd' && !selectedWardAdmissionId) || !patient"
+            @click="printNewlyDispensed"
+          >
+            Print new
+          </HmsButton>
+          <HmsButton
+            variant="secondary"
+            size="sm"
+            :disabled="(serviceType === 'opd' && !selectedEncounterId) || (serviceType === 'ipd' && !selectedWardAdmissionId) || !patient"
+            @click="printBillCard"
+          >
+            Print bill card
+          </HmsButton>
+          <HmsButton
+            v-if="serviceType === 'opd'"
+            variant="primary"
+            size="sm"
+            :disabled="!selectedEncounterId"
+            @click="openAddPrescriptionDialog"
+          >
+            Add prescription
+          </HmsButton>
+          <HmsButton
+            v-if="serviceType === 'ipd'"
+            variant="primary"
+            size="sm"
+            :disabled="!selectedWardAdmissionId"
+            @click="openAddPrescriptionDialog"
+          >
+            Add medication
+          </HmsButton>
+          <HmsButton
+            v-if="serviceType === 'opd'"
+            variant="secondary"
+            size="sm"
+            :disabled="!selectedEncounterId"
+            @click="openAddExternalPrescriptionDialog"
+          >
+            External
+          </HmsButton>
+          <HmsButton
+            v-if="serviceType === 'ipd'"
+            variant="secondary"
+            size="sm"
+            :disabled="!selectedWardAdmissionId"
+            @click="openAddExternalPrescriptionDialog"
+          >
+            External
+          </HmsButton>
+          <HmsButton
+            v-if="serviceType === 'opd' && externalPrescriptions.length > 0"
+            variant="ghost"
+            size="sm"
+            :disabled="!selectedEncounterId || !patient"
+            @click="printExternalPrescriptions"
+          >
+            Print external
+          </HmsButton>
+          <HmsButton
+            v-if="serviceType === 'ipd' && externalPrescriptions.length > 0"
+            variant="ghost"
+            size="sm"
+            :disabled="!selectedWardAdmissionId || !patient"
+            @click="printExternalPrescriptions"
+          >
+            Print external
+          </HmsButton>
+        </div>
+      </div>
+      <div class="panel-body panel-body--flush">
         <!-- OPD Prescriptions Section -->
         <div v-if="serviceType === 'opd' && filteredPrescriptions.length > 0" class="q-mb-md">
-          <div class="text-h6 q-mb-sm">OPD Prescriptions</div>
+          <div class="section-kicker">OPD prescriptions</div>
           <q-table
+            class="diag-table"
             :rows="filteredPrescriptions"
             :columns="columns"
             row-key="id"
             flat
+            dense
             :loading="loadingPrescriptions"
             :rows-per-page-options="[15, 25, 50, 100]"
             :pagination="{ rowsPerPage: 15 }"
@@ -557,29 +521,32 @@
                   {{ props.value }}
                 </span>
                 <span v-else>{{ props.value }}</span>
-                <q-badge v-if="props.row.is_external" color="orange" label="External" />
-                <q-badge v-if="props.row.prescription_type === 'inpatient' || props.row.source === 'inpatient'" color="purple" label="IPD" />
+                <HmsBadge v-if="props.row.is_external" tone="warning">External</HmsBadge>
+                <HmsBadge v-if="props.row.prescription_type === 'inpatient' || props.row.source === 'inpatient'" tone="healthcare">IPD</HmsBadge>
               </div>
             </q-td>
           </template>
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
               <!-- Don't show status badge for external prescriptions (they're going outside) -->
-              <q-badge
+              <HmsBadge
                 v-if="!props.row.is_external && props.row.is_confirmed && props.row.is_dispensed"
-                color="positive"
-                label="Dispensed"
-              />
-              <q-badge
+                tone="success"
+              >
+                Dispensed
+              </HmsBadge>
+              <HmsBadge
                 v-else-if="!props.row.is_external && props.row.is_confirmed"
-                color="blue"
-                label="Confirmed"
-              />
-              <q-badge
+                tone="info"
+              >
+                Confirmed
+              </HmsBadge>
+              <HmsBadge
                 v-else-if="!props.row.is_external"
-                color="orange"
-                label="Pending"
-              />
+                tone="warning"
+              >
+                Pending
+              </HmsBadge>
               <span v-else class="text-grey-6 text-caption">External</span>
             </q-td>
           </template>
@@ -701,15 +668,17 @@
 
         <!-- IPD Prescriptions Section -->
         <div v-if="serviceType === 'ipd' && selectedClinicalReviewId && filteredInpatientPrescriptionsByReview.length > 0" class="q-mb-md">
-          <div class="text-h6 q-mb-sm">IPD Prescriptions</div>
+          <div class="section-kicker">IPD prescriptions</div>
           <div class="text-caption text-info q-mb-sm">
             IPD medications can be dispensed but must be added to IPD bill to be charged at discharge.
           </div>
           <q-table
+            class="diag-table"
             :rows="filteredInpatientPrescriptionsByReview"
             :columns="inpatientColumns"
             row-key="id"
             flat
+            dense
             :loading="loadingInpatientPrescriptions"
             :rows-per-page-options="[15, 25, 50, 100]"
             :pagination="{ rowsPerPage: 15 }"
@@ -756,29 +725,32 @@
                     {{ props.value }}
                   </span>
                   <span v-else>{{ props.value }}</span>
-                  <q-badge color="purple" label="IPD" />
-                  <q-badge v-if="props.row.is_external" color="orange" label="External" />
+                  <HmsBadge tone="healthcare">IPD</HmsBadge>
+                  <HmsBadge v-if="props.row.is_external" tone="warning">External</HmsBadge>
                 </div>
               </q-td>
             </template>
             <template v-slot:body-cell-status="props">
               <q-td :props="props">
                 <!-- Don't show status badge for external prescriptions (they're going outside) -->
-                <q-badge
+                <HmsBadge
                   v-if="!props.row.is_external && props.row.is_confirmed && props.row.is_dispensed"
-                  color="positive"
-                  label="Dispensed"
-                />
-                <q-badge
+                  tone="success"
+                >
+                  Dispensed
+                </HmsBadge>
+                <HmsBadge
                   v-else-if="!props.row.is_external && props.row.is_confirmed"
-                  color="blue"
-                  label="Confirmed"
-                />
-                <q-badge
+                  tone="info"
+                >
+                  Confirmed
+                </HmsBadge>
+                <HmsBadge
                   v-else-if="!props.row.is_external"
-                  color="orange"
-                  label="Pending"
-                />
+                  tone="warning"
+                >
+                  Pending
+                </HmsBadge>
                 <div v-else-if="props.row.is_external" class="text-grey-6 text-caption">
                   External
                 </div>
@@ -879,22 +851,26 @@
         </div>
 
         <!-- Empty State -->
-        <div v-if="serviceType && ((serviceType === 'opd' && prescriptions.length === 0) || (serviceType === 'ipd' && (!selectedClinicalReviewId || filteredInpatientPrescriptionsByReview.length === 0)))" class="text-center q-pa-lg">
-          <q-icon name="medication" size="4em" color="grey-6" />
-          <div class="text-h6 q-mt-md text-grey-6">No prescriptions found</div>
-          <div class="text-body2 text-grey-6">
+        <div v-if="serviceType && ((serviceType === 'opd' && prescriptions.length === 0) || (serviceType === 'ipd' && (!selectedClinicalReviewId || filteredInpatientPrescriptionsByReview.length === 0)))" class="empty-hint">
+          <div class="panel-title" style="font-weight:650">No prescriptions found</div>
+          <div class="panel-sub" style="margin-top:0.35rem">
             <span v-if="serviceType === 'opd'">Prescriptions will appear here once they are added for this encounter.</span>
             <span v-else-if="!selectedClinicalReviewId">Please select a clinical review above to view prescriptions.</span>
             <span v-else>No prescriptions found for the selected clinical review.</span>
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Itemized Confirmation Section -->
-    <q-card v-if="itemizedPrescriptions.length > 0" class="q-mt-md glass-card">
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Selected Prescriptions for Confirmation</div>
+    <section v-if="itemizedPrescriptions.length > 0" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Confirm selected</div>
+          <div class="panel-sub">{{ itemizedPrescriptions.length }} prescription(s) ready to confirm</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="q-gutter-md">
           <q-card
             v-for="prescription in itemizedPrescriptions"
@@ -1005,27 +981,19 @@
             </div>
           </q-card>
         </div>
-        <div class="row q-mt-md justify-end">
-          <q-btn
-            color="primary"
-            icon="check_circle"
-            label="Confirm and Generate Bill"
-            @click="confirmMultiplePrescriptions"
+        <div class="create-row">
+          <HmsButton
+            variant="primary"
+            size="sm"
             :loading="confirmingMultiple"
-            :disable="itemizedPrescriptions.length === 0"
-            size="md"
-          />
+            :disabled="itemizedPrescriptions.length === 0"
+            @click="confirmMultiplePrescriptions"
+          >
+            Confirm and generate bill
+          </HmsButton>
         </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- No Prescriptions Message -->
-    <q-card v-if="patient && !loadingPrescriptions && !loadingInpatientPrescriptions && prescriptions.length === 0 && inpatientPrescriptions.length === 0" class="q-mt-md">
-      <q-card-section class="text-center text-grey-7">
-        <div v-if="selectedEncounterId">No prescriptions found for this encounter</div>
-        <div v-else>No prescriptions found for this patient</div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Add External Prescription Dialog -->
     <q-dialog v-model="showAddExternalPrescriptionDialog">
@@ -1916,10 +1884,10 @@
 
     <!-- Dispense Dialog -->
     <q-dialog v-model="showDispenseDialog">
-      <q-card style="min-width: 500px; max-width: 700px">
-        <q-card-section>
-          <div class="text-h6">Dispense Prescription</div>
-          <div class="text-subtitle2 text-grey-7 q-mt-xs">
+      <q-card class="pharm-dialog-card" style="min-width: min(500px, 96vw); max-width: 700px">
+        <q-card-section class="pharm-dialog-head">
+          <div class="dialog-title">Dispense prescription</div>
+          <div class="dialog-sub">
             {{ dispenseForm.medicine_name }} ({{ dispenseForm.medicine_code }})
           </div>
         </q-card-section>
@@ -2036,6 +2004,9 @@ import { useQuasar } from 'quasar';
 import { consultationAPI, patientsAPI, encountersAPI, vitalsAPI, priceListAPI, staffAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { useFacilityStore } from '../stores/facility';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -2044,6 +2015,20 @@ const facilityStore = useFacilityStore();
 const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
+
+const patientDisplayName = computed(() => {
+  if (!patient.value) return '';
+  const parts = [patient.value.name, patient.value.surname, patient.value.other_names].filter(Boolean);
+  return parts.join(' ');
+});
+
+const patientInitials = computed(() => {
+  if (!patient.value) return '?';
+  const first = (patient.value.name || '').trim().charAt(0);
+  const last = (patient.value.surname || patient.value.other_names || '').trim().charAt(0);
+  const letters = `${first}${last}`.toUpperCase();
+  return letters || '?';
+});
 const activeEncounters = ref([]);
 const todaysEncounter = ref(null); // Keep for backward compatibility, but we'll use todaysEncounters array
 const todaysEncounters = ref([]); // Array of all encounters from today
@@ -5812,3 +5797,179 @@ const printExternalPrescriptions = async () => {
   setTimeout(() => { try { w.focus(); w.print(); } catch(e) {} }, 300);
 };
 </script>
+
+<style scoped>
+.module-seg {
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  gap: 0.15rem;
+}
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--hms-text-secondary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  font-weight: 650;
+  padding: 0.35rem 0.85rem;
+  border-radius: calc(var(--hms-radius-lg) - 2px);
+  cursor: pointer;
+}
+.seg-btn.active {
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+.patient-hero {
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-glass-bg-strong);
+  border: 1px solid var(--hms-border-strong);
+  box-shadow: var(--hms-shadow-lg), var(--hms-shadow-inner);
+  backdrop-filter: blur(16px);
+}
+.hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.hero-avatar {
+  width: 3.1rem; height: 3.1rem; border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.18));
+  color: var(--hms-accent); display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 750; flex-shrink: 0;
+}
+.hero-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.hero-name {
+  margin: 0; font-size: var(--hms-text-2xl); font-weight: 750;
+  letter-spacing: var(--hms-tracking-tight); color: var(--hms-text-primary);
+}
+.hero-meta {
+  margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.15rem 0.2rem;
+  color: var(--hms-text-secondary); font-size: var(--hms-text-sm);
+}
+.sep { color: var(--hms-text-muted); margin: 0 0.2rem; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.4rem 0.7rem;
+  border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font-family: inherit;
+}
+.balance-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hms-text-muted); }
+.balance-value { font-weight: 750; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.mono { font-family: var(--hms-font-mono); font-size: 0.75rem; }
+.text-muted { color: var(--hms-text-muted); }
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem; padding: 0.85rem 1rem; border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.panel-body { padding: 0.95rem 1rem; }
+.panel-body--flush { padding: 0.55rem 0.35rem 0.85rem; }
+.search-body { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+.tool-input {
+  height: 2.15rem; border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg); color: var(--hms-text-primary); font-family: inherit;
+  font-size: var(--hms-text-sm); padding: 0 0.7rem;
+}
+.tool-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.tool-input--search { min-width: 14rem; }
+.tool-input--grow { flex: 1; min-width: 12rem; }
+.service-block + .service-block { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--hms-border); }
+.service-label {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--hms-text-muted); margin-bottom: 0.55rem;
+}
+.service-group { margin-bottom: 0.75rem; }
+.service-group-title { font-size: var(--hms-text-sm); font-weight: 650; color: var(--hms-text-secondary); margin-bottom: 0.45rem; }
+.service-list { display: flex; flex-direction: column; gap: 0.45rem; }
+.service-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  width: 100%; text-align: left; padding: 0.7rem 0.85rem;
+  border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border);
+  background: var(--hms-surface); color: inherit; font-family: inherit; cursor: pointer;
+}
+.service-card.active {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: var(--hms-accent-muted);
+}
+.service-card-title { font-weight: 700; color: var(--hms-text-primary); font-size: var(--hms-text-sm); }
+.service-card-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.service-card-notes {
+  margin-top: 0.25rem; font-size: var(--hms-text-xs); color: var(--hms-text-secondary);
+  max-width: 32rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.service-card-main { min-width: 0; }
+.dx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.65rem; }
+.dx-card {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 0.55rem;
+  padding: 0.75rem 0.85rem; border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+}
+.dx-name { font-weight: 700; color: var(--hms-text-primary); font-size: var(--hms-text-sm); }
+.dx-meta { margin-top: 0.2rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.badge-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.vitals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 0.75rem; }
+.vital-item--wide { grid-column: 1 / -1; }
+.vital-label {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--hms-text-muted);
+}
+.vital-value { margin-top: 0.2rem; font-weight: 700; color: var(--hms-text-primary); font-variant-numeric: tabular-nums; }
+.vital-value--sm { font-weight: 500; font-size: var(--hms-text-sm); }
+.payment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
+.payment-note {
+  grid-column: 1 / -1; padding-top: 0.75rem; border-top: 1px solid var(--hms-border);
+  font-size: var(--hms-text-sm); color: var(--hms-text-secondary);
+}
+.total-value { font-size: var(--hms-text-lg); font-weight: 750; color: var(--hms-text-primary); font-variant-numeric: tabular-nums; }
+.empty-hint {
+  text-align: center; color: var(--hms-text-muted); padding: 1.25rem 1rem;
+  font-size: var(--hms-text-sm);
+}
+.section-kicker {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--hms-text-muted); padding: 0.35rem 0.65rem 0.55rem;
+}
+.create-row {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.55rem; margin-top: 0.85rem;
+}
+.diag-table { background: transparent; }
+.diag-table :deep(thead tr),
+.diag-table :deep(.q-table__top) { background: transparent; }
+.diag-table :deep(th) {
+  font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--hms-text-muted); font-weight: 700;
+}
+.pharm-dialog-card {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+}
+.pharm-dialog-head { border-bottom: 1px solid var(--hms-border); }
+.dialog-title { font-size: var(--hms-text-xl); font-weight: 750; color: var(--hms-text-primary); }
+.dialog-sub { margin-top: 0.2rem; font-size: var(--hms-text-sm); color: var(--hms-text-muted); }
+.pharm-expansion { color: var(--hms-text-secondary) !important; }
+@media (max-width: 720px) {
+  .patient-hero { position: static; }
+  .tool-input--search { width: 100%; }
+}
+</style>

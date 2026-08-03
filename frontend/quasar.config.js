@@ -52,9 +52,12 @@ module.exports = configure(function (ctx) {
         : 'https://app.aquacy.me/api';
 
   return {
+    css: [
+      'app.css',
+    ],
     framework: {
       config: {
-        dark: 'auto',
+        dark: true,
       },
       plugins: [
         'Notify',

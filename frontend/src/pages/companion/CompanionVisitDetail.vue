@@ -1,68 +1,67 @@
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="hms-page">
+    <HmsPageHeader title="Service details" subtitle="Visit identity, account summary, and role-based service actions.">
+      <template #actions>
+        <HmsButton
+          v-if="visit && canEdit"
+          variant="secondary"
+          size="sm"
+          @click="openEditDialog"
+        >
+          Edit
+        </HmsButton>
+        <HmsButton
+          v-if="visit && canDelete"
+          variant="danger"
+          size="sm"
+          @click="confirmDelete"
+        >
+          Delete
+        </HmsButton>
+        <HmsButton variant="ghost" size="sm" @click="$router.push({ name: 'CompanionVisitList' })">
+          Back
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
     <div v-if="loading" class="text-center q-pa-xl">
-      <q-spinner size="48px" />
+      <q-spinner size="48px" color="primary" />
     </div>
+
     <template v-else-if="visit">
-      <div class="row items-center justify-between q-mb-md">
-        <div class="row items-center">
-          <q-btn flat dense icon="arrow_back" @click="$router.push({ name: 'CompanionVisitList' })" />
-          <div class="text-h5 text-weight-bold glass-text q-ml-sm">Service details</div>
-        </div>
-        <div class="row q-gutter-sm">
-          <q-btn
-            v-if="canEdit"
-            flat
-            label="Edit"
-            icon="edit"
-            class="glass-button"
-            @click="openEditDialog"
-          />
-          <q-btn
-            v-if="canDelete"
-            flat
-            label="Delete"
-            icon="delete"
-            class="glass-button"
-            color="negative"
-            @click="confirmDelete"
-          />
-        </div>
-      </div>
-      <q-card class="glass-card" flat>
-        <q-card-section>
-          <div class="row q-col-gutter-md">
-            <div class="col-12 col-sm-6">
-              <div class="text-caption glass-text-muted">Card number</div>
-              <div class="text-body1">{{ visit.external_card_number }}</div>
-            </div>
-            <div class="col-12 col-sm-6">
-              <div class="text-caption glass-text-muted">Visit number</div>
-              <div class="text-body1">{{ visit.external_visit_number }}</div>
-            </div>
-            <div class="col-12 col-sm-6">
-              <div class="text-caption glass-text-muted">Client name</div>
-              <div class="text-body1">{{ visit.client_name || '—' }}</div>
-            </div>
-            <div class="col-12 col-sm-6">
-              <div class="text-caption glass-text-muted">Status</div>
-              <div class="text-body1">{{ visit.status }}</div>
-            </div>
-            <div class="col-12 col-sm-6">
-              <div class="text-caption glass-text-muted">Created</div>
-              <div class="text-body1">{{ formatDate(visit.created_at) }}</div>
+      <div class="claim-hero">
+        <div class="claim-hero__main">
+          <div class="claim-hero__avatar" aria-hidden="true">{{ visitInitials }}</div>
+          <div>
+            <h2 class="claim-hero__name">{{ visitDisplayName }}</h2>
+            <div class="claim-hero__meta">
+              <span class="mono">Card {{ visit.external_card_number || '—' }}</span>
+              <span class="mono">Visit {{ visit.external_visit_number || '—' }}</span>
+              <span>{{ visit.status || '—' }}</span>
+              <span>{{ formatDate(visit.created_at) }}</span>
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+        <div class="claim-hero__aside">
+          <div class="claim-hero__badges">
+            <q-badge
+              :color="visit.status === 'open' ? 'positive' : 'grey'"
+              :label="visit.status === 'open' ? 'Open' : (visit.status === 'closed' ? 'Closed' : (visit.status || '—'))"
+            />
+          </div>
+        </div>
+      </div>
 
-      <!-- Account summary: total bill vs paid amount and balance due (prominent for accounts) -->
-      <div class="text-subtitle1 text-weight-medium glass-text q-mt-lg q-mb-sm">Account summary</div>
-      <q-card class="glass-card account-summary-card q-mb-md" flat>
-        <q-card-section class="account-summary-section">
-          <p class="account-summary-hint text-caption text-grey-7">
-            Tap any amount below for a receipt-style breakdown (lines, receipts, who recorded payment).
-          </p>
+      <section class="diag-panel account-summary-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Account summary</div>
+            <div class="panel-sub">
+              Tap any amount for a receipt-style breakdown (lines, receipts, who recorded payment).
+            </div>
+          </div>
+        </div>
+        <div class="panel-body account-summary-section">
           <div class="account-summary-grid">
             <div
               class="account-summary-cell receipt-amount-hit"
@@ -118,43 +117,62 @@
               <q-tooltip anchor="top middle" self="bottom middle">Overview &amp; full bill</q-tooltip>
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
-      <!-- Role-based action cards: active only for matching roles -->
-      <div class="text-subtitle1 text-weight-medium glass-text q-mt-lg q-mb-sm">Add services</div>
-      <div class="text-body2 glass-text-muted q-mb-sm">
-        Full line-by-line bill (with receipts and payment details) is in Account summary — tap any amount above.
-      </div>
-      <div class="row q-col-gutter-md q-ma-md">
-        <q-card
-          v-for="card in actionCards"
-          :key="card.name"
-          class="action-card col-12 col-sm-6 col-md-3 q-ma-sm"
-          :class="{ 'action-card--inactive': !card.active }"
-          flat
-          :clickable="card.active && visit.status === 'open'"
-          @click="card.active && visit.status === 'open' ? goTo(card.routeName) : null"
-        >
-          <q-card-section class="text-center">
-            <q-icon :name="card.icon" :size="card.active ? '40px' : '32px'" :class="card.active ? 'text-primary' : 'text-grey-5'" />
-            <div class="text-subtitle1 q-mt-sm" :class="card.active ? 'glass-text' : 'text-grey-6'">{{ card.title }}</div>
-            <q-btn
-              v-if="card.active && visit.status === 'open'"
-              flat
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Add services</div>
+            <div class="panel-sub">
+              Full line-by-line bill is in Account summary — tap any amount above.
+            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="services-grid">
+            <HmsCard
+              v-for="card in actionCards"
+              :key="card.name"
               dense
-              size="sm"
-              label="Open"
-              class="glass-button q-mt-sm"
-              @click.stop="goTo(card.routeName)"
-            />
-            <div v-else-if="!card.active" class="text-caption text-grey-6 q-mt-sm">Not available for your role</div>
-            <div v-else class="text-caption text-grey-6 q-mt-sm">Visit is closed</div>
-          </q-card-section>
-        </q-card>
-      </div>
+              :hoverable="card.active && visit.status === 'open'"
+              class="service-card"
+              :class="{ 'service-card--inactive': !card.active }"
+              role="button"
+              :tabindex="card.active && visit.status === 'open' ? 0 : -1"
+              @click="card.active && visit.status === 'open' ? goTo(card.routeName) : null"
+              @keydown.enter="card.active && visit.status === 'open' ? goTo(card.routeName) : null"
+            >
+              <q-icon
+                :name="card.icon"
+                :size="card.active ? '36px' : '28px'"
+                :class="card.active ? 'text-primary' : 'text-grey-5'"
+              />
+              <div class="service-card__title" :class="card.active ? '' : 'text-grey-6'">
+                {{ card.title }}
+              </div>
+              <HmsButton
+                v-if="card.active && visit.status === 'open'"
+                variant="ghost"
+                size="sm"
+                class="q-mt-sm"
+                @click.stop="goTo(card.routeName)"
+              >
+                Open
+              </HmsButton>
+              <div v-else-if="!card.active" class="text-caption text-grey-6 q-mt-sm">Not available for your role</div>
+              <div v-else class="text-caption text-grey-6 q-mt-sm">Visit is closed</div>
+            </HmsCard>
+          </div>
+        </div>
+      </section>
     </template>
-    <div v-else class="text-body1">Visit not found.</div>
+
+    <div v-else class="diag-panel">
+      <div class="panel-body">
+        <div class="text-body1">Visit not found.</div>
+      </div>
+    </div>
 
     <CompanionBillingReceiptDialog
       v-model="receiptOpen"
@@ -165,10 +183,12 @@
     />
 
     <q-dialog v-model="showEditDialog" persistent>
-      <q-card class="glass-card" style="min-width: 400px;">
+      <q-card class="diag-panel edit-dialog-card" style="min-width: 400px;">
         <q-card-section>
           <div class="text-h6">Edit service</div>
-          <div class="text-caption glass-text-muted">Card and visit number can only be changed when the visit is open (to correct officer errors).</div>
+          <div class="text-caption text-grey-7">
+            Card and visit number can only be changed when the visit is open (to correct officer errors).
+          </div>
         </q-card-section>
         <q-card-section>
           <q-form @submit="onSaveEdit" class="q-gutter-md">
@@ -178,7 +198,6 @@
               label="Card number (from government system)"
               :readonly="visit && visit.status === 'closed'"
               :rules="editForm.status === 'open' ? [(v) => !!((v || '').trim()) || 'Required when open'] : []"
-              class="glass-text"
             />
             <q-input
               v-model="editForm.external_visit_number"
@@ -186,13 +205,11 @@
               label="Visit number (from government system)"
               :readonly="visit && visit.status === 'closed'"
               :rules="editForm.status === 'open' ? [(v) => !!((v || '').trim()) || 'Required when open'] : []"
-              class="glass-text"
             />
             <q-input
               v-model="editForm.client_name"
               filled
               label="Client name (optional)"
-              class="glass-text"
             />
             <q-select
               v-model="editForm.status"
@@ -203,8 +220,8 @@
               map-options
             />
             <div class="row q-gutter-sm justify-end">
-              <q-btn flat label="Cancel" @click="showEditDialog = false" />
-              <q-btn unelevated type="submit" label="Save" class="glass-button" :loading="saving" />
+              <HmsButton variant="ghost" size="sm" @click="showEditDialog = false">Cancel</HmsButton>
+              <HmsButton variant="primary" size="sm" type="submit" :loading="saving">Save</HmsButton>
             </div>
           </q-form>
         </q-card-section>
@@ -220,6 +237,9 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
+import HmsCard from '../../components/ui/HmsCard.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -250,6 +270,18 @@ const statusOptions = [
 ];
 
 const id = computed(() => route.params.id);
+
+const visitDisplayName = computed(() => {
+  const name = String(visit.value?.client_name || '').trim();
+  return name || 'Companion client';
+});
+
+const visitInitials = computed(() => {
+  const bits = visitDisplayName.value.split(/\s+/).filter(Boolean);
+  if (!bits.length) return 'CC';
+  if (bits.length === 1) return bits[0].slice(0, 2).toUpperCase();
+  return `${bits[0][0] || ''}${bits[bits.length - 1][0] || ''}`.toUpperCase();
+});
 
 function formatPrice(val) {
   const n = Number(val);
@@ -436,37 +468,35 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.action-card {
-  transition: opacity 0.2s, transform 0.2s;
+.services-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.85rem;
 }
-.action-card:not(.action-card--inactive) {
+
+.service-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
   cursor: pointer;
 }
-.action-card--inactive {
-  opacity: 0.6;
+
+.service-card--inactive {
+  opacity: 0.55;
   pointer-events: none;
-}
-.action-card:not(.action-card--inactive):hover {
-  transform: translateY(-2px);
+  cursor: default;
 }
 
-/* Account summary: grid so columns never overlap; balance cell highlighted, not full-width */
-.account-summary-card {
-  border-left: 4px solid var(--q-primary);
-}
-.body--dark .account-summary-card {
-  border-left-color: var(--q-primary);
+.service-card__title {
+  margin-top: 0.5rem;
+  font-size: var(--hms-text-sm, 0.875rem);
+  font-weight: 600;
+  color: var(--hms-text-primary);
 }
 
-.account-summary-hint {
-  margin: 0 0 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  line-height: 1.45;
-  max-width: 100%;
-}
-.body--dark .account-summary-hint {
-  border-bottom-color: rgba(255, 255, 255, 0.12);
+.account-summary-panel {
+  border-left: 3px solid var(--q-primary);
 }
 
 .account-summary-grid {
@@ -491,26 +521,19 @@ onMounted(async () => {
 .account-summary-cell {
   min-width: 0;
   padding: 12px 14px;
-  border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(0, 0, 0, 0.02);
+  border-radius: var(--hms-radius-lg, 8px);
+  border: 1px solid var(--hms-border, rgba(0, 0, 0, 0.08));
+  background: var(--hms-surface-muted, rgba(0, 0, 0, 0.02));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
 }
-.body--dark .account-summary-cell {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-}
 
 .account-summary-cell--balance {
   border-width: 2px;
   border-color: var(--q-primary);
-  background: rgba(25, 118, 210, 0.06);
-}
-.body--dark .account-summary-cell--balance {
-  background: rgba(100, 181, 246, 0.12);
+  background: color-mix(in srgb, var(--q-primary) 8%, transparent);
 }
 
 .account-summary-label {
@@ -523,7 +546,6 @@ onMounted(async () => {
   line-height: 1.2;
 }
 
-/* Click targets: no negative margins inside summary (they caused overlap) */
 .account-summary-section .receipt-amount-hit {
   cursor: pointer;
   outline-offset: 2px;
@@ -531,15 +553,14 @@ onMounted(async () => {
   margin: 0;
 }
 .account-summary-section .receipt-amount-hit:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  background: rgba(0, 0, 0, 0.03);
-}
-.body--dark .account-summary-section .receipt-amount-hit:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  background: rgba(255, 255, 255, 0.06);
+  box-shadow: var(--hms-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08));
 }
 .account-summary-section .receipt-amount-hit:focus {
   outline: 2px solid var(--q-primary);
   outline-offset: 2px;
+}
+
+.edit-dialog-card {
+  box-shadow: var(--hms-shadow-lg);
 }
 </style>

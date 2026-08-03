@@ -1,312 +1,262 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back"
-        @click="$router.back()"
-        class="q-mr-md"
-      />
-      <div>
-        <div class="text-h4 text-weight-bold glass-text">
-          Inventory Debit - Add Products Used
-        </div>
-        <div v-if="patientInfo?.card_number" class="text-subtitle1 text-grey-4 q-mt-xs">
-          Card Number: <span class="text-weight-bold">{{ patientInfo.card_number }}</span>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Inventory debit"
+      subtitle="Record ward products used for this inpatient encounter."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.back()">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="patientInfo" class="ipd-patient-hero">
+      <div class="ipd-hero-main">
+        <div class="ipd-hero-avatar">{{ iidPatientInitials(patientInfo) }}</div>
+        <div>
+          <h1 class="ipd-hero-name">{{ patientInfo.patient_name }}</h1>
+          <div class="ipd-hero-meta">
+            <span class="mono">{{ patientInfo.card_number }}</span>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.ward || '—' }}</span>
+            <span class="sep">·</span>
+            <span>{{ inventoryDebits.length }} products used</span>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Patient Info Card -->
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-sm">
-          <q-icon name="person" color="primary" class="q-mr-sm" />
-          Patient Information
-        </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Patient Name</div>
-            <div class="text-body1 text-weight-bold">{{ patientInfo.patient_name }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Card Number</div>
-            <div class="text-body1 text-weight-bold text-primary">{{ patientInfo.card_number }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Ward</div>
-            <div class="text-body1 text-weight-bold">{{ patientInfo.ward }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Total Products Used</div>
-            <div class="text-body1 text-weight-bold text-positive">{{ inventoryDebits.length }}</div>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
     <!-- Ward Stock -->
-    <q-card v-if="patientInfo?.ward" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">
-            <q-icon name="inventory_2" color="primary" class="q-mr-sm" />
-            Ward Stock — {{ patientInfo.ward }}
-          </div>
-          <q-space />
-          <q-btn
-            flat
-            icon="refresh"
-            label="Refresh"
-            color="primary"
-            @click="loadWardStock"
-            :loading="stockLoading"
-          />
-        </div>
-        <div class="text-caption text-grey-7 q-mb-md">
-          Available items in this ward. Select an item to pre-fill the form below, or search by name or code.
-        </div>
+    <section v-if="patientInfo?.ward" class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Ward Stock — {{ patientInfo.ward }}</h2>
+        <HmsButton variant="secondary" size="sm" :loading="stockLoading" @click="loadWardStock">
+          Refresh
+        </HmsButton>
+      </div>
+      <p class="am-panel-sub">
+        Available items in this ward. Select an item to pre-fill the form below, or search by name or code.
+      </p>
 
-        <q-banner
-          v-if="!stockLoading && stockRows.length === 0"
-          rounded
-          class="bg-grey-8 text-white q-mb-md"
+      <q-banner
+        v-if="!stockLoading && stockRows.length === 0"
+        rounded
+        class="bg-grey-8 text-white q-mb-md"
+      >
+        No stock is recorded for this ward yet. Request items from pharmacy via a requisition.
+      </q-banner>
+
+      <template v-else>
+        <q-input
+          v-model="stockFilter"
+          dense
+          filled
+          clearable
+          label="Search by name or code"
+          class="q-mb-sm"
         >
-          No stock is recorded for this ward yet. Request items from pharmacy via a requisition.
-        </q-banner>
-
-        <template v-else>
-          <q-input
-            v-model="stockFilter"
-            dense
-            filled
-            clearable
-            label="Search by name or code"
-            class="q-mb-sm"
-          >
-            <template v-slot:prepend>
-              <q-icon name="search" />
-            </template>
-          </q-input>
-          <q-linear-progress v-if="stockLoading" indeterminate class="q-mb-sm" />
-          <q-table
-            v-else
-            flat
-            bordered
-            dense
-            :rows="filteredStockRows"
-            :columns="stockColumns"
-            row-key="product_code"
-            :rows-per-page-options="[10, 15, 25]"
-            :pagination="{ rowsPerPage: 10 }"
-            class="stock-table"
-          >
-            <template v-slot:body-cell-quantity="props">
-              <q-td :props="props">
-                <span :class="props.row.quantity <= 0 ? 'text-negative text-weight-bold' : ''">
-                  {{ formatQty(props.row.quantity) }}
-                </span>
-                <q-badge
-                  v-if="props.row.quantity <= 0"
-                  color="negative"
-                  label="Out of stock"
-                  class="q-ml-sm"
-                />
-              </q-td>
-            </template>
-            <template v-slot:body-cell-actions="props">
-              <q-td :props="props">
-                <q-btn
-                  flat
-                  dense
-                  no-caps
-                  color="primary"
-                  label="Use"
-                  @click="selectStockRow(props.row)"
-                />
-              </q-td>
-            </template>
-          </q-table>
-        </template>
-      </q-card-section>
-    </q-card>
-
-    <!-- Add Product Form -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          <q-icon name="add_shopping_cart" color="primary" class="q-mr-sm" />
-          Add Product Used
-        </div>
-        <div class="row q-col-gutter-md">
-          <!-- Product Search with Auto-complete -->
-          <div class="col-12">
-            <q-select
-              v-model="selectedProduct"
-              :options="filteredProductOptions"
-              filled
-              use-input
-              input-debounce="300"
-              label="Search Product *"
-              hint="Type to search for products (e.g., gloves, gauze, infusion set) - Select to auto-fill"
-              :rules="[val => !!val || 'Product is required']"
-              @filter="filterProducts"
-              @update:model-value="onProductSelected"
-              option-label="label"
-              option-value="value"
-              emit-value
-              map-options
-              clearable
-            >
-              <template v-slot:option="scope">
-                <q-item v-bind="scope.itemProps">
-                  <q-item-section>
-                    <q-item-label>{{ scope.opt.label }}</q-item-label>
-                    <q-item-label caption>
-                      Code: {{ scope.opt.value.code }} | 
-                      Price: GHS {{ scope.opt.value.price?.toFixed(2) || '0.00' }}
-                    </q-item-label>
-                  </q-item-section>
-                </q-item>
-              </template>
-              <template v-slot:no-option>
-                <q-item>
-                  <q-item-section class="text-grey">
-                    No products found. You can enter manually below.
-                  </q-item-section>
-                </q-item>
-              </template>
-            </q-select>
-          </div>
-
-          <!-- Manual Product Entry -->
-          <div class="col-12 col-md-6">
-            <q-input
-              v-model="productForm.product_code"
-              filled
-              label="Product Code *"
-              hint="Product/medication code"
-              :rules="[val => !!val || 'Product code is required']"
-            />
-          </div>
-          <div class="col-12 col-md-6">
-            <q-input
-              v-model="productForm.product_name"
-              filled
-              label="Product Name *"
-              hint="e.g., Gloves, Gauze, Infusion Giving Set"
-              :rules="[val => !!val || 'Product name is required']"
-            />
-          </div>
-          <div class="col-12 col-md-4">
-            <q-input
-              v-model.number="productForm.quantity"
-              filled
-              type="number"
-              step="0.01"
-              min="0.01"
-              label="Quantity *"
-              hint="Number of units used"
-              :rules="[
-                val => !!val || 'Quantity is required',
-                val => val > 0 || 'Quantity must be greater than 0'
-              ]"
-            />
-          </div>
-          <div class="col-12 col-md-4">
-            <q-input
-              v-model.number="productForm.unit_price"
-              filled
-              type="number"
-              step="0.01"
-              min="0"
-              label="Unit Price (GHS)"
-              hint="Leave empty to auto-fetch from price list"
-            />
-          </div>
-          <div class="col-12 col-md-4">
-            <q-input
-              v-model="productForm.notes"
-              filled
-              type="textarea"
-              label="Notes (optional)"
-              hint="Additional notes about product usage"
-              rows="2"
-            />
-          </div>
-          <div class="col-12 flex items-end q-gutter-sm">
-            <q-btn
-              flat
-              icon="add"
-              label="Add Product"
-              color="primary"
-              @click="addProduct"
-              :loading="adding"
-              :disable="!productForm.product_code || !productForm.product_name || !productForm.quantity"
-            />
-            <q-btn
-              flat
-              icon="refresh"
-              label="Clear"
-              color="grey"
-              @click="clearForm"
-            />
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Products Used Table -->
-    <q-card class="glass-card" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">
-            Products Used ({{ inventoryDebits.length }})
-          </div>
-          <q-space />
-          <q-btn
-            flat
-            icon="refresh"
-            label="Refresh"
-            color="primary"
-            @click="loadInventoryDebits"
-            :loading="loading"
-          />
-        </div>
+          <template v-slot:prepend>
+            <q-icon name="search" />
+          </template>
+        </q-input>
+        <q-linear-progress v-if="stockLoading" indeterminate class="q-mb-sm" />
         <q-table
-          :rows="inventoryDebits"
-          :columns="columns"
-          row-key="id"
-          :loading="loading"
+          v-else
           flat
           bordered
-          :rows-per-page-options="[10, 20, 50]"
+          dense
+          :rows="filteredStockRows"
+          :columns="stockColumns"
+          row-key="product_code"
+          :rows-per-page-options="[10, 15, 25]"
+          :pagination="{ rowsPerPage: 10 }"
+          class="stock-table"
         >
+          <template v-slot:body-cell-quantity="props">
+            <q-td :props="props">
+              <span :class="props.row.quantity <= 0 ? 'text-negative text-weight-bold' : ''">
+                {{ formatQty(props.row.quantity) }}
+              </span>
+              <q-badge
+                v-if="props.row.quantity <= 0"
+                color="negative"
+                label="Out of stock"
+                class="q-ml-sm"
+              />
+            </q-td>
+          </template>
           <template v-slot:body-cell-actions="props">
             <q-td :props="props">
               <q-btn
                 flat
                 dense
-                icon="delete"
-                color="negative"
-                @click="deleteDebit(props.row)"
-                :loading="deletingId === props.row.id"
-                :label="props.row.is_billed ? 'Delete' : 'Delete'"
-              />
-              <q-chip
-                v-if="props.row.is_billed"
-                color="info"
-                text-color="white"
-                size="sm"
-                label="Billed"
-                class="q-ml-sm"
+                no-caps
+                color="primary"
+                label="Use"
+                @click="selectStockRow(props.row)"
               />
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </template>
+    </section>
+
+    <!-- Add Product Form -->
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Add Product Used</h2>
+      </div>
+      <div class="row q-col-gutter-md">
+        <!-- Product Search with Auto-complete -->
+        <div class="col-12">
+          <q-select
+            v-model="selectedProduct"
+            :options="filteredProductOptions"
+            filled
+            use-input
+            input-debounce="300"
+            label="Search Product *"
+            hint="Type to search for products (e.g., gloves, gauze, infusion set) - Select to auto-fill"
+            :rules="[val => !!val || 'Product is required']"
+            @filter="filterProducts"
+            @update:model-value="onProductSelected"
+            option-label="label"
+            option-value="value"
+            emit-value
+            map-options
+            clearable
+          >
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.label }}</q-item-label>
+                  <q-item-label caption>
+                    Code: {{ scope.opt.value.code }} | 
+                    Price: GHS {{ scope.opt.value.price?.toFixed(2) || '0.00' }}
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+            <template v-slot:no-option>
+              <q-item>
+                <q-item-section class="text-grey">
+                  No products found. You can enter manually below.
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+        </div>
+
+        <!-- Manual Product Entry -->
+        <div class="col-12 col-md-6">
+          <q-input
+            v-model="productForm.product_code"
+            filled
+            label="Product Code *"
+            hint="Product/medication code"
+            :rules="[val => !!val || 'Product code is required']"
+          />
+        </div>
+        <div class="col-12 col-md-6">
+          <q-input
+            v-model="productForm.product_name"
+            filled
+            label="Product Name *"
+            hint="e.g., Gloves, Gauze, Infusion Giving Set"
+            :rules="[val => !!val || 'Product name is required']"
+          />
+        </div>
+        <div class="col-12 col-md-4">
+          <q-input
+            v-model.number="productForm.quantity"
+            filled
+            type="number"
+            step="0.01"
+            min="0.01"
+            label="Quantity *"
+            hint="Number of units used"
+            :rules="[
+              val => !!val || 'Quantity is required',
+              val => val > 0 || 'Quantity must be greater than 0'
+            ]"
+          />
+        </div>
+        <div class="col-12 col-md-4">
+          <q-input
+            v-model.number="productForm.unit_price"
+            filled
+            type="number"
+            step="0.01"
+            min="0"
+            label="Unit Price (GHS)"
+            hint="Leave empty to auto-fetch from price list"
+          />
+        </div>
+        <div class="col-12 col-md-4">
+          <q-input
+            v-model="productForm.notes"
+            filled
+            type="textarea"
+            label="Notes (optional)"
+            hint="Additional notes about product usage"
+            rows="2"
+          />
+        </div>
+        <div class="col-12 flex items-end q-gutter-sm">
+          <HmsButton
+            variant="primary"
+            :loading="adding"
+            :disabled="!productForm.product_code || !productForm.product_name || !productForm.quantity"
+            @click="addProduct"
+          >
+            Add Product
+          </HmsButton>
+          <HmsButton variant="secondary" @click="clearForm">
+            Clear
+          </HmsButton>
+        </div>
+      </div>
+    </section>
+
+    <!-- Products Used Table -->
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Products Used ({{ inventoryDebits.length }})</h2>
+        <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadInventoryDebits">
+          Refresh
+        </HmsButton>
+      </div>
+      <q-table
+        :rows="inventoryDebits"
+        :columns="columns"
+        row-key="id"
+        :loading="loading"
+        flat
+        bordered
+        :rows-per-page-options="[10, 20, 50]"
+      >
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <q-btn
+              flat
+              dense
+              icon="delete"
+              color="negative"
+              @click="deleteDebit(props.row)"
+              :loading="deletingId === props.row.id"
+              :label="props.row.is_billed ? 'Delete' : 'Delete'"
+            />
+            <q-chip
+              v-if="props.row.is_billed"
+              color="info"
+              text-color="white"
+              size="sm"
+              label="Billed"
+              class="q-ml-sm"
+            />
+          </q-td>
+        </template>
+      </q-table>
+    </section>
   </q-page>
 </template>
 
@@ -314,6 +264,8 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { consultationAPI, priceListAPI, companionVisitsAPI } from '../services/api';
 
 const route = useRoute();
@@ -324,6 +276,14 @@ const wardAdmissionId = computed(() => parseInt(route.params.id));
 const encounterId = computed(() => route.query.encounter_id ? parseInt(route.query.encounter_id) : null);
 
 const patientInfo = ref(null);
+
+const iidPatientInitials = (info) => {
+  if (!info?.patient_name) return '?';
+  const parts = String(info.patient_name).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+};
 const inventoryDebits = ref([]);
 const loading = ref(false);
 const adding = ref(false);
@@ -755,6 +715,100 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.am-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.am-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+.am-panel-sub {
+  margin: 0 0 0.85rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+
+.ipd-patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.ipd-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.ipd-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.ipd-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.ipd-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.ipd-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ipd-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.ipd-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+@media (max-width: 720px) {
+  .ipd-patient-hero { position: static; }
+}
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 .glass-card {
   background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(10px);

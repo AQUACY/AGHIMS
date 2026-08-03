@@ -1,157 +1,158 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Admission Manager"
-        @click="goBack"
-        class="q-mr-md"
-      />
-      <div class="text-h5 text-weight-bold glass-text">
-        NURSES TREATMENT SHEET
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Treatment sheet"
+      subtitle="Nurses treatment sheet and prescribed medications for this admission."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="goBack">Back to manager</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="patientInfo" class="ipd-patient-hero">
+      <div class="ipd-hero-main">
+        <div class="ipd-hero-avatar">{{ tsPatientInitials(patientInfo) }}</div>
+        <div>
+          <h1 class="ipd-hero-name">{{ tsPatientDisplayName(patientInfo) }}</h1>
+          <div class="ipd-hero-meta">
+            <span class="mono">{{ patientInfo.patient_card_number }}</span>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.ward || '—' }}</span>
+            <template v-if="patientInfo.bed_number">
+              <span class="sep">·</span>
+              <span>Bed {{ patientInfo.bed_number }}</span>
+            </template>
+            <template v-if="patientInfo.patient_gender">
+              <span class="sep">·</span>
+              <span>{{ patientInfo.patient_gender }}</span>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 text-weight-bold glass-text q-mb-sm">
-          Patient Information
+    <section class="am-panel ts-board">
+      <div class="am-panel-head ts-board-head">
+        <div>
+          <h2 class="hms-section-title">Medication chart</h2>
+          <p class="ts-board-sub">Pick a day, then tick each dose slot as medication is given.</p>
         </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-2">
-            <div class="text-body2">
-              <strong>NAME:</strong> {{ patientInfo.patient_name || '' }} {{ patientInfo.patient_surname || '' }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
-            </div>
-          </div>
-          <div class="col-12 col-md-2">
-            <div class="text-body2">
-              <strong>SEX:</strong> {{ patientInfo.patient_gender || 'N/A' }}
-            </div>
-          </div>
-          <div class="col-12 col-md-2">
-            <div class="text-body2">
-              <strong>AGED:</strong> {{ patientInfo.patient_age || 'N/A' }}
-            </div>
-          </div>
-          <div class="col-12 col-md-2">
-            <div class="text-body2">
-              <strong>CARD NO:</strong> {{ patientInfo.patient_card_number || 'N/A' }}
-            </div>
-          </div>
-          <div class="col-12 col-md-2">
-            <div class="text-body2">
-              <strong>WARD:</strong> {{ patientInfo.ward || 'N/A' }}
-            </div>
-          </div>
+        <div class="ts-day-nav">
+          <HmsButton variant="secondary" size="sm" @click="shiftSheetDay(-1)">
+            <ChevronLeft :size="14" />
+          </HmsButton>
+          <HmsButton variant="secondary" size="sm" @click="setSheetToday">Today</HmsButton>
+          <HmsButton variant="secondary" size="sm" @click="shiftSheetDay(1)">
+            <ChevronRight :size="14" />
+          </HmsButton>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
 
-    <q-card class="glass-card" flat bordered>
-      <q-card-section>
-        <div class="text-h6 text-weight-bold glass-text q-mb-md">
-          Treatment Sheet
-        </div>
-        
-        <div v-if="loading" class="text-center q-pa-lg">
-          <q-spinner color="primary" size="3em" />
-          <div class="q-mt-md">Loading prescriptions...</div>
+      <div v-if="loading" class="ts-loading">
+        <q-spinner color="primary" size="2.5em" />
+        <span>Loading prescriptions…</span>
+      </div>
+
+      <div v-else-if="prescriptions.length === 0" class="ts-empty">
+        No prescriptions found. They appear here after a clinical review.
+      </div>
+
+      <template v-else>
+        <div class="ts-calendar-strip" role="tablist" aria-label="Treatment days">
+          <button
+            v-for="day in courseDayStrip"
+            :key="day.iso"
+            type="button"
+            role="tab"
+            class="ts-day-chip"
+            :class="{
+              active: selectedSheetDate === day.iso,
+              today: day.isToday,
+              complete: day.allComplete,
+              partial: day.hasAny && !day.allComplete,
+            }"
+            @click="selectedSheetDate = day.iso"
+          >
+            <span class="ts-day-chip-week">{{ day.weekday }}</span>
+            <span class="ts-day-chip-num">{{ day.dayNum }}</span>
+            <span class="ts-day-chip-dots">
+              <span
+                v-for="n in Math.min(day.medCount, 4)"
+                :key="n"
+                class="ts-dot"
+                :class="{ on: day.givenCount >= n }"
+              />
+            </span>
+          </button>
         </div>
 
-        <div v-else-if="!loading && prescriptions.length === 0" class="text-center q-pa-lg">
-          <q-icon name="medication" size="4em" color="grey-6" />
-          <div class="text-h6 q-mt-md text-grey-6">No prescriptions found</div>
-          <div class="text-body2 text-grey-6">Prescriptions will appear here once they are added in a clinical review.</div>
+        <div class="ts-selected-meta">
+          <strong>{{ selectedDayLabel }}</strong>
+          <span>{{ prescriptionsForSelectedDay.length }} medicine{{ prescriptionsForSelectedDay.length === 1 ? '' : 's' }}</span>
+          <span>{{ selectedDayProgress.given }}/{{ selectedDayProgress.total }} doses given</span>
         </div>
 
-        <div v-else>
-          <div v-for="prescription in prescriptions" :key="prescription.id" class="q-mb-md">
-            <q-card class="glass-card" flat bordered>
-              <q-card-section>
-                <div class="text-weight-bold text-h6 q-mb-sm">{{ prescription.medicine_name }}</div>
-                <div class="text-caption text-grey-7 q-mb-md">
-                  {{ prescription.dose }} {{ prescription.unit }} - {{ prescription.frequency }}
-                  <span v-if="prescription.instructions"> | {{ prescription.instructions }}</span>
+        <div v-if="prescriptionsForSelectedDay.length === 0" class="ts-empty">
+          No medications scheduled for this day.
+        </div>
+
+        <div v-else class="ts-med-list">
+          <article
+            v-for="prescription in prescriptionsForSelectedDay"
+            :key="prescription.id"
+            class="ts-med-card"
+          >
+            <div class="ts-med-top">
+              <div>
+                <h3 class="ts-med-name">{{ prescription.medicine_name }}</h3>
+                <div class="ts-med-meta">
+                  <span>{{ prescription.dose }} {{ prescription.unit }}</span>
+                  <span class="sep">·</span>
+                  <span>{{ prescription.frequency }}</span>
+                  <template v-if="prescription.duration">
+                    <span class="sep">·</span>
+                    <span>{{ prescription.duration }}</span>
+                  </template>
                 </div>
-                
-                <q-list>
-                  <q-expansion-item
-                    v-for="(day, dayIndex) in getDaysForPrescription(prescription)"
-                    :key="`${prescription.id}-day-${dayIndex}`"
-                    :label="formatDayLabel(day)"
-                    :default-opened="dayIndex === 0"
-                    header-class="text-weight-medium"
-                    class="q-mb-xs"
-                  >
-                    <q-card flat>
-                      <q-card-section class="q-pa-sm">
-                        <q-table
-                          :rows="getTimeSlotsForDay(prescription, day)"
-                          :columns="dayColumns"
-                          row-key="slotIndex"
-                          flat
-                          dense
-                          :pagination="{ rowsPerPage: 0 }"
-                          hide-header
-                        >
-                          <template v-slot:body-cell-time="props">
-                            <q-td :props="props" class="q-pa-xs">
-                              <div class="row items-center q-gutter-sm">
-                                <div class="col-auto" style="min-width: 80px;">
-                                  <span class="text-body2">
-                                    <span v-if="props.row.administration">
-                                      {{ formatTime(props.row.administration.administration_time) }}
-                                    </span>
-                                    <span v-else class="text-grey-6">Slot {{ props.row.slotIndex + 1 }}</span>
-                                  </span>
-                                </div>
-                                <div class="col-auto">
-                                  <q-checkbox
-                                    :model-value="!!props.row.administration"
-                                    @update:model-value="toggleAdministrationForDay(prescription, day, props.row.slotIndex, $event)"
-                                    color="positive"
-                                    size="sm"
-                                    :disable="loading"
-                                  />
-                                </div>
-                                <div class="col" v-if="props.row.administration">
-                                  <div class="text-caption">
-                                    <div><strong>Given by:</strong> {{ props.row.administration.given_by_name || 'Unknown' }}</div>
-                                    <div v-if="props.row.administration.signature">
-                                      <strong>Signature:</strong> {{ props.row.administration.signature }}
-                                    </div>
-                                    <div v-if="props.row.administration.notes">
-                                      <strong>Notes:</strong> {{ props.row.administration.notes }}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div class="col-auto" v-if="props.row.administration">
-                                  <q-btn
-                                    flat
-                                    dense
-                                    icon="info"
-                                    size="xs"
-                                    color="primary"
-                                    @click="viewAdministrationDetailsForDay(prescription.id, day, props.row.slotIndex)"
-                                  >
-                                    <q-tooltip>View details</q-tooltip>
-                                  </q-btn>
-                                </div>
-                              </div>
-                            </q-td>
-                          </template>
-                        </q-table>
-                      </q-card-section>
-                    </q-card>
-                  </q-expansion-item>
-                </q-list>
-              </q-card-section>
-            </q-card>
-          </div>
+                <div v-if="prescription.instructions" class="ts-med-instructions">
+                  {{ prescription.instructions }}
+                </div>
+              </div>
+              <div class="ts-med-progress" :class="progressTone(prescription)">
+                {{ dayGivenCount(prescription) }}/{{ getTimesPerDay(prescription) }}
+              </div>
+            </div>
+
+            <div class="ts-slot-ticker" role="group" :aria-label="`Dose slots for ${prescription.medicine_name}`">
+              <button
+                v-for="slot in getTimeSlotsForDay(prescription, selectedDayDate)"
+                :key="slot.slotIndex"
+                type="button"
+                class="ts-slot"
+                :class="{ given: !!slot.administration }"
+                :disabled="loading"
+                @click="onSlotClick(prescription, slot)"
+              >
+                <span class="ts-slot-check" aria-hidden="true">
+                  <Check v-if="slot.administration" :size="14" />
+                </span>
+                <span class="ts-slot-label">
+                  <template v-if="slot.administration">
+                    {{ formatTime(slot.administration.administration_time) }}
+                  </template>
+                  <template v-else>
+                    Slot {{ slot.slotIndex + 1 }}
+                  </template>
+                </span>
+                <span v-if="slot.administration" class="ts-slot-by">
+                  {{ slot.administration.given_by_name || 'Given' }}
+                </span>
+              </button>
+            </div>
+          </article>
         </div>
-      </q-card-section>
-    </q-card>
+      </template>
+    </section>
 
     <!-- Administration Dialog -->
     <q-dialog v-model="showAdminDialog" persistent>
@@ -195,15 +196,11 @@
           </q-form>
         </q-card-section>
 
-        <q-card-actions align="right">
+        <q-card-actions align="right" class="q-gutter-sm">
           <q-btn flat label="Cancel" color="primary" @click="showAdminDialog = false" />
-          <q-btn
-            flat
-            label="Save"
-            color="positive"
-            @click="saveAdministration"
-            :loading="saving"
-          />
+          <HmsButton variant="primary" :loading="saving" @click="saveAdministration">
+            Save
+          </HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -255,6 +252,9 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
+import { ChevronLeft, ChevronRight, Check } from 'lucide-vue-next';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { consultationAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { getApplicationTodaySync } from '../utils/dateUtils';
@@ -263,6 +263,17 @@ const $q = useQuasar();
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+
+const tsPatientInitials = (info) => {
+  if (!info) return '?';
+  const a = (info.patient_name || '').trim().charAt(0);
+  const b = (info.patient_surname || '').trim().charAt(0);
+  return ((a + b) || '?').toUpperCase();
+};
+const tsPatientDisplayName = (info) => {
+  if (!info) return '';
+  return [info.patient_name, info.patient_surname, info.patient_other_names].filter(Boolean).join(' ');
+};
 
 const wardAdmissionId = computed(() => parseInt(route.params.id));
 
@@ -525,6 +536,130 @@ const getTimeSlotsForDay = (prescription, day) => {
   return slots;
 };
 
+
+const selectedSheetDate = ref(getApplicationTodaySync().toISOString().split('T')[0]);
+
+const toIsoDay = (d) => {
+  const x = new Date(d);
+  x.setHours(12, 0, 0, 0);
+  return x.toISOString().split('T')[0];
+};
+
+const selectedDayDate = computed(() => new Date(`${selectedSheetDate.value}T12:00:00`));
+
+const isPrescriptionActiveOn = (prescription, day) => {
+  const days = getDaysForPrescription(prescription);
+  const iso = toIsoDay(day);
+  return days.some((d) => toIsoDay(d) === iso);
+};
+
+const prescriptionsForSelectedDay = computed(() =>
+  prescriptions.value.filter((p) => isPrescriptionActiveOn(p, selectedDayDate.value))
+);
+
+const courseDayStrip = computed(() => {
+  const map = new Map();
+  const todayIso = toIsoDay(getApplicationTodaySync());
+
+  for (const p of prescriptions.value) {
+    for (const day of getDaysForPrescription(p)) {
+      const iso = toIsoDay(day);
+      if (!map.has(iso)) {
+        const d = new Date(`${iso}T12:00:00`);
+        map.set(iso, {
+          iso,
+          date: d,
+          weekday: d.toLocaleDateString('en-GB', { weekday: 'short' }),
+          dayNum: d.getDate(),
+          isToday: iso === todayIso,
+          medCount: 0,
+          givenCount: 0,
+          totalSlots: 0,
+          hasAny: false,
+          allComplete: false,
+        });
+      }
+      const entry = map.get(iso);
+      entry.medCount += 1;
+      const slots = getTimesPerDay(p);
+      entry.totalSlots += slots;
+      const given = getAdministrationsForDay(p.id, day).length;
+      entry.givenCount += Math.min(given, slots);
+    }
+  }
+
+  const list = Array.from(map.values()).sort((a, b) => a.iso.localeCompare(b.iso));
+  for (const entry of list) {
+    entry.hasAny = entry.givenCount > 0;
+    entry.allComplete = entry.totalSlots > 0 && entry.givenCount >= entry.totalSlots;
+  }
+  return list;
+});
+
+const selectedDayLabel = computed(() => formatDayLabel(selectedDayDate.value));
+
+const selectedDayProgress = computed(() => {
+  let total = 0;
+  let given = 0;
+  for (const p of prescriptionsForSelectedDay.value) {
+    const slots = getTimesPerDay(p);
+    total += slots;
+    given += Math.min(getAdministrationsForDay(p.id, selectedDayDate.value).length, slots);
+  }
+  return { total, given };
+});
+
+const dayGivenCount = (prescription) =>
+  Math.min(
+    getAdministrationsForDay(prescription.id, selectedDayDate.value).length,
+    getTimesPerDay(prescription)
+  );
+
+const progressTone = (prescription) => {
+  const total = getTimesPerDay(prescription);
+  const given = dayGivenCount(prescription);
+  if (given >= total) return 'done';
+  if (given > 0) return 'partial';
+  return 'pending';
+};
+
+const shiftSheetDay = (delta) => {
+  const strip = courseDayStrip.value;
+  if (!strip.length) {
+    const d = new Date(`${selectedSheetDate.value}T12:00:00`);
+    d.setDate(d.getDate() + delta);
+    selectedSheetDate.value = toIsoDay(d);
+    return;
+  }
+  const idx = strip.findIndex((d) => d.iso === selectedSheetDate.value);
+  const next = strip[Math.min(Math.max((idx < 0 ? 0 : idx) + delta, 0), strip.length - 1)];
+  if (next) selectedSheetDate.value = next.iso;
+};
+
+const setSheetToday = () => {
+  const todayIso = toIsoDay(getApplicationTodaySync());
+  const strip = courseDayStrip.value;
+  if (strip.some((d) => d.iso === todayIso)) {
+    selectedSheetDate.value = todayIso;
+  } else if (strip.length) {
+    selectedSheetDate.value = strip.reduce((best, d) => {
+      const bd = Math.abs(new Date(best).getTime() - new Date(todayIso).getTime());
+      const dd = Math.abs(new Date(d.iso).getTime() - new Date(todayIso).getTime());
+      return dd < bd ? d.iso : best;
+    }, strip[0].iso);
+  } else {
+    selectedSheetDate.value = todayIso;
+  }
+};
+
+const onSlotClick = (prescription, slot) => {
+  if (slot.administration) {
+    viewAdministrationDetailsForDay(prescription.id, selectedDayDate.value, slot.slotIndex);
+    return;
+  }
+  toggleAdministrationForDay(prescription, selectedDayDate.value, slot.slotIndex, true);
+};
+
 // Toggle administration for a specific day and slot
 const toggleAdministrationForDay = (prescription, day, slotIndex, checked) => {
   if (checked) {
@@ -693,10 +828,298 @@ onMounted(async () => {
   await loadPatientInfo();
   await loadPrescriptions();
   await loadAdministrations();
+  setSheetToday();
 });
 </script>
 
 <style scoped>
+
+.ts-board-sub {
+  margin: 0.2rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.ts-board-head { align-items: flex-end; }
+.ts-day-nav { display: inline-flex; gap: 0.4rem; }
+.ts-loading, .ts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 2.5rem 1rem;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  text-align: center;
+}
+.ts-calendar-strip {
+  display: flex;
+  gap: 0.45rem;
+  overflow-x: auto;
+  padding: 0.35rem 0.15rem 0.65rem;
+  margin-bottom: 0.55rem;
+  scrollbar-width: thin;
+}
+.ts-day-chip {
+  flex: 0 0 auto;
+  width: 3.55rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.55rem 0.35rem 0.45rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  color: var(--hms-text-secondary);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--hms-duration-fast) var(--hms-ease-out),
+    box-shadow var(--hms-duration-fast) var(--hms-ease-out),
+    background var(--hms-duration-fast) var(--hms-ease-out);
+}
+.ts-day-chip:hover { border-color: var(--hms-accent); }
+.ts-day-chip.active {
+  background: var(--hms-accent-muted);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: var(--hms-accent);
+  box-shadow: var(--hms-shadow-sm);
+}
+.ts-day-chip.today:not(.active) {
+  border-color: rgba(59, 130, 246, 0.35);
+}
+.ts-day-chip-week {
+  font-size: 0.62rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ts-day-chip-num {
+  font-size: 1.05rem;
+  font-weight: 750;
+  line-height: 1;
+  color: var(--hms-text-primary);
+}
+.ts-day-chip.active .ts-day-chip-num { color: var(--hms-accent); }
+.ts-day-chip-dots { display: flex; gap: 0.15rem; min-height: 0.35rem; }
+.ts-dot {
+  width: 0.28rem; height: 0.28rem; border-radius: 999px;
+  background: rgba(148, 163, 184, 0.45);
+}
+.ts-dot.on { background: var(--hms-success); }
+.ts-day-chip.complete { box-shadow: inset 0 -2px 0 var(--hms-success); }
+.ts-day-chip.partial { box-shadow: inset 0 -2px 0 #f59e0b; }
+.ts-selected-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  margin-bottom: 0.85rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  font-weight: 600;
+}
+.ts-selected-meta strong { color: var(--hms-text-primary); }
+.ts-med-list { display: flex; flex-direction: column; gap: 0.65rem; }
+.ts-med-card {
+  padding: 0.95rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+}
+.ts-med-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+.ts-med-name {
+  margin: 0;
+  font-size: var(--hms-text-md);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.ts-med-meta {
+  margin-top: 0.25rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center;
+}
+.ts-med-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ts-med-instructions {
+  margin-top: 0.3rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.ts-med-progress {
+  flex-shrink: 0;
+  min-width: 2.75rem;
+  text-align: center;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--hms-radius-md);
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  color: var(--hms-text-secondary);
+}
+.ts-med-progress.partial {
+  background: var(--hms-warning-muted);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.28);
+}
+.ts-med-progress.done {
+  background: var(--hms-success-muted);
+  color: var(--hms-success);
+  border-color: rgba(34, 197, 94, 0.28);
+}
+.ts-slot-ticker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.ts-slot {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 5.5rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--hms-radius-md);
+  border: 1px dashed var(--hms-border);
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-secondary);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--hms-duration-fast) var(--hms-ease-out),
+    background var(--hms-duration-fast) var(--hms-ease-out),
+    transform var(--hms-duration-fast) var(--hms-ease-out);
+}
+.ts-slot:hover:not(:disabled) {
+  border-color: var(--hms-accent);
+  transform: translateY(-1px);
+}
+.ts-slot:disabled { opacity: 0.6; cursor: not-allowed; }
+.ts-slot.given {
+  border-style: solid;
+  border-color: rgba(34, 197, 94, 0.35);
+  background: var(--hms-success-muted);
+  color: var(--hms-success);
+}
+.ts-slot-check {
+  width: 1.15rem; height: 1.15rem;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  display: grid; place-items: center;
+  opacity: 0.55;
+}
+.ts-slot.given .ts-slot-check {
+  opacity: 1;
+  background: var(--hms-success);
+  border-color: var(--hms-success);
+  color: #fff;
+}
+.ts-slot-label { font-size: 0.78rem; font-weight: 750; }
+.ts-slot-by { font-size: 0.65rem; opacity: 0.85; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) {
+  .ts-slot { flex: 1 1 calc(50% - 0.45rem); }
+}
+
+.am-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.am-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+.am-panel--nested {
+  margin-bottom: 0.75rem;
+  box-shadow: var(--hms-shadow-sm, var(--hms-shadow-md));
+}
+
+.ipd-patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.ipd-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.ipd-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.ipd-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.ipd-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.ipd-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ipd-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.ipd-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+@media (max-width: 720px) {
+  .ipd-patient-hero { position: static; }
+}
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 .glass-table {
   background: transparent;
 }

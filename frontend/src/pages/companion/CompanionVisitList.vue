@@ -1,24 +1,29 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center justify-between q-mb-md">
-      <div>
-        <div class="text-h5 text-weight-bold glass-text">Service list</div>
-        <div class="text-body2 glass-text-muted">Visits created from the government system (card + visit number)</div>
-      </div>
-      <q-btn
-        unelevated
-        label="Create service"
-        class="glass-button"
-        icon="add"
-        :to="{ name: 'CompanionCreateService' }"
-      />
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Service list"
+      subtitle="Visits created from the government system (card + visit number)."
+    >
+      <template #actions>
+        <HmsButton variant="primary" size="sm" @click="$router.push({ name: 'CompanionCreateService' })">
+          Create service
+        </HmsButton>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/companion')">
+          Back
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <q-card class="glass-card q-mb-md" flat>
-      <q-card-section>
-        <div class="text-caption text-grey-7 q-mb-md">
-          By default this list shows visits <strong>created today</strong>. Change the date range to see other days or a period; clear both dates to load <strong>all</strong> visits (may be slow if there are many).
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">
+            Defaults to visits created today. Change the date range for other days, or clear both dates to load all visits.
+          </div>
         </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <q-input
             v-model="filters.date_from"
@@ -41,8 +46,8 @@
             hint="Visit created_at ≤ this day"
           />
           <div class="col-12 col-sm-12 col-md-6 row q-gutter-sm items-center">
-            <q-btn unelevated outline dense label="Today only" class="glass-button" @click="setTodayRange" />
-            <q-btn flat dense label="Clear dates (all)" @click="clearDateRange" />
+            <HmsButton variant="secondary" size="sm" @click="setTodayRange">Today only</HmsButton>
+            <HmsButton variant="ghost" size="sm" @click="clearDateRange">Clear dates (all)</HmsButton>
           </div>
           <q-input
             v-model="filters.card_number"
@@ -73,16 +78,23 @@
             clearable
             class="col-12 col-sm-2"
           />
-          <q-btn unelevated label="Search" class="glass-button" @click="loadVisits" />
+          <div class="col-auto">
+            <HmsButton variant="primary" size="sm" @click="loadVisits">Search</HmsButton>
+          </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="text-caption text-grey-7 q-mb-sm">
-          Tap <strong>Total bill</strong> for a receipt-style view (line items, receipts, and who recorded each payment).
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Services</div>
+          <div class="panel-sub">
+            Tap Total bill for a receipt-style view (line items, receipts, and who recorded each payment).
+          </div>
         </div>
+      </div>
+      <div class="panel-body table-wrap">
         <q-table
           :rows="visits"
           :columns="columns"
@@ -90,7 +102,7 @@
           flat
           :loading="loading"
           :rows-per-page-options="[10, 25, 50]"
-          class="glass-table"
+          class="diag-table"
           no-data-label="No services found. Create one from the government system card and visit number."
         >
           <template v-slot:body-cell-bill_total="props">
@@ -145,8 +157,8 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <CompanionBillingReceiptDialog
       v-model="receiptOpen"
@@ -165,6 +177,8 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
 
 const router = useRouter();
 const $q = useQuasar();

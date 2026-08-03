@@ -1,0 +1,247 @@
+    <!-- Surgery Form Dialog -->
+    <q-dialog v-model="showSurgeryDialog" persistent>
+      <q-card style="min-width: 700px; max-width: 900px">
+        <q-card-section>
+          <div class="text-h6 glass-text">
+            {{ editingSurgery ? 'Edit Operation' : 'Add Operation' }}
+          </div>
+        </q-card-section>
+
+        <q-card-section class="q-pt-none">
+          <q-form @submit="saveSurgery" class="q-gutter-md">
+            <!-- Surgery Search/Select -->
+            <q-select
+              v-model="selectedSurgery"
+              :options="filteredSurgeryOptions"
+              filled
+              use-input
+              input-debounce="300"
+              :label="editingSurgery ? 'Search Surgery (optional)' : 'Search Surgery *'"
+              hint="Type to search for surgeries from price list - Select to auto-fill"
+              :rules="editingSurgery ? [] : [val => !!val || 'Surgery is required']"
+              @filter="filterSurgeries"
+              @update:model-value="onSurgerySelected"
+              option-label="label"
+              option-value="value"
+              emit-value
+              map-options
+              clearable
+              :loading="loadingSurgeries"
+            >
+              <template v-slot:option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.label }}</q-item-label>
+                    <q-item-label caption>
+                      Code: {{ scope.opt.value.code }} | 
+                      Type: {{ scope.opt.value.service_type || 'N/A' }}
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            
+            <!-- Manual Surgery Entry -->
+            <q-input
+              v-model="surgeryForm.surgery_name"
+              filled
+              label="Surgery Name *"
+              hint="Name/description of the surgery"
+              :rules="[val => !!val || 'Surgery name is required']"
+            />
+            
+            <div class="row q-col-gutter-md">
+              <div class="col-6">
+                <q-input
+                  v-model="surgeryForm.g_drg_code"
+                  filled
+                  label="G-DRG Code"
+                  hint="Surgery code"
+                />
+              </div>
+              <div class="col-6">
+                <q-input
+                  v-model="surgeryForm.surgery_type"
+                  filled
+                  label="Surgery Type"
+                  hint="Type/category of surgery"
+                />
+              </div>
+            </div>
+
+            <div class="row q-col-gutter-md">
+              <div class="col-6">
+                <q-input
+                  v-model="surgeryForm.surgeon_name"
+                  filled
+                  label="Surgeon Name"
+                  hint="Name of the surgeon"
+                />
+              </div>
+              <div class="col-6">
+                <q-input
+                  v-model="surgeryForm.assistant_surgeon"
+                  filled
+                  label="Assistant Surgeon"
+                  hint="Assistant surgeon name (optional)"
+                />
+              </div>
+            </div>
+
+            <div class="row q-col-gutter-md">
+              <div class="col-6">
+                <q-input
+                  v-model="surgeryForm.anesthesia_type"
+                  filled
+                  label="Anesthesia Type"
+                  hint="Type of anesthesia (e.g., General, Local, Regional)"
+                />
+              </div>
+              <div class="col-6">
+                <q-input
+                  v-model="surgeryForm.surgery_date"
+                  filled
+                  type="datetime-local"
+                  label="Surgery Date"
+                  hint="Scheduled/performed date"
+                />
+              </div>
+            </div>
+
+            <q-input
+              v-model="surgeryForm.surgery_notes"
+              filled
+              type="textarea"
+              label="Pre-operative Notes"
+              hint="Pre-operative notes and observations"
+              rows="4"
+            />
+
+            <div v-if="editingSurgery" class="q-mt-md">
+              <q-separator class="q-my-md" />
+              <div class="text-subtitle2 q-mb-sm">Post-operative Information</div>
+              
+              <q-input
+                v-model="surgeryForm.operative_notes"
+                filled
+                type="textarea"
+                label="Operative Notes"
+                hint="Notes during the operation"
+                rows="4"
+              />
+
+              <q-input
+                v-model="surgeryForm.post_operative_notes"
+                filled
+                type="textarea"
+                label="Post-operative Notes"
+                hint="Post-operative observations and care instructions"
+                rows="4"
+                class="q-mt-md"
+              />
+
+              <q-input
+                v-model="surgeryForm.complications"
+                filled
+                type="textarea"
+                label="Complications"
+                hint="Any complications encountered"
+                rows="3"
+                class="q-mt-md"
+              />
+
+              <q-checkbox
+                v-model="surgeryForm.is_completed"
+                label="Mark as Completed"
+                class="q-mt-md"
+              />
+            </div>
+
+            <q-card-actions align="right" class="q-pt-md">
+              <q-btn flat label="Cancel" color="primary" @click="closeSurgeryDialog" />
+              <q-btn
+                type="submit"
+                label="Save"
+                color="positive"
+                :loading="savingSurgery"
+              />
+            </q-card-actions>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Anaesthetist Info Dialog -->
+    <q-dialog v-model="showAnaesthetistDialog" persistent>
+      <q-card style="min-width: 700px; max-width: 900px">
+        <q-card-section>
+          <div class="text-h6 glass-text">Anaesthetist Information</div>
+          <div class="text-subtitle2 text-grey-7 q-mt-sm">
+            Operation: <span class="text-weight-bold">{{ selectedSurgeryForAnaesthetist?.surgery_name }}</span>
+          </div>
+          <div class="text-subtitle2 text-grey-7">
+            Patient: <span class="text-weight-bold">{{ selectedSurgeryForAnaesthetist?.patient_name }}</span>
+          </div>
+        </q-card-section>
+
+        <q-card-section class="q-pt-none">
+          <q-form @submit="saveAnaesthetistInfo" class="q-gutter-md">
+            <q-input
+              v-model="anaesthetistForm.anaesthetist_consultation"
+              filled
+              type="textarea"
+              label="Anaesthetist Consultation"
+              hint="Anaesthetist's consultation notes"
+              rows="4"
+            />
+
+            <q-input
+              v-model="anaesthetistForm.intra_operation_care"
+              filled
+              type="textarea"
+              label="Intra-operation Care"
+              hint="Care provided during the operation"
+              rows="4"
+            />
+
+            <q-input
+              v-model="anaesthetistForm.post_operation_care"
+              filled
+              type="textarea"
+              label="Post-operation Care"
+              hint="Post-operative care notes"
+              rows="4"
+            />
+
+            <q-input
+              v-model="anaesthetistForm.drugs_given"
+              filled
+              type="textarea"
+              label="Drugs Given"
+              hint="Drugs administered during operation"
+              rows="4"
+            />
+
+            <q-input
+              v-model="anaesthetistForm.anaesthesia_used"
+              filled
+              type="textarea"
+              label="Anaesthesia Used"
+              hint="Detailed anaesthesia information"
+              rows="4"
+            />
+
+            <q-card-actions align="right" class="q-pt-md">
+              <q-btn flat label="Cancel" color="primary" @click="closeAnaesthetistDialog" />
+              <q-btn
+                type="submit"
+                label="Save"
+                color="positive"
+                :loading="savingAnaesthetist"
+              />
+            </q-card-actions>
+          </q-form>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+  

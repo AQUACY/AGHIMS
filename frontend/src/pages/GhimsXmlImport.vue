@@ -1,65 +1,78 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat round dense icon="arrow_back" @click="goBack" />
-      <div class="text-h4 q-ml-sm text-weight-bold glass-text">
-        {{ viewingBatchId ? `Import Batch: ${currentBatch?.file_name || ''}` : 'Import GHIMS XML' }}
-      </div>
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      :title="viewingBatchId ? `Import batch: ${currentBatch?.file_name || ''}` : 'Import GHIMS XML'"
+      :subtitle="viewingBatchId ? 'Review, filter, vet, and export claims from this import.' : 'Upload exported XML, review batches, finalize, and export again.'"
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="goBack">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <q-card v-if="!viewingBatchId" class="q-mb-lg glass-card" flat bordered>
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Upload GHIMS XML Export</div>
-        <div class="row q-gutter-md items-center">
-          <q-file v-model="uploadFile" label="Select XML file" accept=".xml,text/xml,application/xml" outlined dense clearable class="col-12 col-md-5" />
-          <q-btn color="primary" label="Import XML" :loading="uploading" :disable="!uploadFile" @click="uploadXml" />
+    <section v-if="!viewingBatchId" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Upload GHIMS XML export</div>
+          <div class="panel-sub">Select an XML file from GHIMS / ClaimIT export</div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+      <div class="panel-body upload-row">
+        <q-file
+          v-model="uploadFile"
+          label="Select XML file"
+          accept=".xml,text/xml,application/xml"
+          outlined
+          dense
+          clearable
+          class="upload-file"
+        />
+        <HmsButton
+          variant="primary"
+          size="sm"
+          :loading="uploading"
+          :disabled="!uploadFile"
+          @click="uploadXml"
+        >
+          Import XML
+        </HmsButton>
+      </div>
+    </section>
 
-    <q-card v-if="!viewingBatchId" class="q-mb-lg glass-card" flat bordered>
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Recent XML imports</div>
-        <q-list v-if="batches.length" bordered separator>
-          <q-item v-for="b in batches" :key="b.id">
-            <q-item-section avatar><q-icon name="folder" color="primary" /></q-item-section>
-            <q-item-section>
-              <q-item-label>{{ b.file_name }}</q-item-label>
-              <q-item-label caption>
+    <section v-if="!viewingBatchId" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Recent XML imports</div>
+          <div class="panel-sub">Open a batch to review claims and export</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div v-if="batches.length" class="batch-list">
+          <div v-for="b in batches" :key="b.id" class="batch-row">
+            <div class="batch-copy">
+              <div class="batch-name">{{ b.file_name }}</div>
+              <div class="batch-meta">
                 {{ formatDate(b.uploaded_at) }} · {{ b.claim_count }} claim(s) · {{ b.finalized_count || 0 }} finalized
                 · {{ b.pharmacy_vetted_count || 0 }} pharmacy-vetted · {{ b.doctor_vetted_count || 0 }} doctor-vetted
-              </q-item-label>
-            </q-item-section>
-            <q-item-section side>
-              <div class="row items-center no-wrap q-gutter-md">
-                <template v-if="canDeleteImportBatch">
-                  <q-btn
-                    flat
-                    dense
-                    round
-                    color="negative"
-                    icon="delete"
-                    @click.stop="deleteBatch(b)"
-                  >
-                    <q-tooltip>Delete import</q-tooltip>
-                  </q-btn>
-                  <q-separator vertical inset />
-                </template>
-                <q-btn
-                  flat
-                  dense
-                  color="primary"
-                  icon-right="chevron_right"
-                  label="Open"
-                  @click.stop="openBatch(b.id)"
-                />
               </div>
-            </q-item-section>
-          </q-item>
-        </q-list>
-        <p v-else class="text-grey-7">No XML imports yet.</p>
-      </q-card-section>
-    </q-card>
+            </div>
+            <div class="batch-actions">
+              <HmsButton
+                v-if="canDeleteImportBatch"
+                variant="danger"
+                size="sm"
+                @click="deleteBatch(b)"
+              >
+                Delete
+              </HmsButton>
+              <HmsButton variant="secondary" size="sm" @click="openBatch(b.id)">
+                Open
+              </HmsButton>
+            </div>
+          </div>
+        </div>
+        <p v-else class="empty-hint">No XML imports yet.</p>
+      </div>
+    </section>
 
     <template v-if="viewingBatchId && currentBatch">
       <div v-if="viewingBatchId && currentBatch" class="text-subtitle1 text-primary q-mb-md">
@@ -71,7 +84,7 @@
           Total claim revenue ({{ filteredClaims.length }} filtered): {{ formatCurrency(filteredRevenue) }}
         </template>
       </div>
-      <q-card class="q-mb-md glass-card" flat bordered>
+      <section class="diag-panel batch-toolbar">
         <q-card-section class="row items-center q-gutter-md">
           <div class="text-body2 text-grey-8">{{ currentBatch.claims?.length || 0 }} claim(s) in this import</div>
           <div class="text-body2 text-primary">
@@ -219,10 +232,10 @@
           />
           <q-btn color="primary" icon="download" :label="selectedItemIds.length ? `Export ${selectedItemIds.length} selected` : 'Export selected'" :disable="selectedItemIds.length === 0" :loading="exporting" @click="exportSelected" />
         </q-card-section>
-      </q-card>
+      </section>
 
-      <q-card class="q-mb-sm glass-card" flat bordered>
-        <q-card-section class="q-pa-none">
+      <section class="diag-panel">
+        <div class="panel-body table-wrap">
           <q-markup-table flat dense bordered separator="horizontal" wrap-cells>
             <thead>
               <tr>
@@ -349,8 +362,8 @@
               </tr>
             </tbody>
           </q-markup-table>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
       <div class="row items-center q-gutter-md q-mt-md">
         <q-select
           v-model="rowsPerPage"
@@ -377,6 +390,8 @@
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
@@ -1043,3 +1058,50 @@ onMounted(async () => {
   catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imports' }); }
 });
 </script>
+
+<style scoped>
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-body { padding: 1rem; }
+.upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.upload-file { flex: 1 1 16rem; min-width: 12rem; max-width: 28rem; }
+.batch-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.batch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface, transparent);
+}
+.batch-name { font-weight: 650; color: var(--hms-text-primary); font-size: var(--hms-text-sm); }
+.batch-meta { margin-top: 0.2rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.batch-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.empty-hint { font-size: var(--hms-text-sm); color: var(--hms-text-muted); margin: 0; }
+.batch-toolbar :deep(.q-card-section) { padding: 1rem; }
+.table-wrap { padding: 0; overflow-x: auto; }
+</style>

@@ -1,75 +1,103 @@
 <template>
-  <div class="login-background" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'">
-    <div class="login-container">
-      <q-card class="login-card glass-card" flat>
-        <q-card-section>
-          <div class="text-h5 text-center q-mb-md text-weight-bold">
-            {{ facilityStore.displayName }}
-          </div>
-          <div class="text-subtitle2 text-center q-mb-lg">
-            Sign in to continue
-          </div>
-          <div class="text-center q-mb-sm">
-            <q-btn flat dense no-caps label="License activation" to="/license-setup" color="primary" />
-          </div>
-          <div v-if="facilityStore.facilityCodeDisplay" class="text-caption text-center q-mb-md">
-            Facility code: <strong>{{ facilityStore.facilityCodeDisplay }}</strong>
-          </div>
-        </q-card-section>
+  <div class="login-shell" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'">
+    <motion.div
+      class="login-panel"
+      :initial="reduceMotion ? false : { opacity: 0, y: 16 }"
+      :animate="{ opacity: 1, y: 0 }"
+      :transition="{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }"
+    >
+      <div class="login-brand">
+        <img
+          src="/logos/ghana-health-service-logo.png"
+          :alt="facilityStore.displayName"
+          width="48"
+          height="48"
+          class="login-logo"
+        />
+        <h1 class="login-title">{{ facilityStore.displayName }}</h1>
+        <p class="login-subtitle">Sign in to continue to the clinical workspace</p>
+        <HmsBadge v-if="facilityStore.facilityCodeDisplay" tone="healthcare">
+          {{ facilityStore.facilityCodeDisplay }}
+        </HmsBadge>
+      </div>
 
-        <q-card-section>
-          <q-form @submit="onSubmit" class="q-gutter-md">
-            <q-input
+      <HmsCard strong class="login-card" :padding="true">
+        <form class="login-form" @submit.prevent="onSubmit">
+          <label class="field">
+            <span class="field-label">Username</span>
+            <input
               v-model="username"
-              filled
-              label="Username"
-              lazy-rules
-              :rules="[(val) => !!val || 'Please enter username']"
-              class=""
+              type="text"
+              autocomplete="username"
+              required
+              class="field-input"
+              placeholder="Enter username"
             />
+          </label>
 
-            <q-input
-              v-model="password"
-              filled
-              type="password"
-              label="Password"
-              lazy-rules
-              :rules="[(val) => !!val || 'Please enter password']"
-              class=""
-            />
-
-            <div class="q-mt-lg">
-              <q-btn
-                unelevated
-                label="Login"
-                type="submit"
-                class="full-width glass-button"
-                :loading="loading"
-                style="font-weight: 600;"
+          <label class="field">
+            <span class="field-label">Password</span>
+            <div class="field-password">
+              <input
+                v-model="password"
+                :type="showPassword ? 'text' : 'password'"
+                autocomplete="current-password"
+                required
+                class="field-input"
+                placeholder="Enter password"
               />
+              <button
+                type="button"
+                class="field-toggle"
+                :aria-label="showPassword ? 'Hide password' : 'Show password'"
+                @click="showPassword = !showPassword"
+              >
+                <EyeOff v-if="showPassword" :size="18" />
+                <Eye v-else :size="18" />
+              </button>
             </div>
-          </q-form>
-        </q-card-section>
-      </q-card>
-    </div>
+          </label>
+
+          <HmsButton type="submit" variant="primary" size="lg" block :loading="loading">
+            Sign in
+          </HmsButton>
+        </form>
+
+        <div class="login-footer">
+          <router-link class="license-link" to="/license-setup">License activation</router-link>
+          <button type="button" class="theme-link" @click="themeStore.toggleTheme()">
+            {{ themeStore.isDark ? 'Light mode' : 'Dark mode' }}
+          </button>
+        </div>
+      </HmsCard>
+    </motion.div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { motion } from 'motion-v';
+import { usePreferredReducedMotion } from '@vueuse/core';
+import { Eye, EyeOff } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { useFacilityStore } from '../stores/facility';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsCard from '../components/ui/HmsCard.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 
 const router = useRouter();
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const facilityStore = useFacilityStore();
+const preferredReducedMotion = usePreferredReducedMotion();
+const reduceMotion = computed(() => preferredReducedMotion.value === 'reduce');
 
 const username = ref('');
 const password = ref('');
 const loading = ref(false);
+const showPassword = ref(false);
 
 onMounted(() => {
   themeStore.initTheme();
@@ -80,7 +108,7 @@ const onSubmit = async () => {
   loading.value = true;
   const success = await authStore.login(username.value, password.value);
   loading.value = false;
-  
+
   if (success) {
     router.push('/choose-mode');
   }
@@ -88,65 +116,145 @@ const onSubmit = async () => {
 </script>
 
 <style scoped>
-.login-background {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: -1;
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  position: relative;
 }
 
-.login-container {
+.login-panel {
+  width: 100%;
+  max-width: 420px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.login-brand {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  min-height: 100vh;
-  padding: 20px;
-  position: relative;
-  z-index: 1;
+  gap: 0.75rem;
+}
+
+.login-logo {
+  border-radius: 12px;
+  box-shadow: var(--hms-shadow-md);
+}
+
+.login-title {
+  font-size: var(--hms-text-2xl);
+  font-weight: 700;
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+  line-height: var(--hms-leading-tight);
+}
+
+.login-subtitle {
+  font-size: var(--hms-text-base);
+  color: var(--hms-text-secondary);
+  max-width: 28ch;
 }
 
 .login-card {
   width: 100%;
-  max-width: 420px;
-  padding: 8px;
 }
 
-.glass-input {
-  background: rgba(107, 17, 17, 0.1) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-radius: 12px;
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.glass-input :deep(.q-field__control) {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: rgba(255, 255, 255, 0.9) !important;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
-.glass-input :deep(.q-field__native) {
-  color: rgba(255, 255, 255, 0.9) !important;
+.field-label {
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+  color: var(--hms-text-secondary);
 }
 
-.glass-input :deep(.q-field__label) {
-  color: rgba(255, 255, 255, 0.7) !important;
+.field-input {
+  width: 100%;
+  height: 2.75rem;
+  padding: 0 0.9rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  color: var(--hms-text-primary);
+  font-size: var(--hms-text-base);
+  font-family: inherit;
+  outline: none;
+  transition:
+    border-color var(--hms-duration-fast) var(--hms-ease-out),
+    background-color var(--hms-duration-fast) var(--hms-ease-out);
 }
 
-.glass-input :deep(.q-field__control:before) {
-  border-color: rgba(46, 139, 87, 0.4) !important;
+.field-input:focus {
+  border-color: var(--hms-accent);
+  background: var(--hms-surface-hover);
 }
 
-.glass-input :deep(.q-field__control:hover:before) {
-  border-color: rgba(255, 215, 0, 0.6) !important;
+.field-input::placeholder {
+  color: var(--hms-text-muted);
 }
 
-.body--dark .glass-input {
-  background: rgba(255, 255, 255, 0.05) !important;
+.field-password {
+  position: relative;
 }
 
-.body--dark .glass-input :deep(.q-field__control) {
-  background: rgba(255, 255, 255, 0.05) !important;
+.field-password .field-input {
+  padding-right: 2.75rem;
+}
+
+.field-toggle {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--hms-text-muted);
+  cursor: pointer;
+  padding: 0.35rem;
+  border-radius: var(--hms-radius-md);
+  display: inline-flex;
+}
+
+.field-toggle:hover {
+  color: var(--hms-text-primary);
+  background: var(--hms-surface);
+}
+
+.login-footer {
+  margin-top: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.license-link,
+.theme-link {
+  font-size: var(--hms-text-sm);
+  color: var(--hms-accent);
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}
+
+.license-link:hover,
+.theme-link:hover {
+  text-decoration: underline;
 }
 </style>
-

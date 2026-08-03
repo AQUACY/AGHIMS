@@ -1,9 +1,19 @@
 <template>
   <router-view />
+  <Toaster
+    position="top-right"
+    :theme="themeStore.isDark ? 'dark' : 'light'"
+    :toast-options="{
+      class: 'hms-toast',
+      duration: 4000,
+    }"
+  />
 </template>
 
 <script setup>
 import { onMounted } from 'vue';
+import { Toaster } from 'vue-sonner';
+import 'vue-sonner/style.css';
 import { useThemeStore } from './stores/theme';
 import { useFacilityStore } from './stores/facility';
 
@@ -24,310 +34,379 @@ onMounted(() => {
 }
 
 body {
-  font-family: 'Roboto', '-apple-system', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: var(--hms-font-sans);
   overflow-x: hidden;
+  background-color: var(--hms-bg-primary);
+  color: var(--hms-text-primary);
 }
 
-#app {
+#app,
+#q-app {
   width: 100%;
   height: 100%;
   position: relative;
   min-height: 100vh;
 }
 
-/* Glassmorphism base styles */
-.glass {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+/* ——— Ambient background ——— */
+.app-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.glass-dark {
-  background: rgba(0, 0, 0, 0.2);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+.light-gradient,
+.dark-gradient {
+  background:
+    radial-gradient(ellipse 80% 60% at 10% -10%, rgba(59, 130, 246, 0.18), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 90% 10%, rgba(6, 182, 212, 0.12), transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(59, 130, 246, 0.08), transparent 55%),
+    var(--hms-bg-primary);
 }
 
-.glass-card {
-  background: rgba(255, 255, 255, 0.85) !important; /* More opaque for better contrast in light mode */
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(46, 139, 87, 0.3);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px 0 rgba(46, 139, 87, 0.25);
-  transition: all 0.3s ease;
-  color: #1a1a1a !important; /* Dark text for light mode cards */
+.body--light .light-gradient,
+.body--light .dark-gradient {
+  background:
+    radial-gradient(ellipse 70% 50% at 0% 0%, rgba(59, 130, 246, 0.06), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(6, 182, 212, 0.04), transparent 50%),
+    var(--hms-bg-primary);
+}
+
+/* ——— Legacy glass aliases → design system ——— */
+.glass,
+.glass-dark,
+.glass-card,
+.hms-glass {
+  background: var(--hms-glass-bg) !important;
+  backdrop-filter: blur(var(--hms-glass-blur)) saturate(var(--hms-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--hms-glass-blur)) saturate(var(--hms-glass-saturate));
+  border: 1px solid var(--hms-border) !important;
+  border-radius: var(--hms-radius-2xl);
+  box-shadow: var(--hms-shadow-md), var(--hms-shadow-inner);
+  color: var(--hms-text-primary) !important;
+  transition:
+    transform var(--hms-duration-normal) var(--hms-ease-out),
+    box-shadow var(--hms-duration-normal) var(--hms-ease-out),
+    border-color var(--hms-duration-normal) var(--hms-ease-out),
+    background-color var(--hms-duration-normal) var(--hms-ease-out);
 }
 
 .glass-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 40px 0 rgba(46, 139, 87, 0.4);
-  border-color: rgba(255, 215, 0, 0.5);
-  background: rgba(255, 255, 255, 0.9) !important;
+  transform: translateY(-2px);
+  border-color: var(--hms-border-strong) !important;
+  box-shadow: var(--hms-shadow-lg), var(--hms-shadow-inner);
 }
 
-.body--dark .glass-card {
-  background: rgba(30, 30, 30, 0.85) !important; /* More opaque for better contrast in dark mode */
-  border: 1px solid rgba(255, 215, 0, 0.3);
-  box-shadow: 0 8px 32px 0 rgba(15, 81, 50, 0.4);
-  color: rgba(255, 255, 255, 0.95) !important; /* Light text for dark mode cards */
-}
-
-.body--dark .glass-card:hover {
-  box-shadow: 0 12px 40px 0 rgba(46, 139, 87, 0.5);
-  border-color: rgba(255, 215, 0, 0.4);
-  background: rgba(35, 35, 35, 0.9) !important;
-}
-
-/* Animated gradient background */
-.app-background {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: -1;
-  overflow: hidden;
-}
-
-.light-gradient {
-  /* Ghana Health Service Colors: Yellow, Red, Green */
-  background: linear-gradient(-45deg, #FFD700, #FF6B35, #2E8B57, #FFD700, #FF6B35);
-  background-size: 400% 400%;
-  /* animation: gradientShift 20s ease infinite; */
-}
-
-.dark-gradient {
-  /* Ghana Health Service Colors - Darker variants */
-  background: linear-gradient(-45deg, #1a1a1a, #8B4513, #0F5132, #1a1a1a, #8B4513);
-  background-size: 400% 400%;
-  /* animation: gradientShift 20s ease infinite; */
-}
-
-@keyframes gradientShift {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-/* Glass header */
 .glass-header {
-  background: rgba(46, 139, 87, 0.25) !important;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid rgba(255, 215, 0, 0.3);
-  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.3);
+  background: var(--hms-glass-bg-strong) !important;
+  backdrop-filter: blur(24px) saturate(var(--hms-glass-saturate));
+  -webkit-backdrop-filter: blur(24px) saturate(var(--hms-glass-saturate));
+  border-bottom: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-sm) !important;
+  color: var(--hms-text-primary) !important;
+  min-height: var(--hms-header-height);
 }
 
-.body--dark .glass-header {
-  background: rgba(15, 81, 50, 0.4) !important;
-  border-bottom: 1px solid rgba(255, 215, 0, 0.25);
-  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.4);
-}
-
-/* Glass drawer - GHS themed */
 .glass-drawer {
-  background: rgba(255, 255, 255, 0.1) !important;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-right: 1px solid rgba(46, 139, 87, 0.25);
+  background: var(--hms-panel-bg) !important;
+  border-right: 1px solid var(--hms-border) !important;
 }
 
-.body--dark .glass-drawer {
-  background: rgba(15, 81, 50, 0.2) !important;
-  border-right: 1px solid rgba(255, 215, 0, 0.2);
+.glass-drawer .q-drawer__content {
+  background: var(--hms-panel-bg) !important;
 }
 
-/* Glass buttons - GHS themed with better contrast */
 .glass-button {
-  background: rgba(46, 139, 87, 0.9) !important; /* More opaque for better visibility */
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 215, 0, 0.5) !important;
-  border-radius: 12px;
-  color: white !important;
-  transition: all 0.3s ease;
-  font-weight: 500;
-  box-shadow: 0 2px 8px rgba(46, 139, 87, 0.3);
+  background: var(--hms-accent) !important;
+  backdrop-filter: none;
+  border: 1px solid transparent !important;
+  border-radius: var(--hms-radius-lg) !important;
+  color: #fff !important;
+  font-weight: 600;
+  box-shadow: var(--hms-shadow-sm);
+  transition:
+    background-color var(--hms-duration-fast) var(--hms-ease-out),
+    transform var(--hms-duration-fast) var(--hms-ease-out),
+    box-shadow var(--hms-duration-fast) var(--hms-ease-out);
 }
 
 .glass-button:hover {
-  background: rgba(46, 139, 87, 1) !important;
-  border-color: rgba(255, 215, 0, 0.7) !important;
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(46, 139, 87, 0.5);
+  background: var(--hms-accent-hover) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--hms-shadow-glow-accent);
 }
 
-.body--dark .glass-button {
-  background: rgba(46, 139, 87, 0.7) !important;
-  border: 1px solid rgba(255, 215, 0, 0.4) !important;
-  box-shadow: 0 2px 8px rgba(46, 139, 87, 0.4);
-}
-
-.body--dark .glass-button:hover {
-  background: rgba(46, 139, 87, 0.85) !important;
-  border-color: rgba(255, 215, 0, 0.6) !important;
-  box-shadow: 0 4px 12px rgba(46, 139, 87, 0.6);
-}
-
-/* Smooth transitions */
-* {
-  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
-}
-
-/* Page container glass effect */
-.q-page-container {
-  background: transparent !important;
-}
-
+.q-page-container,
 .q-page {
   background: transparent !important;
 }
 
-/* Glass tables and data tables - GHS themed with better contrast */
-.glass-table {
-  background: rgba(255, 255, 255, 0.85) !important;
+.glass-table,
+.q-table {
+  background: var(--hms-glass-bg) !important;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(46, 139, 87, 0.3);
-  border-radius: 16px;
-  color: #1a1a1a !important;
-}
-
-.body--dark .glass-table {
-  background: rgba(30, 30, 30, 0.85) !important;
-  border: 1px solid rgba(255, 215, 0, 0.3);
-  color: rgba(255, 255, 255, 0.95) !important;
-}
-
-/* Glass dialogs - GHS themed with better contrast */
-.q-dialog .q-card {
-  background: rgba(255, 255, 255, 0.95) !important; /* More opaque for better visibility */
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(46, 139, 87, 0.3);
-  box-shadow: 0 8px 32px rgba(46, 139, 87, 0.3);
-  color: #1a1a1a !important;
-}
-
-.body--dark .q-dialog .q-card {
-  background: rgba(35, 35, 35, 0.95) !important;
-  border: 1px solid rgba(255, 215, 0, 0.3);
-  box-shadow: 0 8px 32px rgba(46, 139, 87, 0.4);
-  color: rgba(255, 255, 255, 0.95) !important;
-}
-
-/* Glass text styles - ensure proper contrast in both modes */
-.glass-text {
-  color: #1a1a1a !important; /* Dark text for light mode */
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
-}
-
-.glass-text-muted {
-  color: #4a4a4a !important; /* Muted dark text for light mode */
-}
-
-.body--dark .glass-text {
-  color: rgba(255, 255, 255, 0.95) !important; /* Light text for dark mode */
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.body--dark .glass-text-muted {
-  color: rgba(255, 255, 255, 0.8) !important; /* Muted light text for dark mode */
-}
-
-/* Glass inputs - global with better contrast */
-.q-field--filled .q-field__control {
-  background: rgba(255, 255, 255, 0.8) !important; /* More opaque for better visibility */
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-radius: 12px;
-  border: 1px solid rgba(46, 139, 87, 0.2);
-}
-
-.q-field--filled .q-field__control:hover {
-  background: rgba(255, 255, 255, 0.9) !important;
-  border-color: rgba(46, 139, 87, 0.3);
-}
-
-.body--dark .q-field--filled .q-field__control {
-  background: rgba(40, 40, 40, 0.8) !important;
-  border: 1px solid rgba(255, 215, 0, 0.2);
-}
-
-.body--dark .q-field--filled .q-field__control:hover {
-  background: rgba(45, 45, 45, 0.9) !important;
-  border-color: rgba(255, 215, 0, 0.3);
-}
-
-/* Glass tables - GHS themed with better contrast */
-.q-table {
-  background: rgba(255, 255, 255, 0.85) !important; /* More opaque for better visibility */
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(46, 139, 87, 0.3);
-  color: #1a1a1a !important;
+  border: 1px solid var(--hms-border) !important;
+  border-radius: var(--hms-radius-2xl);
+  color: var(--hms-text-primary) !important;
+  overflow: hidden;
 }
 
 .q-table thead th {
-  background: rgba(46, 139, 87, 0.1) !important;
-  color: #1a1a1a !important;
+  background: var(--hms-surface) !important;
+  color: var(--hms-text-secondary) !important;
   font-weight: 600;
+  font-size: var(--hms-text-xs);
+  letter-spacing: var(--hms-tracking-wide);
+  text-transform: uppercase;
 }
 
-.body--dark .q-table {
-  background: rgba(30, 30, 30, 0.85) !important;
-  border: 1px solid rgba(255, 215, 0, 0.3);
-  color: rgba(255, 255, 255, 0.95) !important;
+.q-dialog .q-card {
+  background: var(--hms-glass-bg-strong) !important;
+  backdrop-filter: blur(24px) saturate(var(--hms-glass-saturate));
+  -webkit-backdrop-filter: blur(24px) saturate(var(--hms-glass-saturate));
+  border: 1px solid var(--hms-border-strong) !important;
+  box-shadow: var(--hms-shadow-lg) !important;
+  color: var(--hms-text-primary) !important;
+  border-radius: var(--hms-radius-2xl) !important;
 }
 
-.body--dark .q-table thead th {
-  background: rgba(46, 139, 87, 0.2) !important;
-  color: rgba(255, 255, 255, 0.95) !important;
+.glass-text {
+  color: var(--hms-text-primary) !important;
+  text-shadow: none;
 }
 
-/* Better contrast for text-grey classes in dark mode */
+.glass-text-muted {
+  color: var(--hms-text-secondary) !important;
+}
+
+.q-field--filled .q-field__control {
+  background: var(--hms-surface) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+}
+
+.q-field--filled .q-field__control:hover {
+  background: var(--hms-surface-hover) !important;
+  border-color: var(--hms-border-strong);
+}
+
+.q-field--filled .q-field__native,
+.q-field--filled .q-field__input,
+.q-field--filled .q-field__label {
+  color: var(--hms-text-primary) !important;
+}
+
+.body--dark .q-field--filled .q-field__label {
+  color: var(--hms-text-secondary) !important;
+}
+
+/* Soften Quasar primary buttons that still use color="primary" without glass-button */
+.q-btn.bg-primary {
+  border-radius: var(--hms-radius-lg) !important;
+}
+
+.notifications-dialog-card {
+  width: min(720px, 92vw);
+  max-width: 800px;
+}
+
 .body--dark .text-grey-7,
 .body--dark .text-grey-6,
 .body--dark .text-grey {
-  color: rgba(255, 255, 255, 0.7) !important; /* Lighter grey for better visibility in dark mode */
+  color: var(--hms-text-secondary) !important;
 }
 
 .body--dark .text-grey-8,
 .body--dark .text-grey-9 {
-  color: rgba(255, 255, 255, 0.5) !important;
+  color: var(--hms-text-muted) !important;
 }
 
-/* Ensure text-grey classes have good contrast in light mode */
-.text-grey-7 {
-  color: #616161 !important; /* Darker grey for better visibility in light mode */
+/* Sidebar nav items */
+.glass-nav-item {
+  border-radius: var(--hms-radius-lg) !important;
+  margin: 2px 8px;
+  color: var(--hms-text-secondary) !important;
+  transition: background-color var(--hms-duration-fast) var(--hms-ease-out);
 }
 
-.text-grey-6 {
-  color: #757575 !important;
+.glass-nav-item:hover {
+  background: var(--hms-surface-hover) !important;
+  color: var(--hms-text-primary) !important;
 }
 
-.text-grey-8 {
-  color: #424242 !important;
+.glass-nav-active {
+  background: var(--hms-accent-muted) !important;
+  color: var(--hms-accent) !important;
 }
 
-.text-grey-9 {
-  color: #212121 !important;
+.glass-nav-active .q-icon {
+  color: var(--hms-accent) !important;
 }
 
-/* Global print styles - Hide all navigation and page elements when printing lab results */
+/* Sonner toast polish */
+.hms-toast {
+  font-family: var(--hms-font-sans) !important;
+  border-radius: var(--hms-radius-lg) !important;
+}
+
+/* Header command trigger */
+.command-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--hms-border) !important;
+  border-radius: var(--hms-radius-full) !important;
+  background: var(--hms-surface) !important;
+  color: var(--hms-text-muted) !important;
+  text-transform: none !important;
+  padding: 0 0.9rem !important;
+  min-height: 2.15rem !important;
+  min-width: min(280px, 36vw);
+  font-size: var(--hms-text-sm);
+  font-family: inherit;
+  cursor: pointer;
+  margin-right: 0.45rem;
+  transition:
+    background-color var(--hms-duration-fast) var(--hms-ease-out),
+    border-color var(--hms-duration-fast) var(--hms-ease-out),
+    color var(--hms-duration-fast) var(--hms-ease-out),
+    box-shadow var(--hms-duration-fast) var(--hms-ease-out);
+}
+
+.command-trigger:hover {
+  background: var(--hms-panel-bg) !important;
+  color: var(--hms-text-secondary) !important;
+  border-color: var(--hms-border-strong) !important;
+  box-shadow: var(--hms-shadow-sm);
+}
+
+@media (max-width: 720px) {
+  .command-trigger {
+    min-width: 0;
+    padding: 0 0.65rem !important;
+  }
+  .command-trigger .command-label,
+  .command-trigger .command-kbd {
+    display: none;
+  }
+}
+
+.command-kbd {
+  margin-left: 0.15rem;
+  font-family: var(--hms-font-mono);
+  font-size: 0.65rem;
+  border: 1px solid var(--hms-border);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  opacity: 0.8;
+}
+
+/* Sleek app header chrome */
+.hms-app-header .hms-toolbar {
+  min-height: var(--hms-header-height);
+  padding: 0 0.75rem;
+  gap: 0.35rem;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  margin-right: 0.5rem;
+}
+
+.header-logo {
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.header-title {
+  font-weight: 700;
+  font-size: var(--hms-text-base);
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+  max-width: 220px;
+}
+
+.header-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--hms-radius-full);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.header-chip.accent {
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+
+.header-chip.healthcare {
+  background: var(--hms-healthcare-muted);
+  color: var(--hms-healthcare);
+}
+
+.session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--hms-radius-full);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.25rem;
+}
+
+.header-icon-btn {
+  color: var(--hms-text-secondary) !important;
+}
+
+.header-icon-btn:hover {
+  color: var(--hms-text-primary) !important;
+  background: var(--hms-surface) !important;
+}
+
+.header-ghost-btn {
+  color: var(--hms-text-secondary) !important;
+  border-radius: var(--hms-radius-lg) !important;
+  font-weight: 600 !important;
+  padding: 0 0.65rem !important;
+  min-height: 2rem !important;
+}
+
+.header-ghost-btn:hover {
+  color: var(--hms-text-primary) !important;
+  background: var(--hms-surface) !important;
+}
+
+.header-logout:hover {
+  color: var(--hms-critical) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+
+/* Form / page section headings on legacy Quasar cards */
+.glass-card .text-h6.glass-text,
+.q-card .text-h6.glass-text {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 650 !important;
+  letter-spacing: var(--hms-tracking-tight);
+}
+
 @media print {
-  /* Hide all layout elements */
   .q-layout > .q-header,
   .q-layout > .q-drawer,
   .q-layout > .q-footer,
@@ -338,19 +417,13 @@ body {
   aside {
     display: none !important;
   }
-  
-  /* Show only the lab result content */
-  body {
-    background: white !important;
-    margin: 0;
-    padding: 0;
-  }
-  
-  #app {
+
+  body,
+  #app,
+  #q-app {
     background: white !important;
   }
-  
-  /* Ensure lab result viewer is visible and properly positioned */
+
   .lab-result-viewer,
   .lab-result-container {
     position: relative !important;
@@ -360,25 +433,33 @@ body {
     padding: 20px !important;
     background: white !important;
   }
-  
-  /* Hide all buttons and navigation elements */
+
   .q-btn,
   button:not(.print-header button),
-  .row.items-center,
   .no-print {
     display: none !important;
   }
-  
-  /* Show only the print header and content */
+
   .print-header {
     display: block !important;
   }
-  
-  /* Hide dialog overlays when printing */
+
   .q-dialog,
   .q-menu {
     display: none !important;
   }
 }
-</style>
 
+@media (prefers-reduced-motion: reduce) {
+  .glass-card,
+  .glass-button,
+  .glass-nav-item {
+    transition: none !important;
+  }
+
+  .glass-card:hover,
+  .glass-button:hover {
+    transform: none !important;
+  }
+}
+</style>

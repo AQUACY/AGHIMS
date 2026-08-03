@@ -1,22 +1,42 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat dense icon="arrow_back" :to="backLink" />
-      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Add drugs (Pharmacy)</div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Add drugs (Pharmacy)">
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push(backLink)">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="visit && visit.client_name" class="claim-hero">
+      <div class="claim-hero__main">
+        <div class="claim-hero__avatar" aria-hidden="true">{{ visitInitials }}</div>
+        <div>
+          <h2 class="claim-hero__name">{{ visit.client_name }}</h2>
+          <div class="claim-hero__meta">
+            <span v-if="visit.external_card_number" class="mono">{{ visit.external_card_number }}</span>
+            <span v-if="visit.external_visit_number" class="mono">Visit {{ visit.external_visit_number }}</span>
+            <span v-if="visit.status">{{ visit.status }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <q-card v-if="visitClosed" class="glass-card q-mb-md" flat>
-      <q-card-section>
+
+    <section v-if="visitClosed" class="diag-panel">
+      <div class="panel-body">
         <q-banner class="bg-warning/20 text-warning rounded-borders">
           This visit is closed. You cannot add or remove drugs.
         </q-banner>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Added to bill -->
-    <q-card v-if="addedItems.length > 0" class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Added to client's bill</div>
+    <section v-if="addedItems.length > 0" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Added to client's bill</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-expansion-item
           v-for="group in addedGroups"
           :key="group.key"
@@ -66,14 +86,18 @@
             </q-item>
           </q-list>
         </q-expansion-item>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Import from government PDF or Excel -->
-    <q-card class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Import from government list</div>
-        <div class="text-caption glass-text-muted q-mb-sm">Upload a drugs list from the government system. Use <strong>Excel</strong> (.xls or .xlsx) for best results; PDF is also supported. Only the <strong>Item description</strong> and <strong>Quantity</strong> columns are used.</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Import from government list</div>
+          <div class="panel-sub">Upload a drugs list from the government system. Use <strong>Excel</strong> (.xls or .xlsx) for best results; PDF is also supported. Only the <strong>Item description</strong> and <strong>Quantity</strong> columns are used.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-sm items-center q-mb-md">
           <q-file
             v-model="excelFile"
@@ -161,33 +185,36 @@
         </q-table>
         <div v-if="parsedLines.length > 0 && !visitClosed" class="row q-col-gutter-sm q-mt-sm">
           <div class="col-12 col-sm-auto">
-            <q-btn
+            <HmsButton
               v-if="hasAnySelectedMatched"
-              label="Add selected to bill"
-              color="primary"
+              variant="primary"
+              size="sm"
               :loading="addingSelected"
               @click="addSelectedMatched"
-            />
+            >Add selected to bill</HmsButton>
           </div>
           <div class="col-12 col-sm-auto">
-            <q-btn
+            <HmsButton
               v-if="hasAnyMatched"
-              label="Add all matched to bill"
-              color="primary"
-              flat
+              variant="secondary"
+              size="sm"
               :loading="addingAll"
               @click="addAllMatched"
-            />
+            >Add all matched to bill</HmsButton>
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Search and add (manual) -->
-    <q-card class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add drug</div>
-        <div class="text-caption glass-text-muted q-mb-sm">Type to search the price list, then add with quantity.</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Search and add drug</div>
+          <div class="panel-sub">Type to search the price list, then add with quantity.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-input
           v-model="searchText"
           filled
@@ -209,21 +236,23 @@
               <q-item-label caption>{{ p.medication_code || p.item_code }} · GH¢ {{ formatPrice(copaymentPrice(p)) }} per unit</q-item-label>
             </q-item-section>
             <q-item-section side>
-              <q-btn flat dense size="sm" label="Add" class="glass-button" @click.stop="openAddQuantityDialog(p)" />
+              <HmsButton variant="soft" size="sm" @click.stop="openAddQuantityDialog(p)">Add</HmsButton>
             </q-item-section>
           </q-item>
         </q-list>
         <div v-else-if="searchText.trim() && !loadingProducts" class="text-caption text-grey-7">
           No matching drugs.
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <q-dialog v-model="showQuantityDialog" persistent>
-      <q-card style="min-width: 320px">
-        <q-card-section>
-          <div class="text-h6">Add to bill</div>
-          <div class="text-body2 q-mt-sm">{{ quantityDialogProduct?.service_name || quantityDialogProduct?.product_name }}</div>
+      <q-card class="diag-panel" style="min-width: 320px; margin: 0;">
+        <q-card-section class="panel-head" style="padding: 1rem 1.2rem;">
+          <div class="panel-title">Add to bill</div>
+          <div class="panel-sub q-mt-xs">{{ quantityDialogProduct?.service_name || quantityDialogProduct?.product_name }}</div>
+        </q-card-section>
+        <q-card-section class="panel-body">
           <q-input
             v-model.number="quantityDialogQty"
             type="number"
@@ -232,12 +261,11 @@
             label="Quantity"
             filled
             dense
-            class="q-mt-md"
           />
         </q-card-section>
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" color="grey" v-close-popup />
-          <q-btn flat label="Add" color="primary" :disable="!(quantityDialogQty > 0)" @click="confirmAddWithQuantity" />
+        <q-card-actions align="right" class="q-pa-md">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="primary" size="sm" :disabled="!(quantityDialogQty > 0)" @click="confirmAddWithQuantity">Add</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -250,6 +278,8 @@ import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { companionVisitsAPI, priceListAPI } from '../../services/api';
 import { isCompanionBillItemPaid, companionBillPaidLabel } from '../../utils/companionBillItemPaid.js';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
 
 const route = useRoute();
 const $q = useQuasar();
@@ -258,6 +288,15 @@ const backLink = computed(() => ({ name: 'CompanionVisitDetail', params: { id: v
 
 const visit = ref(null);
 const visitClosed = computed(() => visit.value?.status === 'closed');
+
+const visitInitials = computed(() => {
+  const name = (visit.value?.client_name || '').trim();
+  if (!name) return '?';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+});
+
 const addedItems = ref([]);
 const products = ref([]);
 const loadingProducts = ref(true);

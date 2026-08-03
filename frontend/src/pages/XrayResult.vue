@@ -1,153 +1,107 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to X-ray"
-        @click="$router.push('/xray')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">X-ray Result Entry</div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="X-ray result" subtitle="Enter or review X-ray findings.">
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.push('/xray')">
+          Back
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="investigation && patient" class="result-hero">
+      <div class="result-hero-main">
+        <div class="result-hero-avatar">{{ patientInitials }}</div>
+        <div>
+          <div class="result-hero-name-row">
+            <h1 class="result-hero-name">{{ patientDisplayName }}</h1>
+            <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+              {{ patient.insured ? 'Insured' : 'Cash & carry' }}
+            </HmsBadge>
+            <HmsBadge v-if="investigation?.status" :tone="statusTone(investigation.status)">
+              {{ investigation.status }}
+            </HmsBadge>
+          </div>
+          <div class="result-hero-meta">
+            <span class="mono">{{ patient.card_number || '—' }}</span>
+            <span class="sep">·</span>
+            <span>{{ patient.gender || '—' }}</span>
+            <span class="sep">·</span>
+            <span>{{ patient.age != null ? patient.age : '—' }}</span>
+            <span class="sep">·</span>
+            <span>CCC {{ patient.ccc_number || encounter?.ccc_number || '—' }}</span>
+            <span class="sep">·</span>
+            <span>{{ formatDate(encounter?.created_at) || '—' }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="result-hero-actions">
+        <div
+          v-if="encounterBillInfo.totalAmount !== null"
+          class="balance-pill"
+          :class="encounterBillInfo.remainingBalance > 0 ? 'due' : (encounterBillInfo.totalAmount > 0 ? 'ok' : 'neutral')"
+        >
+          <span class="balance-label">Outstanding</span>
+          <span class="balance-value">GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}</span>
+        </div>
+      </div>
     </div>
 
-    <!-- Patient Information -->
-    <q-card v-if="investigation && patient" class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Patient Information</div>
-        <div class="row q-gutter-md">
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Patient Name</div>
-            <div class="text-body1 text-weight-medium">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Card Number</div>
-            <div class="text-body1 text-weight-medium">{{ patient.card_number || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">CCC Number</div>
-            <div class="text-body1 text-weight-medium">{{ patient.ccc_number || encounter?.ccc_number || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Insurance Status</div>
-            <div class="text-body1 text-weight-medium">
-              <q-badge :color="patient.insured ? 'positive' : 'grey'" :label="patient.insured ? 'Insured' : 'Not Insured'" />
-            </div>
-          </div>
+    <section v-if="investigation" class="result-panel">
+      <div class="result-panel-head">
+        <h2 class="hms-section-title">Investigation</h2>
+      </div>
+      <div class="result-meta-grid">
+        <div class="result-meta-item">
+          <div class="result-meta-label">Procedure</div>
+          <div class="result-meta-value">{{ investigation.procedure_name || 'N/A' }}</div>
         </div>
-        <div class="row q-gutter-md q-mt-md">
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Date of Birth</div>
-            <div class="text-body1 text-weight-medium">{{ formatDateOnly(patient.date_of_birth) }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Age</div>
-            <div class="text-body1 text-weight-medium">{{ patient.age || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Sex</div>
-            <div class="text-body1 text-weight-medium">{{ patient.gender || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Encounter Date</div>
-            <div class="text-body1 text-weight-medium">{{ formatDate(encounter?.created_at) || 'N/A' }}</div>
-          </div>
+        <div class="result-meta-item">
+          <div class="result-meta-label">G-DRG</div>
+          <div class="result-meta-value">{{ investigation.gdrg_code || 'N/A' }}</div>
         </div>
-        <div v-if="encounterBillInfo.totalAmount !== null" class="row q-gutter-md q-mt-md">
-          <div class="col-12">
-            <div class="text-body2" :class="encounterBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
-              <q-icon name="receipt" size="14px" class="q-mr-xs" />
-              <strong>Total Bills:</strong> GHC {{ encounterBillInfo.totalAmount.toFixed(2) }} 
-              <span v-if="encounterBillInfo.remainingBalance > 0" class="text-negative">
-                | Outstanding: GHC {{ encounterBillInfo.remainingBalance.toFixed(2) }}
-              </span>
-              <span v-else>
-                | Outstanding: GHC 0.00
-              </span>
-            </div>
-          </div>
+        <div class="result-meta-item">
+          <div class="result-meta-label">Requested by</div>
+          <div class="result-meta-value">{{ investigation.requested_by_name || 'N/A' }}</div>
         </div>
-        <div v-if="patient.insured && patient.insurance_id" class="row q-gutter-md q-mt-md">
-          <div class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Insurance ID</div>
-            <div class="text-body1 text-weight-medium">{{ patient.insurance_id || 'N/A' }}</div>
-          </div>
-          <div v-if="patient.insurance_start_date" class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Insurance Start Date</div>
-            <div class="text-body1 text-weight-medium">{{ formatDateOnly(patient.insurance_start_date) }}</div>
-          </div>
-          <div v-if="patient.insurance_end_date" class="col-12 col-md-3">
-            <div class="text-caption text-grey-7">Insurance End Date</div>
-            <div class="text-body1 text-weight-medium">{{ formatDateOnly(patient.insurance_end_date) }}</div>
-          </div>
+        <div class="result-meta-item">
+          <div class="result-meta-label">Confirmed by</div>
+          <div class="result-meta-value">{{ investigation.confirmed_by_name || 'N/A' }}</div>
         </div>
-      </q-card-section>
-    </q-card>
+        <div class="result-meta-item">
+          <div class="result-meta-label">Completed by</div>
+          <div class="result-meta-value">{{ investigation.completed_by_name || 'N/A' }}</div>
+        </div>
+        <div class="result-meta-item">
+          <div class="result-meta-label">Entered by</div>
+          <div class="result-meta-value">{{ xrayResult?.entered_by_name || 'N/A' }}</div>
+        </div>
+        <div class="result-meta-item">
+          <div class="result-meta-label">Updated by</div>
+          <div class="result-meta-value">{{ xrayResult?.updated_by_name || 'N/A' }}</div>
+        </div>
+      </div>
+      <div v-if="investigation.notes" class="result-note-callout">
+        <div class="result-meta-label">Doctor's notes</div>
+        <div class="result-note-body">{{ investigation.notes }}</div>
+      </div>
+    </section>
 
-    <!-- Investigation Details -->
-    <q-card v-if="investigation" class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Investigation Details</div>
-        <div class="row q-gutter-md">
-          <div class="col-12 col-md-6">
-            <div class="text-caption text-grey-7">Procedure Name</div>
-            <div class="text-body1 text-weight-medium">{{ investigation.procedure_name || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="text-caption text-grey-7">G-DRG Code</div>
-            <div class="text-body1 text-weight-medium">{{ investigation.gdrg_code || 'N/A' }}</div>
-          </div>
-        </div>
-        <div v-if="investigation.notes" class="row q-mt-md">
-          <div class="col-12">
-            <div class="text-caption text-grey-7">Doctor's Notes</div>
-            <div class="text-body2 q-pa-sm" style="background-color: rgba(255, 255, 255, 0.1); border-radius: 4px;">
-              {{ investigation.notes }}
-            </div>
-          </div>
-        </div>
-        <div class="row q-gutter-md q-mt-md">
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Requested By</div>
-            <div class="text-body1 text-weight-medium">{{ investigation.requested_by_name || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Confirmed By</div>
-            <div class="text-body1 text-weight-medium">{{ investigation.confirmed_by_name || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Completed By</div>
-            <div class="text-body1 text-weight-medium">{{ investigation.completed_by_name || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Entered By</div>
-            <div class="text-body1 text-weight-medium">{{ xrayResult?.entered_by_name || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Updated By</div>
-            <div class="text-body1 text-weight-medium">{{ xrayResult?.updated_by_name || 'N/A' }}</div>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- X-ray Result Form -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">
-          {{ editingResult ? 'Edit X-ray Result' : 'Add X-ray Result' }}
-        </div>
-        <q-banner
-          v-if="investigation?.status === 'completed' && !canEditResult"
-          class="bg-warning text-dark q-mb-md"
-          rounded
-        >
-          <template v-slot:avatar>
-            <q-icon name="warning" color="dark" />
-          </template>
+    <section class="result-panel result-form-panel">
+      <div class="result-panel-head">
+        <h2 class="hms-section-title">{{ editingResult ? 'Edit result' : 'Add result' }}</h2>
+        <p class="result-panel-sub">Enter X-ray findings and attach supporting files.</p>
+      </div>
+      <div
+        v-if="investigation?.status === 'completed' && !canEditResult"
+        class="result-warn-banner"
+        role="status"
+      >
+        <q-icon name="warning" size="20px" />
+        <div>
           This investigation is completed. Only Admin and Xray Head can edit completed investigations. Please contact Xray Head to revert the status if changes are needed.
-        </q-banner>
-        <q-form @submit="saveXrayResult" class="q-gutter-md">
+        </div>
+      </div>
+      <q-form @submit="saveXrayResult" class="q-gutter-md">
           <q-input
             v-model="resultForm.results_text"
             filled
@@ -222,25 +176,21 @@
               </q-item>
             </q-list>
           </div>
-          <div class="row q-gutter-md q-mt-md">
-            <q-btn
-              label="Cancel"
-              flat
-              @click="$router.push('/xray')"
-              class="col"
-            />
-            <q-btn
-              label="Save"
+          <div class="result-form-actions">
+            <HmsButton variant="secondary" @click="$router.push('/xray')">
+              Cancel
+            </HmsButton>
+            <HmsButton
+              variant="primary"
               type="submit"
-              color="primary"
-              class="col"
               :loading="savingResult"
-              :disable="!canEditResult"
-            />
+              :disabled="!canEditResult"
+            >
+              Save
+            </HmsButton>
           </div>
         </q-form>
-      </q-card-section>
-    </q-card>
+    </section>
   </q-page>
 </template>
 
@@ -250,6 +200,9 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, encountersAPI, patientsAPI, billingAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -279,6 +232,26 @@ const canEditResult = computed(() => {
   // For non-completed investigations, all Xray staff can edit
   return true;
 });
+
+const patientDisplayName = computed(() => {
+  if (!patient.value) return '';
+  return [patient.value.name, patient.value.surname, patient.value.other_names].filter(Boolean).join(' ');
+});
+
+const patientInitials = computed(() => {
+  if (!patient.value) return '?';
+  const a = (patient.value.name || '').trim().charAt(0);
+  const b = (patient.value.surname || '').trim().charAt(0);
+  return ((a + b) || '?').toUpperCase();
+});
+
+const statusTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s === 'completed') return 'success';
+  if (s === 'confirmed') return 'info';
+  if (s === 'requested') return 'warning';
+  return 'neutral';
+};
 
 const resultForm = ref({
   investigation_id: null,
@@ -917,4 +890,141 @@ onMounted(() => {
   loadInvestigation();
 });
 </script>
+
+<style scoped>
+.result-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.result-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.result-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.result-hero-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.result-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.result-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.result-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.result-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.result-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+
+.result-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.result-panel-head { margin-bottom: 0.85rem; }
+.result-panel-sub {
+  margin: 0.2rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.result-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.85rem 1rem;
+}
+.result-meta-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  margin-bottom: 0.2rem;
+}
+.result-meta-value {
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+  color: var(--hms-text-primary);
+}
+.result-note-callout {
+  margin-top: 0.95rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+}
+.result-note-body {
+  margin-top: 0.25rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.result-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--hms-border);
+}
+.result-warn-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-bottom: 0.95rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-warning-muted, rgba(245, 158, 11, 0.12));
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: var(--hms-text-primary);
+  font-size: var(--hms-text-sm);
+  line-height: 1.4;
+}
+@media (max-width: 720px) {
+  .result-hero { position: static; }
+}
+</style>
 

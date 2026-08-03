@@ -1,279 +1,198 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Consultation</div>
+  <q-page class="hms-page consult-page">
+    <HmsPageHeader
+      v-if="!encounterLoaded"
+      title="Consultation"
+      subtitle="Select an encounter to open the clinical workspace."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="setToday">Today</HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <q-card class="q-mb-md glass-card" v-if="!encounterLoaded" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Load Encounter</div>
-        
-        <!-- Filter Section -->
-        <div class="row q-gutter-md q-mb-md">
-          <q-input
-            v-model="selectedDate"
-            filled
-            type="date"
-            label="Select Date"
-            class="col-12 col-md-3"
-            @update:model-value="loadEncountersForDate"
-          />
-          <q-input
-            v-model="cardNumberFilter"
-            filled
-            label="Filter by Card Number"
-            class="col-12 col-md-3"
-            clearable
-          />
-          <q-btn
-            icon="today"
-            label="Today"
-            @click="setToday"
-            color="primary"
-            class="col-12 col-md-2 glass-button"
-          />
-          <q-space />
-          <q-badge color="primary" :label="`${filteredEncounters.length} encounters`" />
+    <div v-if="!encounterLoaded" class="picker-shell">
+      <div class="picker-toolbar">
+        <div class="toolbar-meta">
+          <Stethoscope :size="15" />
+          <span>{{ filteredEncounters.length }} encounter{{ filteredEncounters.length === 1 ? '' : 's' }}</span>
         </div>
-
-        <!-- Encounter ID Search (Alternative) -->
-        <q-separator class="q-mb-md" />
-        <div class="text-subtitle2 q-mb-sm glass-text">Or search by Encounter ID:</div>
-        <div class="row q-gutter-md">
-          <q-input
-            v-model="searchEncounterId"
-            filled
-            type="number"
-            label="Encounter ID"
-            class="col-12 col-md-8"
-            @keyup.enter="loadEncounter"
-          />
-          <q-btn
-            color="primary"
-            label="Load"
-            @click="loadEncounter"
-            class="col-12 col-md-4 glass-button"
-            :loading="loadingEncounter"
-          />
-        </div>
-
-        <!-- Encounters List -->
-        <div v-if="filteredEncounters.length > 0" class="q-mt-md">
-          <q-separator class="q-mb-md" />
-          <div class="text-subtitle2 q-mb-sm glass-text">Select an encounter:</div>
-          <q-table
-            :rows="filteredEncounters"
-            :columns="encounterColumns"
-            row-key="id"
-            flat
-            :loading="loadingEncounters"
-            :rows-per-page-options="[10, 20, 50]"
-            @row-click="selectEncounter"
-            class="cursor-pointer"
-          >
-            <template v-slot:body-cell-status="props">
-              <q-td :props="props">
-                <q-badge
-                  :color="getStatusColor(props.value)"
-                  :label="props.value"
-                />
-              </q-td>
-            </template>
-            <template v-slot:body-cell-time="props">
-              <q-td :props="props">
-                {{ formatTime(props.value) }}
-              </q-td>
-            </template>
-            <template v-slot:body-cell-actions="props">
-              <q-td :props="props">
-                <q-btn
-                  size="sm"
-                  color="primary"
-                  icon="visibility"
-                  flat
-                  @click.stop="selectEncounter(props.row)"
-                  label="Select"
-                />
-              </q-td>
-            </template>
-          </q-table>
-        </div>
-
-        <!-- Empty State -->
-        <div v-if="!loadingEncounters && filteredEncounters.length === 0 && selectedDate" class="text-center q-pa-lg text-grey-6">
-          <q-icon name="event_busy" size="64px" />
-          <div class="text-h6 q-mt-md">No encounters found for this date</div>
-          <div class="text-caption q-mt-sm" v-if="cardNumberFilter">
-            Try removing the card number filter or selecting a different date
+        <div class="toolbar-controls">
+          <input v-model="selectedDate" type="date" class="tool-input" @change="loadEncountersForDate" />
+          <input v-model="cardNumberFilter" type="search" class="tool-input" placeholder="Filter by card…" />
+          <div class="id-load">
+            <input v-model="searchEncounterId" type="number" class="tool-input" placeholder="Encounter ID" @keyup.enter="loadEncounter" />
+            <HmsButton variant="primary" size="sm" :loading="loadingEncounter" @click="loadEncounter">Load</HmsButton>
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
 
-    <div v-if="encounterLoaded">
-      <!-- Patient Info -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="text-h6 q-mb-sm glass-text">
-            {{ patientInfo?.name }} {{ patientInfo?.surname }}
-            <span 
-              v-if="remainingBalance > 0" 
-              class="text-negative text-weight-bold q-ml-md cursor-pointer"
-              style="text-decoration: underline;"
-              @click="openBillItemsDialog"
-            >
-              Bill Amount: GHC {{ remainingBalance.toFixed(2) }} (Click to View Items)
-            </span>
-            <span 
-              v-else-if="totalBillAmount > 0" 
-              class="text-positive text-weight-bold q-ml-md cursor-pointer"
-              style="text-decoration: underline;"
-              @click="openBillItemsDialog"
-            >
-              Bill Fully Paid: GHC {{ totalBillAmount.toFixed(2) }} (Click to View Items)
-            </span>
-          </div>
-          <div class="row q-gutter-md">
-            <div class="col-12 col-md-3">
-              <strong>Card Number:</strong> 
-              <span class="text-weight-bold text-primary">{{ patientInfo?.card_number || 'N/A' }}</span>
-            </div>
-            <div class="col-12 col-md-3">
-              <strong>Insurance No:</strong> {{ patientInfo?.insurance_id || 'N/A' }}
-            </div>
-            <div class="col-12 col-md-3">
-              <strong>Age:</strong> {{ patientInfo?.age || 'N/A' }}
-            </div>
-            <div class="col-12 col-md-3">
-              <strong>Sex:</strong> {{ patientInfo?.gender || 'N/A' }}
+      <HmsDataTable
+        :rows="filteredEncounters"
+        :columns="consultPickerColumns"
+        row-key="id"
+        :loading="loadingEncounters"
+        dense
+        searchable
+        search-placeholder="Search patient or department…"
+        empty-title="No encounters found"
+        :empty-description="cardNumberFilter ? 'Try clearing the card filter or picking another date.' : 'No encounters for this date.'"
+        @row-click="selectEncounter"
+      >
+        <template #cell-time="{ value }">{{ formatTime(value) }}</template>
+        <template #cell-patient="{ row }">
+          <div class="patient-cell">
+            <div class="avatar">{{ consultInitials(row) }}</div>
+            <div>
+              <div class="name">{{ titleCaseName(row.patient_name) }}</div>
+              <div class="sub mono">{{ row.patient_card_number }}</div>
             </div>
           </div>
-          <div class="row q-gutter-md q-mt-sm">
-            <div class="col-12 col-md-3">
-              <strong>DOB:</strong> {{ formatDate(patientInfo?.date_of_birth) || 'N/A' }}
+        </template>
+        <template #cell-status="{ value }">
+          <HmsBadge :tone="consultStatusTone(value)">{{ value }}</HmsBadge>
+        </template>
+        <template #cell-actions="{ row }">
+          <HmsButton variant="soft" size="sm" @click.stop="selectEncounter(row)">Open</HmsButton>
+        </template>
+      </HmsDataTable>
+    </div>
+
+    <div v-if="encounterLoaded" class="consult-workspace">
+      <!-- Patient hero -->
+      <div class="patient-hero">
+        <div class="hero-main">
+          <div class="hero-avatar">{{ patientHeroInitials }}</div>
+          <div class="hero-text">
+            <div class="hero-name-row">
+              <h1 class="hero-name">{{ patientDisplayName }}</h1>
+              <HmsBadge v-if="patientInfo?.insured" tone="success">Insured</HmsBadge>
+              <HmsBadge v-else tone="warning">Cash</HmsBadge>
             </div>
-            <div class="col-12 col-md-3">
-              <strong>Encounter Date:</strong> {{ formatDate(encounterStore.currentEncounter?.created_at) || 'N/A' }}
-            </div>
-            <div class="col-12 col-md-3">
-              <strong>CCC Number:</strong> {{ encounterStore.currentEncounter?.ccc_number || 'N/A' }}
+            <div class="hero-meta">
+              <span class="mono">{{ patientInfo?.card_number || 'N/A' }}</span>
+              <span class="sep">·</span>
+              <span>{{ patientInfo?.gender === 'M' ? 'Male' : patientInfo?.gender === 'F' ? 'Female' : (patientInfo?.gender || '—') }}</span>
+              <span class="sep">·</span>
+              <span>Age {{ patientInfo?.age ?? 'N/A' }}</span>
+              <span class="sep">·</span>
+              <span>Encounter {{ formatDate(encounterStore.currentEncounter?.created_at) || 'N/A' }}</span>
+              <template v-if="encounterStore.currentEncounter?.ccc_number">
+                <span class="sep">·</span>
+                <span>CCC {{ encounterStore.currentEncounter.ccc_number }}</span>
+              </template>
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+        <div class="hero-actions">
+          <button type="button" class="balance-pill" :class="remainingBalance > 0 ? 'due' : (totalBillAmount > 0 ? 'ok' : 'neutral')" @click="openBillItemsDialog">
+            <span class="balance-label">Balance</span>
+            <span class="balance-value">GHC {{ remainingBalance.toFixed(2) }}</span>
+          </button>
+          <HmsButton variant="ghost" size="sm" @click="encounterLoaded = false">Change encounter</HmsButton>
+        </div>
+      </div>
 
       <!-- Vitals Display -->
-      <q-card class="q-mb-md glass-card" v-if="encounterStore.encounterVitals" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-sm">
-            <div class="text-h6 glass-text">Vitals</div>
-            <q-space />
-            <q-btn
-              flat
-              icon="history"
-              label="Show Previous"
-              color="secondary"
-              size="sm"
-              @click="showPreviousVitals"
-            />
+      <section class="diag-panel" v-if="encounterStore.encounterVitals">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Vitals</div>
+            <div class="panel-sub">Recorded for this encounter</div>
           </div>
-          <div class="row q-gutter-md">
-            <div v-if="encounterStore.encounterVitals.bp" class="col-12 col-md-3">
-              <strong>BP:</strong> {{ encounterStore.encounterVitals.bp }} mmHg
-            </div>
-            <div v-if="encounterStore.encounterVitals.temperature" class="col-12 col-md-3">
-              <strong>Temp:</strong> {{ encounterStore.encounterVitals.temperature }}°C
-            </div>
-            <div v-if="encounterStore.encounterVitals.pulse" class="col-12 col-md-3">
-              <strong>Pulse:</strong> {{ encounterStore.encounterVitals.pulse }} bpm
-            </div>
-            <div v-if="encounterStore.encounterVitals.respiration" class="col-12 col-md-3">
-              <strong>RR:</strong> {{ encounterStore.encounterVitals.respiration }} /min
-            </div>
-            <div v-if="encounterStore.encounterVitals.weight" class="col-12 col-md-3">
-              <strong>Weight:</strong> {{ encounterStore.encounterVitals.weight }} kg
-            </div>
-            <div v-if="encounterStore.encounterVitals.height" class="col-12 col-md-3">
-              <strong>Height:</strong> {{ encounterStore.encounterVitals.height }} cm
-            </div>
-            <div v-if="encounterStore.encounterVitals.bmi" class="col-12 col-md-3">
-              <strong>BMI:</strong> {{ encounterStore.encounterVitals.bmi }}
-            </div>
-            <div v-if="encounterStore.encounterVitals.spo2" class="col-12 col-md-3">
-              <strong>SpO2:</strong> {{ encounterStore.encounterVitals.spo2 }}%
-            </div>
-            <div v-if="encounterStore.encounterVitals.rbs" class="col-12 col-md-3">
-              <strong>RBS:</strong> {{ encounterStore.encounterVitals.rbs }} mmol/L
-            </div>
-            <div v-if="encounterStore.encounterVitals.fbs" class="col-12 col-md-3">
-              <strong>FBS:</strong> {{ encounterStore.encounterVitals.fbs }} mmol/L
-            </div>
-            <div v-if="encounterStore.encounterVitals.upt" class="col-12 col-md-3">
-              <strong>UPT:</strong> {{ encounterStore.encounterVitals.upt }}
-            </div>
-            <div v-if="encounterStore.encounterVitals.rdt_malaria" class="col-12 col-md-3">
-              <strong>Malaria RDT:</strong> {{ encounterStore.encounterVitals.rdt_malaria }}
-            </div>
-            <div v-if="encounterStore.encounterVitals.retro_rdt" class="col-12 col-md-3">
-              <strong>Retro RDT:</strong> {{ encounterStore.encounterVitals.retro_rdt }}
-            </div>
-            <div v-if="encounterStore.encounterVitals.remarks" class="col-12">
-              <strong>Remarks:</strong> {{ encounterStore.encounterVitals.remarks }}
-            </div>
+          <div class="panel-actions">
+            <HmsButton variant="ghost" size="sm" @click="showPreviousVitals">Previous</HmsButton>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+        <div class="panel-body vitals-grid">
+            <div v-if="encounterStore.encounterVitals.bp" class="vital-item">
+              <div class="vital-label">Blood pressure</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.bp }} mmHg</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.temperature" class="vital-item">
+              <div class="vital-label">Temperature</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.temperature }}°C</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.pulse" class="vital-item">
+              <div class="vital-label">Pulse</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.pulse }} bpm</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.respiration" class="vital-item">
+              <div class="vital-label">Respiration</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.respiration }} /min</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.weight" class="vital-item">
+              <div class="vital-label">Weight</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.weight }} kg</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.height" class="vital-item">
+              <div class="vital-label">Height</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.height }} cm</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.bmi" class="vital-item">
+              <div class="vital-label">BMI</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.bmi }}</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.spo2" class="vital-item">
+              <div class="vital-label">SpO₂</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.spo2 }}%</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.rbs" class="vital-item">
+              <div class="vital-label">RBS</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.rbs }} mmol/L</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.fbs" class="vital-item">
+              <div class="vital-label">FBS</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.fbs }} mmol/L</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.upt" class="vital-item">
+              <div class="vital-label">UPT</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.upt }}</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.rdt_malaria" class="vital-item">
+              <div class="vital-label">Malaria RDT</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.rdt_malaria }}</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.retro_rdt" class="vital-item">
+              <div class="vital-label">Retro RDT</div>
+              <div class="vital-value">{{ encounterStore.encounterVitals.retro_rdt }}</div>
+            </div>
+            <div v-if="encounterStore.encounterVitals.remarks" class="vital-item vital-item--wide">
+              <div class="vital-label">Remarks</div>
+              <div class="vital-value vital-value--sm">{{ encounterStore.encounterVitals.remarks }}</div>
+            </div>
+        </div>
+      </section>
 
       <!-- Presenting Complaints -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Presenting Complaints</div>
-            <q-space />
-            <q-btn
-              flat
-              icon="history"
-              label="Show Previous"
-              color="secondary"
-              size="sm"
-              @click="showPreviousComplaints"
-              class="q-mr-sm"
-            />
-            <q-btn
-              flat
-              icon="edit"
-              label="Edit"
-              color="primary"
-              @click="openEditPresentingComplaints"
-              :disable="readonly"
-            />
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Presenting complaints</div>
+            <div class="panel-sub">Chief concerns for this visit</div>
           </div>
-          <div class="text-body1" style="white-space: pre-wrap;">
+          <div class="panel-actions">
+            <HmsButton variant="ghost" size="sm" @click="showPreviousComplaints">Previous</HmsButton>
+            <HmsButton variant="secondary" size="sm" :disabled="readonly" @click="openEditPresentingComplaints">Edit</HmsButton>
+          </div>
+        </div>
+        <div class="panel-body prose-block">
             {{ consultationNotes?.presenting_complaints || 'No presenting complaints recorded.' }}
-          </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Diagnoses -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Diagnoses</div>
-            <q-space />
-            <q-btn
-              flat
-              icon="history"
-              label="Show Previous"
-              color="secondary"
-              size="sm"
-              @click="showPreviousDiagnoses"
-              class="q-mr-sm"
-            />
-            <q-btn
-              color="primary"
-              label="Add Diagnosis"
-              @click="resetDiagnosisForm(); showDiagnosisDialog = true"
-              class="glass-button"
-            />
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Diagnoses</div>
+            <div class="panel-sub">Clinical assessments for this encounter</div>
           </div>
+          <div class="panel-actions">
+            <HmsButton variant="ghost" size="sm" @click="showPreviousDiagnoses">Previous</HmsButton>
+            <HmsButton variant="primary" size="sm" @click="resetDiagnosisForm(); showDiagnosisDialog = true">Add diagnosis</HmsButton>
+          </div>
+        </div>
+        <div class="panel-body panel-body--flush">
 
           <q-table
             :rows="encounterStore.encounterDiagnoses"
@@ -283,20 +202,20 @@
           >
             <template v-slot:body-cell-diagnosis_status="props">
               <q-td :props="props">
-                <q-badge
+                <HmsBadge
                   v-if="props.value"
-                  :color="props.value === 'new' ? 'blue' : props.value === 'old' ? 'grey' : 'purple'"
-                  :label="props.value === 'new' ? 'New' : props.value === 'old' ? 'Old' : 'Recurring'"
-                />
+                  :tone="props.value === 'new' ? 'info' : props.value === 'old' ? 'muted' : 'healthcare'"
+                >
+                  {{ props.value === 'new' ? 'New' : props.value === 'old' ? 'Old' : 'Recurring' }}
+                </HmsBadge>
                 <span v-else class="text-grey-6">-</span>
               </q-td>
             </template>
             <template v-slot:body-cell-is_provisional="props">
               <q-td :props="props">
-                <q-badge
-                  :color="props.value ? 'orange' : 'green'"
-                  :label="props.value ? 'Provisional' : 'Final'"
-                />
+                <HmsBadge :tone="props.value ? 'warning' : 'success'">
+                  {{ props.value ? 'Provisional' : 'Final' }}
+                </HmsBadge>
               </q-td>
             </template>
             <template v-slot:body-cell-is_chief="props">
@@ -337,48 +256,26 @@
               </q-td>
             </template>
           </q-table>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Prescriptions -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-expansion-item
-          v-model="prescriptionsExpanded"
-          icon="medication"
-          label="Prescriptions"
-          header-class="text-h6 glass-text"
-          expand-separator
-        >
-          <q-card-section>
-            <div class="row items-center q-mb-md">
-              <q-space />
-              <q-btn
-                flat
-                icon="history"
-                label="Show Previous"
-                color="secondary"
-                size="sm"
-                @click="showPreviousPrescriptions"
-                class="q-mr-sm"
-              />
-              <q-btn
-                flat
-                icon="bookmark"
-                label="Templates"
-                color="accent"
-                size="sm"
-                @click="showTemplateDialog = true; loadTemplates()"
-                class="q-mr-sm"
-              >
-                <q-tooltip>Manage and apply prescription/investigation templates</q-tooltip>
-              </q-btn>
-              <q-btn
-                color="primary"
-                label="Add Prescription"
-                @click="resetPrescriptionForm(); showPrescriptionDialog = true"
-                class="glass-button"
-              />
-            </div>
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Prescriptions</div>
+            <div class="panel-sub">Medications for this encounter</div>
+          </div>
+          <div class="panel-actions">
+            <HmsButton variant="ghost" size="sm" @click="showPreviousPrescriptions">Previous</HmsButton>
+            <HmsButton variant="secondary" size="sm" @click="showTemplateDialog = true; loadTemplates()">Templates</HmsButton>
+            <HmsButton variant="primary" size="sm" @click="resetPrescriptionForm(); showPrescriptionDialog = true">Add prescription</HmsButton>
+            <HmsButton variant="ghost" size="sm" @click="prescriptionsExpanded = !prescriptionsExpanded">
+              {{ prescriptionsExpanded ? 'Collapse' : 'Expand' }}
+            </HmsButton>
+          </div>
+        </div>
+        <div v-show="prescriptionsExpanded" class="panel-body panel-body--flush">
 
             <q-table
               :rows="encounterStore.encounterPrescriptions"
@@ -390,16 +287,8 @@
             >
               <template v-slot:body-cell-status="props">
                 <q-td :props="props">
-                  <q-badge
-                    v-if="props.row.is_confirmed"
-                    color="positive"
-                    label="Confirmed"
-                  />
-                  <q-badge
-                    v-else
-                    color="warning"
-                    label="Pending"
-                  />
+                  <HmsBadge v-if="props.row.is_confirmed" tone="success">Confirmed</HmsBadge>
+                  <HmsBadge v-else tone="warning">Pending</HmsBadge>
                 </q-td>
               </template>
               <template v-slot:body-cell-actions="props">
@@ -436,43 +325,23 @@
                 </q-td>
               </template>
             </q-table>
-          </q-card-section>
-        </q-expansion-item>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Investigations -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Investigations</div>
-            <q-space />
-            <q-btn
-              flat
-              icon="history"
-              label="Show Previous"
-              color="secondary"
-              size="sm"
-              @click="showPreviousInvestigations"
-              class="q-mr-sm"
-            />
-            <q-btn
-              flat
-              icon="bookmark"
-              label="Templates"
-              color="accent"
-              size="sm"
-              @click="showTemplateDialog = true; loadTemplates()"
-              class="q-mr-sm"
-            >
-              <q-tooltip>Manage and apply prescription/investigation templates</q-tooltip>
-            </q-btn>
-            <q-btn
-              color="primary"
-              label="Add Investigation"
-              @click="resetInvestigationForm(); showInvestigationDialog = true"
-              class="glass-button"
-            />
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Investigations</div>
+            <div class="panel-sub">Labs, imaging, and procedures</div>
           </div>
+          <div class="panel-actions">
+            <HmsButton variant="ghost" size="sm" @click="showPreviousInvestigations">Previous</HmsButton>
+            <HmsButton variant="secondary" size="sm" @click="showTemplateDialog = true; loadTemplates()">Templates</HmsButton>
+            <HmsButton variant="primary" size="sm" @click="resetInvestigationForm(); showInvestigationDialog = true">Add investigation</HmsButton>
+          </div>
+        </div>
+        <div class="panel-body panel-body--flush">
 
           <q-table
             :rows="encounterStore.encounterInvestigations"
@@ -483,26 +352,10 @@
           >
             <template v-slot:body-cell-status="props">
               <q-td :props="props">
-                <q-badge
-                  v-if="props.row.status === 'cancelled'"
-                  color="negative"
-                  label="Cancelled"
-                />
-                <q-badge
-                  v-else-if="props.row.status === 'completed'"
-                  color="positive"
-                  label="Completed"
-                />
-                <q-badge
-                  v-else-if="props.row.status === 'confirmed'"
-                  color="warning"
-                  label="Confirmed"
-                />
-                <q-badge
-                  v-else
-                  color="grey"
-                  label="Requested"
-                />
+                <HmsBadge v-if="props.row.status === 'cancelled'" tone="critical">Cancelled</HmsBadge>
+                <HmsBadge v-else-if="props.row.status === 'completed'" tone="success">Completed</HmsBadge>
+                <HmsBadge v-else-if="props.row.status === 'confirmed'" tone="warning">Confirmed</HmsBadge>
+                <HmsBadge v-else tone="muted">Requested</HmsBadge>
               </q-td>
             </template>
             <template v-slot:body-cell-actions="props">
@@ -580,27 +433,28 @@
               </q-td>
             </template>
           </q-table>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Doctor Notes -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Doctor Notes</div>
-            <q-space />
-            <q-btn
-              flat
-              dense
-              icon="history"
-              label="Show Previous Notes"
-              color="primary"
-              @click="showPreviousNotesDialog = true; loadPreviousDoctorNotes()"
-              :loading="loadingPreviousNotes"
-            >
-              <q-tooltip>View doctor notes from previous encounters for this patient</q-tooltip>
-            </q-btn>
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Doctor notes</div>
+            <div class="panel-sub">Clinical narrative for this encounter</div>
           </div>
+          <div class="panel-actions">
+            <HmsButton
+              variant="ghost"
+              size="sm"
+              :loading="loadingPreviousNotes"
+              @click="showPreviousNotesDialog = true; loadPreviousDoctorNotes()"
+            >
+              Previous notes
+            </HmsButton>
+          </div>
+        </div>
+        <div class="panel-body">
           
           <!-- Existing Doctor Notes List -->
           <div v-if="doctorNoteEntries.length > 0" class="q-mb-md">
@@ -723,37 +577,37 @@
             <q-icon name="info" size="14px" class="q-mr-xs" />
             Consultation is finalized. Cannot add or edit notes.
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Follow-up Date -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Follow-up Date</div>
-            <q-space />
-          <q-btn
-              flat
-              icon="edit"
-              label="Edit"
-              color="primary"
-            @click="openEditFollowUpDate"
-            :disable="readonly"
-            />
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Follow-up date</div>
+            <div class="panel-sub">Schedule return visit if needed</div>
           </div>
-          <div class="text-body1">
-            <strong>Follow-up Date:</strong> 
+          <div class="panel-actions">
+            <HmsButton variant="secondary" size="sm" :disabled="readonly" @click="openEditFollowUpDate">Edit</HmsButton>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="prose-block">
+            <strong>Follow-up date:</strong>
             {{ consultationNotes?.follow_up_date ? formatDate(consultationNotes.follow_up_date) : 'No follow-up date set.' }}
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Consultation Outcome -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Consultation Outcome</div>
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Consultation outcome</div>
+            <div class="panel-sub">Required to finalize the encounter</div>
           </div>
+        </div>
+        <div class="panel-body">
           <q-select
             v-model="notesForm.outcome"
             filled
@@ -775,64 +629,54 @@
             label="Admission Ward *"
             hint="Select the ward for admission"
           />
-          <div class="row q-mt-md q-gutter-md">
-            <q-btn label="Save Outcome" color="primary" @click="saveConsultationNotes" class="glass-button" />
+          <div class="create-row">
+            <HmsButton variant="primary" size="sm" @click="saveConsultationNotes">Save outcome</HmsButton>
           </div>
-          
+
           <!-- Finalized By Section -->
-          <div v-if="encounterStore.currentEncounter?.status === 'finalized' && encounterStore.currentEncounter?.finalized_by_name" class="q-mt-md q-pt-md" style="border-top: 1px solid rgba(255, 255, 255, 0.1);">
-            <div class="text-caption text-grey-7 q-mb-xs">Finalized By:</div>
-            <div class="text-body1 text-weight-medium glass-text">
+          <div v-if="encounterStore.currentEncounter?.status === 'finalized' && encounterStore.currentEncounter?.finalized_by_name" class="finalized-block">
+            <div class="vital-label">Finalized by</div>
+            <div class="finalized-name">
               {{ encounterStore.currentEncounter.finalized_by_name }}
-              <span v-if="encounterStore.currentEncounter.finalized_by_role" class="text-caption text-grey-6">
+              <span v-if="encounterStore.currentEncounter.finalized_by_role" class="text-muted">
                 ({{ encounterStore.currentEncounter.finalized_by_role }})
               </span>
             </div>
-            <div v-if="encounterStore.currentEncounter.finalized_at" class="text-caption text-grey-6 q-mt-xs">
+            <div v-if="encounterStore.currentEncounter.finalized_at" class="panel-sub">
               On {{ formatDateTime(encounterStore.currentEncounter.finalized_at) }}
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
       <!-- Actions -->
-      <div class="row q-gutter-md">
-        <!-- Show "Save Draft & Wait for Service" only if NOT finalized -->
-        <q-btn
+      <div class="consult-actions">
+        <HmsButton
           v-if="encounterStore.currentEncounter?.status !== 'finalized'"
-          color="warning"
-          label="Save Draft & Wait for Service"
+          variant="healthcare"
+          :disabled="readonly"
           @click="saveDraftAndAwaitServices"
-          :disable="readonly"
-          class="glass-button"
-        />
-        <!-- Show "Update Consultation" only if finalized -->
-        <q-btn
+        >
+          Save draft &amp; wait for service
+        </HmsButton>
+        <HmsButton
           v-if="encounterStore.currentEncounter?.status === 'finalized'"
-          color="primary"
-          label="Update Consultation"
+          variant="primary"
+          :disabled="readonly"
           @click="updateConsultation"
-          :disable="readonly"
-          class="glass-button"
-        />
-        <!-- Show "Finalize Consultation" only if NOT finalized -->
-        <q-btn
+        >
+          Update consultation
+        </HmsButton>
+        <HmsButton
           v-if="encounterStore.currentEncounter?.status !== 'finalized'"
-          color="positive"
-          label="Finalize Consultation"
-          @click="finalizeConsultation"
+          variant="primary"
           :loading="finalizing"
-          :disable="readonly"
-          class="glass-button"
-        />
-        <q-btn
-          flat
-          color="grey"
-          label="Cancel"
-          @click="cancelConsultation"
-          :disable="readonly"
-          class="glass-button"
-        />
+          :disabled="readonly"
+          @click="finalizeConsultation"
+        >
+          Finalize consultation
+        </HmsButton>
+        <HmsButton variant="ghost" :disabled="readonly" @click="cancelConsultation">Cancel</HmsButton>
       </div>
     </div>
 
@@ -2056,6 +1900,11 @@ import { usePatientsStore } from '../stores/patients';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar } from 'quasar';
 import LabResultViewer from '../components/LabResultViewer.vue';
+import { Stethoscope } from 'lucide-vue-next';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
+import HmsDataTable from '../components/ui/HmsDataTable.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -2085,6 +1934,14 @@ const encountersList = ref([]);
 const loadingEncounters = ref(false);
 
 // Encounter columns for the list
+const consultPickerColumns = [
+  { name: 'time', label: 'Time', field: 'created_at', align: 'left', width: '100px' },
+  { name: 'patient', label: 'Patient', field: 'patient_name', align: 'left' },
+  { name: 'department', label: 'Department', field: 'department', align: 'left', width: '140px' },
+  { name: 'status', label: 'Status', field: 'status', align: 'center', width: '130px' },
+  { name: 'actions', label: '', align: 'right', width: '100px' },
+];
+
 const encounterColumns = [
   { name: 'time', label: 'Time', field: 'created_at', align: 'left', sortable: true },
   { name: 'id', label: 'Encounter ID', field: 'id', align: 'left' },
@@ -2094,6 +1951,40 @@ const encounterColumns = [
   { name: 'status', label: 'Status', field: 'status', align: 'center' },
   { name: 'actions', label: 'Actions', align: 'center' },
 ];
+
+const titleCaseName = (value) => {
+  if (!value) return 'Unknown';
+  return String(value)
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+const consultInitials = (row) => {
+  const parts = String(row.patient_name || '?').trim().split(/\s+/);
+  return `${(parts[0] || '?')[0] || '?'}${(parts[1] || '')[0] || ''}`.toUpperCase();
+};
+
+const consultStatusTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('final')) return 'success';
+  if (s.includes('consult') || s.includes('progress')) return 'healthcare';
+  if (s.includes('await') || s.includes('draft') || s.includes('pending')) return 'warning';
+  return 'neutral';
+};
+
+const patientDisplayName = computed(() => {
+  if (!patientInfo.value) return '';
+  return [titleCaseName(patientInfo.value.name), titleCaseName(patientInfo.value.surname)]
+    .filter(Boolean)
+    .join(' ');
+});
+
+const patientHeroInitials = computed(() => {
+  if (!patientInfo.value) return '?';
+  const a = (patientInfo.value.name || '?')[0] || '?';
+  const b = (patientInfo.value.surname || '')[0] || '';
+  return `${a}${b}`.toUpperCase();
+});
 
 // Filtered encounters based on card number
 const filteredEncounters = computed(() => {
@@ -5384,4 +5275,99 @@ onUnmounted(() => {
   draftSaveTimers.value = {};
 });
 </script>
+
+<style scoped>
+.consult-page { max-width: none; }
+.picker-shell { display: flex; flex-direction: column; gap: 0.85rem; }
+.picker-toolbar, .vitals-toolbar-like {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;
+}
+.toolbar-meta { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--hms-text-muted); font-size: var(--hms-text-sm); font-weight: 600; }
+.toolbar-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.tool-input {
+  height: 2.15rem; border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg); color: var(--hms-text-primary); font-family: inherit;
+  font-size: var(--hms-text-sm); padding: 0 0.7rem;
+}
+.id-load { display: inline-flex; gap: 0.4rem; align-items: center; }
+.patient-cell { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.avatar {
+  width: 2.15rem; height: 2.15rem; border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.16));
+  color: var(--hms-accent); display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.68rem; font-weight: 750; flex-shrink: 0;
+}
+.name { font-weight: 700; color: var(--hms-text-primary); }
+.sub { margin-top: 0.1rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.mono { font-family: var(--hms-font-mono); font-size: 0.75rem; }
+.consult-workspace { display: flex; flex-direction: column; gap: 0.85rem; }
+.patient-hero {
+  position: sticky; top: 0.55rem; z-index: 6;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.85rem;
+  padding: 0.95rem 1.1rem; border-radius: var(--hms-radius-xl);
+  background: var(--hms-glass-bg-strong); border: 1px solid var(--hms-border-strong);
+  box-shadow: var(--hms-shadow-lg), var(--hms-shadow-inner); backdrop-filter: blur(16px);
+}
+.hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.hero-avatar {
+  width: 3.1rem; height: 3.1rem; border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.18));
+  color: var(--hms-accent); display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 750; flex-shrink: 0;
+}
+.hero-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.hero-name { margin: 0; font-size: var(--hms-text-2xl); font-weight: 750; letter-spacing: var(--hms-tracking-tight); color: var(--hms-text-primary); }
+.hero-meta { margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.15rem 0.2rem; color: var(--hms-text-secondary); font-size: var(--hms-text-sm); }
+.sep { color: var(--hms-text-muted); margin: 0 0.2rem; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.4rem 0.7rem;
+  border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font-family: inherit;
+}
+.balance-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hms-text-muted); }
+.balance-value { font-weight: 750; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.diag-panel {
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.65rem; padding: 0.85rem 1rem; border-bottom: 1px solid var(--hms-border); margin-bottom: 0;
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.panel-body { padding: 0.95rem 1rem; }
+.panel-body--flush { padding: 0.35rem 0.25rem 0.75rem; }
+.prose-block { white-space: pre-wrap; color: var(--hms-text-primary); font-size: var(--hms-text-sm); line-height: 1.5; }
+.vitals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 0.75rem; }
+.vital-item--wide { grid-column: 1 / -1; }
+.vital-label {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--hms-text-muted);
+}
+.vital-value { margin-top: 0.2rem; font-weight: 700; color: var(--hms-text-primary); font-variant-numeric: tabular-nums; }
+.vital-value--sm { font-weight: 500; font-size: var(--hms-text-sm); }
+.create-row { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.85rem; }
+.finalized-block {
+  margin-top: 0.95rem; padding-top: 0.85rem; border-top: 1px solid var(--hms-border);
+}
+.finalized-name { margin-top: 0.2rem; font-weight: 700; color: var(--hms-text-primary); }
+.text-muted { color: var(--hms-text-muted); }
+.consult-actions {
+  display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center;
+  padding: 0.35rem 0 0.75rem;
+}
+@media (max-width: 720px) {
+  .patient-hero { position: static; }
+  .toolbar-controls { width: 100%; }
+  .tool-input { flex: 1; min-width: 0; }
+  .id-load { width: 100%; }
+}
+</style>
 
