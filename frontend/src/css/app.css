@@ -20,8 +20,25 @@
   }
 
   ::selection {
-    background: var(--hms-accent-muted);
+    background: color-mix(in srgb, var(--hms-accent) 42%, white);
     color: var(--hms-text-primary);
+  }
+
+  ::-moz-selection {
+    background: color-mix(in srgb, var(--hms-accent) 42%, white);
+    color: var(--hms-text-primary);
+  }
+
+  body.body--dark ::selection,
+  html.body--dark ::selection {
+    background: color-mix(in srgb, var(--hms-accent) 52%, transparent);
+    color: #ffffff;
+  }
+
+  body.body--dark ::-moz-selection,
+  html.body--dark ::-moz-selection {
+    background: color-mix(in srgb, var(--hms-accent) 52%, transparent);
+    color: #ffffff;
   }
 
   :focus-visible {
@@ -449,4 +466,73 @@
   .hms-skeleton {
     animation: none;
   }
+}
+
+/* Claim edit / GHIMS import edit — larger field text + clearer selection */
+.q-page.claim-edit-page ::selection,
+.q-page.claim-edit-page *::selection {
+  background: color-mix(in srgb, var(--hms-accent) 55%, white);
+  color: var(--hms-text-primary);
+}
+
+.q-page.claim-edit-page ::-moz-selection,
+.q-page.claim-edit-page *::-moz-selection {
+  background: color-mix(in srgb, var(--hms-accent) 55%, white);
+  color: var(--hms-text-primary);
+}
+
+body.body--dark .q-page.claim-edit-page ::selection,
+body.body--dark .q-page.claim-edit-page *::selection,
+html.body--dark .q-page.claim-edit-page ::selection,
+html.body--dark .q-page.claim-edit-page *::selection {
+  background: color-mix(in srgb, var(--hms-accent) 58%, transparent);
+  color: #ffffff;
+}
+
+body.body--dark .q-page.claim-edit-page ::-moz-selection,
+body.body--dark .q-page.claim-edit-page *::-moz-selection,
+html.body--dark .q-page.claim-edit-page ::-moz-selection,
+html.body--dark .q-page.claim-edit-page *::-moz-selection {
+  background: color-mix(in srgb, var(--hms-accent) 58%, transparent);
+  color: #ffffff;
+}
+
+.q-page.claim-edit-page .q-field__native,
+.q-page.claim-edit-page .q-field__input,
+.q-page.claim-edit-page .q-field__prefix,
+.q-page.claim-edit-page .q-field__suffix,
+.q-page.claim-edit-page .q-select__dropdown-icon {
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.q-page.claim-edit-page .q-field--dense .q-field__native,
+.q-page.claim-edit-page .q-field--dense .q-field__input,
+.q-page.claim-edit-page .q-field--dense .q-field__prefix,
+.q-page.claim-edit-page .q-field--dense .q-field__suffix {
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+.q-page.claim-edit-page .q-field__label {
+  font-size: 0.875rem;
+}
+
+.q-page.claim-edit-page .q-field--dense .q-field__label {
+  font-size: 0.8125rem;
+}
+
+.q-page.claim-edit-page .q-field__marginal {
+  font-size: 0.9375rem;
+}
+
+.q-page.claim-edit-page .q-table th,
+.q-page.claim-edit-page .q-table td {
+  font-size: 0.9375rem;
+}
+
+.q-page.claim-edit-page .q-item__label,
+.q-page.claim-edit-page .q-option-group .q-checkbox__label,
+.q-page.claim-edit-page .q-option-group .q-radio__label {
+  font-size: 0.9375rem;
 }
