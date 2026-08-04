@@ -1,0 +1,156 @@
+/**
+ * AGHIMS Design System — CSS custom properties
+ * Dark-first healthcare SaaS tokens (Apple × Linear × Stripe inspired)
+ */
+
+:root {
+  /* ——— Color ——— */
+  --hms-bg-primary: #09090b;
+  --hms-bg-secondary: #111827;
+  --hms-bg-elevated: #161b26;
+  --hms-surface: rgba(255, 255, 255, 0.06);
+  --hms-surface-hover: rgba(255, 255, 255, 0.1);
+  --hms-surface-active: rgba(255, 255, 255, 0.14);
+  --hms-border: rgba(255, 255, 255, 0.1);
+  --hms-border-strong: rgba(255, 255, 255, 0.18);
+
+  --hms-accent: #3b82f6;
+  --hms-accent-hover: #2563eb;
+  --hms-accent-muted: rgba(59, 130, 246, 0.18);
+  --hms-healthcare: #06b6d4;
+  --hms-healthcare-muted: rgba(6, 182, 212, 0.18);
+
+  --hms-success: #22c55e;
+  --hms-success-muted: rgba(34, 197, 94, 0.16);
+  --hms-warning: #f59e0b;
+  --hms-warning-muted: rgba(245, 158, 11, 0.16);
+  --hms-critical: #ef4444;
+  --hms-critical-muted: rgba(239, 68, 68, 0.16);
+  --hms-info: #38bdf8;
+  --hms-info-muted: rgba(56, 189, 248, 0.16);
+
+  --hms-text-primary: #fafafa;
+  --hms-text-secondary: #a1a1aa;
+  --hms-text-muted: #71717a;
+  --hms-text-inverse: #09090b;
+
+  /* ——— Typography ——— */
+  --hms-font-sans: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --hms-font-display: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --hms-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --hms-text-xs: 0.75rem;
+  --hms-text-sm: 0.8125rem;
+  --hms-text-base: 0.875rem;
+  --hms-text-lg: 1rem;
+  --hms-text-xl: 1.125rem;
+  --hms-text-2xl: 1.375rem;
+  --hms-text-3xl: 1.75rem;
+  --hms-text-4xl: 2.125rem;
+
+  --hms-leading-tight: 1.2;
+  --hms-leading-snug: 1.35;
+  --hms-leading-normal: 1.45;
+  --hms-leading-relaxed: 1.6;
+
+  --hms-tracking-tight: -0.025em;
+  --hms-tracking-normal: 0;
+  --hms-tracking-wide: 0.05em;
+
+  /* ——— Spacing ——— */
+  --hms-space-1: 0.25rem;
+  --hms-space-2: 0.5rem;
+  --hms-space-3: 0.75rem;
+  --hms-space-4: 1rem;
+  --hms-space-5: 1.25rem;
+  --hms-space-6: 1.5rem;
+  --hms-space-8: 2rem;
+
+  /* ——— Radius ——— */
+  --hms-radius-sm: 0.375rem;
+  --hms-radius-md: 0.5rem;
+  --hms-radius-lg: 0.75rem;
+  --hms-radius-xl: 1rem;
+  --hms-radius-2xl: 1.25rem;
+  --hms-radius-full: 9999px;
+
+  /* ——— Elevation ——— */
+  --hms-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --hms-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --hms-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --hms-shadow-glow-accent: 0 4px 20px rgba(59, 130, 246, 0.28);
+  --hms-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  /* ——— Glass / panels ——— */
+  --hms-glass-bg: rgba(22, 27, 38, 0.82);
+  --hms-glass-bg-strong: rgba(22, 27, 38, 0.94);
+  --hms-panel-bg: #141925;
+  --hms-glass-blur: 18px;
+  --hms-glass-saturate: 150%;
+
+  /* ——— Motion ——— */
+  --hms-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --hms-duration-fast: 140ms;
+  --hms-duration-normal: 200ms;
+  --hms-duration-slow: 320ms;
+
+  /* ——— Layout ——— */
+  --hms-sidebar-width: 280px;
+  --hms-sidebar-collapsed: 72px;
+  --hms-header-height: 56px;
+  --hms-content-max: 1320px;
+
+  --q-primary: #3b82f6;
+  --q-secondary: #06b6d4;
+  --q-accent: #38bdf8;
+  --q-positive: #22c55e;
+  --q-negative: #ef4444;
+  --q-info: #38bdf8;
+  --q-warning: #f59e0b;
+  --q-dark: #09090b;
+}
+
+/* Light mode — clinical SaaS (Zendenta-like): soft canvas, white panels, quiet chrome */
+body.body--light,
+html.body--light {
+  --hms-bg-primary: #f5f7fb;
+  --hms-bg-secondary: #eef1f7;
+  --hms-bg-elevated: #ffffff;
+  --hms-surface: #f1f4f9;
+  --hms-surface-hover: #e8edf5;
+  --hms-surface-active: #dfe6f1;
+  --hms-border: rgba(15, 23, 42, 0.08);
+  --hms-border-strong: rgba(15, 23, 42, 0.14);
+
+  --hms-accent: #3b82f6;
+  --hms-accent-hover: #2563eb;
+  --hms-accent-muted: rgba(59, 130, 246, 0.12);
+  --hms-healthcare-muted: rgba(8, 145, 178, 0.12);
+  --hms-success-muted: rgba(22, 163, 74, 0.12);
+  --hms-warning-muted: rgba(217, 119, 6, 0.12);
+  --hms-critical-muted: rgba(220, 38, 38, 0.12);
+  --hms-info-muted: rgba(2, 132, 199, 0.12);
+
+  --hms-text-primary: #0f172a;
+  --hms-text-secondary: #64748b;
+  --hms-text-muted: #94a3b8;
+  --hms-text-inverse: #ffffff;
+
+  --hms-glass-bg: rgba(255, 255, 255, 0.92);
+  --hms-glass-bg-strong: #ffffff;
+  --hms-panel-bg: #ffffff;
+
+  --hms-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 0 0 1px rgba(15, 23, 42, 0.03);
+  --hms-shadow-md: 0 2px 12px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.04);
+  --hms-shadow-lg: 0 8px 28px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  --hms-shadow-glow-accent: 0 4px 16px rgba(59, 130, 246, 0.2);
+  --hms-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hms-duration-fast: 0ms;
+    --hms-duration-normal: 0ms;
+    --hms-duration-slow: 0ms;
+  }
+}

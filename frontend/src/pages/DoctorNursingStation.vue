@@ -1,301 +1,196 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to IPD"
-        @click="$router.push('/ipd')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">
-        Doctor/Nursing Station
-      </div>
-    </div>
+  <q-page class="hms-page dns-page">
+    <HmsPageHeader
+      title="Doctor / Nursing station"
+      subtitle="Select a ward to manage admitted patients and pending transfers."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.push('/ipd')">Back to IPD</HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <!-- Ward Filter - Must select ward first -->
-    <q-card v-if="!selectedWard" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Select Ward</div>
-          <q-space />
-          <q-btn
-            flat
+    <!-- Ward picker -->
+    <div class="dns-toolbar">
+      <div class="dns-toolbar-main">
+        <label class="dns-field">
+          <span class="dns-label">Ward</span>
+          <q-select
+            v-model="selectedWard"
+            :options="wardOptions"
             dense
-            :icon="wardLocked ? 'lock' : 'lock_open'"
-            :label="wardLocked ? 'Unlock Ward' : 'Lock Ward'"
-            :color="wardLocked ? 'positive' : 'grey'"
-            size="sm"
-            @click="toggleWardLock"
-            class="q-ml-md"
-          >
-            <q-tooltip>
-              {{ wardLocked ? 'Ward selection is locked. Click to unlock.' : 'Lock ward selection to persist across page reloads' }}
-            </q-tooltip>
-          </q-btn>
-        </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-6">
-            <q-select
-              v-model="selectedWard"
-              :options="wardOptions"
-              filled
-              dense
-              label="Select Ward"
-              emit-value
-              map-options
-              @update:model-value="onWardSelected"
-            >
-              <template v-slot:prepend>
-                <q-icon name="local_hospital" />
-              </template>
-            </q-select>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Ward Filter with Lock - When ward is selected -->
-    <q-card v-else class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-gutter-md">
-          <div class="col-12 col-md-6">
-            <q-select
-              v-model="selectedWard"
-              :options="wardOptions"
-              filled
-              dense
-              label="Select Ward"
-              emit-value
-              map-options
-              @update:model-value="onWardSelected"
-            >
-              <template v-slot:prepend>
-                <q-icon name="local_hospital" />
-              </template>
-            </q-select>
-          </div>
-          <div class="col-auto">
-            <q-btn
-              flat
-              dense
-              :icon="wardLocked ? 'lock' : 'lock_open'"
-              :label="wardLocked ? 'Unlock' : 'Lock'"
-              :color="wardLocked ? 'positive' : 'grey'"
-              size="sm"
-              @click="toggleWardLock"
-            >
-              <q-tooltip>
-                {{ wardLocked ? 'Ward selection is locked. Click to unlock.' : 'Lock ward selection to persist across page reloads' }}
-              </q-tooltip>
-            </q-btn>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Loading State -->
-    <q-card v-if="loading && selectedWard" class="glass-card" flat>
-      <q-card-section class="text-center">
-        <q-spinner color="primary" size="3em" />
-        <div class="text-subtitle1 q-mt-md glass-text">Loading ward patients...</div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Empty State -->
-    <q-card v-else-if="!loading && selectedWard && wardPatients.length === 0" class="glass-card" flat>
-      <q-card-section class="text-center">
-        <q-icon name="local_hospital" size="64px" color="grey-6" />
-        <div class="text-subtitle1 q-mt-md glass-text">No patients currently admitted to {{ selectedWard }}</div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Pending Transfers Section -->
-    <q-card v-if="selectedWard && pendingTransfers.length > 0" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          <q-icon name="swap_horiz" color="warning" class="q-mr-sm" />
-          Pending Transfer Requests ({{ pendingTransfers.length }})
-        </div>
-        <q-list bordered separator>
-          <q-item v-for="transfer in pendingTransfers" :key="transfer.id">
-            <q-item-section avatar>
-              <q-avatar icon="person" color="warning" text-color="white" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>
-                {{ transfer.patient_name }} {{ transfer.patient_surname }}
-              </q-item-label>
-              <q-item-label caption>
-                Card: {{ transfer.patient_card_number }} | From: {{ transfer.from_ward }}
-                <span v-if="transfer.transfer_reason"> | Reason: {{ transfer.transfer_reason }}</span>
-              </q-item-label>
-              <q-item-label caption>
-                Transferred by: {{ transfer.transferred_by_name }} at {{ formatDateTime(transfer.transferred_at) }}
-              </q-item-label>
-            </q-item-section>
-            <q-item-section side>
-              <q-btn
-                flat
-                dense
-                icon="check"
-                label="Accept"
-                color="positive"
-                size="sm"
-                @click="acceptTransfer(transfer)"
-                :loading="acceptingTransferId === transfer.id"
-                class="q-mr-sm"
-              />
-              <q-btn
-                flat
-                dense
-                icon="close"
-                label="Reject"
-                color="negative"
-                size="sm"
-                @click="rejectTransfer(transfer)"
-                :loading="rejectingTransferId === transfer.id"
-              />
-            </q-item-section>
-          </q-item>
-        </q-list>
-      </q-card-section>
-    </q-card>
-
-    <!-- Ward Patients Cards -->
-    <div v-if="selectedWard && wardPatients.length > 0">
-      <div class="row items-center q-mb-md">
-        <div class="text-h6 glass-text">
-          {{ selectedWard }} - Active Patients ({{ filteredPatients.length }})
-        </div>
-        <q-space />
-        <q-input
-          v-model="filter"
-          filled
-          dense
-          placeholder="Search by card number..."
-          class="q-mr-md"
-          style="max-width: 300px;"
+            outlined
+            emit-value
+            map-options
+            placeholder="Select ward…"
+            @update:model-value="onWardSelected"
+            class="dns-select"
+          />
+        </label>
+        <HmsButton
+          :variant="wardLocked ? 'soft' : 'ghost'"
+          size="sm"
+          @click="toggleWardLock"
         >
-          <template v-slot:append>
-            <q-icon name="search" />
-          </template>
-        </q-input>
-        <q-btn
-          flat
-          icon="refresh"
-          label="Refresh"
-          @click="loadWardPatients"
-          class="glass-button"
-        />
+          {{ wardLocked ? 'Unlock ward' : 'Lock ward' }}
+        </HmsButton>
       </div>
-
-      <div class="row q-col-gutter-md">
-        <div
-          v-for="patient in filteredPatients"
-          :key="patient.id"
-          class="col-12 col-md-6 col-lg-4"
-        >
-          <q-card class="patient-card glass-card" flat bordered>
-            <q-card-section>
-              <div class="row items-start q-mb-md">
-                <q-avatar size="56px" color="primary" text-color="white" class="q-mr-md">
-                  <q-icon name="person" size="32px" />
-                </q-avatar>
-                <div class="col">
-                  <div class="text-h6 text-weight-bold glass-text q-mb-xs">
-                    {{ patient.patient_name }} {{ patient.patient_surname }}
-                    <span v-if="patient.patient_other_names">
-                      {{ patient.patient_other_names }}
-                    </span>
-                  </div>
-                  <div class="text-caption text-secondary q-mb-xs">
-                    <q-icon name="credit_card" size="14px" class="q-mr-xs" />
-                    Card: {{ patient.patient_card_number }}
-                  </div>
-                  <div class="text-caption text-secondary">
-                    <q-icon name="person" size="14px" class="q-mr-xs" />
-                    {{ patient.patient_gender }}
-                    <span v-if="patient.patient_date_of_birth" class="q-ml-sm">
-                      | DOB: {{ formatDate(patient.patient_date_of_birth) }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <q-separator class="q-mb-md" />
-
-              <div class="row q-col-gutter-xs q-mb-md">
-                <div class="col-12">
-                  <q-badge color="primary" :label="patient.ward" class="q-mr-sm" />
-                  <q-badge color="info" :label="patient.encounter_service_type" />
-                  <q-badge v-if="patient.bed_number" color="accent" :label="`Bed: ${patient.bed_number}`" class="q-mr-sm" />
-                </div>
-              </div>
-
-              <div class="text-caption text-secondary q-mb-md">
-                <div>
-                  <q-icon name="schedule" size="14px" class="q-mr-xs" />
-                  Admitted: {{ formatDateTime(patient.admitted_at) }}
-                </div>
-                <div v-if="patient.admitted_by_name" class="q-mt-xs">
-                  By: <strong>{{ patient.admitted_by_name }}</strong>
-                  <span v-if="patient.admitted_by_role"> ({{ patient.admitted_by_role }})</span>
-                </div>
-              </div>
-
-              <q-separator class="q-mb-md" />
-
-              <div class="row q-gutter-xs">
-                <q-btn
-                  flat
-                  dense
-                  icon="visibility"
-                  label="View Patient"
-                  color="primary"
-                  size="sm"
-                  @click="viewPatient(patient.patient_card_number)"
-                  class="col"
-                />
-                <q-btn
-                  flat
-                  dense
-                  icon="medical_services"
-                  label="View Encounter"
-                  color="secondary"
-                  size="sm"
-                  @click="viewEncounter(patient.encounter_id)"
-                  class="col"
-                />
-              </div>
-              <div class="row q-gutter-xs q-mt-xs">
-                <q-btn
-                  flat
-                  dense
-                  icon="manage_accounts"
-                  label="AM"
-                  color="accent"
-                  size="sm"
-                  @click="openAdmissionManager(patient)"
-                  class="col"
-                />
-                <q-btn
-                  flat
-                  dense
-                  icon="exit_to_app"
-                  label="Discharge"
-                  color="negative"
-                  size="sm"
-                  @click="dischargePatient(patient)"
-                  :loading="dischargingId === patient.id"
-                  class="col"
-                />
-              </div>
-            </q-card-section>
-          </q-card>
-        </div>
+      <div v-if="selectedWard" class="dns-toolbar-meta">
+        <HmsBadge tone="accent">{{ selectedWard }}</HmsBadge>
+        <span class="dns-count">{{ filteredPatients.length }} active</span>
+        <span v-if="pendingTransfers.length" class="dns-count warn">{{ pendingTransfers.length }} transfer{{ pendingTransfers.length === 1 ? '' : 's' }}</span>
       </div>
     </div>
+
+    <div v-if="!selectedWard" class="dns-empty-wrap">
+      <HmsEmptyState
+        title="Select a ward to begin"
+        description="Choose a ward above to see admitted patients and pending transfer requests."
+      />
+    </div>
+
+    <div v-else-if="loading" class="dns-loading">
+      <q-spinner color="primary" size="2.5em" />
+      <span>Loading ward patients…</span>
+    </div>
+
+    <template v-else>
+      <!-- Pending transfers -->
+      <section v-if="pendingTransfers.length > 0" class="dns-panel dns-transfers">
+        <div class="dns-panel-head">
+          <h2 class="hms-section-title">Pending transfers</h2>
+          <HmsBadge tone="warning">{{ pendingTransfers.length }}</HmsBadge>
+        </div>
+        <div class="transfer-list">
+          <div v-for="transfer in pendingTransfers" :key="transfer.id" class="transfer-row">
+            <div class="transfer-avatar">{{ patientInitials(transfer.patient_name, transfer.patient_surname) }}</div>
+            <div class="transfer-body">
+              <div class="transfer-name">{{ transfer.patient_name }} {{ transfer.patient_surname }}</div>
+              <div class="transfer-meta">
+                <span class="mono">{{ transfer.patient_card_number }}</span>
+                <span class="sep">·</span>
+                <span>From {{ transfer.from_ward }}</span>
+                <template v-if="transfer.transfer_reason">
+                  <span class="sep">·</span>
+                  <span>{{ transfer.transfer_reason }}</span>
+                </template>
+              </div>
+              <div class="transfer-by">
+                {{ transfer.transferred_by_name }} · {{ formatDateTime(transfer.transferred_at) }}
+              </div>
+            </div>
+            <div class="transfer-actions">
+              <HmsButton
+                variant="primary"
+                size="sm"
+                :loading="acceptingTransferId === transfer.id"
+                @click="acceptTransfer(transfer)"
+              >
+                Accept
+              </HmsButton>
+              <HmsButton
+                variant="ghost"
+                size="sm"
+                :loading="rejectingTransferId === transfer.id"
+                @click="rejectTransfer(transfer)"
+              >
+                Reject
+              </HmsButton>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Patients -->
+      <section class="dns-panel">
+        <div class="dns-panel-head dns-panel-head--row">
+          <div>
+            <h2 class="hms-section-title">Active patients</h2>
+            <p class="dns-panel-sub">{{ selectedWard }} · {{ filteredPatients.length }} on ward</p>
+          </div>
+          <div class="dns-panel-tools">
+            <input
+              v-model="filter"
+              type="search"
+              class="dns-search"
+              placeholder="Search by card number…"
+            />
+            <HmsButton variant="secondary" size="sm" @click="loadWardPatients">Refresh</HmsButton>
+          </div>
+        </div>
+
+        <HmsEmptyState
+          v-if="wardPatients.length === 0"
+          title="No patients on this ward"
+          :description="`No patients currently admitted to ${selectedWard}.`"
+        />
+
+        <HmsEmptyState
+          v-else-if="filteredPatients.length === 0"
+          title="No matching patients"
+          description="Try a different card number filter."
+        />
+
+        <div v-else class="patient-grid">
+          <motion.div
+            v-for="patient in filteredPatients"
+            :key="patient.id"
+            class="patient-card"
+            :initial="reduceMotion ? false : { opacity: 0, y: 8 }"
+            :animate="{ opacity: 1, y: 0 }"
+            :whileHover="reduceMotion ? undefined : { y: -3 }"
+            :whilePress="reduceMotion ? undefined : { scale: 0.985 }"
+            :transition="{ type: 'spring', stiffness: 380, damping: 28 }"
+          >
+            <div class="pc-top">
+              <div class="pc-avatar">{{ patientInitials(patient.patient_name, patient.patient_surname) }}</div>
+              <div class="pc-id">
+                <div class="pc-name">
+                  {{ patient.patient_name }} {{ patient.patient_surname }}
+                  <span v-if="patient.patient_other_names">{{ patient.patient_other_names }}</span>
+                </div>
+                <div class="pc-meta">
+                  <span class="mono">{{ patient.patient_card_number }}</span>
+                  <span class="sep">·</span>
+                  <span>{{ patient.patient_gender || '—' }}</span>
+                  <template v-if="patient.patient_date_of_birth">
+                    <span class="sep">·</span>
+                    <span>{{ formatDate(patient.patient_date_of_birth) }}</span>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <div class="pc-badges">
+              <HmsBadge tone="accent">{{ patient.ward }}</HmsBadge>
+              <HmsBadge v-if="patient.bed_number" tone="info">Bed {{ patient.bed_number }}</HmsBadge>
+              <HmsBadge tone="muted">{{ patient.encounter_service_type }}</HmsBadge>
+            </div>
+
+            <div class="pc-admit">
+              Admitted {{ formatDateTime(patient.admitted_at) }}
+              <template v-if="patient.admitted_by_name">
+                · {{ patient.admitted_by_name }}
+                <span v-if="patient.admitted_by_role">({{ patient.admitted_by_role }})</span>
+              </template>
+            </div>
+
+            <div class="pc-actions">
+              <HmsButton variant="ghost" size="sm" @click="viewPatient(patient.patient_card_number)">Profile</HmsButton>
+              <HmsButton variant="ghost" size="sm" @click="viewEncounter(patient.encounter_id)">Encounter</HmsButton>
+              <HmsButton variant="soft" size="sm" @click="openAdmissionManager(patient)">Manager</HmsButton>
+              <HmsButton
+                variant="danger"
+                size="sm"
+                :loading="dischargingId === patient.id"
+                @click="dischargePatient(patient)"
+              >
+                Discharge
+              </HmsButton>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+    </template>
 
     <!-- Accept Transfer Dialog -->
     <q-dialog v-model="showAcceptDialog" persistent>
@@ -392,9 +287,24 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { consultationAPI, wardsAPI } from '../services/api';
+import { motion } from 'motion-v';
+import { usePreferredReducedMotion } from '@vueuse/core';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
+import HmsEmptyState from '../components/ui/HmsEmptyState.vue';
 
 const $q = useQuasar();
 const router = useRouter();
+
+const preferredReducedMotion = usePreferredReducedMotion();
+const reduceMotion = computed(() => preferredReducedMotion.value === 'reduce');
+
+const patientInitials = (name, surname) => {
+  const a = (name || '').trim().charAt(0);
+  const b = (surname || '').trim().charAt(0);
+  return ((a + b) || '?').toUpperCase();
+};
 
 // Ward lock constants
 const WARD_LOCK_KEY = 'doctor_nursing_station_ward_locked';
@@ -770,47 +680,167 @@ onMounted(async () => {
 });
 </script>
 
+
 <style scoped>
-/* Patient card styling */
+.dns-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+}
+.dns-toolbar-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem;
+}
+.dns-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: min(280px, 100%); }
+.dns-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+}
+.dns-select { min-width: 240px; }
+.dns-toolbar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+.dns-count {
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  font-weight: 600;
+}
+.dns-count.warn { color: #d97706; }
+.dns-empty-wrap { margin-top: 0.5rem; }
+.dns-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 3rem 1rem;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-sm);
+}
+.dns-panel {
+  margin-bottom: 0.95rem;
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+}
+.dns-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+}
+.dns-panel-head--row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.dns-panel-sub {
+  margin: 0.15rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.dns-panel-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dns-search {
+  min-width: min(220px, 100%);
+  height: 2.05rem;
+  padding: 0 0.75rem;
+  border-radius: var(--hms-radius-md);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  color: var(--hms-text-primary);
+  font: inherit;
+  font-size: var(--hms-text-sm);
+}
+.dns-search:focus {
+  outline: none;
+  border-color: var(--hms-accent);
+  box-shadow: 0 0 0 3px var(--hms-accent-muted);
+}
+.transfer-list { display: flex; flex-direction: column; gap: 0.55rem; }
+.transfer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+}
+.transfer-avatar, .pc-avatar {
+  width: 2.5rem; height: 2.5rem;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  font-size: 0.78rem; font-weight: 700;
+  color: var(--hms-accent);
+  background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.transfer-body { flex: 1; min-width: 180px; }
+.transfer-name, .pc-name {
+  font-weight: 700;
+  color: var(--hms-text-primary);
+  font-size: var(--hms-text-md);
+}
+.transfer-meta, .pc-meta, .transfer-by, .pc-admit {
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  margin-top: 0.12rem;
+}
+.transfer-by { color: var(--hms-text-muted); font-size: 0.75rem; }
+.transfer-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.sep { margin: 0 0.25rem; opacity: 0.45; }
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.92em; }
+.patient-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+}
 .patient-card {
-  transition: transform 0.2s, box-shadow 0.2s;
-  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.95rem 1rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+  cursor: default;
 }
-
-.patient-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+.pc-top { display: flex; gap: 0.7rem; align-items: flex-start; }
+.pc-id { min-width: 0; }
+.pc-badges { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.pc-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  margin-top: auto;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--hms-border);
 }
-
-.body--dark .patient-card:hover {
-  box-shadow: 0 8px 16px rgba(255, 255, 255, 0.15);
-}
-
-/* Light mode adjustments */
-.body--light .glass-text {
-  color: rgba(0, 0, 0, 0.87) !important;
-}
-
-/* Dark mode adjustments */
-.body--dark .glass-text {
-  color: rgba(255, 255, 255, 0.9) !important;
-}
-
-.glass-button {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-/* Light mode button adjustments */
-.body--light .glass-button {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  color: rgba(0, 0, 0, 0.87);
-}
-
-.body--light .glass-button:hover {
-  background: rgba(255, 255, 255, 0.9);
+@media (max-width: 640px) {
+  .dns-toolbar { padding: 0.85rem; }
+  .pc-actions { grid-template-columns: 1fr; }
 }
 </style>
-

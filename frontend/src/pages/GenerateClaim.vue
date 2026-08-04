@@ -1,15 +1,33 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Generate Claim</div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Generate claim"
+      subtitle="Build NHIS claim from finalized encounter"
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <!-- Back Button -->
-    <q-btn
-      flat
-      icon="arrow_back"
-      label="Back to Claims"
-      @click="$router.push('/claims')"
-      class="q-mb-md"
-    />
+    <div v-if="encounter && !loading" class="claim-hero">
+      <div class="claim-hero__main">
+        <div class="claim-hero__avatar" aria-hidden="true">{{ generateInitials }}</div>
+        <div>
+          <h2 class="claim-hero__name">{{ encounter.patient_name || 'Encounter patient' }}</h2>
+          <div class="claim-hero__meta">
+            <span class="mono">Encounter #{{ encounter.id }}</span>
+            <span v-if="encounter.patient_card_number" class="mono">{{ encounter.patient_card_number }}</span>
+            <span v-if="encounter.patient_insurance_id" class="mono">{{ encounter.patient_insurance_id }}</span>
+            <span v-if="encounter.department">{{ encounter.department }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="claim-hero__aside">
+        <div class="claim-hero__badges">
+          <q-badge color="primary" :label="encounter.department || 'OPD'" />
+        </div>
+      </div>
+    </div>
 
     <!-- Loading State -->
     <div v-if="loading" class="text-center q-pa-xl">
@@ -30,36 +48,17 @@
     </q-banner>
 
     <!-- Encounter Details -->
-    <q-card v-if="encounter && !loading" class="q-mb-md glass-card" flat>
+    <q-card v-if="encounter && !loading" class="q-mb-md diag-panel" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Encounter Details</div>
+        <div class="text-h6 q-mb-md">Encounter details</div>
         <div class="row q-gutter-md">
           <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">Encounter ID</div>
             <div class="text-body1">{{ encounter.id }}</div>
           </div>
           <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Patient Name</div>
-            <div class="text-body1">{{ encounter.patient_name || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Card Number</div>
-            <div class="text-body1">{{ encounter.patient_card_number || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Member Number</div>
-            <div class="text-body1">
-              <span v-if="encounter.patient_insurance_id">{{ encounter.patient_insurance_id }}</span>
-              <span v-else class="text-negative">Not Set</span>
-            </div>
-          </div>
-          <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">CCC Number</div>
             <div class="text-body1">{{ encounter.ccc_number || 'N/A' }}</div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-caption text-grey-7">Department</div>
-            <div class="text-body1">{{ encounter.department || 'N/A' }}</div>
           </div>
           <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">Finalized At</div>
@@ -68,6 +67,13 @@
           <div class="col-12 col-md-4">
             <div class="text-caption text-grey-7">Physician Code (Finalized By)</div>
             <div class="text-body1">{{ encounter.finalized_by_username || 'N/A' }}</div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="text-caption text-grey-7">Member Number</div>
+            <div class="text-body1">
+              <span v-if="encounter.patient_insurance_id">{{ encounter.patient_insurance_id }}</span>
+              <span v-else class="text-negative">Not Set</span>
+            </div>
           </div>
         </div>
       </q-card-section>
@@ -129,9 +135,9 @@
     </q-banner>
 
     <!-- Medicines Section -->
-    <q-card v-if="encounter && !loading" class="q-mb-md glass-card" flat>
+    <q-card v-if="encounter && !loading" class="q-mb-md diag-panel" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Medicines (Prescriptions)</div>
+        <div class="text-h6 q-mb-md">Medicines (Prescriptions)</div>
         <q-table
           v-if="medicinesDisplay.length > 0"
           :rows="medicinesDisplay"
@@ -156,9 +162,9 @@
     </q-card>
 
     <!-- Investigations Section -->
-    <q-card v-if="encounter && !loading" class="q-mb-md glass-card" flat>
+    <q-card v-if="encounter && !loading" class="q-mb-md diag-panel" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Investigations</div>
+        <div class="text-h6 q-mb-md">Investigations</div>
         <q-table
           v-if="investigations.length > 0"
           :rows="investigations"
@@ -195,9 +201,9 @@
     </q-card>
 
     <!-- Diagnoses Section -->
-    <q-card v-if="encounter && !loading && diagnoses.length > 0" class="q-mb-md glass-card" flat>
+    <q-card v-if="encounter && !loading && diagnoses.length > 0" class="q-mb-md diag-panel" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">
+        <div class="text-h6 q-mb-md">
           Diagnoses 
           <span v-if="isIPD" class="text-caption text-grey-7">
             (OPD + IPD Clinical Reviews)
@@ -228,9 +234,9 @@
     </q-card>
 
     <!-- Surgeries Section - Show for both IPD and OPD (OPD will always show "No surgeries") -->
-    <q-card v-if="encounter && !loading" class="q-mb-md glass-card" flat>
+    <q-card v-if="encounter && !loading" class="q-mb-md diag-panel" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">
+        <div class="text-h6 q-mb-md">
           Surgeries
           <q-badge v-if="surgeries.length > 0" color="primary" :label="surgeries.length" class="q-ml-sm" />
         </div>
@@ -263,9 +269,9 @@
     </q-card>
 
     <!-- Claim Form -->
-    <q-card v-if="encounter && !loading" class="glass-card" flat>
+    <q-card v-if="encounter && !loading" class="q-mb-md diag-panel" flat>
       <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">
+        <div class="text-h6 q-mb-md">
           {{ isRegenerating ? 'Regenerate Claim' : 'Claim Information' }}
         </div>
         <q-banner
@@ -338,11 +344,13 @@
 
     <!-- Undispensed medicine selection dialog -->
     <q-dialog v-model="medicineSelectDialogOpen" persistent>
-      <q-card style="min-width: 420px; max-width: 640px">
-        <q-card-section>
-          <div class="text-h6">Select Medicines to Include</div>
-          <div class="text-caption text-grey-7 q-mt-xs">
-            Choose which undispensed medicines to add to the claim. Dispensed medicines are already included.
+      <q-card style="min-width: 420px; max-width: 640px" class="diag-panel">
+        <q-card-section class="row items-start justify-between">
+          <div>
+            <div class="text-h6">Select medicines to include</div>
+            <div class="text-caption text-grey-7 q-mt-xs">
+              Choose which undispensed medicines to add to the claim. Dispensed medicines are already included.
+            </div>
           </div>
         </q-card-section>
         <q-card-section class="q-pt-none">
@@ -393,6 +401,8 @@
 
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { encountersAPI, consultationAPI, claimsAPI } from '../services/api';
@@ -414,6 +424,14 @@ const wardAdmissionId = ref(null);
 const isIPD = ref(false);
 
 const encounter = ref(null);
+
+const generateInitials = computed(() => {
+  const name = String(encounter.value?.patient_name || '').trim();
+  const bits = name.split(/\s+/).filter(Boolean);
+  if (!bits.length) return 'EN';
+  if (bits.length === 1) return bits[0].slice(0, 2).toUpperCase();
+  return `${bits[0][0] || ''}${bits[bits.length - 1][0] || ''}`.toUpperCase();
+});
 const wardAdmission = ref(null);
 const medicines = ref([]);
 const investigations = ref([]);
@@ -982,4 +1000,14 @@ onMounted(async () => {
   loadEncounter();
 });
 </script>
+
+<style scoped>
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+</style>
 

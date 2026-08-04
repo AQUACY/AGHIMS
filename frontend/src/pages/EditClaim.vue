@@ -1,50 +1,63 @@
 <template>
-  <q-page class="q-pa-md" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
-    <div class="row items-center q-mb-md q-col-gutter-sm">
-      <div class="text-h4">{{ isViewMode ? 'View NHIS Claim Form' : 'Edit NHIS Claim Form' }}</div>
-      <q-badge
-        v-if="claimStatus"
-        class="q-ml-sm"
-        :color="claimStatus === 'finalized' ? 'positive' : (claimStatus === 'vetted' ? 'deep-purple' : (claimStatus === 'pharmacy_vetted' ? 'teal' : (claimStatus === 'doctor_vetted' ? 'indigo' : 'warning')))"
-        :label="claimStatus === 'vetted' ? 'pharmacy + doctor vetted' : (claimStatus === 'pharmacy_vetted' ? 'pharmacy vetted' : (claimStatus === 'doctor_vetted' ? 'doctor vetted' : claimStatus))"
-      />
-      <q-badge v-if="vetting.pharmacy_vetted" class="q-ml-xs" color="teal" label="Pharmacy" />
-      <q-badge v-if="vetting.doctor_vetted" class="q-ml-xs" color="indigo" label="Doctor" />
-      <q-space />
-      <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
-        <q-btn
-          outline
-          color="primary"
-          icon="chevron_left"
-          label="Previous"
-          dense
-          :disable="!claimNav.prevId || loading"
-          @click="goToAdjacentClaim(claimNav.prevId)"
-        />
-        <span class="text-body2 text-grey-8 text-weight-medium q-px-sm claim-nav-position">
-          {{ claimNav.position }} of {{ claimNav.total }}
-        </span>
-        <q-btn
-          outline
-          color="primary"
-          icon-right="chevron_right"
-          label="Next"
-          dense
-          :disable="!claimNav.nextId || loading"
-          @click="goToAdjacentClaim(claimNav.nextId)"
-        />
+  <q-page class="hms-page claim-edit-page" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
+    <HmsPageHeader :title="isViewMode ? 'View NHIS claim' : 'Edit NHIS claim'">
+      <template #actions>
+        <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
+          <q-btn
+            outline
+            color="primary"
+            icon="chevron_left"
+            label="Previous"
+            dense
+            :disable="!claimNav.prevId || loading"
+            @click="goToAdjacentClaim(claimNav.prevId)"
+          />
+          <span class="text-body2 text-grey-8 text-weight-medium q-px-sm claim-nav-position">
+            {{ claimNav.position }} of {{ claimNav.total }}
+          </span>
+          <q-btn
+            outline
+            color="primary"
+            icon-right="chevron_right"
+            label="Next"
+            dense
+            :disable="!claimNav.nextId || loading"
+            @click="goToAdjacentClaim(claimNav.nextId)"
+          />
+        </div>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="!loading" class="claim-hero">
+      <div class="claim-hero__main">
+        <div class="claim-hero__avatar" aria-hidden="true">{{ claimInitials }}</div>
+        <div>
+          <h2 class="claim-hero__name">{{ claimDisplayName }}</h2>
+          <div class="claim-hero__meta">
+            <span class="mono">Claim #{{ claimId }}</span>
+            <span v-if="patientInfo.hospital_record_no">Rec {{ patientInfo.hospital_record_no }}</span>
+            <span v-if="patientInfo.member_number" class="mono">{{ patientInfo.member_number }}</span>
+            <span v-if="claimMeta.claim_check_code" class="mono">CCC {{ claimMeta.claim_check_code }}</span>
+          </div>
+        </div>
       </div>
-      <q-btn
-        color="secondary"
-        label="Back to Claims"
-        icon="arrow_back"
-        @click="$router.push('/claims')"
-        outline
-      />
+      <div class="claim-hero__aside">
+        <div class="claim-hero__badges">
+          <q-badge
+            v-if="claimStatus"
+            :color="claimStatus === 'finalized' ? 'positive' : (claimStatus === 'vetted' ? 'deep-purple' : (claimStatus === 'pharmacy_vetted' ? 'teal' : (claimStatus === 'doctor_vetted' ? 'indigo' : 'warning')))"
+            :label="claimStatus === 'vetted' ? 'pharmacy + doctor vetted' : (claimStatus === 'pharmacy_vetted' ? 'pharmacy vetted' : (claimStatus === 'doctor_vetted' ? 'doctor vetted' : claimStatus))"
+          />
+          <q-badge v-if="vetting.pharmacy_vetted" color="teal" label="Pharmacy" />
+          <q-badge v-if="vetting.doctor_vetted" color="indigo" label="Doctor" />
+        </div>
+      </div>
     </div>
+
     <q-banner
       v-if="isViewMode"
-      class="bg-info text-white q-mb-md"
+      class="soft-banner q-mb-md"
       rounded
     >
       <template v-slot:avatar>
@@ -1353,6 +1366,8 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI, consultationAPI } from '../services/api';
@@ -3544,6 +3559,18 @@ onMounted(async () => {
 });
 
 const claimNav = computed(() => getClaimsNavPosition(claimId.value));
+
+const claimDisplayName = computed(() => {
+  const parts = [patientInfo.other_names, patientInfo.surname].map((x) => String(x || '').trim()).filter(Boolean);
+  return parts.join(' ') || 'Claim patient';
+});
+
+const claimInitials = computed(() => {
+  const bits = claimDisplayName.value.split(/\s+/).filter(Boolean);
+  if (!bits.length) return 'CL';
+  if (bits.length === 1) return bits[0].slice(0, 2).toUpperCase();
+  return `${bits[0][0] || ''}${bits[bits.length - 1][0] || ''}`.toUpperCase();
+});
 
 function goToAdjacentClaim(targetId) {
   if (!targetId || loading.value) return;

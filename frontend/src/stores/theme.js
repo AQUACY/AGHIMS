@@ -3,26 +3,23 @@ import { Dark } from 'quasar';
 
 export const useThemeStore = defineStore('theme', {
   state: () => {
-    // Check localStorage first, then system preference
     const savedTheme = localStorage.getItem('theme');
-    let isDark = false;
-    
+    // Dark-first: default to dark unless user explicitly chose light
+    let isDark = true;
+
     if (savedTheme === 'dark') {
       isDark = true;
     } else if (savedTheme === 'light') {
       isDark = false;
-    } else {
-      // Default to system preference
-      isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
-    
+
     return {
       isDark,
     };
   },
 
   getters: {
-    currentTheme: (state) => state.isDark ? 'dark' : 'light',
+    currentTheme: (state) => (state.isDark ? 'dark' : 'light'),
   },
 
   actions: {
@@ -40,6 +37,9 @@ export const useThemeStore = defineStore('theme', {
 
     applyTheme() {
       Dark.set(this.isDark);
+      document.body.classList.toggle('body--light', !this.isDark);
+      document.documentElement.classList.toggle('body--light', !this.isDark);
+      document.documentElement.classList.toggle('body--dark', this.isDark);
     },
 
     initTheme() {
@@ -47,4 +47,3 @@ export const useThemeStore = defineStore('theme', {
     },
   },
 });
-

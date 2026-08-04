@@ -1,17 +1,16 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to IPD"
-        @click="$router.push('/ipd')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">
-        Transfer Patient
-      </div>
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Transfer patient"
+      subtitle="Move an admitted patient to another ward or bed."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.push('/ipd')">
+          Back to IPD
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
 
     <!-- Patient Search Section -->
     <q-card class="glass-card q-mb-md" flat bordered>
@@ -343,6 +342,8 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { patientsAPI, consultationAPI, wardsAPI } from '../services/api';
 
 const $q = useQuasar();
@@ -636,6 +637,65 @@ onMounted(() => {
 </script>
 
 <style scoped>
+
+.ipd-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 0.95rem;
+  padding: 0.95rem 1.05rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+}
+.ipd-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.ipd-tabs {
+  display: flex;
+  gap: 1.1rem;
+  margin-bottom: 0.95rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.ipd-tab {
+  border: none;
+  background: transparent;
+  padding: 0.55rem 0.1rem 0.7rem;
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  font-weight: 650;
+  color: var(--hms-text-muted);
+  cursor: pointer;
+  position: relative;
+}
+.ipd-tab.active { color: var(--hms-accent); }
+.ipd-tab.active::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--hms-accent); border-radius: 2px 2px 0 0;
+}
+
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 .body--light .glass-text {
   color: rgba(0, 0, 0, 0.87) !important;
 }

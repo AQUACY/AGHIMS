@@ -1,19 +1,25 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat round dense icon="arrow_back" @click="goBack" />
-      <div class="text-h4 q-ml-sm text-weight-bold glass-text">
-        {{ viewingBatchId ? `Batch: ${currentBatch?.file_name || ''}` : 'Correct Errors' }}
-      </div>
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      :title="viewingBatchId ? `Batch: ${currentBatch?.file_name || ''}` : 'Correct errors'"
+      :subtitle="viewingBatchId ? 'Review ClaimIT errors and warnings for this report batch.' : 'Upload ClaimIT import reports and open batches to fix errors.'"
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="goBack">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
 
     <!-- Upload (when not viewing a batch) -->
-    <q-card v-if="!viewingBatchId" class="q-mb-lg glass-card" flat bordered>
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Upload ClaimIT Import Report</div>
-        <p class="text-caption text-grey-7 q-mb-md">
-          Use <strong>Import GHIMS XML</strong> when the XML came from that screen; use <strong>main HMS claims only</strong> when the XML was exported from the normal claim registry (encounters) and ClaimIT errors should open <strong>Edit claim</strong>, not GHIMS import rows.
-        </p>
+    <section v-if="!viewingBatchId" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Upload ClaimIT Import Report</div>
+          <div class="panel-sub">
+            Use Import GHIMS XML when the XML came from that screen; use main HMS claims only when the XML was exported from the normal claim registry.
+          </div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-checkbox
           v-model="uploadMainHmsOnly"
           dense
@@ -35,7 +41,7 @@
           :loading="ghimsBatchesLoading"
           :disable="uploadMainHmsOnly"
         />
-        <div class="row q-gutter-md items-center">
+        <div class="upload-row">
           <q-file
             v-model="uploadFile"
             label="Select report (HTML)"
@@ -43,37 +49,36 @@
             outlined
             dense
             clearable
-            class="col-12 col-md-5"
+            class="upload-file"
             @update:model-value="uploadFile = $event"
           />
-          <q-btn
-            color="primary"
-            label="Upload"
+          <HmsButton
+            variant="primary"
+            size="sm"
             :loading="uploading"
-            :disable="!uploadFile"
+            :disabled="!uploadFile"
             @click="uploadReport"
-          />
+          >
+            Upload
+          </HmsButton>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Batch list (when not viewing a batch) -->
-    <q-card v-if="!viewingBatchId" class="q-mb-lg glass-card" flat bordered>
-      <q-card-section>
-        <div class="text-h6 q-mb-md">Recent report batches</div>
-        <q-list v-if="batches.length" bordered separator>
-          <q-item
-            v-for="b in batches"
-            :key="b.id"
-            clickable
-            @click="openBatch(b.id)"
-          >
-            <q-item-section avatar>
-              <q-icon name="folder" color="primary" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>{{ b.file_name }}</q-item-label>
-              <q-item-label caption>
+    <section v-if="!viewingBatchId" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Recent report batches</div>
+          <div class="panel-sub">Open a batch to review errors and warnings</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div v-if="batches.length" class="batch-list">
+          <div v-for="b in batches" :key="b.id" class="batch-row">
+            <div class="batch-copy">
+              <div class="batch-name">{{ b.file_name }}</div>
+              <div class="batch-meta">
                 {{ formatDate(b.uploaded_at) }} · {{ b.error_count }} claim(s) with errors/warnings in this HTML
                 <template v-if="claimItVolumeCaption(b.summary)">
                   · {{ claimItVolumeCaption(b.summary) }}
@@ -81,16 +86,18 @@
                 <template v-if="b.ghims_import_batch_file_name">
                   · GHIMS: {{ b.ghims_import_batch_file_name }}<template v-if="b.ghims_import_claim_count != null"> ({{ b.ghims_import_claim_count }} claims in HMS)</template>
                 </template>
-              </q-item-label>
-            </q-item-section>
-            <q-item-section side>
-              <q-btn flat dense round icon="chevron_right" />
-            </q-item-section>
-          </q-item>
-        </q-list>
-        <p v-else class="text-grey-7">No report batches yet. Upload a ClaimIT import report above.</p>
-      </q-card-section>
-    </q-card>
+              </div>
+            </div>
+            <div class="batch-actions">
+              <HmsButton variant="secondary" size="sm" @click="openBatch(b.id)">
+                Open
+              </HmsButton>
+            </div>
+          </div>
+        </div>
+        <p v-else class="empty-hint">No report batches yet. Upload a ClaimIT import report above.</p>
+      </div>
+    </section>
 
     <!-- Batch detail: claims with errors -->
     <template v-if="viewingBatchId && currentBatch">
@@ -141,8 +148,9 @@
         No GHIMS import batch was matched for this report. Use <strong>Edit claim</strong> if the claim exists in this system, or open
         <router-link to="/claims/ghims-import" class="text-primary">Import GHIMS XML</router-link> manually.
       </q-banner>
-      <q-card class="q-mb-md glass-card" flat bordered>
-        <q-card-section>
+
+      <section class="diag-panel batch-toolbar">
+        <div class="panel-body">
           <div class="row items-center justify-between q-mb-md">
             <div>
               <span class="text-caption text-grey-7">Errors / warnings in this batch: </span>
@@ -214,11 +222,11 @@
               />
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
-      <q-card v-for="err in paginatedErrors" :key="err.id" class="q-mb-md glass-card" flat bordered>
-        <q-card-section>
+      <section v-for="err in paginatedErrors" :key="err.id" class="diag-panel">
+        <div class="panel-body">
           <!-- Error messages above the claim block -->
           <div
             class="q-mb-md q-pa-md rounded-borders"
@@ -283,11 +291,11 @@
               />
             </div>
           </div>
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
 
-      <q-card v-if="paginatedErrors.length && filteredErrors.length > rowsPerPage" class="q-mt-md glass-card" flat bordered>
-        <q-card-section class="row justify-center">
+      <section v-if="paginatedErrors.length && filteredErrors.length > rowsPerPage" class="diag-panel">
+        <div class="panel-body row justify-center">
           <q-pagination
             v-model="paginationPage"
             :max="paginationMaxPages"
@@ -296,8 +304,8 @@
             boundary-links
             color="primary"
           />
-        </q-card-section>
-      </q-card>
+        </div>
+      </section>
     </template>
   </q-page>
 </template>
@@ -308,6 +316,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
 import { setClaimsNavIds, setGhimsNavIds } from '../utils/claimNav';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const STORAGE_KEY = 'claimit_batch_selections';
 
@@ -659,3 +669,49 @@ onMounted(async () => {
 });
 
 </script>
+
+<style scoped>
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-body { padding: 1rem; }
+.upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.upload-file { flex: 1 1 16rem; min-width: 12rem; max-width: 28rem; }
+.batch-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.batch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface, transparent);
+}
+.batch-name { font-weight: 650; color: var(--hms-text-primary); font-size: var(--hms-text-sm); }
+.batch-meta { margin-top: 0.2rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.batch-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.empty-hint { font-size: var(--hms-text-sm); color: var(--hms-text-muted); margin: 0; }
+.batch-toolbar :deep(.q-card-section) { padding: 1rem; }
+</style>

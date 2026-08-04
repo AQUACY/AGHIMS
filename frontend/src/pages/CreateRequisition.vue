@@ -1,16 +1,29 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Create Requisition</div>
-    
-    <q-banner class="glass-card q-pa-md q-mb-md">
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Create requisition"
+      subtitle="Request store items for your department or unit."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.back()">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <q-banner dense rounded class="soft-banner q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
       Request items from stores. Your requisition will be reviewed by Pharmacy Head and fulfilled by Store Manager before items are added to your department/unit stock.
     </q-banner>
 
-    <q-card class="glass-card" flat>
-      <q-card-section>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Requisition details</div>
+          <div class="panel-sub">Choose department, store, and the items you need</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-form @submit="createRequisition" ref="requisitionForm">
           <!-- Department/Unit Selection -->
           <q-select
@@ -61,7 +74,7 @@
           </q-input>
 
           <!-- Items Section -->
-          <div class="text-h6 q-mb-md glass-text">Items</div>
+          <div class="panel-title q-mb-md">Items</div>
           
           <q-card
             v-for="(item, index) in requisition.items"
@@ -110,41 +123,32 @@
             </q-card-section>
           </q-card>
 
-          <q-btn
-            color="primary"
-            icon="add"
-            label="Add Item"
-            @click="openAddItemDialog"
-            class="q-mb-md"
-          />
+          <HmsButton variant="secondary" size="sm" class="q-mb-md" @click="openAddItemDialog">
+            Add Item
+          </HmsButton>
 
           <!-- Action Buttons -->
-          <div class="row q-gutter-md q-mt-lg">
-            <q-btn
+          <div class="row q-gutter-md q-mt-lg items-center">
+            <HmsButton
               type="submit"
-              color="primary"
-              label="Create Requisition"
-              icon="send"
+              variant="primary"
+              size="sm"
               :loading="creating"
-              :disable="requisition.items.length === 0"
-              class="col-12 col-md-6"
-            />
-            <q-btn
-              flat
-              label="Cancel"
-              @click="$router.back()"
-              class="col-12 col-md-6"
-            />
+              :disabled="requisition.items.length === 0"
+            >
+              Create Requisition
+            </HmsButton>
+            <HmsButton variant="ghost" size="sm" @click="$router.back()">Cancel</HmsButton>
           </div>
         </q-form>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Add Item Dialog -->
     <q-dialog v-model="showAddItemDialog">
       <q-card style="min-width: 600px">
-        <q-card-section>
-          <div class="text-h6">Add Item</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Add item</div>
         </q-card-section>
 
         <q-card-section>
@@ -186,8 +190,8 @@
           </q-select>
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -201,9 +205,12 @@ import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, departmentStaffAssignmentsAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 export default {
   name: 'CreateRequisition',
+  components: { HmsPageHeader, HmsButton },
   setup() {
     const router = useRouter();
     const authStore = useAuthStore();
@@ -534,12 +541,16 @@ export default {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+.dialog-head {
+  border-bottom: 1px solid var(--hms-border);
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.dialog-title {
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.dialog-actions {
+  gap: 0.5rem;
 }
 </style>
 

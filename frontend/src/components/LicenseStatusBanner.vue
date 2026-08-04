@@ -1,26 +1,26 @@
 <template>
-  <div v-if="eligible" class="license-status-banner-root q-mb-md">
-    <q-banner v-if="loading" rounded dense class="bg-grey-4 text-dark">
-      <q-spinner-dots size="sm" class="q-mr-sm" />
-      Loading installation license…
-    </q-banner>
-    <q-banner v-else-if="licenseBanner" rounded :class="bannerClass">
-      <template #avatar>
-        <q-icon :name="licenseBanner.icon || 'verified'" />
-      </template>
-      <div class="text-subtitle2 text-weight-bold">Installation license</div>
-      <div class="text-body1 q-mt-xs">
-        <span class="text-weight-medium">Status:</span>
-        {{ licenseBanner.statusLabel }}
+  <div v-if="eligible" class="license-status-banner-root">
+    <div v-if="loading" class="license-banner muted">
+      <q-spinner-dots size="sm" />
+      <div class="license-body">Loading installation license…</div>
+    </div>
+    <div v-else-if="licenseBanner" class="license-banner" :class="licenseBanner.type">
+      <q-icon :name="licenseBanner.icon || 'verified'" class="license-icon" />
+      <div class="license-body">
+        <div class="license-title">Installation license</div>
+        <div class="license-line">
+          <span class="label">Status</span>
+          {{ licenseBanner.statusLabel }}
+        </div>
+        <div class="license-line">
+          <span class="label">Expires</span>
+          {{ licenseBanner.expiresLabel }}
+        </div>
+        <div v-if="licenseBanner.detail" class="license-detail">
+          {{ licenseBanner.detail }}
+        </div>
       </div>
-      <div class="text-body1 q-mt-xs">
-        <span class="text-weight-medium">Expires:</span>
-        {{ licenseBanner.expiresLabel }}
-      </div>
-      <div v-if="licenseBanner.detail" class="text-caption q-mt-sm">
-        {{ licenseBanner.detail }}
-      </div>
-    </q-banner>
+    </div>
   </div>
 </template>
 
@@ -68,7 +68,8 @@ async function loadBanner() {
         icon: 'info',
         statusLabel: 'Enforcement off',
         expiresLabel: '—',
-        detail: 'Set LICENSE_ENFORCEMENT=true on the HMS server to show live expiry and validation here.',
+        detail:
+          'Set LICENSE_ENFORCEMENT=true on the HMS server to show live expiry and validation here.',
       };
       return;
     }
@@ -85,9 +86,9 @@ async function loadBanner() {
           : '';
       const detail = [grace, boot].filter(Boolean).join(' ');
       licenseBanner.value = {
-        type: 'info',
-        icon: 'verified',
-        statusLabel: 'Active',
+        type: data.in_grace_period ? 'warning' : 'info',
+        icon: data.in_grace_period ? 'schedule' : 'verified',
+        statusLabel: data.in_grace_period ? 'Active (grace)' : 'Active',
         expiresLabel,
         detail: detail || null,
       };
@@ -123,25 +124,97 @@ async function loadBanner() {
   }
 }
 
-const bannerClass = computed(() => {
-  const t = licenseBanner.value?.type;
-  if (t === 'warning') return 'bg-orange-2 text-dark';
-  if (t === 'error') return 'bg-red-2 text-dark';
-  if (t === 'muted') return 'bg-grey-5 text-dark';
-  return 'bg-blue-1 text-dark';
-});
-
-watch(eligible, (ok) => {
-  if (ok) loadBanner();
-  else {
-    loading.value = false;
-    licenseBanner.value = null;
-  }
-}, { immediate: true });
+watch(
+  eligible,
+  (ok) => {
+    if (ok) loadBanner();
+    else {
+      loading.value = false;
+      licenseBanner.value = null;
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>
 .license-status-banner-root {
+  margin-bottom: 1rem;
   min-height: 48px;
+}
+
+.license-banner {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--hms-radius-xl);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-glass-bg);
+  backdrop-filter: blur(12px);
+  color: var(--hms-text-primary);
+}
+
+.license-banner.info {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.license-banner.warning {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.license-banner.error {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.license-banner.muted {
+  background: var(--hms-surface);
+}
+
+.license-icon {
+  margin-top: 0.15rem;
+  color: var(--hms-accent);
+}
+
+.license-banner.info .license-icon {
+  color: var(--hms-accent);
+}
+
+.license-banner.warning .license-icon {
+  color: var(--hms-warning);
+}
+
+.license-banner.error .license-icon {
+  color: var(--hms-critical);
+}
+
+.license-body {
+  min-width: 0;
+}
+
+.license-title {
+  font-weight: 700;
+  font-size: var(--hms-text-sm);
+  margin-bottom: 0.25rem;
+}
+
+.license-line {
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+}
+
+.license-line .label {
+  font-weight: 600;
+  color: var(--hms-text-muted);
+  margin-right: 0.35rem;
+}
+
+.license-detail {
+  margin-top: 0.4rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
 }
 </style>

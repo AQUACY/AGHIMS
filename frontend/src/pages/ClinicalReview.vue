@@ -1,155 +1,133 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Admission Manager"
-        @click="goBack"
-        class="q-mr-md"
-      />
-      <div class="text-h5 text-weight-bold glass-text">
-        Clinical Review
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Clinical review"
+      subtitle="Treatment plan, diagnoses, and clinical notes for this admission."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="goBack">Back to manager</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="patientInfo" class="ipd-patient-hero">
+      <div class="ipd-hero-main">
+        <div class="ipd-hero-avatar">{{ crPatientInitials(patientInfo) }}</div>
+        <div>
+          <h1 class="ipd-hero-name">{{ crPatientDisplayName(patientInfo) }}</h1>
+          <div class="ipd-hero-meta">
+            <span class="mono">{{ patientInfo.patient_card_number }}</span>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.ward || '—' }}</span>
+            <template v-if="patientInfo.bed_number">
+              <span class="sep">·</span>
+              <span>Bed {{ patientInfo.bed_number }}</span>
+            </template>
+            <template v-if="patientInfo.patient_gender">
+              <span class="sep">·</span>
+              <span>{{ patientInfo.patient_gender }}</span>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 text-weight-bold glass-text q-mb-sm">
-          Patient Information
-        </div>
-        <div class="row q-col-gutter-md">
-          <div class="col-12 col-md-6">
-            <div class="text-body2">
-              <strong>Name:</strong> {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
-            </div>
-            <div class="text-body2">
-              <strong>Card Number:</strong> {{ patientInfo.patient_card_number }}
-            </div>
-          </div>
-          <div class="col-12 col-md-6">
-            <div class="text-body2">
-              <strong>Ward:</strong> {{ patientInfo.ward }}
-            </div>
-            <div class="text-body2" v-if="patientInfo.bed_number">
-              <strong>Bed:</strong> {{ patientInfo.bed_number }}
-            </div>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
-
     <!-- Treatment Plan (Review Notes) -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 text-weight-bold glass-text q-mb-md">
-          Treatment Plan
-        </div>
-        <q-input
-          v-model="reviewNotes"
-          filled
-          type="textarea"
-          placeholder="Enter treatment plan and clinical notes..."
-          rows="6"
-          hint="Auto-saved as draft"
-          @update:model-value="autoSaveDraft"
-        />
-        <div class="row q-mt-md">
-          <q-btn
-            color="primary"
-            label="Save Review"
-            @click="saveClinicalReview"
-            :loading="savingReview"
-            class="glass-button"
-          />
-        </div>
-      </q-card-section>
-    </q-card>
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Treatment Plan</h2>
+      </div>
+      <q-input
+        v-model="reviewNotes"
+        filled
+        type="textarea"
+        placeholder="Enter treatment plan and clinical notes..."
+        rows="6"
+        hint="Auto-saved as draft"
+        @update:model-value="autoSaveDraft"
+      />
+      <div class="row q-mt-md">
+        <HmsButton
+          variant="primary"
+          :loading="savingReview"
+          @click="saveClinicalReview"
+        >
+          Save Review
+        </HmsButton>
+      </div>
+    </section>
 
     <!-- Diagnoses -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Diagnoses</div>
-          <q-space />
-          <!-- <q-btn
-            flat
-            dense
-            icon="bookmark"
-            label="Templates"
-            @click="openTemplateDialog('diagnoses')"
-            :disable="!currentClinicalReviewId"
-            class="q-mr-sm"
-          /> -->
-          <q-btn
-            color="primary"
-            label="Add Diagnosis"
-            @click="resetDiagnosisForm(); showDiagnosisDialog = true"
-            :disable="!currentClinicalReviewId"
-            class="glass-button"
-          />
-        </div>
-
-        <q-table
-          :rows="diagnoses"
-          :columns="diagnosisColumns"
-          row-key="id"
-          flat
-          v-if="diagnoses.length > 0"
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Diagnoses</h2>
+        <HmsButton
+          variant="primary"
+          size="sm"
+          :disabled="!currentClinicalReviewId"
+          @click="resetDiagnosisForm(); showDiagnosisDialog = true"
         >
-          <template v-slot:body-cell-diagnosis_status="props">
-            <q-td :props="props">
-              <q-badge
-                v-if="props.value"
-                :color="props.value === 'new' ? 'blue' : props.value === 'old' ? 'grey' : 'purple'"
-                :label="props.value === 'new' ? 'New' : props.value === 'old' ? 'Old' : 'Recurring'"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-is_provisional="props">
-            <q-td :props="props">
-              <q-badge
-                :color="props.value ? 'orange' : 'green'"
-                :label="props.value ? 'Provisional' : 'Final'"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-is_chief="props">
-            <q-td :props="props">
-              <q-icon
-                v-if="props.value"
-                name="star"
-                color="primary"
-                size="sm"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <q-btn
-                flat
-                dense
-                round
-                icon="delete"
-                color="negative"
-                size="sm"
-                @click="deleteDiagnosis(props.row)"
-              />
-            </q-td>
-          </template>
-        </q-table>
-        <div v-else class="text-center text-grey-6 q-pa-md">
-          No diagnoses added yet. Click "Add Diagnosis" to add one.
-        </div>
-      </q-card-section>
-    </q-card>
+          Add Diagnosis
+        </HmsButton>
+      </div>
+
+      <q-table
+        :rows="diagnoses"
+        :columns="diagnosisColumns"
+        row-key="id"
+        flat
+        v-if="diagnoses.length > 0"
+      >
+        <template v-slot:body-cell-diagnosis_status="props">
+          <q-td :props="props">
+            <q-badge
+              v-if="props.value"
+              :color="props.value === 'new' ? 'blue' : props.value === 'old' ? 'grey' : 'purple'"
+              :label="props.value === 'new' ? 'New' : props.value === 'old' ? 'Old' : 'Recurring'"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-is_provisional="props">
+          <q-td :props="props">
+            <q-badge
+              :color="props.value ? 'orange' : 'green'"
+              :label="props.value ? 'Provisional' : 'Final'"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-is_chief="props">
+          <q-td :props="props">
+            <q-icon
+              v-if="props.value"
+              name="star"
+              color="primary"
+              size="sm"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <q-btn
+              flat
+              dense
+              round
+              icon="delete"
+              color="negative"
+              size="sm"
+              @click="deleteDiagnosis(props.row)"
+            />
+          </q-td>
+        </template>
+      </q-table>
+      <div v-else class="text-center text-grey-6 q-pa-md">
+        No diagnoses added yet. Click "Add Diagnosis" to add one.
+      </div>
+    </section>
 
     <!-- Prescriptions -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Prescriptions</div>
-          <q-space />
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Prescriptions</h2>
+        <div class="am-panel-actions">
           <q-btn
             flat
             dense
@@ -157,58 +135,57 @@
             label="Templates"
             @click="openTemplateDialog('prescriptions')"
             :disable="!currentClinicalReviewId"
-            class="q-mr-sm"
           />
-          <q-btn
-            color="primary"
-            label="Add Prescription"
+          <HmsButton
+            variant="primary"
+            size="sm"
+            :disabled="!currentClinicalReviewId"
             @click="resetPrescriptionForm(); showPrescriptionDialog = true"
-            :disable="!currentClinicalReviewId"
-            class="glass-button"
-          />
+          >
+            Add Prescription
+          </HmsButton>
         </div>
+      </div>
 
-        <q-table
-          :rows="prescriptions"
-          :columns="prescriptionColumns"
-          row-key="id"
-          flat
-          v-if="prescriptions.length > 0"
-        >
-          <template v-slot:body-cell-status="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getPrescriptionStatusColor(props.row)"
-                :label="getPrescriptionStatusLabel(props.row)"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <q-btn
-                flat
-                dense
-                round
-                icon="delete"
-                color="negative"
-                size="sm"
-                @click="deletePrescription(props.row)"
-              />
-            </q-td>
-          </template>
-        </q-table>
-        <div v-else class="text-center text-grey-6 q-pa-md">
-          No prescriptions added yet. Click "Add Prescription" to add one.
-        </div>
-      </q-card-section>
-    </q-card>
+      <q-table
+        :rows="prescriptions"
+        :columns="prescriptionColumns"
+        row-key="id"
+        flat
+        v-if="prescriptions.length > 0"
+      >
+        <template v-slot:body-cell-status="props">
+          <q-td :props="props">
+            <q-badge
+              :color="getPrescriptionStatusColor(props.row)"
+              :label="getPrescriptionStatusLabel(props.row)"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <q-btn
+              flat
+              dense
+              round
+              icon="delete"
+              color="negative"
+              size="sm"
+              @click="deletePrescription(props.row)"
+            />
+          </q-td>
+        </template>
+      </q-table>
+      <div v-else class="text-center text-grey-6 q-pa-md">
+        No prescriptions added yet. Click "Add Prescription" to add one.
+      </div>
+    </section>
 
     <!-- Investigations -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Investigations</div>
-          <q-space />
+    <section class="am-panel">
+      <div class="am-panel-head">
+        <h2 class="hms-section-title">Investigations</h2>
+        <div class="am-panel-actions">
           <q-btn
             flat
             dense
@@ -216,51 +193,51 @@
             label="Templates"
             @click="openTemplateDialog('investigations')"
             :disable="!currentClinicalReviewId"
-            class="q-mr-sm"
           />
-          <q-btn
-            color="primary"
-            label="Add Investigation"
+          <HmsButton
+            variant="primary"
+            size="sm"
+            :disabled="!currentClinicalReviewId"
             @click="resetInvestigationForm(); showInvestigationDialog = true"
-            :disable="!currentClinicalReviewId"
-            class="glass-button"
-          />
+          >
+            Add Investigation
+          </HmsButton>
         </div>
+      </div>
 
-        <q-table
-          :rows="investigations"
-          :columns="investigationColumns"
-          row-key="id"
-          flat
-          v-if="investigations.length > 0"
-        >
-          <template v-slot:body-cell-status="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getInvestigationStatusColor(props.row.status)"
-                :label="getInvestigationStatusLabel(props.row.status)"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <q-btn
-                flat
-                dense
-                round
-                icon="delete"
-                color="negative"
-                size="sm"
-                @click="deleteInvestigation(props.row)"
-              />
-            </q-td>
-          </template>
-        </q-table>
-        <div v-else class="text-center text-grey-6 q-pa-md">
-          No investigations added yet. Click "Add Investigation" to add one.
-        </div>
-      </q-card-section>
-    </q-card>
+      <q-table
+        :rows="investigations"
+        :columns="investigationColumns"
+        row-key="id"
+        flat
+        v-if="investigations.length > 0"
+      >
+        <template v-slot:body-cell-status="props">
+          <q-td :props="props">
+            <q-badge
+              :color="getInvestigationStatusColor(props.row.status)"
+              :label="getInvestigationStatusLabel(props.row.status)"
+            />
+          </q-td>
+        </template>
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <q-btn
+              flat
+              dense
+              round
+              icon="delete"
+              color="negative"
+              size="sm"
+              @click="deleteInvestigation(props.row)"
+            />
+          </q-td>
+        </template>
+      </q-table>
+      <div v-else class="text-center text-grey-6 q-pa-md">
+        No investigations added yet. Click "Add Investigation" to add one.
+      </div>
+    </section>
 
     <!-- Diagnosis Dialog -->
     <q-dialog v-model="showDiagnosisDialog">
@@ -582,11 +559,24 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 import { consultationAPI, priceListAPI } from '../services/api';
 
 const $q = useQuasar();
 const router = useRouter();
 const route = useRoute();
+
+const crPatientInitials = (info) => {
+  if (!info) return '?';
+  const a = (info.patient_name || '').trim().charAt(0);
+  const b = (info.patient_surname || '').trim().charAt(0);
+  return ((a + b) || '?').toUpperCase();
+};
+const crPatientDisplayName = (info) => {
+  if (!info) return '';
+  return [info.patient_name, info.patient_surname, info.patient_other_names].filter(Boolean).join(' ');
+};
 
 const wardAdmissionId = computed(() => parseInt(route.params.id));
 const clinicalReviewIdFromQuery = computed(() => {
@@ -1486,6 +1476,101 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.am-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  margin-bottom: 0.95rem;
+}
+.am-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+.am-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.ipd-patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.ipd-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.ipd-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.ipd-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.ipd-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.ipd-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ipd-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.ipd-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+@media (max-width: 720px) {
+  .ipd-patient-hero { position: static; }
+}
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 .body--light .glass-text {
   color: rgba(0, 0, 0, 0.87) !important;
 }

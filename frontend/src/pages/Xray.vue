@@ -1,214 +1,225 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">X-ray Services</div>
-
-    <!-- Filters and Search -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="row q-gutter-md q-mb-md">
-          <!-- Search by Card Number or Name -->
-          <q-input
-            v-model="searchTerm"
-            filled
-            label="Search by Card Number or Patient Name"
-            class="col-12 col-md-4"
-            @keyup.enter="loadRequests"
-            clearable
-            @clear="loadRequests"
-          >
-            <template v-slot:prepend>
-              <q-icon name="search" />
-            </template>
-          </q-input>
-
-          <!-- Date Filter -->
-          <q-input
-            v-model="filterDate"
-            filled
-            label="Date (optional)"
-            type="date"
-            class="col-12 col-md-3"
-            @update:model-value="loadRequests"
-            clearable
-            hint="Leave empty to show all dates"
-          >
-            <template v-slot:prepend>
-              <q-icon name="event" />
-            </template>
-          </q-input>
-
-          <!-- Status Filter -->
-          <q-select
-            v-model="statusFilter"
-            filled
-            :options="statusOptions"
-            label="Status"
-            class="col-12 col-md-3"
-            @update:model-value="loadRequests"
-            clearable
-          >
-            <template v-slot:prepend>
-              <q-icon name="filter_list" />
-            </template>
-          </q-select>
-
-          <!-- Refresh Button -->
-          <q-btn
-            color="primary"
-            icon="refresh"
-            label="Refresh"
-            @click="loadRequests"
-            :loading="loadingRequests"
-            class="col-12 col-md-2"
-          />
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- X-ray Requests Table -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">X-ray Requests</div>
-          <q-space />
-          <q-btn
-            v-if="authStore.userRole === 'Xray' || authStore.userRole === 'Xray Head' || authStore.userRole === 'Admin'"
-            color="primary"
-            icon="add"
-            label="Add Service"
-            @click="openAddServiceDialogForNew"
-            class="q-mr-md"
-          />
-          <q-badge color="primary" :label="`${requests.length} request(s)`" />
-        </div>
-        <q-table
-          :rows="requests"
-          :columns="requestColumns"
-          row-key="id"
-          flat
-          :loading="loadingRequests"
-          :pagination="{ rowsPerPage: 20 }"
+  <q-page class="hms-page">
+    <HmsPageHeader title="X-ray" subtitle="Confirm X-ray requests and enter imaging results.">
+      <template #actions>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          @click="setTodayDate"
         >
-          <template v-slot:body-cell-status="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getStatusColor(props.value)"
-                :label="props.value"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-encounter_date="props">
-            <q-td :props="props">
-              {{ formatDate(props.value || props.row.created_at) }}
-            </q-td>
-          </template>
-          <template v-slot:body-cell-source="props">
-            <q-td :props="props">
-              <q-badge
-                v-if="props.value === 'inpatient' || props.row.prescription_type === 'inpatient'"
-                color="purple"
-                label="IPD"
-              />
-              <q-badge
-                v-else
-                color="blue"
-                label="OPD"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-ward="props">
-            <q-td :props="props">
-              <span v-if="props.value || props.row.bed_number">
-                {{ props.value || '' }}{{ props.row.bed_number ? ` / ${props.row.bed_number}` : '' }}
-              </span>
-              <span v-else class="text-grey">-</span>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <div class="row q-gutter-xs">
-                <q-btn
-                  size="sm"
-                  color="info"
-                  icon="visibility"
-                  flat
-                  round
-                  @click="viewRemarks(props.row)"
-                >
-                  <q-tooltip>View Remarks/Notes</q-tooltip>
-                </q-btn>
-                <q-btn
-                  size="sm"
-                  color="purple"
-                  icon="description"
-                  flat
-                  round
-                  @click="viewDoctorNotes(props.row)"
-                >
-                  <q-tooltip>View Doctor Notes / Treatment Plan</q-tooltip>
-                </q-btn>
-                <q-btn
-                  v-if="(props.row.status === 'requested' || props.row.status === 'confirmed') && (authStore.userRole === 'Xray' || authStore.userRole === 'Xray Head' || authStore.userRole === 'Admin')"
-                  size="sm"
-                  color="secondary"
-                  label="Update Service"
-                  @click="openUpdateServiceDialog(props.row)"
-                />
-                <q-btn
-                  v-if="(props.row.status === 'requested' || props.row.status === 'confirmed') && (authStore.userRole === 'Xray' || authStore.userRole === 'Xray Head' || authStore.userRole === 'Admin')"
-                  size="sm"
-                  color="accent"
-                  label="Add Service"
-                  @click="openAddServiceDialog(props.row)"
-                />
-                <q-btn
-                  v-if="props.row.status === 'requested'"
-                  size="sm"
-                  color="primary"
-                  label="Confirm"
-                  @click="confirmInvestigation(props.row)"
-                  :loading="confirmingId === props.row.id"
-                  :disable="confirmingId !== null"
-                />
-                <q-btn
-                  v-if="props.row.status === 'confirmed'"
-                  size="sm"
-                  color="positive"
-                  label="Add Results"
-                  @click="navigateToResultPage(props.row)"
-                />
-              <q-btn
-                  v-if="props.row.status === 'completed'"
-                size="sm"
-                  color="info"
-                  label="View Results"
-                  @click="navigateToResultPage(props.row)"
-                />
-              <q-btn
-                  v-if="props.row.status === 'confirmed' && authStore.userRole === 'Admin'"
-                size="sm"
-                  color="orange"
-                  label="Revert to Requested"
-                  @click="revertToRequested(props.row)"
-                  :loading="revertingToRequestedId === props.row.id"
-                />
-                <q-btn
-                  v-if="props.row.status === 'completed' && (authStore.userRole === 'Admin' || authStore.userRole === 'Xray Head')"
-                  size="sm"
-                  color="warning"
-                  label="Revert to Confirmed"
-                  @click="revertInvestigationStatus(props.row)"
-                  :loading="revertingId === props.row.id"
-                />
-              </div>
-            </q-td>
-          </template>
-        </q-table>
-        <div v-if="!loadingRequests && requests.length === 0" class="text-center text-grey-7 q-pa-md">
-          No x-ray requests found for the selected filters
+          Today
+        </HmsButton>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          :loading="loadingRequests"
+          @click="loadRequests"
+        >
+          Refresh
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div class="diag-toolbar">
+      <div class="toolbar-meta">
+        <Bone :size="15" />
+        <span>{{ requests.length }} request{{ requests.length === 1 ? '' : 's' }}</span>
+      </div>
+      <div class="toolbar-controls">
+        <input
+          v-model="searchTerm"
+          type="search"
+          class="tool-input tool-input--search"
+          placeholder="Search card or name…"
+          @keyup.enter="loadRequests"
+        />
+        <input
+          v-model="filterDate"
+          type="date"
+          class="tool-input"
+          title="Date"
+          @change="loadRequests"
+        />
+        <select
+          v-model="statusFilter"
+          class="tool-input"
+          @change="loadRequests"
+        >
+          <option value="">All statuses</option>
+          <option
+            v-for="opt in statusOptions"
+            :key="opt.value"
+            :value="opt.value"
+          >
+            {{ opt.label }}
+          </option>
+        </select>
+      </div>
+    </div>
+
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">X-ray Requests</div>
+          <div class="panel-sub">{{ requests.length }} request{{ requests.length === 1 ? '' : 's' }}</div>
         </div>
-      </q-card-section>
-    </q-card>
+        <div class="panel-actions">
+          <HmsButton
+            v-if="authStore.userRole === 'Xray' || authStore.userRole === 'Xray Head' || authStore.userRole === 'Admin'"
+            variant="secondary"
+            size="sm"
+            @click="openAddServiceDialogForNew"
+          >
+            Add Service
+          </HmsButton>
+        </div>
+      </div>
+      <q-table
+        class="diag-table"
+        :rows="requests"
+        :columns="requestColumns"
+        row-key="id"
+        flat
+        dense
+        :loading="loadingRequests"
+        :pagination="{ rowsPerPage: 20 }"
+      >
+        <template v-slot:body-cell-patient_name="props">
+          <q-td :props="props">
+            <div class="patient-cell">
+              <div class="avatar">{{ patientInitials(props.row) }}</div>
+              <div>
+                <div class="name">{{ props.row.patient_name || '—' }}</div>
+                <div class="sub mono">{{ props.row.patient_card_number || '—' }}</div>
+              </div>
+            </div>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-patient_card_number="props">
+          <q-td :props="props">
+            <span class="mono">{{ props.value }}</span>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-status="props">
+          <q-td :props="props">
+            <HmsBadge :tone="statusTone(props.value)">{{ props.value }}</HmsBadge>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-encounter_date="props">
+          <q-td :props="props">
+            {{ formatDate(props.value || props.row.created_at) }}
+          </q-td>
+        </template>
+        <template v-slot:body-cell-source="props">
+          <q-td :props="props">
+            <HmsBadge
+              :tone="(props.value === 'inpatient' || props.row.prescription_type === 'inpatient') ? 'healthcare' : 'info'"
+            >
+              {{ (props.value === 'inpatient' || props.row.prescription_type === 'inpatient') ? 'IPD' : 'OPD' }}
+            </HmsBadge>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-ward="props">
+          <q-td :props="props">
+            <span v-if="props.value || props.row.bed_number">
+              {{ props.value || '' }}{{ props.row.bed_number ? ` / ${props.row.bed_number}` : '' }}
+            </span>
+            <span v-else class="text-muted">-</span>
+          </q-td>
+        </template>
+        <template v-slot:body-cell-actions="props">
+          <q-td :props="props">
+            <div class="row-actions">
+              <q-btn
+                size="sm"
+                color="info"
+                icon="visibility"
+                flat
+                round
+                dense
+                @click="viewRemarks(props.row)"
+              >
+                <q-tooltip>View Remarks/Notes</q-tooltip>
+              </q-btn>
+              <q-btn
+                size="sm"
+                color="purple"
+                icon="description"
+                flat
+                round
+                dense
+                @click="viewDoctorNotes(props.row)"
+              >
+                <q-tooltip>View Doctor Notes / Treatment Plan</q-tooltip>
+              </q-btn>
+              <HmsButton
+                v-if="(props.row.status === 'requested' || props.row.status === 'confirmed') && (authStore.userRole === 'Xray' || authStore.userRole === 'Xray Head' || authStore.userRole === 'Admin')"
+                variant="secondary"
+                size="sm"
+                @click="openUpdateServiceDialog(props.row)"
+              >
+                Update Service
+              </HmsButton>
+              <HmsButton
+                v-if="(props.row.status === 'requested' || props.row.status === 'confirmed') && (authStore.userRole === 'Xray' || authStore.userRole === 'Xray Head' || authStore.userRole === 'Admin')"
+                variant="soft"
+                size="sm"
+                @click="openAddServiceDialog(props.row)"
+              >
+                Add Service
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'requested'"
+                variant="primary"
+                size="sm"
+                :loading="confirmingId === props.row.id"
+                :disabled="confirmingId !== null"
+                @click="confirmInvestigation(props.row)"
+              >
+                Confirm
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'confirmed'"
+                variant="healthcare"
+                size="sm"
+                @click="navigateToResultPage(props.row)"
+              >
+                Add Results
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'completed'"
+                variant="secondary"
+                size="sm"
+                @click="navigateToResultPage(props.row)"
+              >
+                View Results
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'confirmed' && authStore.userRole === 'Admin'"
+                variant="outline"
+                size="sm"
+                :loading="revertingToRequestedId === props.row.id"
+                @click="revertToRequested(props.row)"
+              >
+                Revert to Requested
+              </HmsButton>
+              <HmsButton
+                v-if="props.row.status === 'completed' && (authStore.userRole === 'Admin' || authStore.userRole === 'Xray Head')"
+                variant="outline"
+                size="sm"
+                :loading="revertingId === props.row.id"
+                @click="revertInvestigationStatus(props.row)"
+              >
+                Revert to Confirmed
+              </HmsButton>
+            </div>
+          </q-td>
+        </template>
+      </q-table>
+      <div v-if="!loadingRequests && requests.length === 0" class="empty-hint">
+        No x-ray requests found for the selected filters
+      </div>
+    </section>
 
     <!-- View Remarks Dialog -->
     <q-dialog v-model="showRemarksDialog">
@@ -434,8 +445,12 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import { Bone } from 'lucide-vue-next';
 import { consultationAPI, priceListAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -447,7 +462,7 @@ const requests = ref([]);
 const loadingRequests = ref(false);
 const searchTerm = ref('');
 const filterDate = ref('');
-const statusFilter = ref(null);
+const statusFilter = ref('');
 const statusOptions = [
   { label: 'Requested', value: 'requested' },
   { label: 'Confirmed', value: 'confirmed' },
@@ -509,6 +524,27 @@ const getStatusColor = (status) => {
     completed: 'green',
   };
   return colors[status] || 'grey';
+};
+
+const statusTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s === 'requested') return 'warning';
+  if (s === 'confirmed') return 'info';
+  if (s === 'completed') return 'success';
+  if (s === 'cancelled' || s === 'rejected') return 'critical';
+  return 'muted';
+};
+
+const patientInitials = (row) => {
+  const parts = String(row?.patient_name || '?').trim().split(/\s+/);
+  const a = (parts[0] || '?')[0] || '?';
+  const b = (parts[1] || '')[0] || '';
+  return `${a}${b}`.toUpperCase();
+};
+
+const setTodayDate = () => {
+  initializeDate();
+  loadRequests();
 };
 
 // Load requests with filters
@@ -1071,3 +1107,140 @@ onMounted(() => {
   loadRequests();
 });
 </script>
+
+<style scoped>
+.diag-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+}
+.toolbar-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+}
+.toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.tool-input {
+  height: 2.15rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-primary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  padding: 0 0.7rem;
+}
+.tool-input--search {
+  min-width: 11rem;
+}
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.panel-title {
+  font-size: var(--hms-text-base);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.panel-sub {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+.diag-table {
+  background: transparent;
+}
+.diag-table :deep(th) {
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  font-weight: 700;
+}
+.empty-hint {
+  text-align: center;
+  color: var(--hms-text-muted);
+  padding: 1.25rem 1rem;
+  font-size: var(--hms-text-sm);
+}
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: center;
+}
+.patient-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.avatar {
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(219, 39, 119, 0.14));
+  color: var(--hms-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 750;
+  flex-shrink: 0;
+}
+.name {
+  font-weight: 700;
+  color: var(--hms-text-primary);
+}
+.sub {
+  margin-top: 0.1rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.mono {
+  font-family: var(--hms-font-mono);
+  font-size: 0.75rem;
+}
+.text-muted {
+  color: var(--hms-text-muted);
+}
+@media (max-width: 720px) {
+  .toolbar-controls {
+    width: 100%;
+  }
+  .tool-input {
+    flex: 1;
+    min-width: 0;
+  }
+}
+</style>

@@ -1,107 +1,69 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Record Vitals</div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Record vitals" :subtitle="formattedDate">
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="shiftDay(-1)">Prev</HmsButton>
+        <HmsButton variant="secondary" size="sm" @click="setToday">Today</HmsButton>
+        <HmsButton variant="secondary" size="sm" @click="shiftDay(1)">Next</HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="row items-center q-gutter-md">
-          <q-input
-            v-model="selectedDate"
-            filled
-            type="date"
-            label="Select Date"
-            class="col-12 col-md-4"
-            @update:model-value="loadEncounters"
-          />
-          <q-input
-            v-model="cardSearch"
-            filled
-            label="Filter by Card Number"
-            class="col-12 col-md-4"
-            clearable
-          />
-          <q-btn
-            icon="today"
-            label="Today"
-            @click="setToday"
-            color="primary"
-            class="col-12 col-md-2 glass-button"
-          />
-          <q-space />
-          <q-badge color="primary" :label="`${encounters.length} encounters`" />
+    <div class="vitals-toolbar">
+      <div class="toolbar-meta">
+        <HeartPulse :size="15" />
+        <span>{{ filteredEncounters.length }} encounter{{ filteredEncounters.length === 1 ? '' : 's' }}</span>
+      </div>
+      <div class="toolbar-controls">
+        <input v-model="selectedDate" type="date" class="tool-input" @change="loadEncounters" />
+        <input v-model="cardSearch" type="search" class="tool-input" placeholder="Filter by card…" />
+      </div>
+    </div>
+
+    <HmsDataTable
+      :rows="filteredEncounters"
+      :columns="vitalsTableColumns"
+      row-key="id"
+      :loading="loading"
+      dense
+      searchable
+      search-placeholder="Search patient, card, department…"
+      empty-title="No encounters for this date"
+      empty-description="Try another day or clear the card filter."
+      @row-click="recordVitals"
+    >
+      <template #cell-time="{ value }">{{ formatTime(value) }}</template>
+      <template #cell-patient_name="{ row }">
+        <div class="patient-cell">
+          <div class="avatar">{{ patientInitials(row) }}</div>
+          <div>
+            <div class="name">{{ titleCaseName(row.patient_name) }}</div>
+            <div class="sub mono">{{ row.patient_card_number }}</div>
+          </div>
         </div>
-      </q-card-section>
-    </q-card>
-
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Encounters for {{ formattedDate }}</div>
-        
-        <q-table
-          v-if="encounters.length > 0"
-          :rows="filteredEncounters"
-          :columns="columns"
-          row-key="id"
-          flat
-          :loading="loading"
+      </template>
+      <template #cell-status="{ value }">
+        <HmsBadge :tone="statusTone(value)">{{ value }}</HmsBadge>
+      </template>
+      <template #cell-has_vitals="{ value }">
+        <HmsBadge :tone="value ? 'success' : 'muted'">{{ value ? 'Recorded' : 'Pending' }}</HmsBadge>
+      </template>
+      <template #cell-actions="{ row }">
+        <HmsButton
+          :variant="row.has_vitals ? 'secondary' : 'primary'"
+          size="sm"
+          @click.stop="recordVitals(row)"
         >
-          <template v-slot:body-cell-time="props">
-            <q-td :props="props">
-              {{ formatTime(props.value) }}
-            </q-td>
-          </template>
-          <template v-slot:body-cell-status="props">
-            <q-td :props="props">
-              <q-badge
-                :color="getStatusColor(props.value)"
-                :label="props.value"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-has_vitals="props">
-            <q-td :props="props">
-              <q-icon 
-                v-if="props.value" 
-                name="check_circle" 
-                color="positive" 
-                size="sm"
-                title="Vitals Recorded"
-              />
-              <q-icon 
-                v-else 
-                name="radio_button_unchecked" 
-                color="grey" 
-                size="sm"
-                title="No Vitals"
-              />
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <q-btn
-                size="sm"
-                :color="props.row.has_vitals ? 'secondary' : 'primary'"
-                :icon="props.row.has_vitals ? 'edit' : 'add_circle'"
-                :label="props.row.has_vitals ? 'Edit Vitals' : 'Record Vitals'"
-                @click="recordVitals(props.row)"
-                class="q-mr-xs"
-              />
-            </q-td>
-          </template>
-        </q-table>
-
-        <div v-else class="text-center q-pa-lg text-grey-6">
-          <q-icon name="event_busy" size="64px" />
-          <div class="text-h6 q-mt-md">No encounters found for this date</div>
-        </div>
-      </q-card-section>
-    </q-card>
+          {{ row.has_vitals ? 'Edit' : 'Record' }}
+        </HmsButton>
+      </template>
+    </HmsDataTable>
 
     <!-- Vitals Form Dialog -->
     <q-dialog v-model="showVitalsDialog" persistent>
-      <q-card style="min-width: 700px; max-width: 900px">
-      <q-card-section>
-          <div class="text-h6">Record Vitals - Encounter #{{ selectedEncounter?.id }}</div>
+      <q-card class="vitals-dialog-card" style="min-width: min(900px, 96vw); max-width: 960px">
+      <q-card-section class="vitals-dialog-head">
+          <div class="dialog-title">Record vitals</div>
+          <div class="dialog-sub">Encounter #{{ selectedEncounter?.id }}</div>
           <div class="row q-gutter-md q-mt-md">
             <div class="col-12 col-md-6">
               <div class="text-body2"><strong>Patient:</strong> {{ selectedEncounter?.patient_name || 'N/A' }}</div>
@@ -273,46 +235,30 @@
           />
 
             <div class="row justify-end q-gutter-sm q-mt-md">
-              <q-btn
-                label="Cancel"
-                flat
-                color="grey"
-                @click="closeVitalsDialog"
-              />
-            <q-btn
-                label="Save Vitals"
-              type="submit"
-              color="primary"
-              :loading="saving"
-                icon="save"
-            />
+              <HmsButton variant="ghost" size="sm" @click="closeVitalsDialog">Cancel</HmsButton>
+              <HmsButton variant="primary" size="sm" type="submit" :loading="saving">
+                Save vitals
+              </HmsButton>
           </div>
         </q-form>
       </q-card-section>
 
       <!-- Inventory Debit Section -->
-      <q-card-section v-if="selectedEncounter" class="q-pt-md">
-        <q-separator class="q-mb-md" />
-        <div class="text-h6 q-mb-md">Inventory Debits (Stock Management Only)</div>
+      <q-card-section v-if="selectedEncounter" class="vitals-debit-section">
+        <div class="debit-title">Inventory debits</div>
+        <div class="debit-sub">Stock management only — items are not billed to the patient.</div>
         
         <!-- Reminder to debit when RDT is selected -->
-        <q-banner 
-          v-if="vitalsForm.rdt_malaria && !hasMalariaRDTDebit" 
-          dense 
-          class="q-mb-md bg-warning text-white"
+        <div
+          v-if="vitalsForm.rdt_malaria && !hasMalariaRDTDebit"
+          class="debit-banner debit-banner--warn"
         >
-          <template v-slot:avatar>
-            <q-icon name="warning" />
-          </template>
-          <strong>RDT Result Recorded:</strong> Please debit Malaria RDT inventory before saving vitals.
-        </q-banner>
+          <strong>RDT result recorded.</strong> Debit Malaria RDT inventory before saving vitals.
+        </div>
         
-        <q-banner dense class="q-mb-md bg-info text-white">
-          <template v-slot:avatar>
-            <q-icon name="info" />
-          </template>
-          OPD inventory debits are for stock management and accountability only. Items are NOT billed to the patient.
-        </q-banner>
+        <div class="debit-banner debit-banner--info">
+          OPD inventory debits are for stock accountability only.
+        </div>
         
         <!-- Stock Levels -->
         <q-card flat bordered class="q-mb-md">
@@ -481,6 +427,11 @@ import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { vitalsAPI, encountersAPI, patientsAPI, billingAPI, consultationAPI, pharmacyRequisitionsAPI, wardsAPI } from '../services/api';
 import { useQuasar } from 'quasar';
+import { HeartPulse } from 'lucide-vue-next';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
+import HmsDataTable from '../components/ui/HmsDataTable.vue';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -490,6 +441,49 @@ const selectedDate = ref('');
 const encounters = ref([]);
 const loading = ref(false);
 const cardSearch = ref('');
+
+const vitalsTableColumns = [
+  { name: 'time', label: 'Time', field: 'created_at', align: 'left', width: '100px' },
+  { name: 'patient_name', label: 'Patient', field: 'patient_name', align: 'left' },
+  { name: 'department', label: 'Department', field: 'department', align: 'left', width: '140px' },
+  { name: 'status', label: 'Status', field: 'status', align: 'center', width: '120px' },
+  { name: 'has_vitals', label: 'Vitals', field: 'has_vitals', align: 'center', width: '110px' },
+  { name: 'actions', label: '', align: 'right', width: '110px' },
+];
+
+const titleCaseName = (value) => {
+  if (!value) return 'Unknown';
+  return String(value)
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+const patientInitials = (row) => {
+  const parts = String(row.patient_name || '?').trim().split(/\s+/);
+  const a = (parts[0] || '?')[0] || '?';
+  const b = (parts[1] || '')[0] || '';
+  return `${a}${b}`.toUpperCase();
+};
+
+const statusTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('final')) return 'success';
+  if (s.includes('consult') || s.includes('progress')) return 'healthcare';
+  if (s.includes('await') || s.includes('draft') || s.includes('pending')) return 'warning';
+  return 'neutral';
+};
+
+const shiftDay = (delta) => {
+  if (!selectedDate.value) {
+    setToday();
+    return;
+  }
+  const d = new Date(`${selectedDate.value}T12:00:00`);
+  d.setDate(d.getDate() + delta);
+  selectedDate.value = d.toISOString().split('T')[0];
+  loadEncounters();
+};
+
 const showVitalsDialog = ref(false);
 const selectedEncounter = ref(null);
 const saving = ref(false);
@@ -1326,3 +1320,77 @@ onMounted(() => {
   autoLoadFromRoute();
 });
 </script>
+
+<style scoped>
+.vitals-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+}
+.toolbar-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+}
+.toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.tool-input {
+  height: 2.15rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-primary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  padding: 0 0.7rem;
+}
+.patient-cell { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.avatar {
+  width: 2.15rem; height: 2.15rem; border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(219, 39, 119, 0.14));
+  color: var(--hms-accent); display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.68rem; font-weight: 750; flex-shrink: 0;
+}
+.name { font-weight: 700; color: var(--hms-text-primary); }
+.sub { margin-top: 0.1rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.mono { font-family: var(--hms-font-mono); font-size: 0.75rem; }
+.vitals-dialog-head { border-bottom: 1px solid var(--hms-border); }
+.dialog-title { font-size: var(--hms-text-xl); font-weight: 750; color: var(--hms-text-primary); }
+.dialog-sub { margin-top: 0.2rem; font-size: var(--hms-text-sm); color: var(--hms-text-muted); }
+.vitals-debit-section {
+  border-top: 1px solid var(--hms-border);
+  padding-top: 1rem;
+}
+.debit-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.debit-sub { margin: 0.2rem 0 0.75rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.debit-banner {
+  margin-bottom: 0.65rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--hms-radius-lg);
+  font-size: var(--hms-text-sm);
+  border: 1px solid var(--hms-border);
+}
+.debit-banner--warn {
+  background: var(--hms-warning-muted);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--hms-text-primary);
+}
+.debit-banner--info {
+  background: var(--hms-accent-muted);
+  border-color: rgba(59, 130, 246, 0.22);
+  color: var(--hms-text-secondary);
+}
+@media (max-width: 720px) {
+  .toolbar-controls { width: 100%; }
+  .tool-input { flex: 1; min-width: 0; }
+}
+</style>

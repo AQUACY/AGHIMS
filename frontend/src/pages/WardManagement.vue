@@ -1,16 +1,15 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Inventory"
-        @click="$router.push('/inventory-mode')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">Department/Unit Management</div>
-    </div>
-    <q-banner class="glass-card q-pa-md q-mb-md">
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Department/Unit Management"
+      subtitle="Manage hospital departments and units, including IPD wards."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.back()">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <q-banner dense rounded class="soft-banner q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
@@ -18,9 +17,14 @@
     </q-banner>
 
     <!-- Create New Department -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Create New Department/Unit</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Create New Department/Unit</div>
+          <div class="panel-sub">Name, type, and active status</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-form @submit="createDepartment" ref="createForm">
           <div class="row q-gutter-md">
             <q-input
@@ -47,32 +51,25 @@
               label="Active"
               class="col-12 col-md-6"
             />
-            <div class="col-12">
-              <q-btn
-                type="submit"
-                color="primary"
-                label="Create Department"
-                :loading="creating"
-                icon="add"
-              />
-              <q-btn
-                flat
-                label="Reset"
-                @click="resetForm"
-                class="q-ml-sm"
-              />
+            <div class="col-12 row q-gutter-sm">
+              <HmsButton type="submit" variant="primary" size="sm" :loading="creating">
+                Create Department
+              </HmsButton>
+              <HmsButton variant="ghost" size="sm" @click="resetForm">Reset</HmsButton>
             </div>
           </div>
         </q-form>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Wards List -->
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">Departments/Units</div>
-          <q-space />
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Departments/Units</div>
+          <div class="panel-sub">Filter, search, and manage IC/deputies</div>
+        </div>
+        <div class="row q-gutter-sm items-center">
           <q-select
             v-model="filterType"
             :options="filterTypeOptions"
@@ -82,21 +79,22 @@
             clearable
             emit-value
             map-options
-            class="col-12 col-md-3 q-mr-md"
+            style="min-width: 160px"
           />
           <q-input
             v-model="searchTerm"
             filled
             dense
             placeholder="Search departments..."
-            class="col-12 col-md-4"
+            style="min-width: 200px"
           >
             <template v-slot:prepend>
               <q-icon name="search" />
             </template>
           </q-input>
         </div>
-
+      </div>
+      <div class="panel-body">
         <q-table
           :rows="filteredDepartments"
           :columns="columns"
@@ -151,19 +149,19 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Staff Assignment Dialog -->
     <q-dialog v-model="showStaffDialog" persistent>
-      <q-card style="min-width: 600px" class="glass-card">
-        <q-card-section>
-          <div class="text-h6 glass-text">Manage IC/Deputies - {{ currentDepartment?.name }}</div>
+      <q-card style="min-width: 600px">
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Manage IC/Deputies — {{ currentDepartment?.name }}</div>
         </q-card-section>
 
         <q-card-section>
           <div class="q-mb-md">
-            <div class="text-subtitle2 q-mb-sm glass-text">Current Assignments</div>
+            <div class="text-subtitle2 q-mb-sm">Current Assignments</div>
             <q-list v-if="currentAssignments.length > 0" bordered separator>
               <q-item v-for="assignment in currentAssignments" :key="assignment.id">
                 <q-item-section>
@@ -182,14 +180,14 @@
                 </q-item-section>
               </q-item>
             </q-list>
-            <q-banner v-else class="bg-grey-3">
+            <q-banner v-else dense rounded class="soft-banner">
               No IC or Deputies assigned yet.
             </q-banner>
           </div>
 
           <q-separator class="q-my-md" />
 
-          <div class="text-subtitle2 q-mb-sm glass-text">Add New Assignment</div>
+          <div class="text-subtitle2 q-mb-sm">Add New Assignment</div>
           <q-form @submit="addAssignment" ref="assignmentFormRef">
             <q-select
               v-model="newAssignment.user_id"
@@ -225,20 +223,12 @@
               lazy-rules
               :rules="[(val) => !!val || 'Role is required']"
             />
-            <div class="q-mt-md">
-              <q-btn
-                type="submit"
-                color="primary"
-                label="Add Assignment"
-                :loading="addingAssignment"
-              />
-              <q-btn
-                flat
-                label="Close"
-                @click="showStaffDialog = false"
-                class="q-ml-sm"
-              />
-            </div>
+            <q-card-actions align="right" class="dialog-actions">
+              <HmsButton variant="ghost" size="sm" @click="showStaffDialog = false">Close</HmsButton>
+              <HmsButton type="submit" variant="primary" size="sm" :loading="addingAssignment">
+                Add Assignment
+              </HmsButton>
+            </q-card-actions>
           </q-form>
         </q-card-section>
       </q-card>
@@ -246,9 +236,9 @@
 
     <!-- Edit Dialog -->
     <q-dialog v-model="showEditDialog">
-      <q-card style="min-width: 400px" class="glass-card">
-        <q-card-section>
-          <div class="text-h6 glass-text">Edit Department/Unit</div>
+      <q-card style="min-width: 400px">
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Edit Department/Unit</div>
         </q-card-section>
 
         <q-card-section>
@@ -277,20 +267,10 @@
               label="Active"
               class="q-mb-md"
             />
-            <div class="q-mt-md">
-              <q-btn
-                type="submit"
-                color="primary"
-                label="Update"
-                :loading="updating"
-              />
-              <q-btn
-                flat
-                label="Cancel"
-                @click="showEditDialog = false"
-                class="q-ml-sm"
-              />
-            </div>
+            <q-card-actions align="right" class="dialog-actions">
+              <HmsButton variant="ghost" size="sm" @click="showEditDialog = false">Cancel</HmsButton>
+              <HmsButton type="submit" variant="primary" size="sm" :loading="updating">Update</HmsButton>
+            </q-card-actions>
           </q-form>
         </q-card-section>
       </q-card>
@@ -303,9 +283,12 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { wardsAPI, staffAPI, departmentStaffAssignmentsAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 export default {
   name: 'DepartmentManagement',
+  components: { HmsPageHeader, HmsButton },
   setup() {
     const $q = useQuasar();
     const authStore = useAuthStore();
@@ -725,10 +708,15 @@ export default {
 </script>
 
 <style scoped>
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.dialog-head {
+  border-bottom: 1px solid var(--hms-border);
+}
+.dialog-title {
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.dialog-actions {
+  padding: 0;
 }
 </style>
-
-
-

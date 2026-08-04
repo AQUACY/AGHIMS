@@ -1,17 +1,33 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Inventory"
-        @click="$router.push('/inventory-mode')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">Requisitions</div>
-    </div>
-    
-    <q-banner class="glass-card q-pa-md q-mb-md">
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Requisitions"
+      subtitle="Request, approve, and fulfill store stock for departments and units."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/inventory-mode')">Back</HmsButton>
+        <HmsButton
+          v-if="canCreateRequisition"
+          variant="primary"
+          size="sm"
+          @click="$router.push({ name: $route.path.startsWith('/inventory-mode') ? 'InventoryModeCreateRequisition' : 'CreateRequisition' })"
+        >
+          Create Requisition
+        </HmsButton>
+        <HmsButton
+          variant="secondary"
+          size="sm"
+          @click="$router.push({ name: $route.path.startsWith('/inventory-mode') ? 'InventoryModeWardStock' : 'WardStock' })"
+        >
+          View Department/Unit Stock
+        </HmsButton>
+        <HmsButton variant="ghost" size="sm" :loading="loading" @click="loadRequisitions">
+          Refresh
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <q-banner dense rounded class="soft-banner q-mb-md">
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
@@ -26,38 +42,18 @@
       </div>
     </q-banner>
 
-    <!-- Action Buttons -->
-    <div class="row q-gutter-md q-mb-md items-center">
-      <q-btn
-        v-if="canCreateRequisition"
-        color="primary"
-        icon="add"
-        label="Create Requisition"
-        @click="$router.push({ name: $route.path.startsWith('/inventory-mode') ? 'InventoryModeCreateRequisition' : 'CreateRequisition' })"
-        size="md"
-        class="q-mr-sm"
-      />
-      <q-btn
-        color="secondary"
-        icon="inventory_2"
-        label="View Department/Unit Stock"
-        @click="$router.push({ name: $route.path.startsWith('/inventory-mode') ? 'InventoryModeWardStock' : 'WardStock' })"
-        size="md"
-      />
-      <q-space />
-      <q-btn
-        flat
-        icon="refresh"
-        label="Refresh"
-        @click="loadRequisitions"
-        :loading="loading"
-        size="md"
-      />
-    </div>
-
     <!-- Filters -->
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Narrow by department, store, status, or date range</div>
+        </div>
+        <div class="panel-actions">
+          <HmsButton variant="ghost" size="sm" @click="clearFilters">Clear Filters</HmsButton>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-gutter-md">
           <q-select
             v-model="filters.department_id"
@@ -113,27 +109,19 @@
             class="col-12 col-md-2"
             @update:model-value="loadRequisitions"
           />
-          <div class="col-12 col-md-4 flex items-center">
-            <q-btn
-              flat
-              icon="clear"
-              label="Clear Filters"
-              @click="clearFilters"
-              class="q-mr-sm"
-            />
-          </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Requisitions Table -->
-    <q-card class="glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          Requisitions
-          <q-badge color="primary" class="q-ml-sm">{{ requisitions.length }}</q-badge>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Requisitions</div>
+          <div class="panel-sub">{{ requisitions.length }} matching request{{ requisitions.length === 1 ? '' : 's' }}</div>
         </div>
-
+      </div>
+      <div class="panel-body table-wrap">
         <q-table
           :rows="requisitions"
           :columns="columns"
@@ -141,6 +129,7 @@
           row-key="id"
           flat
           :pagination="{ rowsPerPage: 20 }"
+          class="diag-table"
         >
           <template v-slot:body-cell-status="props">
             <q-td :props="props">
@@ -267,14 +256,14 @@
             </div>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Create Requisition Dialog -->
     <q-dialog v-model="showCreateDialog" persistent>
       <q-card style="min-width: 600px">
-        <q-card-section>
-          <div class="text-h6">Create Requisition</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Create requisition</div>
         </q-card-section>
 
         <q-card-section>
@@ -344,9 +333,9 @@
           />
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="primary" label="Create" @click="createRequisition" :loading="creating" />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="primary" size="sm" :loading="creating" @click="createRequisition">Create</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -354,8 +343,8 @@
     <!-- Add Item Dialog -->
     <q-dialog v-model="showAddItemDialog">
       <q-card style="min-width: 500px">
-        <q-card-section>
-          <div class="text-h6">Add Item</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Add item</div>
         </q-card-section>
 
         <q-card-section>
@@ -381,8 +370,8 @@
           </q-list>
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -390,8 +379,10 @@
     <!-- View Requisition Dialog -->
     <q-dialog v-model="showViewDialog" style="min-width: 800px">
       <q-card>
-        <q-card-section>
-          <div class="text-h6">Requisition Details</div>
+        <q-card-section class="dialog-head row items-center">
+          <div class="dialog-title">Requisition details</div>
+          <q-space />
+          <HmsButton variant="ghost" size="sm" v-close-popup>Close</HmsButton>
         </q-card-section>
 
         <q-card-section v-if="selectedRequisition">
@@ -441,7 +432,7 @@
           </div>
         </q-card-section>
 
-        <q-card-actions align="right">
+        <q-card-actions align="right" class="dialog-actions">
           <q-btn
             v-if="selectedRequisition && canPrintFulfillment(selectedRequisition)"
             outline
@@ -450,7 +441,7 @@
             label="Print fulfillment"
             @click="printRequisitionFulfillment(selectedRequisition)"
           />
-          <q-btn flat label="Close" v-close-popup />
+          <HmsButton variant="ghost" size="sm" v-close-popup>Close</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -458,8 +449,8 @@
     <!-- Reject Dialog -->
     <q-dialog v-model="showRejectDialog">
       <q-card style="min-width: 400px">
-        <q-card-section>
-          <div class="text-h6">Reject Requisition</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Reject requisition</div>
         </q-card-section>
 
         <q-card-section>
@@ -472,9 +463,9 @@
           />
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="negative" label="Reject" @click="rejectRequisition" :loading="processing" />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="danger" size="sm" :loading="processing" @click="rejectRequisition">Reject</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -482,14 +473,12 @@
     <!-- Approve Dialog -->
     <q-dialog v-model="showApproveDialog" persistent style="min-width: 800px">
       <q-card>
-        <q-card-section>
-          <div class="text-h6">Approve Requisition</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Approve requisition</div>
+          <div class="dialog-sub">You can approve partial quantities for each item. Leave blank or set to requested quantity for full approval.</div>
         </q-card-section>
 
         <q-card-section v-if="selectedRequisition">
-          <div class="text-caption q-mb-md">
-            You can approve partial quantities for each item. Leave blank or set to requested quantity for full approval.
-          </div>
           <div v-for="item in selectedRequisition.items" :key="item.id" class="q-mb-md">
             <q-card>
               <q-card-section>
@@ -518,9 +507,9 @@
           />
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="positive" label="Approve" @click="approveRequisition" :loading="processing" />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="healthcare" size="sm" :loading="processing" @click="approveRequisition">Approve</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -528,8 +517,8 @@
     <!-- Edit Dialog -->
     <q-dialog v-model="showEditDialog" persistent style="min-width: 800px">
       <q-card>
-        <q-card-section>
-          <div class="text-h6">Edit Requisition</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Edit requisition</div>
         </q-card-section>
 
         <q-card-section v-if="editingRequisition">
@@ -632,9 +621,9 @@
           </div>
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="primary" label="Update" @click="updateRequisition" :loading="processing" />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="primary" size="sm" :loading="processing" @click="updateRequisition">Update</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -642,8 +631,8 @@
     <!-- Fulfill Dialog -->
     <q-dialog v-model="showFulfillDialog" persistent style="min-width: 800px">
       <q-card>
-        <q-card-section>
-          <div class="text-h6">Fulfill Requisition</div>
+        <q-card-section class="dialog-head">
+          <div class="dialog-title">Fulfill requisition</div>
         </q-card-section>
 
         <q-card-section v-if="selectedRequisition">
@@ -679,9 +668,9 @@
           />
         </q-card-section>
 
-        <q-card-actions align="right">
-          <q-btn flat label="Cancel" v-close-popup />
-          <q-btn color="primary" label="Fulfill" @click="fulfillRequisition" :loading="processing" />
+        <q-card-actions align="right" class="dialog-actions">
+          <HmsButton variant="ghost" size="sm" v-close-popup>Cancel</HmsButton>
+          <HmsButton variant="primary" size="sm" :loading="processing" @click="fulfillRequisition">Fulfill</HmsButton>
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -696,6 +685,8 @@ import { useFacilityStore } from '../stores/facility';
 import { useQuasar, Notify } from 'quasar';
 import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, storeStaffAssignmentsAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 function escapeHtml(s) {
   if (s == null || s === '') return '';
@@ -708,6 +699,7 @@ function escapeHtml(s) {
 
 export default {
   name: 'PharmacyRequisitions',
+  components: { HmsPageHeader, HmsButton },
   setup() {
     const router = useRouter();
     const authStore = useAuthStore();
@@ -1812,12 +1804,27 @@ export default {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.dialog-head {
+  border-bottom: 1px solid var(--hms-border);
+}
+.dialog-title {
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.dialog-sub {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+.dialog-actions {
+  gap: 0.5rem;
 }
 </style>
 

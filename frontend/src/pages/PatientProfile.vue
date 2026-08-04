@@ -1,268 +1,199 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md">Patient Profile</div>
+  <q-page class="hms-page">
+    <div v-if="loading && !patient" class="profile-loading">
+      <HmsSkeleton :lines="6" />
+      <div class="loading-label">Loading patient information…</div>
+    </div>
 
-    <q-card v-if="loading && !patient">
-      <q-card-section class="text-center q-pa-lg">
-        <q-spinner color="primary" size="3em" />
-        <div class="q-mt-md">Loading patient information...</div>
-      </q-card-section>
-    </q-card>
+    <div v-if="patient" class="profile-stack">
+      <div class="patient-hero">
+        <div class="hero-main">
+          <div class="hero-avatar" aria-hidden="true">{{ patientInitials }}</div>
+          <div class="hero-text">
+            <div class="hero-name-row">
+              <h1 class="hero-name">{{ displayPatientName }}</h1>
+              <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+                {{ patient.insured ? 'Insured' : 'Cash' }}
+              </HmsBadge>
+              <HmsBadge v-if="patient.insured" :tone="patient.nhis_active ? 'healthcare' : 'critical'">
+                NHIS {{ patient.nhis_active ? 'Active' : 'Inactive' }}
+              </HmsBadge>
+            </div>
+            <div class="hero-meta">
+              <span class="meta-chip mono">{{ patient.card_number }}</span>
+              <span v-if="patient.legacy_card_number" class="meta-sep">·</span>
+              <span v-if="patient.legacy_card_number">Prev {{ patient.legacy_card_number }}</span>
+              <span class="meta-sep">·</span>
+              <span>{{ patient.gender === 'M' ? 'Male' : patient.gender === 'F' ? 'Female' : (patient.gender || '—') }}</span>
+              <span class="meta-sep">·</span>
+              <span>Age {{ patient.age ?? 'N/A' }}</span>
+              <template v-if="patient.contact">
+                <span class="meta-sep">·</span>
+                <span>{{ patient.contact }}</span>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <HmsButton
+            v-if="canAccess(['Admin', 'Records'])"
+            variant="primary"
+            size="sm"
+            @click="editPatient"
+          >
+            Edit profile
+          </HmsButton>
+          <HmsButton variant="secondary" size="sm" @click="printPatientRecords">Print records</HmsButton>
+        </div>
+      </div>
 
-    <div v-if="patient">
-      <!-- Patient Basic Information -->
-      <q-card class="q-mb-md">
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h5">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="description"
-              label="Print Records"
-              @click="printPatientRecords"
-              class="glass-button q-mr-sm"
-            />
-            <q-btn
-              v-if="canAccess(['Admin', 'Records'])"
-              color="secondary"
-              icon="edit"
-              label="Edit"
-              @click="editPatient"
-              class="glass-button"
-            />
+      <HmsCard class="profile-panel">
+        <div class="panel-head">
+          <h2 class="hms-section-title">Demographics & insurance</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="demo-item">
+            <div class="hms-field-label">{{ patient.legacy_card_number ? 'GHIMS card' : 'Card number' }}</div>
+            <div class="hms-field-value mono accent">{{ patient.card_number }}</div>
           </div>
-          <div class="row q-gutter-md">
-            <div class="col-12 col-md-3">
-              <div class="text-grey-7 text-caption">{{ patient.legacy_card_number ? 'GHIMS Card Number' : 'Card Number' }}</div>
-              <div class="text-h6 text-primary">{{ patient.card_number }}</div>
-            </div>
-            <div v-if="patient.legacy_card_number" class="col-12 col-md-3">
-              <div class="text-grey-7 text-caption">Previous HMS Card</div>
-              <div class="text-body1 text-grey-8">{{ patient.legacy_card_number }}</div>
-            </div>
-            <div class="col-12 col-md-3">
-              <div class="text-grey-7 text-caption">Gender</div>
-              <div class="text-body1">{{ patient.gender }}</div>
-            </div>
-            <div class="col-12 col-md-3">
-              <div class="text-grey-7 text-caption">Age</div>
-              <div class="text-body1">{{ patient.age || 'N/A' }}</div>
-            </div>
-            <div class="col-12 col-md-3">
-              <div class="text-grey-7 text-caption">Date of Birth</div>
-              <div class="text-body1">{{ formatDate(patient.date_of_birth) }}</div>
-            </div>
+          <div v-if="patient.legacy_card_number" class="demo-item">
+            <div class="hms-field-label">Previous HMS card</div>
+            <div class="hms-field-value mono">{{ patient.legacy_card_number }}</div>
           </div>
+          <div class="demo-item">
+            <div class="hms-field-label">Sex</div>
+            <div class="hms-field-value">{{ patient.gender === 'M' ? 'Male' : patient.gender === 'F' ? 'Female' : patient.gender }}</div>
+          </div>
+          <div class="demo-item">
+            <div class="hms-field-label">Age</div>
+            <div class="hms-field-value">{{ patient.age ?? 'N/A' }}</div>
+          </div>
+          <div class="demo-item">
+            <div class="hms-field-label">Date of birth</div>
+            <div class="hms-field-value">{{ formatDate(patient.date_of_birth) }}</div>
+          </div>
+        </div>
+        <div class="panel-divider" />
+        <div class="info-columns">
+          <div>
+            <div class="hms-field-label">Insurance</div>
+            <div class="q-mb-sm">
+              <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+                {{ patient.insured ? 'Insured patient' : 'Cash patient' }}
+              </HmsBadge>
+            </div>
+            <template v-if="patient.insured">
+              <div class="info-line"><span>NHIS active</span><strong>{{ patient.nhis_active ? 'Yes' : 'No (cash & carry)' }}</strong></div>
+              <div class="info-line"><span>Member no.</span><strong>{{ patient.insurance_id || 'N/A' }}</strong></div>
+              <div class="info-line"><span>HIN</span><strong>{{ patient.hin || 'N/A' }}</strong></div>
+              <div v-if="patient.ccc_number" class="info-line"><span>CCC</span><strong>{{ patient.ccc_number }}<template v-if="patient.ccc_status"> ({{ patient.ccc_status }})</template></strong></div>
+              <div class="info-line"><span>Valid from</span><strong>{{ formatDate(patient.insurance_start_date) }}</strong></div>
+              <div class="info-line"><span>Valid to</span><strong>{{ formatDate(patient.insurance_end_date) }}</strong></div>
+            </template>
+          </div>
+          <div>
+            <div class="hms-field-label">Contact</div>
+            <div class="info-line"><span>Phone</span><strong>{{ patient.contact || 'N/A' }}</strong></div>
+            <div class="info-line"><span>Address</span><strong>{{ patient.address || 'N/A' }}</strong></div>
+            <template v-if="patient.emergency_contact_name || patient.emergency_contact_relationship || patient.emergency_contact_number">
+              <div class="hms-field-label q-mt-md">Emergency contact</div>
+              <div v-if="patient.emergency_contact_name" class="info-line"><span>Name</span><strong>{{ patient.emergency_contact_name }}</strong></div>
+              <div v-if="patient.emergency_contact_relationship" class="info-line"><span>Relationship</span><strong>{{ patient.emergency_contact_relationship }}</strong></div>
+              <div v-if="patient.emergency_contact_number" class="info-line"><span>Phone</span><strong>{{ patient.emergency_contact_number }}</strong></div>
+            </template>
+            <template v-if="patient.marital_status || patient.educational_level || patient.occupation">
+              <div class="hms-field-label q-mt-md">Additional</div>
+              <div v-if="patient.marital_status" class="info-line"><span>Marital status</span><strong>{{ patient.marital_status }}</strong></div>
+              <div v-if="patient.educational_level" class="info-line"><span>Education</span><strong>{{ patient.educational_level }}</strong></div>
+              <div v-if="patient.occupation" class="info-line"><span>Occupation</span><strong>{{ patient.occupation }}</strong></div>
+            </template>
+          </div>
+        </div>
+      </HmsCard>
 
-          <q-separator class="q-mt-md q-mb-md" />
-
-          <div class="row q-gutter-md">
-            <div class="col-12 col-md-6">
-              <div class="text-grey-7 text-caption">Insurance Status</div>
-              <q-badge
-                :color="patient.insured ? 'green' : 'orange'"
-                :label="patient.insured ? 'Insured' : 'Cash Patient'"
-                class="q-mt-xs"
-              />
-              <div v-if="patient.insured" class="q-mt-sm">
-                <div class="text-body2">
-                  <strong>NHIS Active:</strong>
-                  {{ patient.nhis_active ? 'Yes' : 'No (cash & carry)' }}
-                </div>
-                <div class="text-body2">
-                  <strong>NHIS Member Number:</strong> {{ patient.insurance_id || 'N/A' }}
-                </div>
-                <div class="text-body2">
-                  <strong>HIN:</strong> {{ patient.hin || 'N/A' }}
-                </div>
-                <div v-if="patient.ccc_number" class="text-body2">
-                  <strong>CCC:</strong> {{ patient.ccc_number }}
-                  <span v-if="patient.ccc_status"> ({{ patient.ccc_status }})</span>
-                </div>
-                <div class="text-body2">
-                  <strong>Valid From:</strong> {{ formatDate(patient.insurance_start_date) }}
-                </div>
-                <div class="text-body2">
-                  <strong>Valid To:</strong> {{ formatDate(patient.insurance_end_date) }}
-                </div>
-              </div>
+      <HmsCard v-if="patient" class="profile-panel">
+        <div class="panel-head">
+          <h2 class="hms-section-title">Bill summary</h2>
+          <button type="button" class="balance-pill" :class="balanceTone" @click="openBillItemsDialog">
+            <span class="balance-label">Total balance</span>
+            <span class="balance-value">₵{{ totalRemainingBalance.toFixed(2) }}</span>
+            <span class="balance-hint">View items</span>
+          </button>
+        </div>
+        <div v-if="unpaidEncounters.length > 0" class="bill-list">
+          <button
+            v-for="encounter in unpaidEncounters"
+            :key="encounter.id"
+            type="button"
+            class="bill-row"
+            @click="viewEncounterBilling(encounter.id)"
+          >
+            <div class="bill-icon" :class="encounter.remaining_balance > 0 ? 'due' : 'ok'">
+              <Receipt :size="16" />
             </div>
-            <div class="col-12 col-md-6">
-              <div class="text-grey-7 text-caption">Contact Information</div>
-              <div class="text-body2">
-                <strong>Phone:</strong> {{ patient.contact || 'N/A' }}
-              </div>
-              <div class="text-body2 q-mt-xs">
-                <strong>Address:</strong> {{ patient.address || 'N/A' }}
-              </div>
+            <div class="bill-copy">
+              <div class="bill-title">Encounter #{{ encounter.id }} · {{ encounter.department }}</div>
+              <div class="bill-sub">{{ formatDateTime(encounter.created_at) }}</div>
             </div>
-          </div>
-
-          <q-separator class="q-mt-md q-mb-md" v-if="patient.emergency_contact_name || patient.marital_status || patient.occupation" />
-
-          <div class="row q-gutter-md" v-if="patient.emergency_contact_name || patient.emergency_contact_relationship || patient.emergency_contact_number">
-            <div class="col-12">
-              <div class="text-grey-7 text-caption">Emergency Contact Details</div>
-              <div v-if="patient.emergency_contact_name" class="text-body2 q-mt-xs">
-                <strong>Name:</strong> {{ patient.emergency_contact_name }}
-              </div>
-              <div v-if="patient.emergency_contact_relationship" class="text-body2 q-mt-xs">
-                <strong>Relationship:</strong> {{ patient.emergency_contact_relationship }}
-              </div>
-              <div v-if="patient.emergency_contact_number" class="text-body2 q-mt-xs">
-                <strong>Contact Number:</strong> {{ patient.emergency_contact_number }}
-              </div>
+            <div class="bill-amount" :class="encounter.remaining_balance > 0 ? 'due' : 'ok'">
+              ₵{{ encounter.remaining_balance.toFixed(2) }}
             </div>
-          </div>
-
-          <div class="row q-gutter-md q-mt-md" v-if="patient.marital_status || patient.educational_level || patient.occupation">
-            <div class="col-12">
-              <div class="text-grey-7 text-caption">Additional Information</div>
-              <div v-if="patient.marital_status" class="text-body2 q-mt-xs">
-                <strong>Marital Status:</strong> {{ patient.marital_status }}
-              </div>
-              <div v-if="patient.educational_level" class="text-body2 q-mt-xs">
-                <strong>Educational Level:</strong> {{ patient.educational_level }}
-              </div>
-              <div v-if="patient.occupation" class="text-body2 q-mt-xs">
-                <strong>Occupation:</strong> {{ patient.occupation }}
-              </div>
-            </div>
-          </div>
-        </q-card-section>
-      </q-card>
-
-      <!-- Bill Summary -->
-      <q-card class="q-mb-md glass-card" v-if="patient" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Bill Summary</div>
-            <q-space />
-            <div class="text-h5" :class="totalRemainingBalance > 0 ? 'text-negative' : 'text-positive'">
-              <span v-if="totalRemainingBalance > 0" class="text-weight-bold cursor-pointer" @click="openBillItemsDialog" style="text-decoration: underline;">
-                Total Balance: ₵{{ totalRemainingBalance.toFixed(2) }} (Click to View Items)
-              </span>
-              <span v-else-if="totalBillAmount > 0" class="text-positive text-weight-bold cursor-pointer" @click="openBillItemsDialog" style="text-decoration: underline;">
-                Total Balance: ₵0.00 (Click to View Items)
-              </span>
-              <span v-else class="text-grey-7 cursor-pointer" @click="openBillItemsDialog" style="text-decoration: underline;">
-                Total Balance: ₵0.00 (Click to View Items)
-              </span>
-            </div>
-          </div>
-          
-          <div v-if="unpaidEncounters.length > 0" class="q-mt-md">
-            <div class="text-subtitle2 q-mb-sm glass-text">Unpaid Services:</div>
-            <q-list class="glass-card">
-              <q-item 
-                v-for="encounter in unpaidEncounters" 
-                :key="encounter.id"
-                clickable
-                @click="viewEncounterBilling(encounter.id)"
-                class="q-mb-xs"
-              >
-                <q-item-section avatar>
-                  <q-icon name="receipt" :color="encounter.remaining_balance > 0 ? 'negative' : 'positive'" />
-                </q-item-section>
-                <q-item-section>
-                  <q-item-label class="text-weight-medium glass-text">
-                    Encounter #{{ encounter.id }} - {{ encounter.department }}
-                  </q-item-label>
-                  <q-item-label caption>
-                    Date: {{ formatDateTime(encounter.created_at) }}
-                  </q-item-label>
-                </q-item-section>
-                <q-item-section side>
-                  <div class="text-h6" :class="encounter.remaining_balance > 0 ? 'text-negative' : 'text-positive'">
-                    <span class="text-weight-bold">₵{{ encounter.remaining_balance.toFixed(2) }}</span>
-                  </div>
-                </q-item-section>
-              </q-item>
-            </q-list>
-          </div>
-          <div v-else-if="loadingBills" class="text-center q-pa-md">
-            <q-spinner color="primary" size="2em" />
-            <div class="q-mt-sm text-grey-7">Loading bill information...</div>
-          </div>
-          <div v-else class="text-center q-pa-md text-grey-7">
-            No unpaid services found
-          </div>
-        </q-card-section>
-      </q-card>
+          </button>
+        </div>
+        <div v-else-if="loadingBills" class="panel-empty"><HmsSkeleton :lines="3" /></div>
+        <div v-else class="panel-empty muted">No unpaid services found</div>
+      </HmsCard>
 
       <!-- IPD Information -->
-      <q-card class="q-mb-md glass-card" v-if="patient && wardAdmissions.length > 0" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">IPD (Inpatient Department) Information</div>
-          </div>
-          
-          <q-list class="glass-card">
-            <q-item 
-              v-for="admission in wardAdmissions" 
-              :key="admission.id"
-              class="q-mb-xs"
+      <HmsCard v-if="patient && wardAdmissions.length > 0" class="profile-panel">
+        <div class="panel-head">
+          <h2 class="hms-section-title">Inpatient (IPD)</h2>
+        </div>
+        <div class="ipd-list">
+          <div v-for="admission in wardAdmissions" :key="admission.id" class="ipd-row">
+            <div class="ipd-copy">
+              <div class="ipd-title">
+                Ward {{ admission.ward }}
+                <HmsBadge :tone="admission.discharged_at ? 'neutral' : 'success'" class="q-ml-sm">
+                  {{ admission.discharged_at ? 'Discharged' : 'Active' }}
+                </HmsBadge>
+              </div>
+              <div class="ipd-meta">
+                Admitted {{ formatDateTime(admission.admitted_at) }}
+                <template v-if="admission.bed_number"> · Bed {{ admission.bed_number }}</template>
+                <template v-if="admission.discharged_at"> · Discharged {{ formatDateTime(admission.discharged_at) }}</template>
+                <template v-if="admission.encounter_department"> · {{ admission.encounter_department }}</template>
+              </div>
+            </div>
+            <HmsButton
+              v-if="!admission.discharged_at"
+              variant="primary"
+              size="sm"
+              @click="goToIPD(admission.id)"
             >
-              <q-item-section avatar>
-                <q-icon 
-                  :name="admission.discharged_at ? 'check_circle' : 'local_hospital'" 
-                  :color="admission.discharged_at ? 'grey' : 'primary'"
-                  size="md"
-                />
-              </q-item-section>
-              <q-item-section>
-                <q-item-label class="text-weight-medium glass-text">
-                  Ward: {{ admission.ward }}
-                  <q-badge 
-                    :color="admission.discharged_at ? 'grey' : 'positive'"
-                    :label="admission.discharged_at ? 'Discharged' : 'Active'"
-                    class="q-ml-sm"
-                  />
-                </q-item-label>
-                <q-item-label caption>
-                  <div>Admitted: {{ formatDateTime(admission.admitted_at) }}</div>
-                  <div v-if="admission.bed_number">Bed: {{ admission.bed_number }}</div>
-                  <div v-if="admission.discharged_at">Discharged: {{ formatDateTime(admission.discharged_at) }}</div>
-                  <div v-if="admission.encounter_department">Department: {{ admission.encounter_department }}</div>
-                </q-item-label>
-              </q-item-section>
-              <q-item-section side>
-                <q-btn
-                  v-if="!admission.discharged_at"
-                  color="primary"
-                  icon="local_hospital"
-                  label="Go to IPD"
-                  @click="goToIPD(admission.id)"
-                  class="glass-button"
-                />
-                <q-btn
-                  v-else
-                  color="info"
-                  icon="visibility"
-                  label="View IPD Details"
-                  @click="viewIPDDetails(admission.id)"
-                  class="glass-button"
-                />
-              </q-item-section>
-            </q-item>
-          </q-list>
-        </q-card-section>
-      </q-card>
+              Go to IPD
+            </HmsButton>
+            <HmsButton
+              v-else
+              variant="secondary"
+              size="sm"
+              @click="viewIPDDetails(admission.id)"
+            >
+              View details
+            </HmsButton>
+          </div>
+        </div>
+      </HmsCard>
 
       <!-- Patient Encounters -->
-      <q-card>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6">Encounters History</div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="add"
-              label="New Encounter"
-              @click="createNewEncounter"
-            />
-          </div>
+      <HmsCard class="profile-panel encounters-panel">
+        <div class="panel-head">
+          <h2 class="hms-section-title">Encounters history</h2>
+          <HmsButton variant="primary" size="sm" @click="createNewEncounter">
+            <Plus :size="14" />
+            New encounter
+          </HmsButton>
+        </div>
 
           <q-table
             :rows="patientEncounters"
@@ -270,14 +201,11 @@
             row-key="id"
             flat
             :loading="loadingEncounters"
-            class="glass-table"
+            class="glass-table profile-q-table"
           >
             <template v-slot:body-cell-status="props">
               <q-td :props="props">
-                <q-badge
-                  :color="getStatusColor(props.value)"
-                  :label="props.value"
-                />
+                <HmsBadge :tone="encounterStatusTone(props.value)">{{ props.value }}</HmsBadge>
               </q-td>
             </template>
             <template v-slot:body-cell-created_at="props">
@@ -287,116 +215,97 @@
             </template>
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
-                <div class="row q-gutter-xs">
-                  <!-- Doctor: Go to Consultation -->
-                  <q-btn
+                <div class="encounter-actions">
+                  <HmsButton
                     v-if="canAccess(['Doctor', 'PA', 'Admin'])"
+                    variant="soft"
                     size="sm"
-                    color="primary"
-                    icon="medical_services"
-                    label="Consult"
                     @click="goToConsultation(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- Nurse: Go to Vitals -->
-                  <q-btn
+                  >
+                    Consult
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Nurse', 'Admin'])"
+                    variant="soft"
                     size="sm"
-                    color="pink"
-                    icon="favorite"
-                    label="Vitals"
                     @click="goToVitals(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- Pharmacy: Go to Pharmacy -->
-                  <q-btn
+                  >
+                    Vitals
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'])"
+                    variant="soft"
                     size="sm"
-                    color="purple"
-                    icon="medication"
-                    label="Prescriptions"
                     @click="goToPharmacy(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- Lab: Go to Lab -->
-                  <q-btn
+                  >
+                    Rx
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Lab', 'Admin'])"
+                    variant="soft"
                     size="sm"
-                    color="blue"
-                    icon="science"
-                    label="Lab"
                     @click="goToLab(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- Scan: Go to Scan -->
-                  <q-btn
+                  >
+                    Lab
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Scan', 'Admin'])"
+                    variant="soft"
                     size="sm"
-                    color="teal"
-                    icon="biotech"
-                    label="Scan"
                     @click="goToScan(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- Xray: Go to Xray -->
-                  <q-btn
+                  >
+                    Scan
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Xray', 'Admin'])"
+                    variant="soft"
                     size="sm"
-                    color="cyan"
-                    icon="radio_button_checked"
-                    label="X-ray"
                     @click="goToXray(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- Billing: Go to Billing -->
-                  <q-btn
+                  >
+                    X-ray
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Billing', 'Admin'])"
+                    variant="healthcare"
                     size="sm"
-                    color="green"
-                    icon="receipt"
-                    label="Bill"
                     @click="viewEncounterBilling(props.row.id)"
-                    class="glass-button"
-                  />
-                  <!-- View/Edit (Admin/Records) -->
-                  <q-btn
+                  >
+                    Bill
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Admin', 'Records'])"
+                    variant="ghost"
                     size="sm"
-                    color="info"
-                    icon="visibility"
-                    flat
                     @click="viewEncounter(props.row.id)"
-                  />
-                  <q-btn
+                  >
+                    View
+                  </HmsButton>
+                  <HmsButton
                     v-if="canAccess(['Admin', 'Records'])"
+                    variant="ghost"
                     size="sm"
-                    color="secondary"
-                    icon="edit"
-                    flat
                     @click="editEncounter(props.row)"
-                  />
-                  <q-btn
+                  >
+                    Edit
+                  </HmsButton>
+                  <HmsButton
                     v-if="isAdmin"
+                    variant="danger"
                     size="sm"
-                    color="negative"
-                    icon="delete"
-                    flat
                     @click="deleteEncounterConfirm(props.row)"
-                  />
+                  >
+                    Delete
+                  </HmsButton>
                 </div>
               </q-td>
             </template>
           </q-table>
-        </q-card-section>
-      </q-card>
+      </HmsCard>
     </div>
 
-    <q-card v-if="!loading && !patient">
-      <q-card-section class="text-center q-pa-lg">
-        <q-icon name="person_off" size="64px" color="grey" />
-        <div class="text-h6 q-mt-md">Patient not found</div>
-      </q-card-section>
-    </q-card>
+    <HmsCard v-if="!loading && !patient" class="profile-panel not-found">
+      <HmsEmptyState title="Patient not found" description="No patient record matches this card number." />
+    </HmsCard>
 
     <!-- Edit Patient Dialog -->
     <q-dialog v-model="showEditDialog" persistent>
@@ -794,6 +703,12 @@ import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
 import { priceListAPI } from '../services/api';
 import { applyNhiaDataToForm, applyNhiaCccToForm, canFetchNhiaCcc } from '../utils/nhiaForm';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
+import HmsSkeleton from '../components/ui/HmsSkeleton.vue';
+import HmsCard from '../components/ui/HmsCard.vue';
+import HmsEmptyState from '../components/ui/HmsEmptyState.vue';
+import { Receipt, Plus } from 'lucide-vue-next';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -1309,6 +1224,42 @@ const viewIPDDetails = (wardAdmissionId) => {
 };
 
 const canAccess = (roles) => authStore.canAccess(roles);
+
+const titleCase = (value) => {
+  if (!value) return '';
+  return String(value)
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+const displayPatientName = computed(() => {
+  if (!patient.value) return '';
+  return [titleCase(patient.value.name), titleCase(patient.value.surname), titleCase(patient.value.other_names)]
+    .filter(Boolean)
+    .join(' ');
+});
+
+const patientInitials = computed(() => {
+  if (!patient.value) return '?';
+  const a = (patient.value.name || '?')[0] || '?';
+  const b = (patient.value.surname || '')[0] || '';
+  return `${a}${b}`.toUpperCase();
+});
+
+const balanceTone = computed(() => {
+  if (totalRemainingBalance.value > 0) return 'due';
+  if (totalBillAmount.value > 0) return 'ok';
+  return 'neutral';
+});
+
+const encounterStatusTone = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (s.includes('complete') || s.includes('discharg') || s.includes('closed')) return 'success';
+  if (s.includes('cancel') || s.includes('abort')) return 'critical';
+  if (s.includes('progress') || s.includes('active') || s.includes('open')) return 'healthcare';
+  if (s.includes('pending') || s.includes('wait')) return 'warning';
+  return 'neutral';
+};
 
 const canGenerateCcc = computed(() => canFetchNhiaCcc(editForm));
 
@@ -2303,4 +2254,75 @@ onMounted(async () => {
   loadServiceTypes();
 });
 </script>
+
+<style scoped>
+.profile-stack { display:flex; flex-direction:column; gap:1.15rem; }
+.profile-loading { padding:1.25rem; border-radius:var(--hms-radius-xl); background:var(--hms-panel-bg); border:1px solid var(--hms-border); }
+.loading-label { margin-top:0.85rem; color:var(--hms-text-secondary); font-size:var(--hms-text-sm); }
+.patient-hero { position:sticky; top:0.65rem; z-index:5; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.85rem; padding:1.05rem 1.2rem; border-radius:var(--hms-radius-xl); background:var(--hms-glass-bg-strong); border:1px solid var(--hms-border-strong); box-shadow:var(--hms-shadow-lg), var(--hms-shadow-inner); backdrop-filter:blur(18px); }
+.hero-main { display:flex; align-items:center; gap:0.85rem; min-width:0; }
+.hero-avatar { width:3.25rem; height:3.25rem; border-radius:9999px; background:linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.18)); color:var(--hms-accent); display:inline-flex; align-items:center; justify-content:center; font-weight:750; font-size:var(--hms-text-base); flex-shrink:0; }
+.hero-name-row { display:flex; flex-wrap:wrap; align-items:center; gap:0.45rem; }
+.hero-name { font-size:var(--hms-text-2xl); font-weight:750; letter-spacing:var(--hms-tracking-tight); color:var(--hms-text-primary); margin:0; line-height:1.2; }
+.hero-meta { margin-top:0.4rem; display:flex; flex-wrap:wrap; align-items:center; gap:0.25rem 0.15rem; color:var(--hms-text-secondary); font-size:var(--hms-text-sm); }
+.meta-sep { color:var(--hms-text-muted); margin:0 0.2rem; }
+.meta-chip { font-weight:650; }
+.hero-actions { display:flex; flex-wrap:wrap; gap:0.45rem; }
+.profile-panel { padding:1.25rem 1.35rem; }
+.panel-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:1.15rem; }
+.panel-head .hms-section-title {
+  font-size: var(--hms-text-lg);
+  font-weight: 700;
+  letter-spacing: var(--hms-tracking-tight);
+  line-height: 1.3;
+}
+.demo-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem 1.15rem; }
+.demo-item .accent { color:var(--hms-accent); }
+.panel-divider { height:1px; background:var(--hms-border); margin:1.15rem 0; }
+.info-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1.4rem; }
+.info-line { display:grid; grid-template-columns:7.5rem 1fr; gap:0.5rem; align-items:baseline; padding:0.32rem 0; font-size:var(--hms-text-sm); }
+.info-line span { color:var(--hms-text-muted); font-weight:600; }
+.info-line strong { color:var(--hms-text-primary); font-weight:650; }
+.balance-pill { display:inline-flex; align-items:center; gap:0.55rem; padding:0.45rem 0.75rem; border-radius:var(--hms-radius-lg); border:1px solid var(--hms-border); background:var(--hms-surface); cursor:pointer; font-family:inherit; }
+.balance-pill:hover { border-color:var(--hms-border-strong); background:var(--hms-surface-hover); }
+.balance-label { font-size:0.68rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--hms-text-muted); }
+.balance-value { font-size:var(--hms-text-lg); font-weight:750; font-variant-numeric:tabular-nums; }
+.balance-hint { font-size:var(--hms-text-xs); color:var(--hms-accent); font-weight:650; }
+.balance-pill.due .balance-value { color:var(--hms-critical); }
+.balance-pill.ok .balance-value { color:var(--hms-success); }
+.balance-pill.neutral .balance-value { color:var(--hms-text-primary); }
+.bill-list { display:flex; flex-direction:column; gap:0.45rem; }
+.bill-row { display:grid; grid-template-columns:auto 1fr auto; gap:0.75rem; align-items:center; width:100%; padding:0.7rem 0.75rem; border-radius:var(--hms-radius-lg); border:1px solid var(--hms-border); background:var(--hms-surface); text-align:left; cursor:pointer; font-family:inherit; color:inherit; }
+.bill-row:hover { background:var(--hms-surface-hover); border-color:var(--hms-border-strong); }
+.bill-icon { width:2rem; height:2rem; border-radius:var(--hms-radius-md); display:inline-flex; align-items:center; justify-content:center; }
+.bill-icon.due { background:var(--hms-critical-muted); color:var(--hms-critical); }
+.bill-icon.ok { background:var(--hms-success-muted); color:var(--hms-success); }
+.bill-title { font-weight:700; font-size:var(--hms-text-sm); color:var(--hms-text-primary); }
+.bill-sub { margin-top:0.1rem; font-size:var(--hms-text-xs); color:var(--hms-text-muted); }
+.bill-amount { font-weight:750; font-variant-numeric:tabular-nums; }
+.bill-amount.due { color:var(--hms-critical); }
+.bill-amount.ok { color:var(--hms-success); }
+.panel-empty { padding:0.85rem 0.25rem; }
+.panel-empty.muted { text-align:center; color:var(--hms-text-muted); font-size:var(--hms-text-sm); padding:1.25rem 0.5rem; }
+.mono { font-family:var(--hms-font-mono); font-size:0.8em; letter-spacing:0.01em; }
+.ipd-list { display:flex; flex-direction:column; gap:0.55rem; }
+.ipd-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.75rem 0.85rem; border-radius:var(--hms-radius-lg); border:1px solid var(--hms-border); background:var(--hms-surface); }
+.ipd-title { display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem; font-weight:700; color:var(--hms-text-primary); }
+.ipd-meta { margin-top:0.25rem; font-size:var(--hms-text-xs); color:var(--hms-text-muted); }
+.encounters-panel :deep(.profile-q-table) { border:1px solid var(--hms-border); border-radius:var(--hms-radius-lg); overflow:hidden; background:var(--hms-surface) !important; }
+.encounters-panel :deep(.q-table th) { font-size:0.68rem; letter-spacing:0.04em; text-transform:uppercase; color:var(--hms-text-muted); font-weight:700; }
+.encounters-panel :deep(.q-table tbody td) { font-size:var(--hms-text-sm); }
+.encounter-actions { display:flex; flex-wrap:wrap; gap:0.35rem; max-width:28rem; }
+.not-found { padding:1.5rem; }
+@media (max-width:960px){ .demo-grid,.info-columns{ grid-template-columns:1fr 1fr; } }
+@media (max-width:720px){
+  .patient-hero{ position:static; flex-direction:column; align-items:stretch; }
+  .hero-actions{ width:100%; }
+  .hero-actions :deep(.hms-btn){ flex:1; }
+  .demo-grid,.info-columns{ grid-template-columns:1fr; }
+  .info-line{ grid-template-columns:1fr; gap:0.1rem; }
+  .panel-head{ flex-direction:column; align-items:stretch; }
+  .balance-pill{ width:100%; justify-content:space-between; }
+}
+</style>
 

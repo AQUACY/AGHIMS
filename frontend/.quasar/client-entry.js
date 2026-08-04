@@ -29,6 +29,8 @@ import 'quasar/dist/quasar.css'
 
 
 
+import 'src/css/app.css'
+
 
 import createQuasarApp from './app.js'
 import quasarUserOptions from './quasar-user-options.js'

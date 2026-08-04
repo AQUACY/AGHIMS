@@ -1,19 +1,31 @@
 <template>
-  <q-page class="q-pa-md inventory-reports-page">
-    <div class="row items-center q-mb-md">
-      <q-btn flat icon="arrow_back" label="Back" class="q-mr-md" @click="$router.push('/inventory-mode')" />
-      <div class="text-h4 text-weight-bold glass-text">Inventory reports</div>
+  <q-page class="hms-page inventory-reports-page">
+    <HmsPageHeader
+      title="Inventory reports"
+      subtitle="Requisition history and store stock snapshots with CSV and PDF export."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/inventory-mode')">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div class="soft-banner q-pa-md q-mb-md">
+      <div class="row items-start no-wrap q-gutter-sm">
+        <q-icon name="assessment" color="primary" size="20px" class="q-mt-xs" />
+        <div class="panel-sub" style="margin-top: 0; max-width: none">
+          Requisitions and store stock snapshots use the same access rules as the inventory dashboard (your store or department assignments, unless you have full filter access).
+        </div>
+      </div>
     </div>
 
-    <q-banner class="glass-card q-pa-md q-mb-md" rounded>
-      <template v-slot:avatar>
-        <q-icon name="assessment" color="primary" />
-      </template>
-      Requisitions and store stock snapshots use the same access rules as the inventory dashboard (your store or department assignments, unless you have full filter access).
-    </q-banner>
-
-    <q-card class="glass-card q-mb-lg" flat bordered>
-      <q-card-section>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Date range, store, department, and store type</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <div class="col-12 col-sm-6 col-md-3">
             <q-input v-model="filters.startDate" type="date" label="Start date" filled dense />
@@ -62,94 +74,113 @@
             />
           </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
-    <q-tabs v-model="tab" class="text-primary q-mb-md" align="left" dense>
-      <q-tab name="req" label="Requisitions" icon="shopping_cart" />
-      <q-tab name="stock" label="Store stock" icon="inventory_2" />
-    </q-tabs>
+    <div class="tool-seg" role="tablist" aria-label="Report type">
+      <button type="button" class="seg-btn" :class="{ active: tab === 'req' }" @click="tab = 'req'">
+        Requisitions
+      </button>
+      <button type="button" class="seg-btn" :class="{ active: tab === 'stock' }" @click="tab = 'stock'">
+        Store stock
+      </button>
+    </div>
 
-    <q-tab-panels v-model="tab" animated>
-      <q-tab-panel name="req" class="q-pa-none">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section class="row items-center">
-            <div class="text-subtitle1 text-weight-medium glass-text">Requisitions in date range</div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="visibility"
-              label="Run"
-              :loading="loadingReq"
-              class="q-mr-sm"
-              @click="loadRequisitions"
-            />
-            <q-btn
-              color="positive"
-              outline
-              icon="download"
-              label="CSV"
-              :loading="exportingReq"
-              class="q-mr-sm"
-              @click="exportRequisitionsCsv"
-            />
-            <q-btn
-              color="negative"
-              outline
-              icon="picture_as_pdf"
-              label="PDF"
-              :disable="!reqRows.length"
+    <template v-if="tab === 'req'">
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Requisitions in date range</div>
+            <div v-if="reqSummaryText" class="panel-sub">{{ reqSummaryText }}</div>
+          </div>
+          <div class="panel-actions">
+            <HmsButton variant="primary" size="sm" :loading="loadingReq" @click="loadRequisitions">
+              Run
+            </HmsButton>
+            <HmsButton variant="secondary" size="sm" :loading="exportingReq" @click="exportRequisitionsCsv">
+              CSV
+            </HmsButton>
+            <HmsButton
+              variant="ghost"
+              size="sm"
+              :disabled="!reqRows.length"
               :loading="exportingReqPdf"
               @click="exportPdfRequisitions"
-            />
-          </q-card-section>
-          <q-card-section v-if="reqSummaryText" class="text-caption text-grey-7 q-pt-none">
-            {{ reqSummaryText }}
-          </q-card-section>
-          <q-card-section>
-            <q-table
-              flat
-              :rows="reqRows"
-              :columns="reqColumns"
-              row-key="requisition_id"
-              :loading="loadingReq"
-              :pagination="{ rowsPerPage: 25 }"
-              :rows-per-page-options="[10, 25, 50, 100]"
             >
-              <template v-slot:body-cell-line_count="props">
-                <q-td :props="props">
-                  <span
-                    class="text-primary text-weight-medium cursor-pointer text-underline"
-                    role="button"
-                    tabindex="0"
-                    @click="openReqLineItems(props.row)"
-                    @keyup.enter="openReqLineItems(props.row)"
-                  >
-                    {{ props.row.line_count }}
-                  </span>
-                </q-td>
-              </template>
-              <template v-slot:body-cell-total_requested_qty="props">
-                <q-td :props="props">
-                  <span
-                    class="text-primary text-weight-medium cursor-pointer text-underline"
-                    role="button"
-                    tabindex="0"
-                    @click="openReqLineItems(props.row)"
-                    @keyup.enter="openReqLineItems(props.row)"
-                  >
-                    {{ formatQty(props.row.total_requested_qty) }}
-                  </span>
-                </q-td>
-              </template>
-            </q-table>
-          </q-card-section>
-        </q-card>
-      </q-tab-panel>
+              PDF
+            </HmsButton>
+          </div>
+        </div>
+        <div class="panel-body table-wrap">
+          <q-table
+            class="diag-table"
+            flat
+            dense
+            :rows="reqRows"
+            :columns="reqColumns"
+            row-key="requisition_id"
+            :loading="loadingReq"
+            :pagination="{ rowsPerPage: 25 }"
+            :rows-per-page-options="[10, 25, 50, 100]"
+          >
+            <template v-slot:body-cell-line_count="props">
+              <q-td :props="props">
+                <span
+                  class="text-primary text-weight-medium cursor-pointer text-underline"
+                  role="button"
+                  tabindex="0"
+                  @click="openReqLineItems(props.row)"
+                  @keyup.enter="openReqLineItems(props.row)"
+                >
+                  {{ props.row.line_count }}
+                </span>
+              </q-td>
+            </template>
+            <template v-slot:body-cell-total_requested_qty="props">
+              <q-td :props="props">
+                <span
+                  class="text-primary text-weight-medium cursor-pointer text-underline"
+                  role="button"
+                  tabindex="0"
+                  @click="openReqLineItems(props.row)"
+                  @keyup.enter="openReqLineItems(props.row)"
+                >
+                  {{ formatQty(props.row.total_requested_qty) }}
+                </span>
+              </q-td>
+            </template>
+          </q-table>
+        </div>
+      </section>
+    </template>
 
-      <q-tab-panel name="stock" class="q-pa-none">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section class="row q-col-gutter-md items-end">
+    <template v-else>
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Current store stock (snapshot)</div>
+            <div v-if="stockTotalsText" class="panel-sub">{{ stockTotalsText }}</div>
+          </div>
+          <div class="panel-actions">
+            <HmsButton variant="primary" size="sm" :loading="loadingStock" @click="loadStoreStock">
+              Run
+            </HmsButton>
+            <HmsButton variant="secondary" size="sm" :loading="exportingStock" @click="exportStoreStockCsv">
+              CSV
+            </HmsButton>
+            <HmsButton
+              variant="ghost"
+              size="sm"
+              :disabled="!stockRows.length"
+              :loading="exportingStockPdf"
+              @click="exportPdfStoreStock"
+            >
+              PDF
+            </HmsButton>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="row q-col-gutter-md items-end q-mb-md">
             <div class="col-12 col-sm-6 col-md-4">
               <q-select
                 v-model="stockStatus"
@@ -162,43 +193,12 @@
                 map-options
               />
             </div>
-          </q-card-section>
-          <q-card-section class="row items-center">
-            <div class="text-subtitle1 text-weight-medium glass-text">Current store stock (snapshot)</div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="visibility"
-              label="Run"
-              :loading="loadingStock"
-              class="q-mr-sm"
-              @click="loadStoreStock"
-            />
-            <q-btn
-              color="positive"
-              outline
-              icon="download"
-              label="CSV"
-              :loading="exportingStock"
-              class="q-mr-sm"
-              @click="exportStoreStockCsv"
-            />
-            <q-btn
-              color="negative"
-              outline
-              icon="picture_as_pdf"
-              label="PDF"
-              :disable="!stockRows.length"
-              :loading="exportingStockPdf"
-              @click="exportPdfStoreStock"
-            />
-          </q-card-section>
-          <q-card-section v-if="stockTotalsText" class="text-caption text-grey-7 q-pt-none">
-            {{ stockTotalsText }}
-          </q-card-section>
-          <q-card-section>
+          </div>
+          <div class="table-wrap">
             <q-table
+              class="diag-table"
               flat
+              dense
               :rows="stockRows"
               :columns="stockColumns"
               row-key="__key"
@@ -206,15 +206,20 @@
               :pagination="{ rowsPerPage: 25 }"
               :rows-per-page-options="[10, 25, 50, 100]"
             />
-          </q-card-section>
-        </q-card>
-      </q-tab-panel>
-    </q-tab-panels>
+          </div>
+        </div>
+      </section>
+    </template>
 
     <q-dialog v-model="reqItemsDialogOpen">
-      <q-card class="glass-card" style="min-width: min(96vw, 920px); max-width: 920px">
-        <q-card-section class="row items-center">
-          <div class="text-h6 glass-text">Requisition line items</div>
+      <q-card class="diag-panel dialog-card" style="min-width: min(96vw, 920px); max-width: 920px">
+        <q-card-section class="dialog-head row items-center">
+          <div>
+            <div class="dialog-title">Requisition line items</div>
+            <div v-if="reqItemsDetail" class="dialog-sub">
+              {{ reqItemsDetail.requisition_number }} · {{ reqItemsDetail.status }}
+            </div>
+          </div>
           <q-space />
           <q-btn flat round dense icon="close" v-close-popup />
         </q-card-section>
@@ -232,6 +237,7 @@
           </q-card-section>
           <q-card-section>
             <q-table
+              class="diag-table"
               flat
               bordered
               :rows="reqItemsDetail?.items || []"
@@ -257,6 +263,8 @@ import { useAuthStore } from '../stores/auth';
 import { useFacilityStore } from '../stores/facility';
 import { storeSelectLabel } from '../utils/storeKind';
 import { downloadInventoryReportPdf } from '../utils/inventoryReportPdf';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 const authStore = useAuthStore();
@@ -712,8 +720,58 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
+.tool-seg {
+  display: inline-flex;
+  padding: 0.2rem;
+  margin-bottom: 1rem;
+  gap: 0.15rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+}
+.seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-sm);
+  font-weight: 650;
+  padding: 0.45rem 0.85rem;
+  border-radius: calc(var(--hms-radius-lg) - 2px);
+  cursor: pointer;
+  transition: background var(--hms-duration-fast) var(--hms-ease-out), color var(--hms-duration-fast) var(--hms-ease-out);
+}
+.seg-btn.active {
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-primary);
+  box-shadow: var(--hms-shadow-sm);
+}
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.table-wrap {
+  padding: 0;
+  overflow-x: auto;
+}
+.dialog-card {
+  margin-bottom: 0;
+}
+.dialog-head {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+.dialog-title {
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.dialog-sub {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
 }
 .text-underline {
   text-decoration: underline;

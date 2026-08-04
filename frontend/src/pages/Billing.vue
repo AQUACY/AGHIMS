@@ -1,463 +1,473 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Billing</div>
-
-    <!-- Billing Module Tabs -->
-    <q-tabs v-model="billingModule" class="text-primary q-mb-md">
-      <q-tab name="opd" label="OPD Billing" />
-      <q-tab name="ipd" label="IPD Billing" />
-    </q-tabs>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Billing" subtitle="Search patients, build bills, and issue receipts.">
+      <template #actions>
+        <div class="module-seg" role="tablist" aria-label="Billing module">
+          <button
+            type="button"
+            role="tab"
+            class="seg-btn"
+            :class="{ active: billingModule === 'opd' }"
+            :aria-selected="billingModule === 'opd'"
+            @click="billingModule = 'opd'"
+          >
+            OPD
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="seg-btn"
+            :class="{ active: billingModule === 'ipd' }"
+            :aria-selected="billingModule === 'ipd'"
+            @click="billingModule = 'ipd'"
+          >
+            IPD
+          </button>
+        </div>
+      </template>
+    </HmsPageHeader>
 
     <!-- Patient Search -->
-    <q-card class="q-mb-md glass-card" v-if="!patient" flat>
-      <q-card-section>
-        <div class="text-h6 q-mb-md glass-text">Search Patient</div>
-        <div class="row q-gutter-md">
-          <q-input
-            v-model="cardNumber"
-            filled
-            label="Patient Card Number"
-            class="col-12 col-md-8"
-            @keyup.enter="searchPatient"
-            :disable="loadingPatient"
-          />
-          <q-btn
-            color="primary"
-            label="Search"
-            @click="searchPatient"
-            class="col-12 col-md-4 glass-button"
-            :loading="loadingPatient"
-          />
+    <section v-if="!patient" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Search patient</div>
+          <div class="panel-sub">Enter a card number to load encounters and bills.</div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+      <div class="panel-body search-body">
+        <input
+          v-model="cardNumber"
+          type="search"
+          class="tool-input tool-input--search tool-input--grow"
+          placeholder="Patient card number"
+          :disabled="loadingPatient"
+          @keyup.enter="searchPatient"
+        />
+        <HmsButton
+          variant="primary"
+          size="sm"
+          :loading="loadingPatient"
+          @click="searchPatient"
+        >
+          Search
+        </HmsButton>
+      </div>
+    </section>
 
     <!-- Patient Info & Encounter Selection -->
-    <q-card v-if="patient" class="q-mb-md glass-card" flat>
-        <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div>
-            <div class="text-h6 glass-text">{{ patient.name }} {{ patient.surname || '' }}<span v-if="patient.other_names"> {{ patient.other_names }}</span></div>
-            <div class="text-grey-7">Card: {{ patient.card_number }}</div>
-            <div class="q-mt-xs">
-              <q-badge :color="patient.insured ? 'green' : 'orange'">
-                {{ patient.insured ? 'Has Insurance' : 'Cash Patient' }}
-              </q-badge>
-            </div>
-            </div>
-          <q-space />
-          <q-btn
-            flat
-            icon="refresh"
-            label="Clear"
-            @click="clearSearch"
-          />
-            </div>
-
-        <!-- Encounter Selection -->
-        <div v-if="filteredEncounters.length > 0" class="q-mt-md">
-          <div class="text-subtitle1 q-mb-sm">
-            {{ billingModule === 'opd' ? 'Select OPD Encounter:' : 'Select IPD Admission:' }}
+    <div v-if="patient" class="patient-hero">
+      <div class="hero-main">
+        <div class="hero-avatar">{{ patientInitials }}</div>
+        <div class="hero-text">
+          <div class="hero-name-row">
+            <h1 class="hero-name">{{ patientDisplayName }}</h1>
+            <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+              {{ patient.insured ? 'Insured' : 'Cash' }}
+            </HmsBadge>
+            <HmsBadge tone="info">{{ billingModule === 'opd' ? 'OPD' : 'IPD' }}</HmsBadge>
           </div>
+          <div class="hero-meta">
+            <span class="mono">{{ patient.card_number }}</span>
+            <template v-if="selectedEncounter && selectedEncounter.ccc_number">
+              <span class="sep">·</span>
+              <span>CCC {{ selectedEncounter.ccc_number }}</span>
+            </template>
+            <template v-else-if="selectedEncounter && !selectedEncounter.ccc_number">
+              <span class="sep">·</span>
+              <span>Cash &amp; carry</span>
+            </template>
+            <template v-if="selectedWardAdmission && billingModule === 'ipd'">
+              <span class="sep">·</span>
+              <span>Ward {{ selectedWardAdmission.ward }} · Bed {{ selectedWardAdmission.bed_number || 'N/A' }}</span>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <HmsButton variant="ghost" size="sm" @click="clearSearch">Clear</HmsButton>
+        <HmsButton
+          v-if="showRecalculateButton"
+          variant="healthcare"
+          size="sm"
+          @click="openRecalculateDialog"
+        >
+          Update to insured
+        </HmsButton>
+      </div>
+    </div>
+
+    <section v-if="patient" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">
+            {{ billingModule === 'opd' ? 'OPD encounter' : 'IPD admission' }}
+          </div>
+          <div class="panel-sub">
+            {{ filteredEncounters.length }} option{{ filteredEncounters.length === 1 ? '' : 's' }} available
+          </div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div v-if="filteredEncounters.length > 0" class="encounter-row">
           <q-select
             v-model="selectedEncounterId"
             :options="filteredEncounters"
             option-value="id"
             option-label="label"
-            filled
+            outlined
+            dense
             :label="billingModule === 'opd' ? 'OPD Encounter' : 'IPD Admission'"
             emit-value
             map-options
+            class="encounter-select"
             @update:model-value="loadEncounterData"
           />
-          <div v-if="selectedEncounter && selectedEncounter.ccc_number" class="q-mt-sm">
-            <q-badge color="green">
-              Insured Encounter (CCC: {{ selectedEncounter.ccc_number }})
-            </q-badge>
-          </div>
-          <div v-else-if="selectedEncounter && !selectedEncounter.ccc_number" class="q-mt-sm">
-            <q-badge color="orange">
-              Cash & Carry Encounter
-            </q-badge>
-          </div>
-          <div v-if="selectedWardAdmission && billingModule === 'ipd'" class="q-mt-sm">
-            <q-badge color="blue">
-              Ward: {{ selectedWardAdmission.ward }} | Bed: {{ selectedWardAdmission.bed_number || 'N/A' }}
-            </q-badge>
-          </div>
-          <div v-if="showRecalculateButton" class="q-mt-md">
-            <q-btn
-              color="warning"
-              icon="calculate"
-              label="Update to Insured & Recalculate Billing"
-              @click="openRecalculateDialog"
-              class="glass-button"
-            >
-              <q-tooltip>Update encounter CCC number and recalculate all bills with insurance co-payment rates</q-tooltip>
-            </q-btn>
+          <div class="badge-row">
+            <HmsBadge v-if="selectedEncounter && selectedEncounter.ccc_number" tone="success">
+              Insured · CCC {{ selectedEncounter.ccc_number }}
+            </HmsBadge>
+            <HmsBadge v-else-if="selectedEncounter && !selectedEncounter.ccc_number" tone="warning">
+              Cash &amp; carry
+            </HmsBadge>
+            <HmsBadge v-if="selectedWardAdmission && billingModule === 'ipd'" tone="info">
+              {{ selectedWardAdmission.ward }} · Bed {{ selectedWardAdmission.bed_number || 'N/A' }}
+            </HmsBadge>
           </div>
         </div>
-        <div v-else class="text-grey-7 q-mt-md">
-          {{ billingModule === 'opd' ? 'No active OPD encounters found for this patient' : 'No active IPD admissions found for this patient' }}
-          </div>
-        </q-card-section>
-      </q-card>
+        <div v-else class="empty-hint">
+          {{ billingModule === 'opd' ? 'No active OPD encounters found for this patient.' : 'No active IPD admissions found for this patient.' }}
+        </div>
+      </div>
+    </section>
 
     <!-- Billing Section -->
-    <div v-if="selectedEncounterId">
+    <div v-if="selectedEncounterId" class="billing-workspace">
       <!-- Auto-calculated Bill Items -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Diagnoses (Auto-calculated)</div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="refresh"
-              label="Recalculate"
-              @click="loadAutoCalculatedItems"
-              :loading="calculatingItems"
-              class="glass-button"
-            />
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Diagnoses</div>
+            <div class="panel-sub">Auto-calculated GDRG items ready to bill</div>
           </div>
-          <div v-if="autoCalculatedItems.length > 0" class="q-mb-md">
+          <div class="panel-actions">
+            <HmsButton
+              variant="secondary"
+              size="sm"
+              :loading="calculatingItems"
+              @click="loadAutoCalculatedItems"
+            >
+              Recalculate
+            </HmsButton>
+          </div>
+        </div>
+        <div v-if="autoCalculatedItems.length > 0">
+          <q-table
+            class="diag-table"
+            :rows="autoCalculatedItems"
+            :columns="billItemColumns"
+            row-key="item_code"
+            flat
+            dense
+          >
+            <template v-slot:body-cell-actions="props">
+              <q-td :props="props">
+                <HmsButton
+                  variant="primary"
+                  size="sm"
+                  :loading="addingDiagnosisId === props.row.item_code"
+                  :disabled="addingDiagnosisId !== null"
+                  @click="addDiagnosisToBill(props.row)"
+                >
+                  Add to bill
+                </HmsButton>
+              </q-td>
+            </template>
+          </q-table>
+          <div class="panel-footer">
+            <span class="total-label">Total</span>
+            <span class="total-value">₵{{ autoCalculatedTotal.toFixed(2) }}</span>
+          </div>
+        </div>
+        <div v-else-if="!calculatingItems" class="empty-hint">
+          No unbilled diagnoses with GDRG codes found.
+          <br />
+          <span class="empty-note">Prescriptions and investigations are billed when confirmed by their respective staff.</span>
+        </div>
+      </section>
+
+      <!-- Manual Bill Items -->
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Bill items</div>
+            <div class="panel-sub">{{ billItems.length }} item{{ billItems.length === 1 ? '' : 's' }} staged</div>
+          </div>
+          <div class="panel-actions">
+            <HmsButton variant="secondary" size="sm" @click="showAddItemDialog = true">
+              Add item
+            </HmsButton>
+          </div>
+        </div>
+        <q-table
+          v-if="billItems.length > 0"
+          class="diag-table"
+          :rows="billItems"
+          :columns="billItemColumns"
+          row-key="id"
+          flat
+          dense
+        >
+          <template v-slot:body-cell-actions="props">
+            <q-td :props="props">
+              <HmsButton variant="ghost" size="sm" @click="removeBillItem(props.rowIndex)">
+                Remove
+              </HmsButton>
+            </q-td>
+          </template>
+        </q-table>
+        <div v-else class="empty-hint">
+          No items added. Use Add item or Add to bill from diagnoses.
+        </div>
+
+        <div class="panel-body">
+          <q-input
+            v-model="miscellaneous"
+            outlined
+            dense
+            label="Miscellaneous notes"
+            type="textarea"
+            rows="2"
+            class="full-width"
+            hint="Additional items or notes not in the price list"
+          />
+          <div class="create-row">
+            <div class="total-block">
+              <span class="total-label">Total</span>
+              <span class="total-value">GHC {{ totalAmount.toFixed(2) }}</span>
+            </div>
+            <HmsButton
+              variant="primary"
+              size="sm"
+              :loading="creating"
+              :disabled="billItems.length === 0"
+              @click="createBill"
+            >
+              Create bill
+            </HmsButton>
+          </div>
+        </div>
+      </section>
+
+      <!-- Existing Bills -->
+      <section class="diag-panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">
+              {{ billingModule === 'ipd' ? 'IPD bills' : 'Existing bills' }}
+            </div>
+            <div class="panel-sub">View, pay, or manage receipts</div>
+          </div>
+          <div class="panel-actions">
+            <HmsButton
+              variant="secondary"
+              size="sm"
+              :loading="loadingBills"
+              @click="loadExistingBills"
+            >
+              Refresh
+            </HmsButton>
+          </div>
+        </div>
+
+        <!-- IPD Bills Grouped by Ward Admission -->
+        <div v-if="billingModule === 'ipd' && groupedIPDBills.length > 0" class="ipd-groups">
+          <div v-for="group in groupedIPDBills" :key="group.wardAdmissionId" class="ipd-group">
+            <div class="ipd-group-head">
+              <div>
+                <div class="ipd-group-title">Ward {{ group.ward }} · Bed {{ group.bedNumber || 'N/A' }}</div>
+                <div class="ipd-group-sub">
+                  Admission {{ group.wardAdmissionId }} · Encounter #{{ group.encounterId }}
+                </div>
+              </div>
+              <div class="ipd-group-totals">
+                Total ₵{{ group.total.toFixed(2) }}
+                <span class="sep">·</span>
+                Paid ₵{{ group.paid.toFixed(2) }}
+                <span class="sep">·</span>
+                Balance ₵{{ group.balance.toFixed(2) }}
+              </div>
+            </div>
             <q-table
-              :rows="autoCalculatedItems"
-              :columns="billItemColumns"
-              row-key="item_code"
+              class="diag-table"
+              :rows="group.bills"
+              :columns="existingBillColumns"
+              row-key="id"
               flat
               dense
             >
+              <template v-slot:body-cell-encounter_id="props">
+                <q-td :props="props">
+                  <span class="mono">#{{ props.value }}</span>
+                </q-td>
+              </template>
+              <template v-slot:body-cell-services="props">
+                <q-td :props="props">
+                  <div class="services-cell" :title="props.value">{{ props.value }}</div>
+                </q-td>
+              </template>
+              <template v-slot:body-cell-remaining_balance="props">
+                <q-td :props="props">
+                  <span :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'amt-due' : 'amt-ok'">
+                    {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
+                  </span>
+                </q-td>
+              </template>
+              <template v-slot:body-cell-is_paid="props">
+                <q-td :props="props">
+                  <HmsBadge :tone="props.value ? 'success' : 'warning'">
+                    {{ props.value ? 'Paid' : 'Unpaid' }}
+                  </HmsBadge>
+                </q-td>
+              </template>
               <template v-slot:body-cell-actions="props">
                 <q-td :props="props">
-                  <q-btn
-                    size="sm"
-                    color="positive"
-                    icon="add"
-                    label="Add to Bill"
-                    @click="addDiagnosisToBill(props.row)"
-                    :loading="addingDiagnosisId === props.row.item_code"
-                    :disable="addingDiagnosisId !== null"
-                  />
+                  <div class="row-actions">
+                    <HmsButton variant="ghost" size="sm" @click="viewBillDetails(props.row.id)">View</HmsButton>
+                    <HmsButton
+                      v-if="!props.row.is_paid"
+                      variant="primary"
+                      size="sm"
+                      @click="openReceiptDialog(props.row)"
+                    >
+                      Pay
+                    </HmsButton>
+                    <HmsButton
+                      v-if="authStore.userRole === 'Admin'"
+                      variant="secondary"
+                      size="sm"
+                      :loading="updatingBillId === props.row.id"
+                      @click="editBill(props.row)"
+                    >
+                      Edit
+                    </HmsButton>
+                    <HmsButton
+                      v-if="props.row.is_paid && authStore.userRole === 'Admin'"
+                      variant="healthcare"
+                      size="sm"
+                      @click="refundReceipt(props.row)"
+                    >
+                      Refund
+                    </HmsButton>
+                    <HmsButton
+                      v-if="authStore.userRole === 'Admin'"
+                      variant="ghost"
+                      size="sm"
+                      @click="confirmDeleteBill(props.row)"
+                    >
+                      Delete
+                    </HmsButton>
+                  </div>
                 </q-td>
               </template>
             </q-table>
-            <div class="q-mt-md" style="border-top: 2px solid #1976d2; padding-top: 8px;">
-              <div class="text-subtitle1 text-weight-bold">
-                Total: ₵{{ autoCalculatedTotal.toFixed(2) }}
-              </div>
-            </div>
           </div>
-          <div v-else-if="!calculatingItems" class="text-grey-7 text-center q-pa-md">
-            No unbilled diagnoses with GDRG codes found.
-            <br />
-            <small>Note: Other services (prescriptions, investigations) are billed when confirmed by their respective staff.</small>
-          </div>
-        </q-card-section>
-      </q-card>
+        </div>
 
-      <!-- Manual Bill Items -->
-      <q-card class="q-mb-md glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">Bill Items</div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="add"
-              label="Add Item"
-              @click="showAddItemDialog = true"
-              class="glass-button"
-            />
-          </div>
-
-          <q-table
-            v-if="billItems.length > 0"
-            :rows="billItems"
-            :columns="billItemColumns"
-            row-key="id"
-            flat
-          >
-            <template v-slot:body-cell-actions="props">
-              <q-td :props="props">
-                <q-btn
-                  size="sm"
-                  color="negative"
-                  icon="delete"
-                  flat
-                  @click="removeBillItem(props.rowIndex)"
-                />
-              </q-td>
-            </template>
-          </q-table>
-          <div v-else class="text-grey-7 text-center q-pa-md">
-            No items added. Click "Add Item" or "Use Auto-calculated" to add bill items.
-          </div>
-
-          <div class="row q-mt-md">
-            <q-input
-              v-model="miscellaneous"
-              filled
-              label="Miscellaneous Notes"
-              type="textarea"
-              rows="2"
-              class="col-12"
-              hint="Additional items or notes not in the price list"
-            />
-          </div>
-
-          <div class="row q-mt-md justify-end">
-            <div class="text-h6 q-mr-lg">
-              Total: GHC {{ totalAmount.toFixed(2) }}
-            </div>
-          </div>
-
-          <div class="row q-mt-md">
-            <q-btn
-              color="primary"
-              label="Create Bill"
-              @click="createBill"
-              :loading="creating"
-              :disable="billItems.length === 0"
-              class="glass-button"
-            />
-          </div>
-        </q-card-section>
-      </q-card>
-
-      <!-- Existing Bills -->
-      <q-card class="glass-card" flat>
-        <q-card-section>
-          <div class="row items-center q-mb-md">
-            <div class="text-h6 glass-text">
-              {{ billingModule === 'ipd' ? 'IPD Bills' : 'Existing Bills' }}
-            </div>
-            <q-space />
-            <q-btn
-              color="primary"
-              icon="refresh"
-              label="Refresh"
-              @click="loadExistingBills"
-              :loading="loadingBills"
-              class="glass-button"
-              size="sm"
-            />
-          </div>
-          
-          <!-- IPD Bills Grouped by Ward Admission -->
-          <div v-if="billingModule === 'ipd' && groupedIPDBills.length > 0" class="q-mb-md">
-            <div v-for="group in groupedIPDBills" :key="group.wardAdmissionId" class="q-mb-lg">
-              <q-card flat bordered class="q-mb-md">
-                <q-card-section>
-                  <div class="row items-center q-mb-md">
-                    <div class="text-subtitle1 glass-text text-weight-bold">
-                      Ward: {{ group.ward }} | Bed: {{ group.bedNumber || 'N/A' }}
-                    </div>
-                    <q-space />
-                    <div class="text-caption text-grey-7">
-                      Admission ID: {{ group.wardAdmissionId }} | Encounter: #{{ group.encounterId }}
-                    </div>
-                  </div>
-                  <q-table
-                    :rows="group.bills"
-                    :columns="existingBillColumns"
-                    row-key="id"
-                    flat
-                    dense
-                    class="glass-table"
-                  >
-                    <template v-slot:body-cell-encounter_id="props">
-                      <q-td :props="props">
-                        <div class="text-weight-medium glass-text">#{{ props.value }}</div>
-                      </q-td>
-                    </template>
-                    <template v-slot:body-cell-services="props">
-                      <q-td :props="props">
-                        <div class="glass-text-muted" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="props.value">
-                          {{ props.value }}
-                        </div>
-                      </q-td>
-                    </template>
-                    <template v-slot:body-cell-remaining_balance="props">
-                      <q-td :props="props">
-                        <div :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'text-negative text-weight-bold' : 'text-positive'" class="glass-text">
-                          {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
-                        </div>
-                      </q-td>
-                    </template>
-                    <template v-slot:body-cell-is_paid="props">
-                      <q-td :props="props">
-                        <q-badge
-                          :color="props.value ? 'positive' : 'warning'"
-                          :label="props.value ? 'Paid' : 'Unpaid'"
-                        />
-                      </q-td>
-                    </template>
-                    <template v-slot:body-cell-actions="props">
-                      <q-td :props="props">
-                        <div class="row q-gutter-xs">
-                          <q-btn
-                            size="sm"
-                            color="info"
-                            icon="visibility"
-                            label="View"
-                            @click="viewBillDetails(props.row.id)"
-                          />
-                          <q-btn
-                            v-if="!props.row.is_paid"
-                            size="sm"
-                            color="positive"
-                            icon="receipt"
-                            label="Pay"
-                            @click="openReceiptDialog(props.row)"
-                          />
-                          <q-btn
-                            v-if="authStore.userRole === 'Admin'"
-                            size="sm"
-                            color="secondary"
-                            icon="edit"
-                            label="Edit"
-                            @click="editBill(props.row)"
-                            :loading="updatingBillId === props.row.id"
-                          >
-                            <q-tooltip>Edit bill (Admin only)</q-tooltip>
-                          </q-btn>
-                          <q-btn
-                            v-if="props.row.is_paid && authStore.userRole === 'Admin'"
-                            size="sm"
-                            color="warning"
-                            icon="undo"
-                            label="Refund"
-                            @click="refundReceipt(props.row)"
-                          />
-                          <q-btn
-                            v-if="authStore.userRole === 'Admin'"
-                            size="sm"
-                            color="negative"
-                            icon="delete"
-                            label="Delete"
-                            @click="confirmDeleteBill(props.row)"
-                          />
-                        </div>
-                      </q-td>
-                    </template>
-                  </q-table>
-                  <div class="q-mt-md text-right">
-                    <div class="text-subtitle2 text-weight-bold">
-                      Group Total: ₵{{ group.total.toFixed(2) }} | 
-                      Paid: ₵{{ group.paid.toFixed(2) }} | 
-                      Balance: ₵{{ group.balance.toFixed(2) }}
-                    </div>
-                  </div>
-                </q-card-section>
-              </q-card>
-            </div>
-          </div>
-          
-          <!-- OPD Bills (Regular Table) -->
-          <q-table
-            v-if="billingModule === 'opd' && existingBills.length > 0"
-            :rows="existingBills"
-            :columns="existingBillColumns"
-            row-key="id"
-            flat
-            :loading="loadingBills"
-            class="glass-table q-mb-md"
-          >
-            <template v-slot:body-cell-encounter_id="props">
-              <q-td :props="props">
-                <div class="text-weight-medium glass-text">#{{ props.value }}</div>
-              </q-td>
-            </template>
-            <template v-slot:body-cell-services="props">
-              <q-td :props="props">
-                <div class="glass-text-muted" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="props.value">
-                  {{ props.value }}
-                </div>
-              </q-td>
-            </template>
-            <template v-slot:body-cell-remaining_balance="props">
-              <q-td :props="props">
-                <div :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'text-negative text-weight-bold' : 'text-positive'" class="glass-text">
-                  {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
-                </div>
-              </q-td>
-            </template>
-            <template v-slot:body-cell-is_paid="props">
-              <q-td :props="props">
-                <q-badge
-                  :color="props.value ? 'positive' : 'warning'"
-                  :label="props.value ? 'Paid' : 'Unpaid'"
-                />
-              </q-td>
-            </template>
-            <template v-slot:body-cell-actions="props">
-              <q-td :props="props">
-                <div class="row q-gutter-xs">
-                  <q-btn
-                    size="sm"
-                    color="info"
-                    icon="visibility"
-                    label="View"
-                    @click="viewBillDetails(props.row.id)"
-                  />
-                <q-btn
+        <!-- OPD Bills (Regular Table) -->
+        <q-table
+          v-if="billingModule === 'opd' && existingBills.length > 0"
+          class="diag-table"
+          :rows="existingBills"
+          :columns="existingBillColumns"
+          row-key="id"
+          flat
+          dense
+          :loading="loadingBills"
+        >
+          <template v-slot:body-cell-encounter_id="props">
+            <q-td :props="props">
+              <span class="mono">#{{ props.value }}</span>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-services="props">
+            <q-td :props="props">
+              <div class="services-cell" :title="props.value">{{ props.value }}</div>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-remaining_balance="props">
+            <q-td :props="props">
+              <span :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'amt-due' : 'amt-ok'">
+                {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
+              </span>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-is_paid="props">
+            <q-td :props="props">
+              <HmsBadge :tone="props.value ? 'success' : 'warning'">
+                {{ props.value ? 'Paid' : 'Unpaid' }}
+              </HmsBadge>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-actions="props">
+            <q-td :props="props">
+              <div class="row-actions">
+                <HmsButton variant="ghost" size="sm" @click="viewBillDetails(props.row.id)">View</HmsButton>
+                <HmsButton
                   v-if="!props.row.is_paid"
+                  variant="primary"
                   size="sm"
-                  color="positive"
-                    icon="receipt"
-                    label="Pay"
-                    @click="openReceiptDialog(props.row)"
-                  />
-                  <!-- Edit button for Admin -->
-                  <q-btn
-                    v-if="authStore.userRole === 'Admin'"
-                    size="sm"
-                    color="secondary"
-                    icon="edit"
-                    label="Edit"
-                    @click="editBill(props.row)"
-                    :loading="updatingBillId === props.row.id"
-                  >
-                    <q-tooltip>Edit bill (Admin only)</q-tooltip>
-                  </q-btn>
-                  <q-btn
-                    v-if="props.row.is_paid && authStore.userRole === 'Admin'"
-                    size="sm"
-                    color="warning"
-                    icon="undo"
-                    label="Refund"
-                    @click="refundReceipt(props.row)"
-                  />
-                  <q-btn
-                    v-if="authStore.userRole === 'Admin'"
-                    size="sm"
-                    color="negative"
-                    icon="delete"
-                    label="Delete"
-                    @click="confirmDeleteBill(props.row)"
-                  />
-                </div>
-              </q-td>
-            </template>
-          </q-table>
-          <div v-if="billingModule === 'opd' && existingBills.length === 0 && !loadingBills" class="text-grey-7 text-center q-pa-md">
-            No bills found for this encounter
-          </div>
-          <div v-if="billingModule === 'ipd' && groupedIPDBills.length === 0 && !loadingBills" class="text-grey-7 text-center q-pa-md">
-            No IPD bills found for this patient
-          </div>
-        </q-card-section>
-      </q-card>
+                  @click="openReceiptDialog(props.row)"
+                >
+                  Pay
+                </HmsButton>
+                <HmsButton
+                  v-if="authStore.userRole === 'Admin'"
+                  variant="secondary"
+                  size="sm"
+                  :loading="updatingBillId === props.row.id"
+                  @click="editBill(props.row)"
+                >
+                  Edit
+                </HmsButton>
+                <HmsButton
+                  v-if="props.row.is_paid && authStore.userRole === 'Admin'"
+                  variant="healthcare"
+                  size="sm"
+                  @click="refundReceipt(props.row)"
+                >
+                  Refund
+                </HmsButton>
+                <HmsButton
+                  v-if="authStore.userRole === 'Admin'"
+                  variant="ghost"
+                  size="sm"
+                  @click="confirmDeleteBill(props.row)"
+                >
+                  Delete
+                </HmsButton>
+              </div>
+            </q-td>
+          </template>
+        </q-table>
+        <div v-if="billingModule === 'opd' && existingBills.length === 0 && !loadingBills" class="empty-hint">
+          No bills found for this encounter
+        </div>
+        <div v-if="billingModule === 'ipd' && groupedIPDBills.length === 0 && !loadingBills" class="empty-hint">
+          No IPD bills found for this patient
+        </div>
+      </section>
     </div>
 
     <!-- Bill Details Dialog -->
     <q-dialog v-model="showBillDetailsDialog">
-      <q-card style="min-width: 700px; max-width: 900px">
-        <q-card-section>
-          <div class="row items-center">
-            <div class="text-h6">Bill Details</div>
-            <q-space />
+      <q-card class="billing-dialog-card" style="min-width: min(700px, 96vw); max-width: 900px">
+        <q-card-section class="billing-dialog-head">
+          <div class="dialog-head-row">
+            <div>
+              <div class="dialog-title">Bill details</div>
+              <div class="dialog-sub" v-if="currentBillDetails">{{ currentBillDetails.bill_number }}</div>
+            </div>
             <q-btn icon="close" flat round dense v-close-popup />
           </div>
         </q-card-section>
@@ -483,10 +493,9 @@
             </div>
           </div>
           <div class="q-mb-md">
-            <q-badge
-              :color="currentBillDetails.is_paid ? 'green' : 'orange'"
-              :label="currentBillDetails.is_paid ? 'Paid' : 'Unpaid'"
-            />
+            <HmsBadge :tone="currentBillDetails.is_paid ? 'success' : 'warning'">
+              {{ currentBillDetails.is_paid ? 'Paid' : 'Unpaid' }}
+            </HmsBadge>
           </div>
           <div v-if="currentBillDetails.miscellaneous" class="q-mb-md">
             <div class="text-caption text-grey-7">Miscellaneous Notes</div>
@@ -802,11 +811,13 @@
 
     <!-- Receipt Dialog with Itemized Payment -->
     <q-dialog v-model="showReceiptDialog">
-      <q-card style="min-width: 700px; max-width: 900px">
-        <q-card-section>
-          <div class="row items-center">
-            <div class="text-h6">Issue Receipt - Bill {{ currentBillForReceipt?.bill_number }}</div>
-            <q-space />
+      <q-card class="billing-dialog-card" style="min-width: min(700px, 96vw); max-width: 900px">
+        <q-card-section class="billing-dialog-head">
+          <div class="dialog-head-row">
+            <div>
+              <div class="dialog-title">Issue receipt</div>
+              <div class="dialog-sub">Bill {{ currentBillForReceipt?.bill_number }}</div>
+            </div>
             <q-btn icon="close" flat round dense v-close-popup />
           </div>
         </q-card-section>
@@ -952,11 +963,13 @@
 
     <!-- Recalculate Billing Dialog -->
     <q-dialog v-model="showRecalculateDialog" persistent>
-      <q-card style="min-width: 500px; max-width: 700px">
-        <q-card-section>
-          <div class="row items-center">
-            <div class="text-h6">Update to Insured & Recalculate Billing</div>
-            <q-space />
+      <q-card class="billing-dialog-card" style="min-width: min(500px, 96vw); max-width: 700px">
+        <q-card-section class="billing-dialog-head">
+          <div class="dialog-head-row">
+            <div>
+              <div class="dialog-title">Recalculate with insurance</div>
+              <div class="dialog-sub">Update CCC and co-payment rates for all bill items</div>
+            </div>
             <q-btn icon="close" flat round dense v-close-popup />
           </div>
           <div class="text-caption text-warning q-mt-sm">
@@ -1097,9 +1110,10 @@
 
     <!-- Add Item Dialog -->
     <q-dialog v-model="showAddItemDialog">
-      <q-card style="min-width: 700px; max-width: 900px">
-        <q-card-section>
-          <div class="text-h6">Add Item to Bill</div>
+      <q-card class="billing-dialog-card" style="min-width: min(700px, 96vw); max-width: 900px">
+        <q-card-section class="billing-dialog-head">
+          <div class="dialog-title">Add bill item</div>
+          <div class="dialog-sub">Search price list or enter a custom item</div>
         </q-card-section>
         <q-tabs v-model="addItemTab" class="text-primary">
           <q-tab name="search" label="Search from Price List" />
@@ -1228,6 +1242,9 @@ import { useRoute, useRouter } from 'vue-router';
 import { billingAPI, patientsAPI, encountersAPI, priceListAPI, consultationAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 
 const $q = useQuasar();
 const route = useRoute();
@@ -1238,6 +1255,20 @@ const billingModule = ref('opd'); // 'opd' or 'ipd'
 const cardNumber = ref('');
 const loadingPatient = ref(false);
 const patient = ref(null);
+
+const patientDisplayName = computed(() => {
+  if (!patient.value) return '';
+  const parts = [patient.value.name, patient.value.surname, patient.value.other_names].filter(Boolean);
+  return parts.join(' ');
+});
+
+const patientInitials = computed(() => {
+  if (!patient.value) return '?';
+  const first = (patient.value.name || '').trim().charAt(0);
+  const last = (patient.value.surname || patient.value.other_names || '').trim().charAt(0);
+  const letters = `${first}${last}`.toUpperCase();
+  return letters || '?';
+});
 const activeEncounters = ref([]);
 const wardAdmissions = ref([]); // Store ward admissions for IPD filtering
 
@@ -3061,3 +3092,151 @@ onMounted(() => {
   autoLoadFromRoute();
 });
 </script>
+
+<style scoped>
+.module-seg {
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  gap: 0.15rem;
+}
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--hms-text-secondary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  font-weight: 650;
+  padding: 0.35rem 0.85rem;
+  border-radius: calc(var(--hms-radius-lg) - 2px);
+  cursor: pointer;
+}
+.seg-btn.active {
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+.patient-hero {
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-glass-bg-strong);
+  border: 1px solid var(--hms-border-strong);
+  box-shadow: var(--hms-shadow-lg), var(--hms-shadow-inner);
+  backdrop-filter: blur(16px);
+}
+.hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.hero-avatar {
+  width: 3.1rem; height: 3.1rem; border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.18));
+  color: var(--hms-accent); display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 750; flex-shrink: 0;
+}
+.hero-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.hero-name {
+  margin: 0; font-size: var(--hms-text-2xl); font-weight: 750;
+  letter-spacing: var(--hms-tracking-tight); color: var(--hms-text-primary);
+}
+.hero-meta {
+  margin-top: 0.35rem; display: flex; flex-wrap: wrap; gap: 0.15rem 0.2rem;
+  color: var(--hms-text-secondary); font-size: var(--hms-text-sm);
+}
+.sep { color: var(--hms-text-muted); margin: 0 0.2rem; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.mono { font-family: var(--hms-font-mono); font-size: 0.75rem; }
+.diag-panel {
+  margin-bottom: 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem; padding: 0.85rem 1rem; border-bottom: 1px solid var(--hms-border);
+}
+.panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
+.panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.panel-body { padding: 0.95rem 1rem; }
+.panel-footer {
+  display: flex; justify-content: flex-end; align-items: baseline; gap: 0.55rem;
+  padding: 0.75rem 1rem; border-top: 1px solid var(--hms-border);
+}
+.search-body { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+.tool-input {
+  height: 2.15rem; border-radius: var(--hms-radius-lg); border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg); color: var(--hms-text-primary); font-family: inherit;
+  font-size: var(--hms-text-sm); padding: 0 0.7rem;
+}
+.tool-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.tool-input--search { min-width: 14rem; }
+.tool-input--grow { flex: 1; min-width: 12rem; }
+.encounter-row { display: flex; flex-direction: column; gap: 0.65rem; }
+.encounter-select { width: 100%; max-width: 36rem; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.diag-table { background: transparent; }
+.diag-table :deep(thead tr),
+.diag-table :deep(.q-table__top) { background: transparent; }
+.diag-table :deep(th) {
+  font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--hms-text-muted); font-weight: 700;
+}
+.empty-hint {
+  text-align: center; color: var(--hms-text-muted); padding: 1.25rem 1rem;
+  font-size: var(--hms-text-sm);
+}
+.empty-note { display: inline-block; margin-top: 0.35rem; font-size: var(--hms-text-xs); }
+.full-width { width: 100%; }
+.create-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem; margin-top: 0.85rem;
+}
+.total-block { display: inline-flex; align-items: baseline; gap: 0.45rem; }
+.total-label {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.total-value { font-size: var(--hms-text-lg); font-weight: 750; color: var(--hms-text-primary); font-variant-numeric: tabular-nums; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.services-cell {
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--hms-text-secondary); font-size: var(--hms-text-sm);
+}
+.amt-due { color: var(--hms-critical); font-weight: 700; font-variant-numeric: tabular-nums; }
+.amt-ok { color: var(--hms-success); font-weight: 650; font-variant-numeric: tabular-nums; }
+.ipd-groups { display: flex; flex-direction: column; gap: 0.85rem; padding: 0.75rem 0.85rem 1rem; }
+.ipd-group {
+  border: 1px solid var(--hms-border); border-radius: var(--hms-radius-lg);
+  overflow: hidden; background: var(--hms-surface);
+}
+.ipd-group-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.55rem; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--hms-border);
+}
+.ipd-group-title { font-weight: 700; color: var(--hms-text-primary); font-size: var(--hms-text-sm); }
+.ipd-group-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.ipd-group-totals { font-size: var(--hms-text-xs); color: var(--hms-text-secondary); font-weight: 650; }
+.billing-dialog-card {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+}
+.billing-dialog-head { border-bottom: 1px solid var(--hms-border); }
+.dialog-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+.dialog-title { font-size: var(--hms-text-xl); font-weight: 750; color: var(--hms-text-primary); }
+.dialog-sub { margin-top: 0.2rem; font-size: var(--hms-text-sm); color: var(--hms-text-muted); }
+@media (max-width: 720px) {
+  .patient-hero { position: static; }
+  .tool-input--search { width: 100%; }
+}
+</style>

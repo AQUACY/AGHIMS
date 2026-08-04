@@ -1,110 +1,170 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="text-h4 q-mb-md text-weight-bold glass-text">Patient Search Results</div>
-
-    <q-card class="q-mb-md glass-card" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          <span v-if="patients.length > 0">Found {{ patients.length }} patient(s) matching </span>
-          <span v-else>No patients found matching </span>
-          <span v-if="searchType === 'name'">name "{{ searchTerm }}"</span>
-          <span v-else-if="searchType === 'card'">card number "{{ searchTerm }}"</span>
-          <span v-else-if="searchType === 'ccc'">Ghana card/insurance number "{{ searchTerm }}"</span>
-          <span v-else-if="searchType === 'contact'">contact number "{{ searchTerm }}"</span>
-          <span v-else>"{{ searchTerm }}"</span>
-        </div>
-
-        <q-table
-          :rows="patients"
-          :columns="patientColumns"
-          row-key="id"
-          flat
-          class="glass-table"
+  <q-page class="hms-page">
+    <HmsPageHeader title="Patient search results" :subtitle="subtitle">
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.back()">
+          <ArrowLeft :size="14" />
+          Back
+        </HmsButton>
+        <HmsButton
+          v-if="canRegister"
+          variant="primary"
+          size="sm"
+          @click="$router.push({ name: 'PatientRegistration' })"
         >
-          <template v-slot:body-cell-card_number="props">
-            <q-td :props="props">
-              <div class="text-weight-medium glass-text">{{ props.value }}</div>
-            </q-td>
-          </template>
-          
-          <template v-slot:body-cell-name="props">
-            <q-td :props="props">
-              <div class="glass-text">
-                {{ props.row.name }} {{ props.row.surname || '' }}
-              </div>
-            </q-td>
-          </template>
-          
-          <template v-slot:body-cell-gender="props">
-            <q-td :props="props">
-              <q-badge :color="props.value === 'M' ? 'blue' : 'pink'">
-                {{ props.value }}
-              </q-badge>
-            </q-td>
-          </template>
-          
-          <template v-slot:body-cell-insured="props">
-            <q-td :props="props">
-              <q-badge :color="props.value ? 'green' : 'orange'">
-                {{ props.value ? 'Insured' : 'Cash' }}
-              </q-badge>
-            </q-td>
-          </template>
-          
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
-              <q-btn
-                size="sm"
-                color="primary"
-                icon="visibility"
-                label="View"
-                @click="viewPatient(props.row)"
-                class="glass-button"
-              />
-            </q-td>
-          </template>
-        </q-table>
-      </q-card-section>
-    </q-card>
+          <UserPlus :size="14" />
+          Add patient
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div class="results-meta">
+      <Users :size="15" class="meta-icon" />
+      <span>{{ patients.length }} total patient{{ patients.length === 1 ? '' : 's' }}</span>
+    </div>
+
+    <HmsDataTable
+      :rows="patients"
+      :columns="patientColumns"
+      row-key="id"
+      searchable
+      dense
+      search-placeholder="Search for anything here…"
+      empty-title="No patients found"
+      :empty-description="`No matches for “${searchTerm}”`"
+      @row-click="viewPatient"
+    >
+      <template #cell-card_number="{ value }">
+        <span class="mono">{{ value }}</span>
+      </template>
+
+      <template #cell-name="{ row }">
+        <div class="patient-cell">
+          <div class="avatar">{{ initials(row) }}</div>
+          <div class="patient-meta">
+            <div class="name">{{ displayName(row) }}</div>
+            <div v-if="row.contact" class="sub">{{ row.contact }}</div>
+          </div>
+        </div>
+      </template>
+
+      <template #cell-gender="{ value }">
+        <HmsBadge :tone="value === 'M' || value === 'Male' ? 'info' : 'healthcare'">
+          {{ genderLabel(value) }}
+        </HmsBadge>
+      </template>
+
+      <template #cell-insured="{ value }">
+        <HmsBadge :tone="value ? 'success' : 'warning'">
+          {{ value ? 'Insured' : 'Cash' }}
+        </HmsBadge>
+      </template>
+
+      <template #cell-actions="{ row }">
+        <HmsButton variant="soft" size="sm" @click.stop="viewPatient(row)">Open</HmsButton>
+      </template>
+
+      <template #footer="{ count, total }">
+        Showing {{ count }} of {{ total }} patient{{ total === 1 ? '' : 's' }}
+      </template>
+    </HmsDataTable>
   </q-page>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
+import { ArrowLeft, UserPlus, Users } from 'lucide-vue-next';
+import { useAuthStore } from '../stores/auth';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
+import HmsDataTable from '../components/ui/HmsDataTable.vue';
 
 const route = useRoute();
 const router = useRouter();
 const $q = useQuasar();
+const authStore = useAuthStore();
 
 const searchTerm = ref('');
-const searchType = ref('name'); // 'name' or 'card'
+const searchType = ref('name');
 const patients = ref([]);
 
+const canRegister = computed(() => authStore.canAccess(['Records', 'Admin', 'PA', 'Doctor']));
+
 const patientColumns = [
-  { name: 'card_number', label: 'Card Number', field: 'card_number', align: 'left' },
-  { name: 'name', label: 'Name', field: 'name', align: 'left' },
-  { name: 'gender', label: 'Gender', field: 'gender', align: 'center' },
-  { name: 'date_of_birth', label: 'Date of Birth', field: 'date_of_birth', align: 'left', format: (val) => val ? new Date(val).toLocaleDateString() : 'N/A' },
-  { name: 'insured', label: 'Insurance', field: 'insured', align: 'center' },
-  { name: 'actions', label: 'Actions', align: 'center' },
+  { name: 'card_number', label: 'Card', field: 'card_number', align: 'left', width: '150px' },
+  { name: 'name', label: 'Patient', field: 'name', align: 'left' },
+  { name: 'gender', label: 'Sex', field: 'gender', align: 'center', width: '80px' },
+  {
+    name: 'date_of_birth',
+    label: 'DOB',
+    field: 'date_of_birth',
+    align: 'left',
+    width: '120px',
+    format: (val) =>
+      val
+        ? new Date(val).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+          })
+        : '—',
+  },
+  { name: 'insured', label: 'Cover', field: 'insured', align: 'center', width: '100px' },
+  { name: 'actions', label: '', align: 'right', width: '96px' },
 ];
+
+const subtitle = computed(() => {
+  const labels = {
+    name: 'name',
+    card: 'card number',
+    ccc: 'Ghana card / insurance number',
+    contact: 'contact number',
+  };
+  const kind = labels[searchType.value] || 'query';
+  if (!patients.value.length) return `No patients matching ${kind} “${searchTerm.value}”`;
+  return `Matching ${kind} “${searchTerm.value}”`;
+});
+
+const titleCase = (value) => {
+  if (!value) return '';
+  return String(value)
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+const displayName = (row) =>
+  [titleCase(row.name), titleCase(row.surname)].filter(Boolean).join(' ') || 'Unknown';
+
+const initials = (row) => {
+  const a = (row.name || '?')[0] || '?';
+  const b = (row.surname || '')[0] || '';
+  return `${a}${b}`.toUpperCase();
+};
+
+const genderLabel = (value) => {
+  if (value === 'M' || value === 'Male') return 'Male';
+  if (value === 'F' || value === 'Female') return 'Female';
+  return value || '—';
+};
 
 const viewPatient = (patient) => {
   router.push({
     name: 'PatientProfile',
-    params: { cardNumber: patient.card_number }
+    params: { cardNumber: patient.card_number },
   });
 };
 
 const loadPatientsFromQuery = () => {
-  console.log('Loading patients from query, route.query:', route.query);
-  
-  // Get search parameters from query
-  searchTerm.value = route.query.searchTerm || route.query.name || route.query.cardNumber || route.query.contactNumber || '';
-  
-  // Determine search type from query
+  searchTerm.value =
+    route.query.searchTerm ||
+    route.query.name ||
+    route.query.cardNumber ||
+    route.query.contactNumber ||
+    '';
+
   if (route.query.searchType) {
     searchType.value = route.query.searchType;
   } else if (route.query.name) {
@@ -118,15 +178,11 @@ const loadPatientsFromQuery = () => {
   } else {
     searchType.value = 'name';
   }
-  
-  // Try to get patients from query params
+
   if (route.query.patients) {
     try {
       const parsedPatients = JSON.parse(route.query.patients);
-      console.log('Parsed patients:', parsedPatients);
       patients.value = Array.isArray(parsedPatients) ? parsedPatients : [];
-      
-      // Show notification if no patients found
       if (patients.value.length === 0) {
         $q.notify({
           type: 'info',
@@ -144,30 +200,88 @@ const loadPatientsFromQuery = () => {
       });
     }
   } else {
-    console.warn('No patients in query params');
     patients.value = [];
-    $q.notify({
-      type: 'warning',
-      message: 'No search results available',
-      position: 'top',
-    });
   }
-  
-  console.log('Final patients:', patients.value);
 };
 
 onMounted(() => {
   loadPatientsFromQuery();
 });
 
-// Watch for route query changes (when navigating from search to search results)
-watch(() => route.query, () => {
-  console.log('Route query changed:', route.query);
-  loadPatientsFromQuery();
-}, { deep: true });
+watch(
+  () => route.query,
+  () => {
+    loadPatientsFromQuery();
+  },
+  { deep: true }
+);
 </script>
 
 <style scoped>
-/* Styles are now defined globally in App.vue */
-</style>
+.results-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: -0.35rem 0 0.85rem;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  font-weight: 600;
+}
 
+.meta-icon {
+  flex-shrink: 0;
+}
+
+.patient-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.avatar {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 9999px;
+  background: linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.18));
+  color: var(--hms-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 750;
+  flex-shrink: 0;
+}
+
+.patient-meta {
+  min-width: 0;
+}
+
+.name {
+  font-weight: 700;
+  color: var(--hms-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sub {
+  margin-top: 0.1rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+
+.mono {
+  font-family: var(--hms-font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.01em;
+  color: var(--hms-text-secondary);
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .results-meta {
+    margin-bottom: 0.65rem;
+  }
+}
+</style>

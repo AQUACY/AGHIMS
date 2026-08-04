@@ -1,22 +1,42 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn flat dense icon="arrow_back" :to="backLink" />
-      <div class="text-h5 text-weight-bold glass-text q-ml-sm">Add day surgery</div>
+  <q-page class="hms-page">
+    <HmsPageHeader title="Add day surgery">
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push(backLink)">Back</HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="visit && visit.client_name" class="claim-hero">
+      <div class="claim-hero__main">
+        <div class="claim-hero__avatar" aria-hidden="true">{{ visitInitials }}</div>
+        <div>
+          <h2 class="claim-hero__name">{{ visit.client_name }}</h2>
+          <div class="claim-hero__meta">
+            <span v-if="visit.external_card_number" class="mono">{{ visit.external_card_number }}</span>
+            <span v-if="visit.external_visit_number" class="mono">Visit {{ visit.external_visit_number }}</span>
+            <span v-if="visit.status">{{ visit.status }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <q-card v-if="visitClosed" class="glass-card q-mb-md" flat>
-      <q-card-section>
+
+    <section v-if="visitClosed" class="diag-panel">
+      <div class="panel-body">
         <q-banner class="bg-warning/20 text-warning rounded-borders">
           This visit is closed. You cannot add or remove day surgeries.
         </q-banner>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Added to bill -->
-    <q-card v-if="addedItems.length > 0" class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Added to client's bill</div>
+    <section v-if="addedItems.length > 0" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Added to client's bill</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-expansion-item
           v-for="group in addedGroups"
           :key="group.key"
@@ -66,14 +86,18 @@
             </q-item>
           </q-list>
         </q-expansion-item>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Search and add -->
-    <q-card class="glass-card q-mb-lg" flat>
-      <q-card-section>
-        <div class="text-subtitle1 text-weight-medium glass-text q-mb-md">Search and add day surgery</div>
-        <div class="text-caption glass-text-muted q-mb-sm">Type to search, then select to add to this visit.</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Search and add day surgery</div>
+          <div class="panel-sub">Type to search, then select to add to this visit.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <q-input
           v-model="searchText"
           filled
@@ -96,30 +120,37 @@
               <q-item-label caption>{{ proc.g_drg_code }} · GH¢ {{ formatPrice(copaymentPrice(proc)) }} copay</q-item-label>
             </q-item-section>
             <q-item-section side>
-              <q-btn flat dense size="sm" label="Add" class="glass-button" @click.stop="selectSearchResult(proc)" />
+              <HmsButton variant="soft" size="sm" @click.stop="selectSearchResult(proc)">Add</HmsButton>
             </q-item-section>
           </q-item>
         </q-list>
         <div v-else-if="searchText.trim() && !loadingProcedures" class="text-caption text-grey-7">
           {{ filteredSearchOptions.length === 0 ? 'No matching day surgeries.' : '' }}
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
     <!-- Regularly requested (card list) -->
-    <div class="text-subtitle1 text-weight-medium glass-text q-mb-md q-ma-md">Regularly requested (cards)</div>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Regularly requested</div>
+          <div class="panel-sub">Tap a card to add it to this visit.</div>
+        </div>
+      </div>
+      <div class="panel-body">
     <div v-if="loadingProcedures || loadingActive" class="row q-col-gutter-md ">
-      <q-card v-for="i in 4" :key="i" class="col-12 col-sm-6 col-md-4 glass-card q-ma-md" flat>
+      <q-card v-for="i in 4" :key="i" class="col-12 col-sm-6 col-md-4 procedure-card" flat>
         <q-card-section class="text-center">
           <q-skeleton type="text" width="80%" class="q-mx-auto" />
           <q-skeleton type="text" width="50%" class="q-mx-auto q-mt-sm" />
         </q-card-section>
       </q-card>
     </div>
-    <div v-else-if="procedures.length === 0" class="text-body2 glass-text-muted">
+    <div v-else-if="procedures.length === 0" class="text-body2">
       No day surgeries in the price list for service type "DAY SURGERY".
     </div>
-    <div v-else-if="activeProcedures.length === 0" class="text-body2 glass-text-muted">
+    <div v-else-if="activeProcedures.length === 0" class="text-body2">
       No day surgeries are on the card list yet. Doctor/PA can add regularly requested ones below. Use "Search and add" above to add any day surgery to the visit.
     </div>
     <div v-else class="row q-col-gutter-md q-ma-md">
@@ -134,28 +165,33 @@
       >
         <q-card-section class="text-center q-pa-md">
           <q-icon name="medical_services" size="32px" class="text-primary" />
-          <div class="text-subtitle2 q-mt-sm text-weight-medium glass-text">{{ proc.service_name }}</div>
+          <div class="text-subtitle2 q-mt-sm text-weight-medium">{{ proc.service_name }}</div>
           <div class="text-caption text-grey-7">{{ proc.g_drg_code }}</div>
           <div class="text-caption q-mt-xs">Copayment: GH¢ {{ formatPrice(copaymentPrice(proc)) }}</div>
-          <q-btn
+          <HmsButton
             v-if="!visitClosed"
-            flat
-            dense
+            variant="soft"
             size="sm"
-            label="Add to bill"
-            class="glass-button q-mt-sm"
+            class="q-mt-sm"
             @click.stop="addProcedure(proc)"
-          />
+            >Add to bill</HmsButton>
           <q-badge v-else-if="addedCount(proc) > 0" color="positive" :label="addedCount(proc) > 1 ? `Added (${addedCount(proc)})` : 'Added'" class="q-mt-sm" />
         </q-card-section>
       </q-card>
     </div>
 
+      </div>
+    </section>
+
     <!-- Doctor/PA: manage card list -->
-    <q-card v-if="canManageActive" class="glass-card q-mt-xl" flat>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">Manage card list (Doctor / PA)</div>
-        <div class="text-caption glass-text-muted q-mb-md">Day surgeries on the card list appear above. Add or remove them here.</div>
+    <section v-if="canManageActive" class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Manage card list (Doctor / PA)</div>
+          <div class="panel-sub">Day surgeries on the card list appear above. Add or remove them here.</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md q-mb-md">
           <div class="col-12 col-md-6">
             <q-select
@@ -194,8 +230,8 @@
           </q-chip>
         </div>
         <div v-else class="text-caption text-grey-7">No day surgeries on the card list yet.</div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
   </q-page>
 </template>
 
@@ -207,6 +243,8 @@ import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI } from '../../services/api';
 import { priceListAPI } from '../../services/api';
 import { isCompanionBillItemPaid, companionBillPaidLabel } from '../../utils/companionBillItemPaid.js';
+import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
+import HmsButton from '../../components/ui/HmsButton.vue';
 
 const route = useRoute();
 const $q = useQuasar();
@@ -216,6 +254,15 @@ const backLink = computed(() => ({ name: 'CompanionVisitDetail', params: { id: v
 
 const visit = ref(null);
 const visitClosed = computed(() => visit.value?.status === 'closed');
+
+const visitInitials = computed(() => {
+  const name = (visit.value?.client_name || '').trim();
+  if (!name) return '?';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+});
+
 const procedures = ref([]);
 const addedItems = ref([]);
 const activeCodes = ref([]);

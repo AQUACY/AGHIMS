@@ -1,655 +1,442 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Ward"
-        @click="$router.push('/ipd/doctor-nursing-station')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">
-        Admission Manager
+  <q-page class="hms-page am-page">
+    <HmsPageHeader
+      title="Admission manager"
+      subtitle="Inpatient clinical workspace for the selected ward admission."
+    >
+      <template #actions>
+        <HmsButton variant="secondary" size="sm" @click="$router.push('/ipd/doctor-nursing-station')">
+          Back to ward
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
+
+    <div v-if="patientInfo" class="ipd-patient-hero">
+      <div class="ipd-hero-main">
+        <div class="ipd-hero-avatar">{{ amPatientInitials(patientInfo) }}</div>
+        <div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.45rem;">
+            <h1 class="ipd-hero-name">{{ amPatientDisplayName(patientInfo) }}</h1>
+            <HmsBadge v-if="isInsured" tone="success">Insured</HmsBadge>
+            <HmsBadge v-else tone="warning">Cash &amp; carry</HmsBadge>
+          </div>
+          <div class="ipd-hero-meta">
+            <span class="mono">{{ patientInfo.patient_card_number }}</span>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.patient_gender || '—' }}</span>
+            <template v-if="patientInfo.patient_date_of_birth">
+              <span class="sep">·</span>
+              <span>{{ formatDate(patientInfo.patient_date_of_birth) }}</span>
+            </template>
+            <span class="sep">·</span>
+            <span>{{ patientInfo.ward }}</span>
+            <template v-if="patientInfo.bed_number">
+              <span class="sep">·</span>
+              <span>Bed {{ patientInfo.bed_number }}</span>
+            </template>
+            <span class="sep">·</span>
+            <span>Admitted {{ formatDateTime(patientInfo.admitted_at) }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="ipd-hero-actions">
+        <button
+          v-if="patientBillInfo.totalAmount !== null"
+          type="button"
+          class="balance-pill"
+          :class="patientBillInfo.remainingBalance > 0 ? 'due' : (patientBillInfo.totalAmount > 0 ? 'ok' : 'neutral')"
+          @click="openBillItemsDialog"
+        >
+          <span class="balance-label">Outstanding</span>
+          <span class="balance-value">GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}</span>
+        </button>
       </div>
     </div>
 
-    <!-- Patient Info Card -->
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="row items-center">
-          <q-avatar size="64px" color="primary" text-color="white" class="q-mr-md">
-            <q-icon name="person" size="40px" />
-          </q-avatar>
-          <div class="col">
-            <div class="text-h5 text-weight-bold glass-text q-mb-xs">
-              {{ patientInfo.patient_name }} {{ patientInfo.patient_surname }}<span v-if="patientInfo.patient_other_names"> {{ patientInfo.patient_other_names }}</span>
-            </div>
-            <div v-if="patientBillInfo.totalAmount !== null" class="text-body1 q-mt-xs" :class="patientBillInfo.remainingBalance > 0 ? 'text-negative text-weight-bold' : 'text-secondary'">
-              <q-icon name="receipt" size="16px" class="q-mr-xs" />
-              <span 
-                @click="openBillItemsDialog" 
-                style="cursor: pointer; text-decoration: underline;"
-                class="text-primary"
-              >
-                Total Bills: GHC {{ patientBillInfo.totalAmount.toFixed(2) }} 
-                <span v-if="patientBillInfo.remainingBalance > 0" class="text-negative">
-                  | Outstanding: GHC {{ patientBillInfo.remainingBalance.toFixed(2) }}
-                </span>
-                <span v-else>
-                  | Outstanding: GHC 0.00
-                </span>
-              </span>
-              <q-tooltip>Click to view all bill items</q-tooltip>
-            </div>
-            <div class="row q-col-gutter-md q-mt-sm">
-              <div class="col-12 col-md-6">
-                <div class="text-body2 text-secondary">
-                  <q-icon name="credit_card" size="16px" class="q-mr-xs" />
-                  Card: {{ patientInfo.patient_card_number }}
-                </div>
-                <div class="text-body2 text-secondary q-mt-xs">
-                  <q-icon name="person" size="16px" class="q-mr-xs" />
-                  {{ patientInfo.patient_gender }}
-                  <span v-if="patientInfo.patient_date_of_birth" class="q-ml-sm">
-                    | DOB: {{ formatDate(patientInfo.patient_date_of_birth) }}
-                  </span>
-                </div>
-                <!-- Insurance Status Indicator -->
-                <div v-if="patientInfo.patient_date_of_birth" class="q-mt-sm">
-                  <q-badge
-                    :color="isInsured ? 'positive' : 'negative'"
-                    :label="isInsured ? 'INSURED ADMISSION' : 'CASH & CARRY ADMISSION'"
-                    class="q-pa-sm text-weight-bold"
-                    style="font-size: 14px; letter-spacing: 0.5px;"
-                  >
-                    <q-icon 
-                      :name="isInsured ? 'verified_user' : 'account_balance_wallet'" 
-                      size="18px" 
-                      class="q-mr-xs" 
-                    />
-                  </q-badge>
-                </div>
-              </div>
-              <div class="col-12 col-md-6">
-                <div class="text-body2 text-secondary">
-                  <q-icon name="local_hospital" size="16px" class="q-mr-xs" />
-                  Ward: <strong>{{ patientInfo.ward }}</strong>
-                </div>
-                <div v-if="patientInfo.bed_number" class="text-body2 text-secondary q-mt-xs">
-                  <q-icon name="hotel" size="16px" class="q-mr-xs" />
-                  Bed: <strong>{{ patientInfo.bed_number }}</strong>
-                </div>
-                <div class="text-body2 text-secondary q-mt-xs">
-                  <q-icon name="schedule" size="16px" class="q-mr-xs" />
-                  Admitted: {{ formatDateTime(patientInfo.admitted_at) }}
-                </div>
-                <div v-if="patientInfo.admitted_by_name" class="text-body2 text-secondary q-mt-xs">
-                  <q-icon name="person" size="16px" class="q-mr-xs" />
-                  Admitted by: <strong>{{ patientInfo.admitted_by_name }}</strong>
-                  <span v-if="patientInfo.admitted_by_role"> ({{ patientInfo.admitted_by_role }})</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </q-card-section>
-    </q-card>
+    <div v-if="patientInfo" class="am-emergency-strip">
+      <div class="am-emergency-label">Emergency contact</div>
+      <template v-if="patientInfo.emergency_contact_name || patientInfo.emergency_contact_number">
+        <span class="am-emergency-value">{{ patientInfo.emergency_contact_name || '—' }}</span>
+        <span class="am-emergency-sep">·</span>
+        <span class="am-emergency-value">{{ patientInfo.emergency_contact_relationship || '—' }}</span>
+        <span class="am-emergency-sep">·</span>
+        <a
+          v-if="patientInfo.emergency_contact_number"
+          :href="`tel:${patientInfo.emergency_contact_number}`"
+          class="am-emergency-phone"
+        >{{ patientInfo.emergency_contact_number }}</a>
+        <span v-else class="am-emergency-value">No phone</span>
+      </template>
+      <span v-else class="am-emergency-muted">No emergency contact on file</span>
+    </div>
 
-    <!-- Emergency Contact Card -->
-    <q-card v-if="patientInfo" class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
-        <div class="text-h6 glass-text q-mb-md">
-          <q-icon name="contact_phone" color="info" class="q-mr-sm" />
-          Emergency Contact
-        </div>
-        <div v-if="patientInfo.emergency_contact_name || patientInfo.emergency_contact_number" class="row q-col-gutter-md">
-          <div class="col-12 col-md-4">
-            <div class="text-body2 text-secondary">Contact Name</div>
-            <div class="text-body1 glass-text q-mt-xs">
-              <strong>{{ patientInfo.emergency_contact_name || 'N/A' }}</strong>
-            </div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-body2 text-secondary">Relationship</div>
-            <div class="text-body1 glass-text q-mt-xs">
-              <strong>{{ patientInfo.emergency_contact_relationship || 'N/A' }}</strong>
-            </div>
-          </div>
-          <div class="col-12 col-md-4">
-            <div class="text-body2 text-secondary">Contact Number</div>
-            <div class="text-body1 glass-text q-mt-xs">
-              <strong>
-                <a 
-                  v-if="patientInfo.emergency_contact_number" 
-                  :href="`tel:${patientInfo.emergency_contact_number}`"
-                  class="text-primary text-weight-bold"
-                  style="text-decoration: none;"
-                >
-                  <q-icon name="phone" size="18px" class="q-mr-xs" />
-                  {{ patientInfo.emergency_contact_number }}
-                </a>
-                <span v-else>N/A</span>
-              </strong>
-            </div>
-          </div>
-        </div>
-        <div v-else class="text-body2 text-secondary text-center q-pa-md">
-          <q-icon name="info" color="warning" size="24px" class="q-mb-sm" />
-          <div>No emergency contact information available</div>
-        </div>
-      </q-card-section>
-    </q-card>
-
-    <!-- Loading State -->
-    <q-card v-if="loading" class="glass-card" flat>
-      <q-card-section class="text-center">
-        <q-spinner color="primary" size="3em" />
-        <div class="text-subtitle1 q-mt-md glass-text">Loading patient information...</div>
-      </q-card-section>
-    </q-card>
+    <div v-if="loading" class="am-loading">
+      <q-spinner color="primary" size="2.5em" />
+      <span>Loading patient information…</span>
+    </div>
 
     <!-- Main Content Layout -->
-    <div v-else class="row q-col-gutter-md">
+    <div v-else class="am-workspace">
       <!-- Main Body - Middle Section -->
-      <div class="col-12 col-md-8 col-lg-9">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-h6 glass-text q-mb-md">
-              Inpatient Activities
+      <div class="am-main">
+        <section class="am-panel">
+            <div class="am-panel-head am-panel-head--board">
+              <div>
+                <h2 class="hms-section-title">Inpatient activities</h2>
+                <p class="am-panel-sub">Clinical reviews, notes, surgeries, and services for this admission.</p>
+              </div>
+              <div class="am-activity-summary">
+                <span>{{ activityTotalCount }} records</span>
+              </div>
             </div>
             
-            <!-- Admission Notes Table -->
-            <q-table
-              :rows="admissionNotesRows"
-              :columns="admissionNotesColumns"
-              row-key="label"
-              flat
-              hide-pagination
-              class="glass-table"
-            >
-              <template v-slot:body-cell-notes="props">
-                <q-td :props="props" class="q-pa-md">
-                  <div v-if="props.row.isTable" class="column q-gutter-sm">
-                    <div class="row items-center justify-between">
-                      <div class="text-body2 text-secondary">
-                        {{ getTableItemCount(props.row.type) }} record(s)
+            <div class="am-activity-board">
+              <div class="am-activity-tabs" role="tablist">
+                <button
+                  v-for="tab in activitySections"
+                  :key="tab.key"
+                  type="button"
+                  role="tab"
+                  class="am-activity-tab"
+                  :class="{ active: activeActivityTab === tab.key }"
+                  :aria-selected="activeActivityTab === tab.key"
+                  @click="activeActivityTab = tab.key"
+                >
+                  <span class="am-activity-tab-label">{{ tab.label }}</span>
+                  <span class="am-activity-tab-count">{{ tab.count }}</span>
+                </button>
+              </div>
+
+              <div class="am-activity-body">
+                <div v-if="activeActivityTab === 'diagnoses'" class="am-activity-pane">
+                  <div class="am-activity-pane-head">
+                    <div>
+                      <h3 class="am-activity-pane-title">Diagnoses</h3>
+                      <p class="am-activity-pane-sub">IPD and carried-over OPD diagnoses for this admission.</p>
+                    </div>
+                  </div>
+                  <div v-if="inpatientDiagnoses.length === 0" class="am-activity-empty">
+                    No diagnoses recorded yet.
+                  </div>
+                  <div v-else class="am-activity-list">
+                    <article
+                      v-for="diagnosis in inpatientDiagnoses"
+                      :key="diagnosis.id"
+                      class="am-activity-item"
+                    >
+                      <div class="am-activity-item-main">
+                        <div class="am-activity-item-title-row">
+                          <h4 class="am-activity-item-title">{{ diagnosis.diagnosis }}</h4>
+                          <div class="am-activity-item-badges">
+                            <HmsBadge v-if="diagnosis.is_chief" tone="accent">Chief</HmsBadge>
+                            <HmsBadge v-if="diagnosis.is_provisional" tone="warning">Provisional</HmsBadge>
+                            <HmsBadge v-if="diagnosis.source === 'opd'" tone="info">OPD</HmsBadge>
+                          </div>
+                        </div>
+                        <div class="am-activity-item-meta">
+                          <span v-if="diagnosis.icd10" class="mono">ICD-10 {{ diagnosis.icd10 }}</span>
+                          <span v-if="diagnosis.icd10 && diagnosis.gdrg_code" class="sep">·</span>
+                          <span v-if="diagnosis.gdrg_code" class="mono">G-DRG {{ diagnosis.gdrg_code }}</span>
+                          <template v-if="diagnosis.diagnosis_status">
+                            <span class="sep">·</span>
+                            <span>{{ diagnosis.diagnosis_status }}</span>
+                          </template>
+                        </div>
+                        <div class="am-activity-item-foot">
+                          Added {{ formatDateTime(diagnosis.created_at) }}
+                          <span v-if="diagnosis.created_by_name"> by {{ diagnosis.created_by_name }}</span>
+                        </div>
                       </div>
+                    </article>
+                  </div>
+                </div>
+
+                <div v-else-if="activeActivityTab === 'admission_notes'" class="am-activity-pane">
+                  <div class="am-activity-pane-head">
+                    <div>
+                      <h3 class="am-activity-pane-title">Admission notes</h3>
+                      <p class="am-activity-pane-sub">Narrative notes captured on ward admission.</p>
                     </div>
-                    <q-btn
-                      v-if="props.row.type === 'transfers' || props.row.type === 'clinical_review'"
-                      flat
-                      dense
-                      icon="visibility"
-                      label="View All"
-                      color="secondary"
+                    <HmsButton
+                      variant="soft"
                       size="sm"
-                      @click="viewTableItems(props.row.type)"
-                    />
-                    <!-- Show clinical reviews list with edit buttons -->
-                    <div v-if="props.row.type === 'clinical_review' && clinicalReviews.length > 0" class="q-mt-md">
-                      <q-list bordered separator>
-                        <q-item
-                          v-for="review in clinicalReviews"
-                          :key="review.id"
-                          class="q-pa-sm"
-                        >
-                          <q-item-section>
-                            <q-item-label class="text-weight-bold">
-                              {{ review.reviewed_by_name || 'Unknown' }} - {{ formatDateTime(review.reviewed_at) }}
-                            </q-item-label>
-                            <q-item-label caption class="text-body2" style="white-space: pre-wrap; word-wrap: break-word;">
-                              {{ review.review_notes || 'No notes' }}
-                            </q-item-label>
-                          </q-item-section>
-                          <q-item-section side>
-                            <div class="row q-gutter-xs">
-                              <q-btn
-                                v-if="authStore.user?.id === review.reviewed_by || authStore.userRole === 'Admin'"
-                                flat
-                                dense
-                                icon="edit"
-                                label="Edit"
-                                color="primary"
-                                size="sm"
-                                @click="editClinicalReview(review)"
-                                :disable="isDischarged"
-                              />
-                              <q-btn
-                                flat
-                                dense
-                                icon="open_in_new"
-                                label="Open"
-                                color="secondary"
-                                size="sm"
-                                @click="openClinicalReview(review.id)"
-                              />
-                              <q-btn
-                                v-if="authStore.userRole === 'Admin'"
-                                flat
-                                dense
-                                icon="delete"
-                                label="Delete"
-                                color="negative"
-                                size="sm"
-                                @click="deleteClinicalReview(review)"
-                                :disable="isDischarged"
-                              />
-                            </div>
-                          </q-item-section>
-                        </q-item>
-                      </q-list>
-                    </div>
-                    <!-- Show surgeries list -->
-                    <div v-if="props.row.type === 'surgeries' && surgeries.length > 0" class="q-mt-md">
-                      <q-list bordered separator>
-                        <q-item
-                          v-for="surgery in surgeries"
-                          :key="surgery.id"
-                          class="q-pa-sm"
-                        >
-                          <q-item-section>
-                            <q-item-label class="text-weight-bold">
-                              {{ surgery.surgery_name }}
-                              <q-badge 
-                                :color="surgery.is_completed ? 'positive' : 'warning'" 
-                                :label="surgery.is_completed ? 'Completed' : 'Pending'"
-                                class="q-ml-sm"
-                              />
-                            </q-item-label>
-                            <q-item-label caption>
-                              <div v-if="surgery.surgeon_name" class="q-mt-xs">
-                                Surgeon: {{ surgery.surgeon_name }}
-                              </div>
-                              <div v-if="surgery.surgery_date" class="q-mt-xs">
-                                Date: {{ formatDateTime(surgery.surgery_date) }}
-                              </div>
-                              <div v-if="surgery.surgery_notes" class="q-mt-xs text-body2" style="white-space: pre-wrap; word-wrap: break-word;">
-                                {{ surgery.surgery_notes }}
-                              </div>
-                            </q-item-label>
-                          </q-item-section>
-                          <q-item-section side>
-                            <div class="row q-gutter-xs">
-                              <q-btn
-                                v-if="authStore.userRole === 'Doctor' || authStore.userRole === 'PA' || authStore.userRole === 'Admin'"
-                                flat
-                                dense
-                                icon="edit"
-                                label="Edit"
-                                color="primary"
-                                size="sm"
-                                @click="editSurgery(surgery)"
-                                :disable="isDischarged && surgery.is_completed"
-                              >
-                                <q-tooltip v-if="isDischarged && surgery.is_completed">Cannot edit completed surgery after discharge</q-tooltip>
-                                <q-tooltip v-else-if="isDischarged && !surgery.is_completed">Edit and complete surgery (patient discharged)</q-tooltip>
-                              </q-btn>
-                              <q-btn
-                                v-if="authStore.userRole === 'Admin'"
-                                flat
-                                dense
-                                icon="delete"
-                                label="Delete"
-                                color="negative"
-                                size="sm"
-                                @click="deleteSurgery(surgery)"
-                                :disable="isDischarged && surgery.is_completed"
-                              >
-                                <q-tooltip v-if="isDischarged && surgery.is_completed">Cannot delete completed surgery after discharge</q-tooltip>
-                                <q-tooltip v-else-if="isDischarged && !surgery.is_completed">Delete surgery (patient discharged)</q-tooltip>
-                              </q-btn>
-                            </div>
-                          </q-item-section>
-                        </q-item>
-                      </q-list>
-                    </div>
-                    <div v-if="props.row.type === 'surgeries' && surgeries.length === 0" class="q-mt-sm text-center text-grey-7">
-                      No surgeries recorded
-                    </div>
-                    <!-- Show additional services list -->
-                    <div v-if="props.row.type === 'additional_services' && patientAdditionalServices.length > 0" class="q-mt-md">
-                      <q-list bordered separator>
-                        <q-item
-                          v-for="service in patientAdditionalServices"
-                          :key="service.id"
-                          class="q-pa-sm"
-                        >
-                          <q-item-section>
-                            <q-item-label class="text-weight-bold">
-                              {{ service.service_name }}
-                              <q-badge 
-                                :color="service.end_time ? 'positive' : 'warning'" 
-                                :label="service.end_time ? 'Stopped' : 'Active'"
-                                class="q-ml-sm"
-                              />
-                              <q-badge 
-                                v-if="service.is_billed"
-                                color="info" 
-                                label="Billed"
-                                class="q-ml-sm"
-                              />
-                            </q-item-label>
-                            <q-item-label caption>
-                              <div class="q-mt-xs">
-                                Started: {{ formatDateTime(service.start_time) }}
-                                <span v-if="service.started_by_name"> by {{ service.started_by_name }}</span>
-                              </div>
-                              <div v-if="service.end_time" class="q-mt-xs">
-                                Stopped: {{ formatDateTime(service.end_time) }}
-                                <span v-if="service.stopped_by_name"> by {{ service.stopped_by_name }}</span>
-                              </div>
-                              <div v-if="service.units_used && service.total_cost" class="q-mt-xs text-weight-bold">
-                                {{ service.units_used }} {{ service.service_unit_type }}(s) × {{ service.service_price_per_unit }} GHS = {{ service.total_cost }} GHS
-                              </div>
-                              <div v-if="service.notes" class="q-mt-xs text-body2" style="white-space: pre-wrap; word-wrap: break-word;">
-                                {{ service.notes }}
-                              </div>
-                            </q-item-label>
-                          </q-item-section>
-                          <q-item-section side v-if="!service.end_time">
-                            <q-btn
-                              flat
-                              dense
-                              icon="stop"
-                              label="Stop"
-                              color="negative"
-                              size="sm"
-                              @click="stopAdditionalService(service)"
-                            />
-                          </q-item-section>
-                        </q-item>
-                      </q-list>
-                    </div>
-                    <div v-if="props.row.type === 'additional_services' && patientAdditionalServices.length === 0" class="q-mt-sm text-center text-grey-7">
-                      No additional services recorded
-                    </div>
-                    <!-- Show diagnoses list -->
-                    <div v-if="props.row.type === 'diagnoses' && inpatientDiagnoses.length > 0" class="q-mt-md">
-                      <q-list bordered separator>
-                        <q-item
-                          v-for="diagnosis in inpatientDiagnoses"
-                          :key="diagnosis.id"
-                          class="q-pa-sm"
-                        >
-                          <q-item-section>
-                            <q-item-label class="text-weight-bold">
-                              {{ diagnosis.diagnosis }}
-                              <q-badge 
-                                v-if="diagnosis.is_chief"
-                                color="primary" 
-                                label="Chief"
-                                class="q-ml-sm"
-                              />
-                              <q-badge 
-                                v-if="diagnosis.is_provisional"
-                                color="warning" 
-                                label="Provisional"
-                                class="q-ml-sm"
-                              />
-                              <q-badge 
-                                v-if="diagnosis.source === 'opd'"
-                                color="info" 
-                                label="OPD"
-                                class="q-ml-sm"
-                              />
-                            </q-item-label>
-                            <q-item-label caption>
-                              <div class="q-mt-xs">
-                                <span v-if="diagnosis.icd10">
-                                  ICD-10: <strong>{{ diagnosis.icd10 }}</strong>
-                                </span>
-                                <span v-if="diagnosis.gdrg_code" class="q-ml-md">
-                                  G-DRG: <strong>{{ diagnosis.gdrg_code }}</strong>
-                                </span>
-                              </div>
-                              <div v-if="diagnosis.diagnosis_status" class="q-mt-xs">
-                                Status: <strong>{{ diagnosis.diagnosis_status }}</strong>
-                              </div>
-                              <div class="q-mt-xs text-caption text-grey-7">
-                                Added: {{ formatDateTime(diagnosis.created_at) }}
-                                <span v-if="diagnosis.created_by_name"> by {{ diagnosis.created_by_name }}</span>
-                              </div>
-                            </q-item-label>
-                          </q-item-section>
-                        </q-item>
-                      </q-list>
-                    </div>
-                    <div v-if="props.row.type === 'diagnoses' && inpatientDiagnoses.length === 0" class="q-mt-sm text-center text-grey-7">
-                      No diagnoses recorded
-                    </div>
+                      @click="openDocumentationDialog('admission_notes', patientInfo?.admission_notes || null)"
+                    >
+                      {{ patientInfo?.admission_notes ? 'Edit notes' : 'Add notes' }}
+                    </HmsButton>
                   </div>
-                  <!-- Show accepted transfers count for transfers type -->
-                  <div v-if="props.row.type === 'transfers'" class="q-mt-sm">
-                    <div class="text-caption text-secondary">
-                      Showing {{ transfers.filter(t => t.status === 'accepted').length }} accepted transfer(s)
-                    </div>
+                  <div v-if="patientInfo?.admission_notes" class="am-note-card">
+                    <pre class="am-note-text">{{ patientInfo.admission_notes }}</pre>
                   </div>
-                  <div v-else-if="props.value" class="column q-gutter-sm">
-                    <div class="text-body2 glass-text" style="white-space: pre-wrap; word-wrap: break-word;">
-                      {{ props.value }}
-                    </div>
-                    <div class="row justify-end">
-                      <q-btn
-                        flat
-                        dense
-                        icon="edit"
-                        label="Edit"
-                        color="primary"
-                        size="sm"
-                        @click="openDocumentationDialog(props.row.type, props.value)"
-                      />
-                    </div>
-                  </div>
-                  <div v-else class="column items-center q-pa-md">
-                    <!-- <q-icon name="edit" size="32px" color="grey-6" class="q-mb-sm" /> -->
-                    <q-btn
-                      v-if="props.row.type === 'admission_notes'"
-                      flat
-                      dense
-                      icon="edit"
-                      label="Add Notes"
-                      color="primary"
+                  <div v-else class="am-activity-empty">
+                    No admission notes yet.
+                    <HmsButton
+                      class="am-empty-cta"
+                      variant="primary"
                       size="sm"
-                      @click="openDocumentationDialog(props.row.type, null)"
-                    />
+                      @click="openDocumentationDialog('admission_notes', null)"
+                    >
+                      Add notes
+                    </HmsButton>
                   </div>
-                </q-td>
-              </template>
-            </q-table>
-          </q-card-section>
-        </q-card>
+                </div>
+
+                <div v-else-if="activeActivityTab === 'surgeries'" class="am-activity-pane">
+                  <div class="am-activity-pane-head">
+                    <div>
+                      <h3 class="am-activity-pane-title">Surgeries</h3>
+                      <p class="am-activity-pane-sub">Scheduled and completed theatre cases for this patient.</p>
+                    </div>
+                    <HmsButton
+                      variant="soft"
+                      size="sm"
+                      :disabled="isDischarged"
+                      @click="addOperation"
+                    >
+                      Add operation
+                    </HmsButton>
+                  </div>
+                  <div v-if="surgeries.length === 0" class="am-activity-empty">
+                    No surgeries recorded.
+                  </div>
+                  <div v-else class="am-activity-list">
+                    <article
+                      v-for="surgery in surgeries"
+                      :key="surgery.id"
+                      class="am-activity-item"
+                    >
+                      <div class="am-activity-item-main">
+                        <div class="am-activity-item-title-row">
+                          <h4 class="am-activity-item-title">{{ surgery.surgery_name }}</h4>
+                          <HmsBadge :tone="surgery.is_completed ? 'success' : 'warning'">
+                            {{ surgery.is_completed ? 'Completed' : 'Pending' }}
+                          </HmsBadge>
+                        </div>
+                        <div class="am-activity-item-meta">
+                          <span v-if="surgery.surgeon_name">{{ surgery.surgeon_name }}</span>
+                          <template v-if="surgery.surgeon_name && surgery.surgery_date"><span class="sep">·</span></template>
+                          <span v-if="surgery.surgery_date">{{ formatDateTime(surgery.surgery_date) }}</span>
+                        </div>
+                        <p v-if="surgery.surgery_notes" class="am-activity-item-note">{{ surgery.surgery_notes }}</p>
+                      </div>
+                      <div class="am-activity-item-actions">
+                        <HmsButton
+                          v-if="authStore.userRole === 'Doctor' || authStore.userRole === 'PA' || authStore.userRole === 'Admin'"
+                          variant="ghost"
+                          size="sm"
+                          :disabled="isDischarged && surgery.is_completed"
+                          @click="editSurgery(surgery)"
+                        >
+                          Edit
+                        </HmsButton>
+                        <HmsButton
+                          v-if="authStore.userRole === 'Admin'"
+                          variant="ghost"
+                          size="sm"
+                          :disabled="isDischarged && surgery.is_completed"
+                          @click="deleteSurgery(surgery)"
+                        >
+                          Delete
+                        </HmsButton>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+
+                <div v-else-if="activeActivityTab === 'clinical_review'" class="am-activity-pane">
+                  <div class="am-activity-pane-head">
+                    <div>
+                      <h3 class="am-activity-pane-title">Clinical reviews</h3>
+                      <p class="am-activity-pane-sub">Doctor reviews and treatment plans for this admission.</p>
+                    </div>
+                    <div class="am-activity-pane-actions">
+                      <HmsButton variant="ghost" size="sm" @click="viewTableItems('clinical_review')">View all</HmsButton>
+                      <HmsButton variant="soft" size="sm" @click="viewClinicalReview">New review</HmsButton>
+                    </div>
+                  </div>
+                  <div v-if="clinicalReviews.length === 0" class="am-activity-empty">
+                    No clinical reviews yet.
+                  </div>
+                  <div v-else class="am-activity-list">
+                    <article
+                      v-for="review in clinicalReviews"
+                      :key="review.id"
+                      class="am-activity-item"
+                    >
+                      <div class="am-activity-item-main">
+                        <div class="am-activity-item-title-row">
+                          <h4 class="am-activity-item-title">{{ review.reviewed_by_name || 'Unknown' }}</h4>
+                          <span class="am-activity-item-when">{{ formatDateTime(review.reviewed_at) }}</span>
+                        </div>
+                        <p class="am-activity-item-note">{{ review.review_notes || 'No notes' }}</p>
+                      </div>
+                      <div class="am-activity-item-actions">
+                        <HmsButton
+                          v-if="authStore.user?.id === review.reviewed_by || authStore.userRole === 'Admin'"
+                          variant="ghost"
+                          size="sm"
+                          :disabled="isDischarged"
+                          @click="editClinicalReview(review)"
+                        >
+                          Edit
+                        </HmsButton>
+                        <HmsButton variant="soft" size="sm" @click="openClinicalReview(review.id)">Open</HmsButton>
+                        <HmsButton
+                          v-if="authStore.userRole === 'Admin'"
+                          variant="ghost"
+                          size="sm"
+                          :disabled="isDischarged"
+                          @click="deleteClinicalReview(review)"
+                        >
+                          Delete
+                        </HmsButton>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+
+                <div v-else-if="activeActivityTab === 'additional_services'" class="am-activity-pane">
+                  <div class="am-activity-pane-head">
+                    <div>
+                      <h3 class="am-activity-pane-title">Additional services</h3>
+                      <p class="am-activity-pane-sub">Timed ward services such as oxygen and monitoring.</p>
+                    </div>
+                    <HmsButton
+                      variant="soft"
+                      size="sm"
+                      :disabled="isDischarged"
+                      @click="addAdditionalService"
+                    >
+                      Add service
+                    </HmsButton>
+                  </div>
+                  <div v-if="patientAdditionalServices.length === 0" class="am-activity-empty">
+                    No additional services recorded.
+                  </div>
+                  <div v-else class="am-activity-list">
+                    <article
+                      v-for="service in patientAdditionalServices"
+                      :key="service.id"
+                      class="am-activity-item"
+                    >
+                      <div class="am-activity-item-main">
+                        <div class="am-activity-item-title-row">
+                          <h4 class="am-activity-item-title">{{ service.service_name }}</h4>
+                          <div class="am-activity-item-badges">
+                            <HmsBadge :tone="service.end_time ? 'success' : 'warning'">
+                              {{ service.end_time ? 'Stopped' : 'Active' }}
+                            </HmsBadge>
+                            <HmsBadge v-if="service.is_billed" tone="info">Billed</HmsBadge>
+                          </div>
+                        </div>
+                        <div class="am-activity-item-meta">
+                          <span>Started {{ formatDateTime(service.start_time) }}</span>
+                          <span v-if="service.started_by_name"> by {{ service.started_by_name }}</span>
+                          <template v-if="service.end_time">
+                            <span class="sep">·</span>
+                            <span>Stopped {{ formatDateTime(service.end_time) }}</span>
+                            <span v-if="service.stopped_by_name"> by {{ service.stopped_by_name }}</span>
+                          </template>
+                        </div>
+                        <div
+                          v-if="service.units_used && service.total_cost"
+                          class="am-activity-item-cost"
+                        >
+                          {{ service.units_used }} {{ service.service_unit_type }}(s)
+                          × GHC {{ service.service_price_per_unit }}
+                          = <strong>GHC {{ service.total_cost }}</strong>
+                        </div>
+                        <p v-if="service.notes" class="am-activity-item-note">{{ service.notes }}</p>
+                      </div>
+                      <div class="am-activity-item-actions" v-if="!service.end_time">
+                        <HmsButton variant="danger" size="sm" @click="stopAdditionalService(service)">
+                          Stop
+                        </HmsButton>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+        </section>
       </div>
 
-      <!-- Right Sidebar - Quick Actions -->
-      <div class="col-12 col-md-4 col-lg-3">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-h6 glass-text q-mb-md">
-              <q-icon name="flash_on" color="primary" class="q-mr-sm" />
-              Quick Actions
+      <aside class="am-sidebar">
+        <section class="am-panel am-actions-panel">
+          <div class="am-panel-head">
+            <h2 class="hms-section-title">Quick actions</h2>
+          </div>
+
+          <div class="am-action-group">
+            <div class="am-action-label">Patient</div>
+            <HmsButton variant="secondary" size="sm" class="am-action-btn" @click="viewPatient">Patient profile</HmsButton>
+            <HmsButton variant="secondary" size="sm" class="am-action-btn" @click="viewEncounter">Encounter</HmsButton>
+            <HmsButton variant="secondary" size="sm" class="am-action-btn" @click="viewBilling">Billing</HmsButton>
+          </div>
+
+          <div class="am-action-group">
+            <div class="am-action-label">Clinical</div>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="addVitals">Vitals</HmsButton>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="viewPrescriptions">Prescriptions</HmsButton>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="viewInvestigations">Investigations</HmsButton>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="addOperation">Add operation</HmsButton>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="addAdditionalService">Additional service</HmsButton>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="addInventoryDebit">Inventory debit</HmsButton>
+            <HmsButton variant="soft" size="sm" class="am-action-btn" :disabled="isDischarged" @click="requestBlood">Request blood</HmsButton>
+          </div>
+
+          <div class="am-action-group">
+            <div class="am-action-label">Documentation</div>
+            <HmsButton variant="ghost" size="sm" class="am-action-btn" @click="addNurseNote">Nurse note</HmsButton>
+            <HmsButton variant="ghost" size="sm" class="am-action-btn" @click="viewNurseMidDocumentation">Nurse mid docs</HmsButton>
+            <HmsButton variant="ghost" size="sm" class="am-action-btn" @click="viewClinicalReview">Clinical review</HmsButton>
+            <HmsButton variant="ghost" size="sm" class="am-action-btn" @click="viewTreatmentSheet">Treatment sheet</HmsButton>
+          </div>
+
+          <div class="am-action-group am-action-group--danger">
+            <div class="am-action-label">Discharge</div>
+            <HmsButton
+              v-if="!isDischarged"
+              variant="danger"
+              size="sm"
+              class="am-action-btn"
+              :loading="discharging"
+              @click="dischargePatient"
+            >
+              {{ isPartiallyDischarged ? 'Final discharge' : 'Discharge patient' }}
+            </HmsButton>
+            <div v-if="isPartiallyDischarged && !isDischarged" class="am-partial-banner">
+              Partially discharged — settle outstanding bills before final discharge.
             </div>
-            <div class="column q-gutter-sm">
-              <q-btn
-                flat
-                icon="visibility"
-                label="View Patient Profile"
-                color="primary"
-                @click="viewPatient"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="medical_services"
-                label="View Encounter"
-                color="secondary"
-                @click="viewEncounter"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="monitor_heart"
-                label="Vitals"
-                color="info"
-                @click="addVitals"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="medication"
-                label="Prescriptions"
-                color="accent"
-                @click="viewPrescriptions"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="science"
-                label="Investigations"
-                color="purple"
-                @click="viewInvestigations"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="healing"
-                label="Add Operation"
-                color="red"
-                @click="addOperation"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="add_circle"
-                label="Add Additional Service"
-                color="deep-orange"
-                @click="addAdditionalService"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="inventory_2"
-                label="Inventory Debit"
-                color="teal"
-                @click="addInventoryDebit"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="bloodtype"
-                label="Request Blood"
-                color="red"
-                @click="requestBlood"
-                :disable="isDischarged"
-                class="full-width"
-              />
-              <q-separator class="q-my-sm" />
-              <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-                <q-icon name="link" color="primary" class="q-mr-sm" />
-                Quick Links
-              </div>
-              <q-btn
-                flat
-                icon="note_add"
-                label="Nurse Note"
-                color="orange"
-                @click="addNurseNote"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="description"
-                label="Nurse Mid Documentation"
-                color="teal"
-                @click="viewNurseMidDocumentation"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="medical_services"
-                label="Clinical Review"
-                color="purple"
-                @click="viewClinicalReview"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="medication_liquid"
-                label="Treatment Sheet"
-                color="indigo"
-                @click="viewTreatmentSheet"
-                class="full-width"
-              />
-              <q-btn
-                flat
-                icon="receipt"
-                label="Billing"
-                color="amber"
-                @click="viewBilling"
-                class="full-width"
-              />
-              <q-separator class="q-my-sm" />
-              <q-btn
-                v-if="!isDischarged"
-                flat
-                icon="exit_to_app"
-                :label="isPartiallyDischarged ? 'Final Discharge' : 'Discharge Patient'"
-                :color="isPartiallyDischarged ? 'warning' : 'negative'"
-                @click="dischargePatient"
-                :loading="discharging"
-                class="full-width"
-              />
-              <q-banner
-                v-if="isPartiallyDischarged && !isDischarged"
-                class="bg-warning text-white q-mt-sm"
-                rounded
-              >
-                <template v-slot:avatar>
-                  <q-icon name="warning" />
-                </template>
-                <div class="text-weight-bold">Partially Discharged</div>
-                <div class="text-caption">Please ensure all bills are paid before final discharge.</div>
-              </q-banner>
-              <q-btn
-                v-if="isPartiallyDischarged && !isDischarged"
-                flat
-                icon="undo"
-                label="Revert Partial Discharge"
-                color="warning"
-                @click="revertPartialDischarge"
-                :loading="discharging"
-                class="full-width q-mt-sm"
-              />
-              <q-btn
-                v-if="!isDischarged"
-                flat
-                icon="cancel"
-                label="Cancel Admission"
-                color="negative"
-                @click="cancelAdmission"
-                :loading="cancelling"
-                class="full-width"
-              />
-              <q-banner
-                v-if="isDischarged"
-                class="bg-grey-3 q-mt-sm"
-                rounded
-              >
-                <template v-slot:avatar>
-                  <q-icon name="info" color="grey" />
-                </template>
-                Patient has been discharged. This record is read-only.
-              </q-banner>
+            <HmsButton
+              v-if="isPartiallyDischarged && !isDischarged"
+              variant="secondary"
+              size="sm"
+              class="am-action-btn"
+              :loading="discharging"
+              @click="revertPartialDischarge"
+            >
+              Revert partial discharge
+            </HmsButton>
+            <HmsButton
+              v-if="!isDischarged"
+              variant="outline"
+              size="sm"
+              class="am-action-btn"
+              :loading="cancelling"
+              @click="cancelAdmission"
+            >
+              Cancel admission
+            </HmsButton>
+            <div v-if="isDischarged" class="am-discharged-banner">
+              Patient discharged — this record is read-only.
             </div>
-          </q-card-section>
-        </q-card>
-      </div>
+          </div>
+        </section>
+      </aside>
     </div>
+
 
           <!-- Documentation Dialog -->
           <q-dialog v-model="showAdmissionNotesDialog" persistent>
@@ -724,10 +511,14 @@
           <!-- Table Item Dialog -->
           <q-dialog v-model="showTableItemDialog" persistent>
             <q-card style="min-width: 600px; max-width: 1000px; max-height: 90vh; display: flex; flex-direction: column;">
-              <q-card-section class="q-pb-none">
+              <q-card-section class="q-pb-none nn-dialog-head">
                 <div class="text-h6 glass-text">
-                  Add {{ documentationTypeLabels[currentTableType] || 'Item' }}
+                  <template v-if="currentTableType === 'nurses_notes'">Nurse note</template>
+                  <template v-else>Add {{ documentationTypeLabels[currentTableType] || 'Item' }}</template>
                 </div>
+                <p v-if="currentTableType === 'nurses_notes'" class="nn-dialog-sub">
+                  Record dated ward observations for this admission.
+                </p>
               </q-card-section>
 
               <q-card-section style="flex: 1; overflow-y: auto;" class="q-pt-md">
@@ -905,164 +696,90 @@
                     class="q-mt-sm"
                   />
                 </div>
-                <div v-else-if="currentTableType === 'nurses_notes'" class="column q-gutter-md">
-                  <!-- Nurses Note Form - Matching the attached image format -->
-                  <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-                    MOH / GHANA HEALTH SERVICE
+                <div v-else-if="currentTableType === 'nurses_notes'" class="nn-workspace">
+                  <div class="nn-hero">
+                    <div class="nn-hero-kicker">Ghana Health Service</div>
+                    <h3 class="nn-hero-title">Nurse note</h3>
+                    <p class="nn-hero-sub">Use red text for night notes. A nurse signature accompanies each entry.</p>
                   </div>
-                  <div class="text-h6 text-weight-bold glass-text q-mb-sm">
-                    NURSES NOTE
-                  </div>
-                  <div class="text-caption text-warning q-mb-md">
-                    USE RED INK FOR NIGHT NOTES
-                  </div>
-                  
-                  <q-separator class="q-mb-md" />
-                  
-                  <!-- Draft Banner for Nurse Notes -->
-                  <q-banner
-                    v-if="currentTableType === 'nurses_notes' && (
+
+                  <div
+                    v-if="(
                       (hasNurseNoteDraft('note_date') && tableItemData.note_date !== (getNurseNoteDraftValue('note_date') || '')) ||
                       (hasNurseNoteDraft('note_hour') && tableItemData.note_hour !== (getNurseNoteDraftValue('note_hour') || '')) ||
                       (hasNurseNoteDraft('notes') && tableItemData.notes !== (getNurseNoteDraftValue('notes') || ''))
                     )"
-                    class="bg-warning text-dark q-mb-md"
-                    rounded
+                    class="nn-draft"
                   >
-                    <template v-slot:avatar>
-                      <q-icon name="save" color="dark" />
-                    </template>
-                    <strong>Draft Available</strong>
-                    <div class="text-caption q-mt-xs">
-                      A draft was saved 
-                      <span v-if="getNurseNoteDraftTime('notes')">
-                        {{ formatDraftTime(getNurseNoteDraftTime('notes')) }}
-                      </span>
-                      <span v-else-if="getNurseNoteDraftTime('note_date')">
-                        {{ formatDraftTime(getNurseNoteDraftTime('note_date')) }}
-                      </span>
-                      <span v-else-if="getNurseNoteDraftTime('note_hour')">
-                        {{ formatDraftTime(getNurseNoteDraftTime('note_hour')) }}
-                      </span>
-                      . Would you like to restore it?
+                    <div>
+                      <strong>Draft available</strong>
+                      <div class="nn-draft-sub">
+                        Saved
+                        <span v-if="getNurseNoteDraftTime('notes')">{{ formatDraftTime(getNurseNoteDraftTime('notes')) }}</span>
+                        <span v-else-if="getNurseNoteDraftTime('note_date')">{{ formatDraftTime(getNurseNoteDraftTime('note_date')) }}</span>
+                        <span v-else-if="getNurseNoteDraftTime('note_hour')">{{ formatDraftTime(getNurseNoteDraftTime('note_hour')) }}</span>
+                      </div>
                     </div>
-                    <template v-slot:action>
-                      <q-btn
-                        flat
-                        label="Restore All"
-                        color="dark"
+                    <div class="nn-draft-actions">
+                      <HmsButton
+                        variant="secondary"
+                        size="sm"
                         @click="restoreNurseNoteDraft('note_date'); restoreNurseNoteDraft('note_hour'); restoreNurseNoteDraft('notes')"
-                      />
-                      <q-btn
-                        flat
-                        label="Discard"
-                        color="dark"
+                      >
+                        Restore
+                      </HmsButton>
+                      <HmsButton
+                        variant="ghost"
+                        size="sm"
                         @click="clearAllNurseNoteDrafts(); $q.notify({ type: 'info', message: 'Draft discarded', position: 'top', timeout: 2000 })"
-                      />
-                    </template>
-                  </q-banner>
-                  
-                  <div class="row q-col-gutter-md q-mb-md">
-                    <div class="col-12 col-md-6">
-                      <q-input
-                        v-model="tableItemData.note_date"
-                        filled
-                        type="date"
-                        label="Date *"
-                        :rules="[val => !!val || 'Date is required']"
-                        @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('note_date')"
-                      />
-                    </div>
-                    <div class="col-12 col-md-6">
-                      <q-input
-                        v-model="tableItemData.note_hour"
-                        filled
-                        type="time"
-                        label="Hour *"
-                        :rules="[val => !!val || 'Hour is required']"
-                        @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('note_hour')"
-                      />
+                      >
+                        Discard
+                      </HmsButton>
                     </div>
                   </div>
-                  
-                  <q-separator class="q-mb-md" />
-                  
-                  <div class="text-body2 text-secondary q-mb-sm">
-                    HOSPITAL REGULATIONS - The Signature of a nurse shall accompany each entry
+
+                  <div class="nn-form-grid">
+                    <q-input
+                      v-model="tableItemData.note_date"
+                      outlined
+                      dense
+                      type="date"
+                      label="Date *"
+                      :rules="[val => !!val || 'Date is required']"
+                      @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('note_date')"
+                    />
+                    <q-input
+                      v-model="tableItemData.note_hour"
+                      outlined
+                      dense
+                      type="time"
+                      label="Hour *"
+                      :rules="[val => !!val || 'Hour is required']"
+                      @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('note_hour')"
+                    />
                   </div>
-                  
-                  <q-separator class="q-mb-md" />
-                  
-                  <div class="text-body2 text-secondary q-mb-sm">
-                    NOTES * (Use formatting tools to differentiate day/night shifts)
+
+                  <div class="nn-toolbar">
+                    <div class="nn-toolbar-label">Text color</div>
+                    <q-btn
+                      flat
+                      dense
+                      icon="format_color_text"
+                      :style="`background-color: ${selectedTextColor}; color: ${getContrastColor(selectedTextColor)}; min-width: 42px;`"
+                      size="sm"
+                    >
+                      <q-popup-proxy>
+                        <q-color v-model="selectedTextColor" format-model="hex" />
+                      </q-popup-proxy>
+                    </q-btn>
+                    <HmsButton variant="soft" size="sm" @click="applyTextColor">Apply color</HmsButton>
+                    <span class="nn-toolbar-hint">Tip: red for night shift</span>
                   </div>
-                  
-                  <!-- Color Picker Controls (Only for Nurse Notes) -->
-                  <div v-if="currentTableType === 'nurses_notes'" class="row q-col-gutter-sm q-mb-md">
-                    <div class="col-12 col-md-6">
-                      <div class="row items-center q-gutter-sm">
-                        <q-icon name="format_color_text" size="20px" color="primary" />
-                        <div class="text-body2 text-weight-medium">Text Color:</div>
-                        <q-btn
-                          flat
-                          dense
-                          icon="format_color_text"
-                          :style="`background-color: ${selectedTextColor}; color: ${getContrastColor(selectedTextColor)}; min-width: 50px;`"
-                          size="sm"
-                        >
-                          <q-popup-proxy>
-                            <q-color
-                              v-model="selectedTextColor"
-                              format-model="hex"
-                            />
-                          </q-popup-proxy>
-                        </q-btn>
-                        <q-btn
-                          flat
-                          dense
-                          icon="check"
-                          label="Apply"
-                          size="sm"
-                          color="primary"
-                          @click="applyTextColor"
-                        />
-                      </div>
-                    </div>
-                    <div class="col-12 col-md-6">
-                      <div class="row items-center q-gutter-sm">
-                        <!-- <q-icon name="format_color_fill" size="20px" color="secondary" /> -->
-                        <!-- <div class="text-body2 text-weight-medium">Background Color:</div>
-                        <q-btn
-                          flat
-                          dense
-                          icon="format_color_fill"
-                          :style="`background-color: ${selectedBgColor}; color: ${getContrastColor(selectedBgColor)}; min-width: 50px;`"
-                          size="sm"
-                        >
-                          <q-popup-proxy>
-                            <q-color
-                              v-model="selectedBgColor"
-                              format-model="hex"
-                            />
-                          </q-popup-proxy>
-                        </q-btn> -->
-                        <!-- <q-btn
-                          flat
-                          dense
-                          icon="check"
-                          label="Apply"
-                          size="sm"
-                          color="secondary"
-                          @click="applyBgColor"
-                        /> -->
-                      </div>
-                    </div>
-                  </div>
-                  
+
                   <q-editor
-                    v-if="currentTableType === 'nurses_notes'"
                     ref="nurseNoteEditor"
                     v-model="tableItemData.notes"
+                    class="nn-editor"
                     :toolbar="[
                       ['bold', 'italic', 'strike', 'underline'],
                       ['left', 'center', 'right', 'justify'],
@@ -1070,95 +787,51 @@
                       ['undo', 'redo'],
                       ['viewsource']
                     ]"
-                    :fonts="{
-                      arial: 'Arial',
-                      arial_black: 'Arial Black',
-                      comic_sans: 'Comic Sans MS',
-                      courier_new: 'Courier New',
-                      impact: 'Impact',
-                      lucida_grande: 'Lucida Grande',
-                      times_new_roman: 'Times New Roman',
-                      verdana: 'Verdana'
-                    }"
-                    min-height="200px"
+                    min-height="180px"
                     :rules="[val => !!val || 'Notes are required']"
                     @update:model-value="() => currentTableType === 'nurses_notes' && autoSaveNurseNoteDraft('notes')"
                   />
-                  <q-input
-                    v-else
-                    v-model="tableItemData.notes"
-                    filled
-                    type="textarea"
-                    label="Notes"
-                    :hint="`Enter ${documentationTypeLabels[currentTableType]?.toLowerCase() || 'notes'}`"
-                    rows="10"
-                    autofocus
-                  />
-                  <div class="text-caption text-secondary q-mt-xs">
-                    <q-icon name="info" size="14px" class="q-mr-xs" />
-                    Tip: Use <strong>red text color</strong> for night shift notes to differentiate from day shift
-                  </div>
-                  
-                  <q-separator class="q-mt-md q-mb-md" />
-                  
-                  <!-- Existing Nurse Notes List -->
-                  <div class="text-subtitle2 text-weight-bold glass-text q-mb-sm">
-                    Previous Nurse Notes
-                  </div>
-                  <div style="max-height: 300px; overflow-y: auto;" class="q-mb-md">
-                    <q-list bordered separator v-if="nurseNotes.length > 0">
-                      <q-item
+
+                  <div class="nn-history">
+                    <div class="nn-history-head">
+                      <h4 class="nn-history-title">Previous notes</h4>
+                      <span class="nn-history-count">{{ nurseNotes.length }}</span>
+                    </div>
+                    <div class="nn-history-list">
+                      <article
                         v-for="note in nurseNotes"
                         :key="note.id"
-                        :class="{ 'strikethrough-note': note.strikethrough === 1 }"
+                        class="nn-note-card"
+                        :class="{ struck: note.strikethrough === 1 }"
                       >
-                        <q-item-section>
-                          <q-item-label>
-                            <div class="row items-center">
-                              <div 
-                                class="col"
-                                :class="getNoteClass(note)"
-                                :style="getNoteStyle(note)"
-                                v-html="processNoteHtml(note)"
-                              ></div>
-                              <div class="col-auto q-ml-md">
-                                <q-btn
-                                  v-if="canStrikethroughNote(note)"
-                                  flat
-                                  dense
-                                  :icon="note.strikethrough === 1 ? 'undo' : 'strikethrough_s'"
-                                  :color="note.strikethrough === 1 ? 'positive' : 'negative'"
-                                  size="sm"
-                                  @click="toggleStrikethrough(note)"
-                                  :label="note.strikethrough === 1 ? 'Restore' : 'Strikethrough'"
-                                />
-                              </div>
-                            </div>
-                          </q-item-label>
-                          <q-item-label caption>
-                            <div class="row items-center q-gutter-sm">
-                              <div>
-                                <q-icon name="person" size="14px" class="q-mr-xs" />
-                                {{ note.created_by_name || 'Unknown' }}
-                              </div>
-                              <div>
-                                <q-icon name="schedule" size="14px" class="q-mr-xs" />
-                                {{ formatDateTime(note.created_at) }}
-                              </div>
-                              <div v-if="note.strikethrough === 1 && note.strikethrough_by_name">
-                                <q-icon name="block" size="14px" class="q-mr-xs" />
-                                Strikethrough by: {{ note.strikethrough_by_name }}
-                                <span v-if="note.strikethrough_at">
-                                  at {{ formatDateTime(note.strikethrough_at) }}
-                                </span>
-                              </div>
-                            </div>
-                          </q-item-label>
-                        </q-item-section>
-                      </q-item>
-                    </q-list>
-                    <div v-else class="text-center text-secondary q-pa-md">
-                      No previous nurse notes
+                        <div
+                          class="nn-note-body"
+                          :class="getNoteClass(note)"
+                          :style="getNoteStyle(note)"
+                          v-html="processNoteHtml(note)"
+                        />
+                        <div class="nn-note-meta">
+                          <span>{{ note.created_by_name || 'Unknown' }}</span>
+                          <span class="sep">·</span>
+                          <span>{{ formatDateTime(note.created_at) }}</span>
+                          <template v-if="note.strikethrough === 1 && note.strikethrough_by_name">
+                            <span class="sep">·</span>
+                            <span>Struck by {{ note.strikethrough_by_name }}</span>
+                          </template>
+                        </div>
+                        <div class="nn-note-actions" v-if="canStrikethroughNote(note)">
+                          <HmsButton
+                            variant="ghost"
+                            size="sm"
+                            @click="toggleStrikethrough(note)"
+                          >
+                            {{ note.strikethrough === 1 ? 'Restore' : 'Strikethrough' }}
+                          </HmsButton>
+                        </div>
+                      </article>
+                      <div v-if="nurseNotes.length === 0" class="nn-history-empty">
+                        No previous nurse notes.
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1949,6 +1622,9 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
+import HmsBadge from '../components/ui/HmsBadge.vue';
 import { consultationAPI, priceListAPI, billingAPI, labTemplatesAPI, encountersAPI } from '../services/api';
 import LabResultViewer from '../components/LabResultViewer.vue';
 import { useAuthStore } from '../stores/auth';
@@ -1957,6 +1633,17 @@ const $q = useQuasar();
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+
+const amPatientInitials = (info) => {
+  if (!info) return '?';
+  const a = (info.patient_name || '').trim().charAt(0);
+  const b = (info.patient_surname || '').trim().charAt(0);
+  return ((a + b) || '?').toUpperCase();
+};
+const amPatientDisplayName = (info) => {
+  if (!info) return '';
+  return [info.patient_name, info.patient_surname, info.patient_other_names].filter(Boolean).join(' ');
+};
 
 const loading = ref(false);
 const patientInfo = ref(null);
@@ -2383,6 +2070,25 @@ const stopServiceForm = ref({
   end_time: '',
   notes: '',
 });
+
+
+const activeActivityTab = ref('diagnoses');
+
+const activitySections = computed(() => [
+  { key: 'diagnoses', label: 'Diagnoses', count: inpatientDiagnoses.value.length },
+  {
+    key: 'admission_notes',
+    label: 'Notes',
+    count: patientInfo.value?.admission_notes ? 1 : 0,
+  },
+  { key: 'surgeries', label: 'Surgeries', count: surgeries.value.length },
+  { key: 'clinical_review', label: 'Reviews', count: clinicalReviews.value.length },
+  { key: 'additional_services', label: 'Services', count: patientAdditionalServices.value.length },
+]);
+
+const activityTotalCount = computed(() =>
+  activitySections.value.reduce((sum, tab) => sum + (tab.count || 0), 0)
+);
 
 const admissionNotesColumns = [
   {
@@ -4603,6 +4309,528 @@ const deleteSurgery = async (surgery) => {
 </script>
 
 <style scoped>
+.nn-dialog-sub {
+  margin: 0.25rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.nn-workspace { display: flex; flex-direction: column; gap: 0.85rem; }
+.nn-hero {
+  padding: 0.85rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+}
+.nn-hero-kicker {
+  font-size: 0.65rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+}
+.nn-hero-title {
+  margin: 0.2rem 0 0;
+  font-size: var(--hms-text-lg);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.nn-hero-sub {
+  margin: 0.25rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+}
+.nn-draft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--hms-radius-md);
+  background: var(--hms-warning-muted);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: #92400e;
+}
+.nn-draft-sub { margin-top: 0.15rem; font-size: 0.75rem; opacity: 0.9; }
+.nn-draft-actions { display: flex; gap: 0.35rem; }
+.nn-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.nn-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.nn-toolbar-label {
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+}
+.nn-toolbar-hint {
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+  margin-left: auto;
+}
+.nn-editor {
+  border-radius: var(--hms-radius-lg) !important;
+  border: 1px solid var(--hms-border) !important;
+}
+.nn-history-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+.nn-history-title {
+  margin: 0;
+  font-size: var(--hms-text-sm);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.nn-history-count {
+  min-width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 750;
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+.nn-history-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.nn-note-card {
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--hms-radius-md);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+}
+.nn-note-card.struck { opacity: 0.7; }
+.nn-note-body { font-size: var(--hms-text-sm); color: var(--hms-text-primary); }
+.nn-note-meta {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--hms-text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.nn-note-meta .sep { margin: 0 0.3rem; opacity: 0.45; }
+.nn-note-actions { margin-top: 0.35rem; }
+.nn-history-empty {
+  padding: 1.25rem;
+  text-align: center;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  border: 1px dashed var(--hms-border);
+  border-radius: var(--hms-radius-md);
+}
+@media (max-width: 640px) {
+  .nn-form-grid { grid-template-columns: 1fr; }
+  .nn-toolbar-hint { margin-left: 0; width: 100%; }
+}
+
+.am-panel-head--board {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.am-activity-summary {
+  font-size: var(--hms-text-sm);
+  font-weight: 650;
+  color: var(--hms-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.am-activity-board {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.am-activity-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+}
+.am-activity-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: none;
+  background: transparent;
+  color: var(--hms-text-secondary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  font-weight: 650;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--hms-radius-md);
+  cursor: pointer;
+  transition: background var(--hms-duration-fast) var(--hms-ease-out), color var(--hms-duration-fast) var(--hms-ease-out);
+}
+.am-activity-tab:hover {
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-primary);
+}
+.am-activity-tab.active {
+  background: var(--hms-panel-bg);
+  color: var(--hms-accent);
+  box-shadow: var(--hms-shadow-sm);
+}
+.am-activity-tab-count {
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 750;
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+}
+.am-activity-tab:not(.active) .am-activity-tab-count {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--hms-text-muted);
+}
+.am-activity-body {
+  min-height: 280px;
+}
+.am-activity-pane-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+.am-activity-pane-title {
+  margin: 0;
+  font-size: var(--hms-text-md);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.01em;
+}
+.am-activity-pane-sub {
+  margin: 0.2rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.am-activity-pane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.am-activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-sm);
+  border: 1px dashed var(--hms-border);
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+}
+.am-empty-cta { margin-top: 0.15rem; }
+.am-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.am-activity-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+  transition: border-color var(--hms-duration-fast) var(--hms-ease-out), box-shadow var(--hms-duration-fast) var(--hms-ease-out);
+}
+.am-activity-item:hover {
+  border-color: var(--hms-border-strong, var(--hms-border));
+  box-shadow: var(--hms-shadow-sm);
+}
+.am-activity-item-main { flex: 1; min-width: 200px; }
+.am-activity-item-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+}
+.am-activity-item-title {
+  margin: 0;
+  font-size: var(--hms-text-sm);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+}
+.am-activity-item-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.am-activity-item-when {
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--hms-text-muted);
+}
+.am-activity-item-meta {
+  margin-top: 0.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+}
+.am-activity-item-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.am-activity-item-meta .mono,
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+}
+.am-activity-item-foot {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--hms-text-muted);
+}
+.am-activity-item-note {
+  margin: 0.45rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  line-height: 1.45;
+}
+.am-activity-item-cost {
+  margin-top: 0.4rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.am-activity-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+.am-note-card {
+  padding: 1rem 1.1rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+}
+.am-note-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  line-height: 1.55;
+  color: var(--hms-text-primary);
+}
+@media (max-width: 720px) {
+  .am-activity-tabs { gap: 0.25rem; }
+  .am-activity-tab { flex: 1 1 auto; justify-content: space-between; }
+}
+
+
+.am-emergency-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  margin: -0.35rem 0 0.95rem;
+  padding: 0.65rem 1rem;
+  border-radius: var(--hms-radius-lg);
+  background: var(--hms-surface);
+  border: 1px solid var(--hms-border);
+  font-size: var(--hms-text-sm);
+}
+.am-emergency-label {
+  font-size: 0.65rem;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  margin-right: 0.35rem;
+}
+.am-emergency-value { color: var(--hms-text-secondary); font-weight: 600; }
+.am-emergency-sep { opacity: 0.4; color: var(--hms-text-muted); }
+.am-emergency-phone {
+  color: var(--hms-accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+.am-emergency-phone:hover { text-decoration: underline; }
+.am-emergency-muted { color: var(--hms-text-muted); }
+.am-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 3rem 1rem;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-sm);
+}
+.am-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
+  gap: 0.95rem;
+  align-items: start;
+}
+.am-panel {
+  padding: 1.05rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+}
+.am-panel-head { margin-bottom: 0.85rem; }
+.am-panel-sub {
+  margin: 0.2rem 0 0;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-muted);
+}
+.am-sidebar { position: sticky; top: 5.5rem; }
+.am-actions-panel { padding-bottom: 0.85rem; }
+.am-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--hms-border);
+}
+.am-action-group:first-of-type { border-top: none; padding-top: 0; }
+.am-action-label {
+  font-size: 0.65rem;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  margin-bottom: 0.15rem;
+}
+.am-action-btn { width: 100%; justify-content: flex-start; }
+.am-partial-banner,
+.am-discharged-banner {
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--hms-radius-md);
+  font-size: var(--hms-text-xs);
+  line-height: 1.4;
+  font-weight: 600;
+}
+.am-partial-banner {
+  background: var(--hms-warning-muted);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+.am-discharged-banner {
+  background: var(--hms-surface);
+  color: var(--hms-text-secondary);
+  border: 1px solid var(--hms-border);
+}
+@media (max-width: 960px) {
+  .am-workspace { grid-template-columns: 1fr; }
+  .am-sidebar { position: static; }
+}
+
+.ipd-patient-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.95rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  border: 1px solid var(--hms-border);
+  box-shadow: var(--hms-shadow-md);
+  position: sticky;
+  top: 0.55rem;
+  z-index: 6;
+}
+.ipd-hero-main { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+.ipd-hero-avatar {
+  width: 3rem; height: 3rem; border-radius: 999px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 0.85rem;
+  color: var(--hms-accent); background: var(--hms-accent-muted);
+  flex-shrink: 0;
+}
+.ipd-hero-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 750;
+  color: var(--hms-text-primary);
+  letter-spacing: -0.02em;
+}
+.ipd-hero-meta {
+  margin-top: 0.2rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem;
+}
+.ipd-hero-meta .sep { margin: 0 0.3rem; opacity: 0.4; }
+.ipd-hero-meta .mono,
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.ipd-hero-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.balance-pill {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  padding: 0.35rem 0.7rem; border-radius: var(--hms-radius-lg);
+  border: 1px solid var(--hms-border); background: var(--hms-surface);
+  cursor: pointer; font: inherit;
+}
+.balance-pill .balance-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.balance-pill .balance-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+.balance-pill.due .balance-value { color: var(--hms-critical); }
+.balance-pill.ok .balance-value { color: var(--hms-success); }
+.balance-pill.neutral .balance-value { color: var(--hms-text-secondary); }
+@media (max-width: 720px) {
+  .ipd-patient-hero { position: static; }
+}
+:deep(.glass-card) {
+  border-radius: var(--hms-radius-xl) !important;
+  border: 1px solid var(--hms-border) !important;
+  box-shadow: var(--hms-shadow-md) !important;
+  background: var(--hms-panel-bg) !important;
+}
+:deep(.text-h6.glass-text),
+:deep(.glass-text.text-h6) {
+  font-size: var(--hms-text-lg) !important;
+  font-weight: 700 !important;
+  color: var(--hms-text-primary) !important;
+}
+
+
 .body--light .glass-text {
   color: rgba(0, 0, 0, 0.87) !important;
 }

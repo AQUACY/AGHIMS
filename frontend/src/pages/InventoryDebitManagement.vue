@@ -1,27 +1,32 @@
 <template>
-  <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md">
-      <q-btn
-        flat
-        icon="arrow_back"
-        label="Back to Inventory"
-        @click="$router.push('/inventory-mode')"
-        class="q-mr-md"
-      />
-      <div class="text-h4 text-weight-bold glass-text">
-        Inventory Debit Management
-      </div>
-    </div>
+  <q-page class="hms-page">
+    <HmsPageHeader
+      title="Inventory debits"
+      subtitle="Review inpatient and companion inventory debits, filter by ward or status, and release items for ward administration."
+    >
+      <template #actions>
+        <HmsButton variant="ghost" size="sm" @click="$router.push('/inventory-mode')">Back</HmsButton>
+        <HmsButton variant="secondary" size="sm" :loading="loading" @click="loadInventoryDebits">
+          Refresh
+        </HmsButton>
+      </template>
+    </HmsPageHeader>
 
-    <!-- Filters -->
-    <q-card class="glass-card q-mb-md" flat bordered>
-      <q-card-section>
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Filters</div>
+          <div class="panel-sub">Ward, release status, dates, user, and item</div>
+        </div>
+      </div>
+      <div class="panel-body">
         <div class="row q-col-gutter-md items-end">
           <div class="col-12 col-md-3">
             <q-select
               v-model="selectedWard"
               :options="wardOptions"
               filled
+              dense
               label="Filter by Ward"
               clearable
               emit-value
@@ -38,6 +43,7 @@
               v-model="releaseStatusFilter"
               :options="releaseStatusOptions"
               filled
+              dense
               label="Release Status"
               clearable
               emit-value
@@ -53,6 +59,7 @@
             <q-input
               v-model="startDate"
               filled
+              dense
               label="Start Date"
               type="date"
               clearable
@@ -67,6 +74,7 @@
             <q-input
               v-model="endDate"
               filled
+              dense
               label="End Date"
               type="date"
               clearable
@@ -81,6 +89,7 @@
             <q-input
               v-model="userNameFilter"
               filled
+              dense
               label="Filter by Full Name"
               clearable
               @update:model-value="loadInventoryDebits"
@@ -94,6 +103,7 @@
             <q-input
               v-model="itemFilter"
               filled
+              dense
               label="Filter by Item (Code/Name)"
               clearable
               @update:model-value="loadInventoryDebits"
@@ -103,65 +113,47 @@
               </template>
             </q-input>
           </div>
-          <div class="col-12 col-md-3">
-            <q-btn
-              flat
-              icon="refresh"
-              label="Refresh"
-              color="primary"
-              @click="loadInventoryDebits"
-              :loading="loading"
-            />
-          </div>
         </div>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
 
-    <!-- Summary Cards -->
-    <div class="row q-col-gutter-md q-mb-md">
-      <div class="col-12 col-md-4">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-caption text-grey-7">Total Inventory Debits</div>
-            <div class="text-h5 text-weight-bold glass-text">{{ inventoryDebits.length }}</div>
-          </q-card-section>
-        </q-card>
+    <div class="claim-kpi-grid">
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">Total inventory debits</div>
+        </div>
+        <div class="claim-kpi__value">{{ inventoryDebits.length }}</div>
       </div>
-      <div class="col-12 col-md-4">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-caption text-grey-7">Pending Release</div>
-            <div class="text-h5 text-weight-bold text-warning">{{ pendingReleaseCount }}</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">Pending release</div>
+        </div>
+        <div class="claim-kpi__value text-warning">{{ pendingReleaseCount }}</div>
       </div>
-      <div class="col-12 col-md-4">
-        <q-card class="glass-card" flat bordered>
-          <q-card-section>
-            <div class="text-caption text-grey-7">Released</div>
-            <div class="text-h5 text-weight-bold text-positive">{{ releasedCount }}</div>
-          </q-card-section>
-        </q-card>
+      <div class="claim-kpi">
+        <div class="stat-top">
+          <div class="claim-kpi__label">Released</div>
+        </div>
+        <div class="claim-kpi__value text-positive">{{ releasedCount }}</div>
       </div>
     </div>
 
-    <!-- Inventory Debits Table -->
-    <q-card class="glass-card" flat bordered>
-      <q-card-section>
-        <div class="row items-center q-mb-md">
-          <div class="text-h6 glass-text">
-            Inventory Debits ({{ filteredDebits.length }})
-          </div>
-          <q-space />
+    <section class="diag-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Inventory debits</div>
+          <div class="panel-sub">{{ filteredDebits.length }} matching row(s)</div>
         </div>
-
+      </div>
+      <div class="panel-body table-wrap">
         <q-table
+          class="diag-table"
           :rows="filteredDebits"
           :columns="columns"
           :row-key="debitRowKey"
           :loading="loading"
           flat
-          bordered
+          dense
           :rows-per-page-options="[15, 25, 50, 100]"
           :pagination="{ rowsPerPage: 15 }"
         >
@@ -270,8 +262,8 @@
             </q-td>
           </template>
         </q-table>
-      </q-card-section>
-    </q-card>
+      </div>
+    </section>
   </q-page>
 </template>
 
@@ -279,6 +271,8 @@
 import { ref, computed, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { consultationAPI, wardsAPI } from '../services/api';
+import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
+import HmsButton from '../components/ui/HmsButton.vue';
 
 const $q = useQuasar();
 
@@ -543,21 +537,9 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-}
-
-.glass-text {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.body--light .glass-text {
-  color: rgba(0, 0, 0, 0.87) !important;
-}
-
-.body--dark .glass-text {
-  color: rgba(255, 255, 255, 0.9) !important;
+.stat-top {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
 }
 </style>
-

@@ -1,71 +1,64 @@
 <template>
   <div class="app-background" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'"></div>
   <q-layout view="hHh lpR fFf" class="layout-glass">
-    <q-header elevated class="glass-header text-white">
-      <q-toolbar>
-        <!-- Hamburger Menu (All Screen Sizes) -->
+    <q-header class="glass-header hms-app-header">
+      <q-toolbar class="hms-toolbar">
         <q-btn
           flat
           dense
           round
           icon="menu"
-          class="q-mr-sm"
+          class="header-icon-btn"
           @click="drawerOpen = !drawerOpen"
         >
           <q-tooltip>{{ drawerOpen ? 'Hide Sidebar' : 'Show Sidebar' }}</q-tooltip>
         </q-btn>
-        <q-toolbar-title class="text-weight-bold row items-center no-wrap q-gutter-sm">
-          <img src="../../public/logos/ghana-health-service-logo.png" :alt="facilityStore.displayName" width="32px" height="32px" />
-          <span class="ellipsis">{{ facilityStore.displayName }}</span>
-          <q-badge
-            v-if="facilityStore.facilityCodeDisplay"
-            color="amber-8"
-            text-color="black"
-            class="text-caption"
-          >
-            {{ facilityStore.facilityCodeDisplay }}
-          </q-badge>
-        </q-toolbar-title>
-        <q-badge color="blue-8" text-color="white" class="q-mr-md">
-          Current Mode: {{ currentModeLabel }}
-        </q-badge>
-        <LicenseTitleLink />
+
+        <div class="header-brand">
+          <img
+            src="/logos/ghana-health-service-logo.png"
+            :alt="facilityStore.displayName"
+            width="28"
+            height="28"
+            class="header-logo"
+          />
+        </div>
+
         <q-space />
-        <!-- Session Timer -->
-        <div v-if="sessionTimeLeft" class="q-mr-md row items-center q-gutter-xs">
-          <q-icon name="schedule" size="sm" />
-          <span class="text-caption text-weight-medium" :class="sessionTimeLeftMinutes < 5 ? 'text-negative' : 'text-white'">
+
+        <button type="button" class="command-trigger" @click="showCommandPalette = true">
+          <q-icon name="search" size="xs" />
+          <span class="command-label gt-xs">Search for anything…</span>
+          <kbd class="command-kbd gt-sm">Ctrl K</kbd>
+          <q-tooltip>Command palette (Ctrl+K)</q-tooltip>
+        </button>
+
+        <div v-if="sessionTimeLeft" class="session-chip">
+          <q-icon name="schedule" size="xs" />
+          <span :class="sessionTimeLeftMinutes < 5 ? 'text-negative' : ''">
             {{ formatTimeLeft(sessionTimeLeft) }}
           </span>
           <q-tooltip v-if="sessionTimeLeftMinutes > 65">
             You're using an old token. Please log out and log back in to get a 1-hour session.
           </q-tooltip>
         </div>
-        <q-btn
-          flat
-          icon="swap_horiz"
-          label="Switch Mode"
-          class="q-mr-sm glass-button"
-          @click="switchMode"
-        >
+
+        <q-btn flat dense no-caps class="header-ghost-btn gt-sm" @click="switchMode">
+          Switch mode
           <q-tooltip>Switch application mode</q-tooltip>
         </q-btn>
-        <q-btn
-          flat
-          :label="authStore.userName"
-          class="q-mr-md text-weight-medium glass-button"
-          @click="goToProfile"
-          style="text-transform: none;"
-        >
-          <q-tooltip>Click to view profile and change password</q-tooltip>
+
+        <q-btn flat dense no-caps class="header-ghost-btn gt-md" @click="goToProfile">
+          {{ authStore.userName }}
+          <q-tooltip>Profile and password</q-tooltip>
         </q-btn>
-        <!-- Notifications -->
+
         <q-btn
           flat
           round
           dense
           icon="notifications"
-          class="q-mr-sm glass-button"
+          class="header-icon-btn"
           @click="showNotifications = true"
         >
           <q-badge
@@ -77,721 +70,41 @@
           />
           <q-tooltip>Notifications ({{ unreadNotificationCount }} unread)</q-tooltip>
         </q-btn>
+
         <q-btn
           flat
           round
           dense
           :icon="themeStore.isDark ? 'light_mode' : 'dark_mode'"
-          class="q-mr-sm glass-button"
+          class="header-icon-btn"
           @click="themeStore.toggleTheme()"
         >
           <q-tooltip>Toggle {{ themeStore.isDark ? 'Light' : 'Dark' }} Mode</q-tooltip>
         </q-btn>
-        <q-btn
-          flat
-          icon="logout"
-          label="Logout"
-          class="glass-button"
-          @click="handleLogout"
-        />
+
+        <q-btn flat dense no-caps class="header-ghost-btn header-logout" @click="handleLogout">
+          Logout
+        </q-btn>
       </q-toolbar>
     </q-header>
 
-    <!-- Notifications Dialog -->
-    <q-dialog v-model="showNotifications" style="min-width: 600px; max-width: 800px">
-      <q-card>
-        <q-card-section>
-          <div class="row items-center">
-            <div class="text-h6">Notifications</div>
-            <q-space />
-            <q-btn
-              flat
-              dense
-              round
-              icon="close"
-              v-close-popup
-            />
-          </div>
-        </q-card-section>
-
-        <q-card-section>
-          <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
-        </q-card-section>
-      </q-card>
-    </q-dialog>
-
-    <q-drawer
-      v-model="drawerOpen"
-      show-if-above
-      :width="300"
-      :breakpoint="1024"
-      class="glass-drawer"
-    >
-      <!-- Patient Search Section - Collapsible -->
-      <q-expansion-item
-        v-if="!appModeStore.isClaims"
-        v-model="searchExpanded"
-        icon="search"
-        label="Search Patient"
-        header-class="text-weight-bold glass-text"
-        class="q-ma-xs"
-      >
-        <q-card class="glass-card" flat>
-          <q-card-section class="q-pa-sm">
-            <!-- Search by Card Number -->
-            <q-input
-              v-model="searchCardNumber"
-              filled
-              dense
-              label="Card Number"
-              class="q-mb-xs"
-              @keyup.enter="searchByCardNumber"
-              clearable
-            >
-              <template v-slot:append>
-                <q-icon 
-                  name="search" 
-                  class="cursor-pointer" 
-                  @click="searchByCardNumber"
-                  :class="{ 'text-primary': searchCardNumber }"
-                />
-              </template>
-            </q-input>
-            
-            <!-- Search by CCC/Insurance Number -->
-            <q-input
-              v-model="searchCccNumber"
-              filled
-              dense
-              label="Ghana Card/Insurance #"
-              class="q-mb-xs"
-              @keyup.enter="searchByCcc"
-              clearable
-            >
-              <template v-slot:append>
-                <q-icon 
-                  name="search" 
-                  class="cursor-pointer" 
-                  @click="searchByCcc"
-                  :class="{ 'text-primary': searchCccNumber }"
-                />
-              </template>
-            </q-input>
-            
-            <!-- Search by Name -->
-            <q-input
-              v-model="searchPatientName"
-              filled
-              dense
-              label="Patient Name"
-              class="q-mb-xs"
-              @keyup.enter="searchByName"
-              clearable
-            >
-              <template v-slot:append>
-                <q-icon 
-                  name="search" 
-                  class="cursor-pointer" 
-                  @click="searchByName"
-                  :class="{ 'text-primary': searchPatientName }"
-                />
-              </template>
-            </q-input>
-            
-            <!-- Search by Contact Number -->
-            <q-input
-              v-model="searchContactNumber"
-              filled
-              dense
-              label="Contact Number"
-              class="q-mb-xs"
-              @keyup.enter="searchByContact"
-              clearable
-            >
-              <template v-slot:append>
-                <q-icon 
-                  name="search" 
-                  class="cursor-pointer" 
-                  @click="searchByContact"
-                  :class="{ 'text-primary': searchContactNumber }"
-                />
-              </template>
-            </q-input>
-          </q-card-section>
-        </q-card>
-      </q-expansion-item>
-
-      <q-separator v-if="!appModeStore.isClaims" class="q-my-sm" />
-
-      <q-list class="glass-nav-list">
-        <q-item-label header class="text-weight-bold q-py-md" style="opacity: 0.9;">
-          Navigation
-        </q-item-label>
-
-        <template v-if="appModeStore.isClaims">
-          <q-item
-            clickable
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'Claims' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="apps" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Claims home</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('claims')"
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'ClaimsDashboard' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="dashboard" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Dashboard</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('claims')"
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'ClaimsList' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="description" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Claims</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('claims')"
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'ClaimsReports' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="assessment" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Reports</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('claims')"
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'ClaimItCorrectErrors' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="error_outline" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Correct errors</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('claims')"
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'GhimsXmlImport' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="upload_file" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Import GHIMS XML</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('claims')"
-            v-ripple
-            :to="isModuleActive('claims') ? { name: 'ClaimsCxfTools' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="compare_arrows" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>CFX Convert &amp; Diff</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('price_list')"
-            v-ripple
-            :to="isModuleActive('price_list') ? { name: 'ClaimsPriceListManagement' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('price_list') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('price_list') && $q.notify({ type: 'warning', message: 'Price list module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="price_check" :class="{ 'text-grey-6': !isModuleActive('price_list') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>Price List Management</q-item-label>
-            </q-item-section>
-          </q-item>
-
-          <q-item
-            :clickable="isModuleActive('icd10_mapping')"
-            v-ripple
-            :to="isModuleActive('icd10_mapping') ? { name: 'ClaimsIcd10DrgMapping' } : null"
-            :class="['glass-nav-item', { 'module-inactive': !isModuleActive('icd10_mapping') }]"
-            active-class="glass-nav-active"
-            @click="!isModuleActive('icd10_mapping') && $q.notify({ type: 'warning', message: 'ICD-10 mapping module is not active', position: 'top' })"
-          >
-            <q-item-section avatar>
-              <q-icon name="medical_information" :class="{ 'text-grey-6': !isModuleActive('icd10_mapping') }" />
-            </q-item-section>
-            <q-item-section>
-              <q-item-label>ICD-10 DRG Mapping</q-item-label>
-            </q-item-section>
-          </q-item>
-        </template>
-
-        <template v-else>
-        <q-item
-          clickable
-          v-ripple
-          :to="{ name: 'Dashboard' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="dashboard" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Dashboard</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Records', 'Admin', 'PA', 'Doctor'])"
-          clickable
-          v-ripple
-          :to="{ name: 'PatientRegistration' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="person_add" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Patient Registration</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          clickable
-          v-ripple
-          :to="{ name: 'EncountersCalendar' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="calendar_month" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Appointment Calendar</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Vitals' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="favorite" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Vitals</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Doctor', 'PA', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Consultation' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="medical_services" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Consultation</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Billing', 'Admin'])"
-          :clickable="isModuleActive('billing')"
-          v-ripple
-          :to="isModuleActive('billing') ? { name: 'Billing' } : null"
-          :class="['glass-nav-item', { 'module-inactive': !isModuleActive('billing') }]"
-          active-class="glass-nav-active"
-          @click="!isModuleActive('billing') && $q.notify({ type: 'warning', message: 'Billing module is not active', position: 'top' })"
-        >
-          <q-item-section avatar>
-            <q-icon name="receipt" :class="{ 'text-grey-6': !isModuleActive('billing') }" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label :class="{ 'text-grey-6': !isModuleActive('billing') }">Billing</q-item-label>
-          </q-item-section>
-          <q-tooltip v-if="!isModuleActive('billing')">Module not active</q-tooltip>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Pharmacy', 'Pharmacy Head', 'Store Manager', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Pharmacy' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="medication" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Pharmacy</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Lab', 'Admin', 'Lab Head'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Lab' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="science" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Lab</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Lab Head', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'LabTemplates' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="description" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Lab Templates</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Scan', 'Scan Head', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Scan' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="biotech" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Scan</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Xray', 'Xray Head', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Xray' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="radio_button_checked" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>X-ray</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Claims', 'Admin', 'Doctor', 'PA'])"
-          :clickable="isModuleActive('claims')"
-          v-ripple
-          :to="isModuleActive('claims') ? { name: 'Claims' } : null"
-          :class="['glass-nav-item', { 'module-inactive': !isModuleActive('claims') }]"
-          active-class="glass-nav-active"
-          @click="!isModuleActive('claims') && $q.notify({ type: 'warning', message: 'Claims module is not active', position: 'top' })"
-        >
-          <q-item-section avatar>
-            <q-icon name="description" :class="{ 'text-grey-6': !isModuleActive('claims') }" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label :class="{ 'text-grey-6': !isModuleActive('claims') }">Claims</q-item-label>
-          </q-item-section>
-          <q-tooltip v-if="!isModuleActive('claims')">Module not active</q-tooltip>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Admin', 'Records'])"
-          clickable
-          v-ripple
-          :to="{ name: 'MISReport' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="assessment" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>MIS Reports</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Nurse', 'Doctor', 'PA', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'IPD' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="local_hospital" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>IPD</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin', 'Pharmacy Head', 'Store Manager'])"
-          clickable
-          v-ripple
-          :to="{ name: 'PriceListManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="price_check" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Price List Management</q-item-label>
-          </q-item-section>
-        </q-item>
-
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'StaffManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="people" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Staff Management</q-item-label>
-          </q-item-section>
-        </q-item>
-        
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'PatientUpload' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="file_upload" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Patient Upload</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'Icd10DrgMapping' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="medical_information" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>ICD-10 DRG Mapping</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'AdditionalServicesManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="add_circle" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Additional Services</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin', 'Lab Head'])"
-          clickable
-          v-ripple
-          :to="{ name: 'BloodTransfusionTypesManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="bloodtype" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Blood Transfusion Types</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Lab', 'Lab Head', 'Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'BloodTransfusionLabManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="science" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Blood Transfusion Requests</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'DatabaseManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="storage" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Database Management</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin'])"
-          clickable
-          v-ripple
-          :to="{ name: 'ModuleManagement' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="settings_applications" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Module Management</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin']) || authStore.isSuperAdmin"
-          clickable
-          v-ripple
-          :to="{ name: 'FacilitySetup' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="business" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Facility branding</q-item-label>
-          </q-item-section>
-        </q-item>
-        <q-item
-          v-if="canAccess(['Admin', 'Auditor'])"
-          clickable
-          v-ripple
-          :to="{ name: 'AuditLogs' }"
-          class="glass-nav-item"
-          active-class="glass-nav-active"
-        >
-          <q-item-section avatar>
-            <q-icon name="history" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label>Audit Trail Logs</q-item-label>
-          </q-item-section>
-        </q-item>
-        </template>
-      </q-list>
-    </q-drawer>
+    <AppSidebar v-model="drawerOpen" />
 
     <q-page-container>
       <router-view />
     </q-page-container>
   </q-layout>
 
-  <!-- Notifications Dialog -->
-  <q-dialog v-model="showNotifications" style="min-width: 600px; max-width: 800px">
-    <q-card>
-      <q-card-section>
-        <div class="row items-center">
-          <div class="text-h6">Notifications</div>
-          <q-space />
-          <q-btn
-            flat
-            dense
-            round
-            icon="close"
-            v-close-popup
-          />
-        </div>
-      </q-card-section>
+  <CommandPalette v-model="showCommandPalette" />
 
+  <!-- Notifications Dialog -->
+  <q-dialog v-model="showNotifications">
+    <q-card class="notifications-dialog-card">
+      <q-card-section class="row items-center q-pb-none">
+        <div class="text-h6">Notifications</div>
+        <q-space />
+        <q-btn flat dense round icon="close" v-close-popup />
+      </q-card-section>
       <q-card-section>
         <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
       </q-card-section>
@@ -803,14 +116,15 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
-import { useAppModeStore, APP_MODES } from '../stores/appMode';
+import { useAppModeStore } from '../stores/appMode';
 import { useThemeStore } from '../stores/theme';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
 import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
-import { patientsAPI, notificationsAPI } from '../services/api';
+import { notificationsAPI } from '../services/api';
 import NotificationsPanel from '../components/NotificationsPanel.vue';
-import LicenseTitleLink from '../components/LicenseTitleLink.vue';
+import CommandPalette from '../components/CommandPalette.vue';
+import AppSidebar from '../components/layout/AppSidebar.vue';
 
 const $q = useQuasar();
 const router = useRouter();
@@ -820,16 +134,7 @@ const themeStore = useThemeStore();
 const moduleSettingsStore = useModuleSettingsStore();
 const facilityStore = useFacilityStore();
 const drawerOpen = ref(true);
-
-const currentModeLabel = computed(() => {
-  const labels = {
-    [APP_MODES.HMS]: 'HMS',
-    [APP_MODES.COMPANION]: 'Copayment',
-    [APP_MODES.INVENTORY]: 'Inventory',
-    [APP_MODES.CLAIMS]: 'Claims',
-  };
-  return labels[appModeStore.currentMode] || 'HMS';
-});
+const showCommandPalette = ref(false);
 
 // Session timer
 const sessionTimeLeft = ref(null);
@@ -989,319 +294,6 @@ const stopSessionTimer = () => {
   // Idle check interval removed - no longer needed
 };
 
-// Patient search fields
-const searchCardNumber = ref('');
-const searchPatientName = ref('');
-const searchCccNumber = ref('');
-const searchContactNumber = ref('');
-const searchingByCard = ref(false);
-const searchingByName = ref(false);
-const searchingByCcc = ref(false);
-const searchingByContact = ref(false);
-const searchExpanded = ref(false);
-
-// Search by card number
-const searchByCardNumber = async () => {
-  if (!searchCardNumber.value || !searchCardNumber.value.trim()) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please enter a card number',
-    });
-    return;
-  }
-
-  searchingByCard.value = true;
-  try {
-    const response = await patientsAPI.getByCard(searchCardNumber.value.trim());
-    console.log('Card search response:', response);
-    console.log('Response data:', response.data);
-    
-    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
-    // Handle both array and single object responses
-    let patients = [];
-    if (Array.isArray(response.data)) {
-      patients = response.data;
-    } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
-      // Single object returned - convert to array
-      patients = [response.data];
-    } else if (response.data?.data && Array.isArray(response.data.data)) {
-      patients = response.data.data;
-    } else if (response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
-      // Single object in data property
-      patients = [response.data.data];
-    } else if (response.data?.results && Array.isArray(response.data.results)) {
-      patients = response.data.results;
-    }
-    
-    console.log('Extracted patients:', patients);
-    
-    if (patients.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that card number',
-      });
-      return;
-    }
-    
-    // Always go to search results page
-    await router.push({
-      name: 'PatientSearchResults',
-      query: { 
-        searchType: 'card',
-        searchTerm: searchCardNumber.value.trim(),
-        patients: JSON.stringify(patients) 
-      }
-    });
-    // Clear search field
-    searchCardNumber.value = '';
-  } catch (error) {
-    console.error('Card search error:', error);
-    console.error('Error response:', error.response);
-    console.error('Error data:', error.response?.data);
-    
-    // Check if it's a 404 or empty response
-    if (error.response?.status === 404 || error.response?.status === 200) {
-      // API returned empty list or not found - show appropriate message
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that card number',
-      });
-    } else {
-      // Actual error occurred
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || error.message || 'Failed to search patients',
-      });
-    }
-  } finally {
-    searchingByCard.value = false;
-  }
-};
-
-// Search by CCC/Insurance number
-const searchByCcc = async () => {
-  if (!searchCccNumber.value || !searchCccNumber.value.trim()) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please enter a Ghana card/insurance number',
-    });
-    return;
-  }
-
-  searchingByCcc.value = true;
-  try {
-    const response = await patientsAPI.searchByCcc(searchCccNumber.value.trim());
-    console.log('CCC search response:', response);
-    console.log('Response data:', response.data);
-    
-    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
-    let patients = [];
-    if (Array.isArray(response.data)) {
-      patients = response.data;
-    } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
-      patients = [response.data];
-    } else if (response.data?.data && Array.isArray(response.data.data)) {
-      patients = response.data.data;
-    } else if (response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
-      patients = [response.data.data];
-    } else if (response.data?.results && Array.isArray(response.data.results)) {
-      patients = response.data.results;
-    }
-    
-    console.log('Extracted patients:', patients);
-    
-    if (patients.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that Ghana card/insurance number',
-      });
-      return;
-    }
-    
-    // Always go to search results page
-    await router.push({
-      name: 'PatientSearchResults',
-      query: { 
-        searchType: 'ccc',
-        searchTerm: searchCccNumber.value.trim(),
-        patients: JSON.stringify(patients) 
-      }
-    });
-    // Clear search field
-    searchCccNumber.value = '';
-  } catch (error) {
-    console.error('CCC search error:', error);
-    console.error('Error response:', error.response);
-    console.error('Error data:', error.response?.data);
-    
-    // Check if it's a 404 or empty response
-    if (error.response?.status === 404 || error.response?.status === 200) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that Ghana card/insurance number',
-      });
-    } else {
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || error.message || 'Failed to search patients',
-      });
-    }
-  } finally {
-    searchingByCcc.value = false;
-  }
-};
-
-// Search by name
-const searchByName = async () => {
-  if (!searchPatientName.value || !searchPatientName.value.trim()) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please enter a patient name',
-    });
-    return;
-  }
-
-  searchingByName.value = true;
-  try {
-    const response = await patientsAPI.searchByName(searchPatientName.value.trim());
-    console.log('Name search response:', response);
-    console.log('Response data:', response.data);
-    
-    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
-    // Handle both array and single object responses
-    let patients = [];
-    if (Array.isArray(response.data)) {
-      patients = response.data;
-    } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
-      // Single object returned - convert to array
-      patients = [response.data];
-    } else if (response.data?.data && Array.isArray(response.data.data)) {
-      patients = response.data.data;
-    } else if (response.data?.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data)) {
-      // Single object in data property
-      patients = [response.data.data];
-    } else if (response.data?.results && Array.isArray(response.data.results)) {
-      patients = response.data.results;
-    }
-    
-    console.log('Extracted patients:', patients);
-    
-    if (patients.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that name',
-      });
-      return;
-    }
-    
-    // Always go to search results page
-    await router.push({
-      name: 'PatientSearchResults',
-      query: { 
-        searchType: 'name',
-        searchTerm: searchPatientName.value.trim(),
-        patients: JSON.stringify(patients) 
-      }
-    });
-    // Clear search field
-    searchPatientName.value = '';
-  } catch (error) {
-    console.error('Name search error:', error);
-    console.error('Error response:', error.response);
-    console.error('Error data:', error.response?.data);
-    
-    // Check if it's a 404 or empty response
-    if (error.response?.status === 404 || error.response?.status === 200) {
-      // API returned empty list or not found - show appropriate message
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that name',
-      });
-    } else {
-      // Actual error occurred
-      $q.notify({
-        type: 'negative',
-        message: error.response?.data?.detail || error.message || 'Failed to search patients',
-      });
-    }
-  } finally {
-    searchingByName.value = false;
-  }
-};
-
-const searchByContact = async () => {
-  if (!searchContactNumber.value || !searchContactNumber.value.trim()) {
-    $q.notify({
-      type: 'warning',
-      message: 'Please enter a contact number',
-    });
-    return;
-  }
-
-  searchingByContact.value = true;
-  try {
-    const response = await patientsAPI.searchByContact(searchContactNumber.value.trim());
-    console.log('Contact search response:', response);
-    console.log('Response data:', response.data);
-    
-    // FastAPI returns List[PatientResponse] which Axios wraps in response.data
-    let patients = [];
-    if (Array.isArray(response.data)) {
-      patients = response.data;
-    } else if (response.data && typeof response.data === 'object') {
-      // If it's a single object, wrap it in an array
-      patients = [response.data];
-    }
-    
-    console.log('Parsed patients:', patients);
-    
-    if (patients.length === 0) {
-      $q.notify({
-        type: 'warning',
-        message: 'No patients found with this contact number',
-        position: 'top',
-      });
-      return;
-    }
-    
-    // Navigate to search results page with patient data
-    router.push({
-      name: 'PatientSearchResults',
-      query: {
-        searchType: 'contact',
-        searchTerm: searchContactNumber.value.trim(),
-        patients: JSON.stringify(patients) 
-      }
-    });
-    // Clear search field
-    searchContactNumber.value = '';
-  } catch (error) {
-    console.error('Contact search error:', error);
-    console.error('Error response:', error.response);
-    console.error('Error data:', error.response?.data);
-    
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Failed to search patients',
-      position: 'top',
-    });
-  } finally {
-    searchingByContact.value = false;
-  }
-};
-
-const canAccess = (roles) => authStore.canAccess(roles);
-
-// Helper function to check if a module is active
-const isModuleActive = (moduleKey) => {
-  return moduleSettingsStore.isModuleActive(moduleKey);
-};
-
-// Helper function to get module status for navigation
-const getModuleStatus = (moduleKey) => {
-  return moduleSettingsStore.getModuleStatus(moduleKey);
-};
-
 const switchMode = () => {
   router.push('/choose-mode');
 };
@@ -1426,56 +418,13 @@ watch(() => authStore.token, (token) => {
   position: relative;
 }
 
-.glass-nav-list {
-  padding: 8px;
-}
-
-.glass-nav-item {
-  margin: 4px 0;
-  border-radius: 12px;
-  transition: all 0.3s ease;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.glass-nav-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: translateX(4px);
-}
-
-.glass-nav-active {
-  background: rgba(46, 139, 87, 0.3) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 215, 0, 0.5);
-  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.3);
-}
-
-.body--dark .glass-nav-item {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.body--dark .glass-nav-item:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.body--dark .glass-nav-active {
-  background: rgba(46, 139, 87, 0.25) !important;
-  border: 1px solid rgba(255, 215, 0, 0.4);
-  box-shadow: 0 4px 16px rgba(46, 139, 87, 0.4);
-}
-
-.module-inactive {
-  opacity: 0.5 !important;
-  cursor: not-allowed !important;
-}
-
-.module-inactive:hover {
-  background: rgba(255, 255, 255, 0.05) !important;
-  transform: none !important;
+.notifications-dialog-card {
+  width: min(720px, 92vw);
+  max-width: 800px;
 }
 
 .q-drawer {
-  border-right: none;
+  border-right: 1px solid var(--hms-border) !important;
 }
 </style>
 

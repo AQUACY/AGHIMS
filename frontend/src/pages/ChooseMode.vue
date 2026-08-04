@@ -1,125 +1,61 @@
 <template>
-  <div class="choose-mode-background" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'">
-    <div class="choose-mode-container">
-      <div class="text-h5 text-center q-mb-md text-weight-bold glass-text ">
-        Choose application mode
-      </div>
-      <div class="text-subtitle2 text-center q-mb-lg glass-text">
-        Select how you want to use the system
-      </div>
-      <q-banner
+  <div class="choose-shell" :class="themeStore.isDark ? 'dark-gradient' : 'light-gradient'">
+    <div class="choose-inner">
+      <header class="choose-header">
+        <img
+          src="/logos/ghana-health-service-logo.png"
+          alt=""
+          width="40"
+          height="40"
+          class="choose-logo"
+        />
+        <h1 class="choose-title">Choose application mode</h1>
+        <p class="choose-subtitle">Select how you want to use the system</p>
+      </header>
+
+      <div
         v-if="allModesInactiveForRegularUser"
-        class="glass-card q-mb-md full-width mode-support-banner"
+        class="support-banner hms-glass"
+        role="alert"
       >
-        <template v-slot:avatar>
-          <q-icon name="warning" color="negative" />
-        </template>
-        All application modes are currently inactive for this facility. Please contact support service or Super Admin.
-      </q-banner>
-      <div class="mode-cards row q-col-gutter-x-xs q-col-gutter-y-lg justify-center">
-        <q-card
-          class="mode-card glass-card col-12 col-sm-6 col-md-4 q-ma-sm"
-          flat
-          :clickable="canSelectMode(APP_MODES.HMS)"
-          :class="{ 'mode-disabled': !canSelectMode(APP_MODES.HMS) }"
-          @click="selectMode('hms')"
+        <AlertTriangle :size="18" class="support-icon" />
+        <p>
+          All application modes are currently inactive for this facility. Please contact support
+          or a Super Admin.
+        </p>
+      </div>
+
+      <div class="mode-grid">
+        <motion.button
+          v-for="(mode, index) in modes"
+          :key="mode.id"
+          type="button"
+          class="mode-card hms-glass"
+          :class="{ disabled: !mode.enabled }"
+          :disabled="!mode.enabled && modeStatusLoaded"
+          :initial="reduceMotion ? false : { opacity: 0, y: 12 }"
+          :animate="{ opacity: 1, y: 0 }"
+          :whileHover="reduceMotion || !mode.enabled ? undefined : { y: -4, scale: 1.015 }"
+          :whilePress="reduceMotion || !mode.enabled ? undefined : { scale: 0.985 }"
+          :transition="{ delay: index * 0.05, duration: 0.3, ease: [0.16, 1, 0.3, 1] }"
+          @click="selectMode(mode.id)"
         >
-          <q-card-section class="text-center">
-            <q-icon name="medical_services" size="64px" class="q-mb-md" />
-            <div class="text-h6 q-mb-sm glass-text">HMS Mode</div>
-            <div class="text-body2 glass-text-muted">
-              Full Hospital Management System — patient registration, encounters, billing, pharmacy, lab, and all modules.
-            </div>
-            <q-btn
-              unelevated
-              label="Enter HMS"
-              class="glass-button q-mt-lg"
-              :disable="!canSelectMode(APP_MODES.HMS)"
-              no-caps
-            />
-            <div v-if="!canSelectMode(APP_MODES.HMS)" class="text-caption text-negative q-mt-sm">
-              Mode inactive - contact support
-            </div>
-          </q-card-section>
-        </q-card>
-        <q-card
-          class="mode-card glass-card col-12 col-sm-6 col-md-4"
-          flat
-          :clickable="canSelectMode(APP_MODES.COMPANION)"
-          :class="{ 'mode-disabled': !canSelectMode(APP_MODES.COMPANION) }"
-          @click="selectMode('companion')"
-        >
-          <q-card-section class="text-center">
-            <q-icon name="handshake" size="64px" class="q-mb-md" />
-            <div class="text-h6 q-mb-sm glass-text">Copayment</div>
-            <div class="text-body2 glass-text-muted">
-              Companion and copayment workflows — dedicated interface and menus for this module.
-            </div>
-            <q-btn
-              unelevated
-              label="Enter Companion"
-              class="glass-button q-mt-lg"
-              :disable="!canSelectMode(APP_MODES.COMPANION)"
-              no-caps
-            />
-            <div v-if="!canSelectMode(APP_MODES.COMPANION)" class="text-caption text-negative q-mt-sm">
-              Mode inactive - contact support
-            </div>
-          </q-card-section>
-        </q-card>
-        <q-card
-          class="mode-card glass-card col-12 col-sm-6 col-md-4"
-          flat
-          :clickable="canSelectMode(APP_MODES.INVENTORY)"
-          :class="{ 'mode-disabled': !canSelectMode(APP_MODES.INVENTORY) }"
-          @click="selectMode('inventory')"
-        >
-          <q-card-section class="text-center">
-            <q-icon name="inventory_2" size="64px" class="q-mb-md" />
-            <div class="text-h6 q-mb-sm glass-text">Inventory Mode</div>
-            <div class="text-body2 glass-text-muted">
-              For staff assigned as department IC/deputy or store roles, plus Management, Pharmacy, and Admin — assignments matter, not only job title.
-            </div>
-            <q-btn
-              unelevated
-              label="Enter Inventory"
-              class="glass-button q-mt-lg"
-              :disable="!canSelectMode(APP_MODES.INVENTORY)"
-              no-caps
-            />
-            <div v-if="!canSelectMode(APP_MODES.INVENTORY)" class="text-caption text-negative q-mt-sm">
-              Mode inactive - contact support
-            </div>
-          </q-card-section>
-        </q-card>
-        <q-card
-          class="mode-card glass-card col-12 col-sm-6 col-md-4"
-          flat
-          :clickable="canSelectMode(APP_MODES.CLAIMS)"
-          :class="{ 'mode-disabled': !canSelectMode(APP_MODES.CLAIMS) }"
-          @click="selectMode('claims')"
-        >
-          <q-card-section class="text-center">
-            <q-icon name="description" size="64px" class="q-mb-md" />
-            <div class="text-h6 q-mb-sm glass-text">Claims Mode</div>
-            <div class="text-body2 glass-text-muted">
-              NHIA claims — generate and edit claims, correct ClaimIT errors, and import GHIMS XML without the full HMS menus.
-            </div>
-            <q-btn
-              unelevated
-              label="Enter Claims"
-              class="glass-button q-mt-lg"
-              :disable="!canSelectMode(APP_MODES.CLAIMS)"
-              no-caps
-            />
-            <div v-if="!canSelectClaimsRole" class="text-caption text-negative q-mt-sm">
-              Your role does not have Claims access
-            </div>
-            <div v-else-if="!canSelectMode(APP_MODES.CLAIMS)" class="text-caption text-negative q-mt-sm">
-              Claims module inactive - contact support
-            </div>
-          </q-card-section>
-        </q-card>
+          <div class="mode-icon" :style="{ color: mode.color, background: mode.bg }">
+            <component :is="mode.icon" :size="26" />
+          </div>
+          <h2 class="mode-name">{{ mode.title }}</h2>
+          <p class="mode-desc">{{ mode.description }}</p>
+          <span class="mode-cta" :class="{ muted: !mode.enabled }">
+            {{ mode.enabled ? mode.cta : mode.disabledReason }}
+          </span>
+        </motion.button>
+      </div>
+
+      <div class="choose-footer">
+        <button type="button" class="footer-link" @click="themeStore.toggleTheme()">
+          {{ themeStore.isDark ? 'Light mode' : 'Dark mode' }}
+        </button>
+        <button type="button" class="footer-link" @click="logout">Sign out</button>
       </div>
     </div>
   </div>
@@ -128,6 +64,15 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { motion } from 'motion-v';
+import { usePreferredReducedMotion } from '@vueuse/core';
+import {
+  Stethoscope,
+  Handshake,
+  Package,
+  FileText,
+  AlertTriangle,
+} from 'lucide-vue-next';
 import { useAppModeStore, APP_MODES, APP_MODE_MODULE_KEYS } from '../stores/appMode';
 import { useThemeStore } from '../stores/theme';
 import { useModuleSettingsStore } from '../stores/moduleSettings';
@@ -141,6 +86,8 @@ const themeStore = useThemeStore();
 const moduleSettingsStore = useModuleSettingsStore();
 const authStore = useAuthStore();
 const modeStatusLoaded = ref(false);
+const preferredReducedMotion = usePreferredReducedMotion();
+const reduceMotion = computed(() => preferredReducedMotion.value === 'reduce');
 
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 
@@ -162,10 +109,68 @@ const canSelectMode = (mode) => {
   if (mode === APP_MODES.CLAIMS && !canSelectClaimsRole.value) return false;
   return true;
 };
+
 const allModesInactiveForRegularUser = computed(() => {
   if (isSuperAdmin.value) return false;
-  return !isModeActive(APP_MODES.HMS) && !isModeActive(APP_MODES.COMPANION) && !isModeActive(APP_MODES.INVENTORY);
+  return (
+    !isModeActive(APP_MODES.HMS) &&
+    !isModeActive(APP_MODES.COMPANION) &&
+    !isModeActive(APP_MODES.INVENTORY)
+  );
 });
+
+const modes = computed(() => [
+  {
+    id: APP_MODES.HMS,
+    title: 'HMS Mode',
+    description:
+      'Full Hospital Management System — registration, encounters, billing, pharmacy, lab, and clinical modules.',
+    cta: 'Enter HMS',
+    icon: Stethoscope,
+    color: 'var(--hms-accent)',
+    bg: 'var(--hms-accent-muted)',
+    enabled: canSelectMode(APP_MODES.HMS),
+    disabledReason: 'Mode inactive — contact support',
+  },
+  {
+    id: APP_MODES.COMPANION,
+    title: 'Copayment',
+    description:
+      'Companion and copayment workflows — dedicated interface and menus for this module.',
+    cta: 'Enter Companion',
+    icon: Handshake,
+    color: 'var(--hms-healthcare)',
+    bg: 'var(--hms-healthcare-muted)',
+    enabled: canSelectMode(APP_MODES.COMPANION),
+    disabledReason: 'Mode inactive — contact support',
+  },
+  {
+    id: APP_MODES.INVENTORY,
+    title: 'Inventory Mode',
+    description:
+      'Stores and stock for department IC/deputies, store roles, Management, Pharmacy, and Admin.',
+    cta: 'Enter Inventory',
+    icon: Package,
+    color: 'var(--hms-warning)',
+    bg: 'rgba(245, 158, 11, 0.15)',
+    enabled: canSelectMode(APP_MODES.INVENTORY),
+    disabledReason: 'Mode inactive — contact support',
+  },
+  {
+    id: APP_MODES.CLAIMS,
+    title: 'Claims Mode',
+    description:
+      'NHIA claims — generate and edit claims, correct ClaimIT errors, and import GHIMS XML.',
+    cta: 'Enter Claims',
+    icon: FileText,
+    color: 'var(--hms-info)',
+    bg: 'rgba(56, 189, 248, 0.15)',
+    enabled: canSelectMode(APP_MODES.CLAIMS),
+    disabledReason: !canSelectClaimsRole.value
+      ? 'Your role does not have Claims access'
+      : 'Claims module inactive — contact support',
+  },
+]);
 
 const selectMode = (mode) => {
   if (!isSuperAdmin.value && !modeStatusLoaded.value) {
@@ -197,7 +202,13 @@ const selectMode = (mode) => {
   }
 };
 
+const logout = () => {
+  authStore.logout();
+  router.push('/login');
+};
+
 onMounted(async () => {
+  themeStore.initTheme();
   try {
     if (authStore.isAuthenticated && authStore.user?.can_access_inventory_mode === undefined) {
       try {
@@ -207,9 +218,7 @@ onMounted(async () => {
       }
     }
     modeStatusLoaded.value = false;
-    await moduleSettingsStore.fetchModuleStatus([
-      ...Object.values(APP_MODE_MODULE_KEYS),
-    ]);
+    await moduleSettingsStore.fetchModuleStatus([...Object.values(APP_MODE_MODULE_KEYS)]);
   } catch (error) {
     console.error('Failed to load app mode status:', error);
   } finally {
@@ -219,55 +228,171 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.choose-mode-background {
-  position: relative;
-  top: 0;
-  left: 0;
-  width: 100%;
+.choose-shell {
   min-height: 100vh;
-  overflow-y: auto;
-  z-index: 0;
+  padding: 2rem 1.25rem 3rem;
 }
 
-.choose-mode-container {
+.choose-inner {
+  max-width: 1080px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
   align-items: center;
-  min-height: 100vh;
-  padding: 32px 24px 40px;
-  position: relative;
-  z-index: 1;
+  gap: 1.75rem;
 }
 
-.mode-cards {
-  max-width: 1200px;
+.choose-header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.choose-logo {
+  border-radius: 10px;
+  box-shadow: var(--hms-shadow-sm);
+}
+
+.choose-title {
+  margin: 0;
+  font-size: var(--hms-text-3xl);
+  font-weight: 700;
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+}
+
+.choose-subtitle {
+  margin: 0;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-base);
+}
+
+.support-banner {
   width: 100%;
-  padding: 14px 12px 18px;
-  row-gap: 18px;
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 1rem 1.15rem;
+  border-radius: var(--hms-radius-xl);
+  color: var(--hms-text-primary);
+  font-size: var(--hms-text-sm);
+}
+
+.support-icon {
+  color: var(--hms-critical);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.mode-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
 }
 
 .mode-card {
-  min-height: 320px;
   display: flex;
-  align-items: stretch;
-  height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 0.65rem;
+  padding: 1.35rem 1.4rem 1.25rem;
+  border-radius: var(--hms-radius-2xl);
+  border: 1px solid var(--hms-border);
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  transition:
+    transform var(--hms-duration-normal) var(--hms-ease-out),
+    border-color var(--hms-duration-normal) var(--hms-ease-out),
+    box-shadow var(--hms-duration-normal) var(--hms-ease-out);
 }
 
-.mode-disabled {
+.mode-card:hover:not(.disabled) {
+  transform: translateY(-2px);
+  border-color: var(--hms-border-strong);
+  box-shadow: var(--hms-shadow-lg), var(--hms-shadow-inner);
+}
+
+.mode-card:focus-visible {
+  outline: 2px solid var(--hms-accent);
+  outline-offset: 2px;
+}
+
+.mode-card.disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-.mode-support-banner {
-  max-width: 1200px;
-}
-
-.mode-card .q-card__section {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+.mode-icon {
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--hms-radius-xl);
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.mode-name {
+  margin: 0;
+  font-size: var(--hms-text-xl);
+  font-weight: 700;
+  letter-spacing: var(--hms-tracking-tight);
+  color: var(--hms-text-primary);
+}
+
+.mode-desc {
+  margin: 0;
+  flex: 1;
+  color: var(--hms-text-secondary);
+  font-size: var(--hms-text-sm);
+  line-height: var(--hms-leading-relaxed);
+}
+
+.mode-cta {
+  margin-top: 0.5rem;
+  font-size: var(--hms-text-sm);
+  font-weight: 700;
+  color: var(--hms-accent);
+}
+
+.mode-cta.muted {
+  color: var(--hms-critical);
+  font-weight: 600;
+}
+
+.choose-footer {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.footer-link {
+  border: none;
+  background: none;
+  color: var(--hms-text-secondary);
+  font-family: inherit;
+  font-size: var(--hms-text-sm);
+  cursor: pointer;
+  padding: 0;
+}
+
+.footer-link:hover {
+  color: var(--hms-accent);
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .mode-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-card:hover:not(.disabled) {
+    transform: none;
+  }
 }
 </style>
