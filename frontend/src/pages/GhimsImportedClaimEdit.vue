@@ -1,5 +1,5 @@
 <template>
-  <q-page class="hms-page" :class="{ 'revert-bar-visible': !loading && status === 'finalized' }">
+  <q-page class="hms-page claim-edit-page" :class="{ 'revert-bar-visible': !loading && status === 'finalized' }">
     <HmsPageHeader :title="status === 'finalized' ? 'View imported claim' : 'Edit imported claim'">
       <template #actions>
         <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">

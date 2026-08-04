@@ -1,5 +1,5 @@
 <template>
-  <q-page class="hms-page" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
+  <q-page class="hms-page claim-edit-page" :class="{ 'reopen-bar-visible': !loading && claimStatus === 'finalized' }">
     <HmsPageHeader :title="isViewMode ? 'View NHIS claim' : 'Edit NHIS claim'">
       <template #actions>
         <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
