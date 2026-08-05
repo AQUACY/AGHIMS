@@ -212,6 +212,7 @@ export const CLAIMS_NAV_GROUPS = [
       { id: 'claims-reports', label: 'Reports', icon: 'assessment', to: { name: 'ClaimsReports' }, moduleKey: 'claims' },
       { id: 'claims-errors', label: 'Correct errors', icon: 'error_outline', to: { name: 'ClaimItCorrectErrors' }, moduleKey: 'claims' },
       { id: 'claims-ghims', label: 'Import GHIMS XML', icon: 'upload_file', to: { name: 'GhimsXmlImport' }, moduleKey: 'claims' },
+      { id: 'claims-ai-vetting', label: 'AI Vetting', icon: 'auto_awesome', to: { name: 'AiClaimsVetting' }, moduleKey: 'claims' },
       { id: 'claims-cfx', label: 'CFX Convert & Diff', icon: 'compare_arrows', to: { name: 'ClaimsCxfTools' }, moduleKey: 'claims' },
       {
         id: 'claims-price-list',

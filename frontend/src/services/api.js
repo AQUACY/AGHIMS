@@ -967,6 +967,40 @@ export const claimsAPI = {
     }),
 };
 
+/** AI Claims Vetting (optional module: ai_claims_vetting) */
+export const aiClaimVettingAPI = {
+  analyzeSample: (payload) => api.post('/ai-claim-vetting/analyze', payload),
+  analyzeGhimsItem: (itemId) => api.post(`/ai-claim-vetting/ghims-items/${itemId}/analyze`),
+  listGhimsFindings: (itemId, statusFilter = null) =>
+    api.get(`/ai-claim-vetting/ghims-items/${itemId}/findings`, {
+      params: statusFilter ? { status_filter: statusFilter } : {},
+    }),
+  decideFinding: (findingId, { decision, note = null, otac = null } = {}) =>
+    api.post(`/ai-claim-vetting/findings/${findingId}/decide`, {
+      decision,
+      ...(note ? { note } : {}),
+      ...(otac ? { otac } : {}),
+    }),
+  startBatchAnalyze: (batchId, { item_ids = null, include_finalized = false } = {}) =>
+    api.post(`/ai-claim-vetting/batches/${batchId}/analyze`, {
+      item_ids: item_ids && item_ids.length ? item_ids : null,
+      include_finalized: !!include_finalized,
+    }),
+  getJob: (jobId) => api.get(`/ai-claim-vetting/jobs/${jobId}`),
+  getLatestBatchJob: (batchId) => api.get(`/ai-claim-vetting/batches/${batchId}/jobs/latest`),
+  getBatchReport: (batchId, statusFilter = 'pending') =>
+    api.get(`/ai-claim-vetting/batches/${batchId}/report`, {
+      params: { status_filter: statusFilter },
+    }),
+  bulkDecideFindings: ({ finding_ids, decision, note = null, otac = null }) =>
+    api.post('/ai-claim-vetting/findings/bulk-decide', {
+      finding_ids,
+      decision,
+      ...(note ? { note } : {}),
+      ...(otac ? { otac } : {}),
+    }, { timeout: 600000 }),
+};
+
 /** Claims analytics: dashboard aggregates + advice */
 export const claimsAnalyticsAPI = {
   getDashboard: (params = {}) => api.get('/claims/dashboard', { params }),

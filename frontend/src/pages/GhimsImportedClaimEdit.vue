@@ -120,6 +120,14 @@
         <div class="text-body2">{{ flagComment }}</div>
       </q-banner>
 
+      <AiClaimVettingPanel
+        :item-id="itemId"
+        :disabled="status === 'finalized'"
+        :auto-run="false"
+        class="q-mb-md"
+        @payload-updated="onAiPayloadUpdated"
+      />
+
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider / Claim Header</div>
@@ -864,6 +872,7 @@
 import { ref, reactive, computed, watch } from 'vue';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
+import AiClaimVettingPanel from '../components/claims/AiClaimVettingPanel.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
@@ -2343,6 +2352,12 @@ async function onConvertGhanaCardToHin() {
   } finally {
     convertingGhanaCard.value = false;
   }
+}
+
+function onAiPayloadUpdated(nextPayload) {
+  if (!nextPayload || typeof nextPayload !== 'object') return;
+  Object.assign(payload, normalize(nextPayload));
+  syncGhimsServiceDateSnapshot();
 }
 
 async function onGetGhimsClaimCcc() {

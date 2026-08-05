@@ -54,6 +54,14 @@
         <div class="text-body2">{{ flagComment }}</div>
       </q-banner>
 
+      <AiClaimVettingPanel
+        :item-id="itemId"
+        :disabled="status === 'finalized'"
+        :auto-run="false"
+        class="q-mb-md"
+        @payload-updated="onAiPayloadUpdated"
+      />
+
       <q-card flat bordered>
         <q-card-section>
           <div class="text-h6 q-mb-md">Provider / Claim Header</div>
@@ -442,6 +450,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
+import AiClaimVettingPanel from '../components/claims/AiClaimVettingPanel.vue';
 import {
   confirmClaimGetCcc,
   canFetchClaimCcc,
@@ -1187,6 +1196,11 @@ async function onGetGhimsClaimCcc() {
   } finally {
     fetchingClaimCcc.value = false;
   }
+}
+
+function onAiPayloadUpdated(nextPayload) {
+  if (!nextPayload || typeof nextPayload !== 'object') return;
+  Object.assign(payload, normalize(nextPayload));
 }
 
 async function load() {

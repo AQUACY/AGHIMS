@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     NHIA_SSL_VERIFY: bool = True
     NHIA_SSL_CA_BUNDLE: str = ""  # Optional path to custom CA bundle (.pem)
     NHIA_DEFAULT_CARD_TYPE: str = "NHISCARD"  # NHISCARD or GHANACARD on CCC portal
+
+    # AI Claim Vetting (Phase 1) — local Ollama optional; rules provider is default
+    AI_CLAIM_VETTING_PROVIDER: str = "rules"  # rules | ollama
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "llama3.2"
+    OLLAMA_TIMEOUT_SECONDS: float = 30.0
     
     @property
     def DATABASE_URL(self) -> str:

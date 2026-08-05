@@ -180,6 +180,13 @@ DEFAULT_MODULES = [
         "category": "core",
         "display_order": 23
     },
+    {
+        "module_key": "ai_claims_vetting",
+        "module_name": "AI Claims Vetting",
+        "description": "Optional AI-assisted claims vetting for ZOOM specialty cleanup, Ghana Card→HIN, and later clinical validation. Recommendations require human approval.",
+        "category": "administrative",
+        "display_order": 24
+    },
 ]
 
 
@@ -217,7 +224,7 @@ def init_module_settings():
                             module_key=module_data["module_key"],
                             module_name=module_data["module_name"],
                             description=module_data.get("description", ""),
-                            is_active=module_data["module_key"] != "ghims",
+                            is_active=module_data["module_key"] not in ("ghims", "ai_claims_vetting"),
                             allow_read=True,
                             allow_create=True,
                             allow_update=True,
@@ -278,7 +285,7 @@ def init_module_settings():
                 existing = cursor.fetchone()
                 
                 if not existing:
-                    ghims_active = module_data["module_key"] != "ghims"
+                    ghims_active = module_data["module_key"] not in ("ghims", "ai_claims_vetting")
                     cursor.execute("""
                         INSERT INTO module_settings 
                         (module_key, module_name, description, is_active, allow_read, 
