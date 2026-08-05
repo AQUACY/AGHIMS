@@ -201,6 +201,98 @@ def create_price_item(
         db.refresh(item)
         return {"message": f"{file_type} price item created successfully", "item_id": item.id}
 
+
+class BulkClearRequest(BaseModel):
+    """Bulk archive or permanently delete all items of one price-list type."""
+    mode: str = "archive"  # archive | hard
+    confirm: str  # must equal file_type, e.g. "product"
+    sub_category_2: Optional[str] = None  # optional product filter, e.g. "Pharmacy"
+
+
+@router.post("/bulk-clear/{file_type}")
+def bulk_clear_price_list(
+    file_type: str,
+    body: BulkClearRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Pharmacy Head", "Store Manager"])),
+    _module_check: User = Depends(require_module_permission("price_list", "update")),
+):
+    """
+    Archive or permanently delete all items for a price-list file type.
+    Soft archive (is_active=False) is the default and recommended.
+    Optional sub_category_2 limits product clears (e.g. Pharmacy only).
+    """
+    valid_types = ["procedure", "surgery", "product", "unmapped_drg"]
+    if file_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file_type. Must be one of: {', '.join(valid_types)}",
+        )
+
+    mode = (body.mode or "archive").strip().lower()
+    if mode not in ("archive", "hard"):
+        raise HTTPException(status_code=400, detail="mode must be 'archive' or 'hard'")
+
+    # Hard delete requires Admin
+    if mode == "hard" and not (
+        current_user.has_role("Admin") or current_user.has_role("Super Admin")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only Admin can permanently delete price list items. Use mode='archive' instead.",
+        )
+
+    if (body.confirm or "").strip().lower() != file_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Confirmation failed. Set confirm to '{file_type}' to proceed.",
+        )
+
+    model_map = {
+        "product": ProductPrice,
+        "procedure": ProcedurePrice,
+        "surgery": SurgeryPrice,
+        "unmapped_drg": UnmappedDRGPrice,
+    }
+    model = model_map[file_type]
+    query = db.query(model)
+
+    if file_type == "product" and body.sub_category_2:
+        sub = body.sub_category_2.strip()
+        query = query.filter(ProductPrice.sub_category_2 == sub)
+
+    # For archive mode, only touch currently active rows (idempotent)
+    if mode == "archive":
+        query = query.filter(model.is_active == True)
+
+    matched = query.all()
+    count = len(matched)
+
+    if mode == "archive":
+        for item in matched:
+            item.is_active = False
+        db.commit()
+        return {
+            "message": f"Archived {count} {file_type} item(s)",
+            "file_type": file_type,
+            "mode": mode,
+            "count": count,
+            "sub_category_2": body.sub_category_2,
+        }
+
+    # hard delete
+    for item in matched:
+        db.delete(item)
+    db.commit()
+    return {
+        "message": f"Permanently deleted {count} {file_type} item(s)",
+        "file_type": file_type,
+        "mode": mode,
+        "count": count,
+        "sub_category_2": body.sub_category_2,
+    }
+
+
 @router.put("/item/{file_type}/{item_id}")
 def update_price_item(
     file_type: str,  # procedure, surgery, product, unmapped_drg
@@ -659,6 +751,8 @@ def search_price_items_endpoint(
     service_type: Optional[str] = None,  # Service Type (department/clinic) filter
     file_type: Optional[str] = None,  # Filter by file type: procedure, surgery, product, unmapped_drg
     status_filter: Optional[str] = "active",  # active | archived | all
+    sub_category_2: Optional[str] = None,  # Product Sub Category 2 (Pharmacy, Non-Drug Consumables, ...)
+    insurance_covered: Optional[str] = None,  # yes | no
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Nurse", "PA"])),
     _module_check: User = Depends(require_module_permission("price_list", "read"))
@@ -672,8 +766,25 @@ def search_price_items_endpoint(
             detail="status_filter must be one of: active, archived, all",
         )
 
+    if insurance_covered is not None and str(insurance_covered).strip():
+        ins = str(insurance_covered).strip().lower()
+        if ins not in ("yes", "no"):
+            raise HTTPException(
+                status_code=400,
+                detail="insurance_covered must be 'yes' or 'no'",
+            )
+        insurance_covered = ins
+    else:
+        insurance_covered = None
+
     results = search_price_items_all_tables(
-        db, search_term, service_type, file_type, status_filter=status
+        db,
+        search_term,
+        service_type,
+        file_type,
+        status_filter=status,
+        sub_category_2=sub_category_2,
+        insurance_covered=insurance_covered,
     )
     
     # Format results
@@ -842,6 +953,24 @@ def get_service_types(
     ).all()
     
     return [st[0] for st in service_types if st[0]]
+
+
+@router.get("/product-subcategories")
+def get_product_subcategories(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Doctor", "Admin", "Pharmacy", "Pharmacy Head", "Store Manager", "Nurse", "PA"])),
+    _module_check: User = Depends(require_module_permission("price_list", "read")),
+):
+    """Distinct Sub Category 2 values from product prices (Pharmacy, Non-Drug Consumables, etc.)."""
+    from sqlalchemy import distinct
+
+    rows = (
+        db.query(distinct(ProductPrice.sub_category_2))
+        .filter(ProductPrice.sub_category_2.isnot(None))
+        .order_by(ProductPrice.sub_category_2)
+        .all()
+    )
+    return [r[0] for r in rows if r[0] and str(r[0]).strip()]
 
 
 @router.get("/icd10/search")
