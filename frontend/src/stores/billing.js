@@ -42,9 +42,23 @@ export const useBillingStore = defineStore('billing', {
       }
     },
 
-    async searchPriceItems(searchTerm, serviceType = null, fileType = null, statusFilter = 'active') {
+    async searchPriceItems(
+      searchTerm,
+      serviceType = null,
+      fileType = null,
+      statusFilter = 'active',
+      subCategory2 = null,
+      insuranceCovered = null
+    ) {
       try {
-        const response = await priceListAPI.search(searchTerm, serviceType, fileType, statusFilter);
+        const response = await priceListAPI.search(
+          searchTerm,
+          serviceType,
+          fileType,
+          statusFilter,
+          subCategory2,
+          insuranceCovered
+        );
         this.priceListItems = response.data;
         return response.data;
       } catch (error) {

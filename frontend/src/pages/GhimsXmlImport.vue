@@ -42,12 +42,21 @@
       <div class="panel-head">
         <div>
           <div class="panel-title">Recent XML imports</div>
-          <div class="panel-sub">Open a batch to review claims and export</div>
+          <div class="panel-sub">Click a batch to review claims and export</div>
         </div>
       </div>
       <div class="panel-body">
         <div v-if="batches.length" class="batch-list">
-          <div v-for="b in batches" :key="b.id" class="batch-row">
+          <div
+            v-for="b in batches"
+            :key="b.id"
+            class="batch-row"
+            role="button"
+            tabindex="0"
+            @click="openBatch(b.id)"
+            @keydown.enter.prevent="openBatch(b.id)"
+            @keydown.space.prevent="openBatch(b.id)"
+          >
             <div class="batch-copy">
               <div class="batch-name">{{ b.file_name }}</div>
               <div class="batch-meta">
@@ -55,18 +64,16 @@
                 · {{ b.pharmacy_vetted_count || 0 }} pharmacy-vetted · {{ b.doctor_vetted_count || 0 }} doctor-vetted
               </div>
             </div>
-            <div class="batch-actions">
-              <HmsButton
-                v-if="canDeleteImportBatch"
-                variant="danger"
-                size="sm"
+            <div v-if="canDeleteImportBatch" class="batch-actions" @click.stop>
+              <button
+                type="button"
+                class="batch-delete-btn"
+                aria-label="Delete import batch"
                 @click="deleteBatch(b)"
               >
-                Delete
-              </HmsButton>
-              <HmsButton variant="secondary" size="sm" @click="openBatch(b.id)">
-                Open
-              </HmsButton>
+                <Trash2 :size="15" :stroke-width="2" />
+                <q-tooltip anchor="top middle" self="bottom middle">Delete import (admin only)</q-tooltip>
+              </button>
             </div>
           </div>
         </div>
@@ -397,6 +404,7 @@ import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { setGhimsNavIds } from '../utils/claimNav';
+import { Trash2 } from 'lucide-vue-next';
 import {
   isClaimExportable,
   confirmExportWithVettingWarning,
@@ -997,9 +1005,21 @@ function deleteBatch(batch) {
     $q.notify({ type: 'negative', message: 'Only Admin can delete imports' });
     return;
   }
-  $q.dialog({ title: 'Delete Imported XML', message: `Delete ${batch.file_name}?`, cancel: true, persistent: true }).onOk(async () => {
-    try { await claimsAPI.deleteGhimsImportBatch(batch.id); await loadBatches(); $q.notify({ type: 'positive', message: 'Import deleted' }); }
-    catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to delete import' }); }
+  $q.dialog({
+    title: 'Delete imported XML?',
+    message:
+      `Permanently delete “${batch.file_name}” and all ${batch.claim_count || 0} claim(s) in this batch? This cannot be undone.`,
+    cancel: { label: 'Keep batch', flat: true, color: 'primary' },
+    ok: { label: 'Delete permanently', color: 'negative', unelevated: true },
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      await claimsAPI.deleteGhimsImportBatch(batch.id);
+      await loadBatches();
+      $q.notify({ type: 'positive', message: 'Import deleted' });
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to delete import' });
+    }
   });
 }
 
@@ -1097,10 +1117,50 @@ onMounted(async () => {
   border: 1px solid var(--hms-border);
   border-radius: var(--hms-radius-lg);
   background: var(--hms-surface, transparent);
+  cursor: pointer;
+  transition:
+    background-color var(--hms-duration-fast) var(--hms-ease-out),
+    border-color var(--hms-duration-fast) var(--hms-ease-out);
+}
+.batch-row:hover,
+.batch-row:focus-visible {
+  background: var(--hms-surface-hover, var(--hms-surface));
+  border-color: var(--hms-border-strong);
+  outline: none;
 }
 .batch-name { font-weight: 650; color: var(--hms-text-primary); font-size: var(--hms-text-sm); }
 .batch-meta { margin-top: 0.2rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
 .batch-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.batch-delete-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--hms-radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--hms-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    opacity var(--hms-duration-fast) var(--hms-ease-out),
+    color var(--hms-duration-fast) var(--hms-ease-out),
+    background-color var(--hms-duration-fast) var(--hms-ease-out),
+    border-color var(--hms-duration-fast) var(--hms-ease-out);
+}
+.batch-row:hover .batch-delete-btn,
+.batch-row:focus-within .batch-delete-btn {
+  opacity: 0.85;
+}
+.batch-delete-btn:hover,
+.batch-delete-btn:focus-visible {
+  opacity: 1;
+  color: var(--hms-critical, #ef4444);
+  background: var(--hms-critical-muted, rgba(239, 68, 68, 0.12));
+  border-color: color-mix(in srgb, var(--hms-critical, #ef4444) 28%, transparent);
+  outline: none;
+}
 .empty-hint { font-size: var(--hms-text-sm); color: var(--hms-text-muted); margin: 0; }
 .batch-toolbar :deep(.q-card-section) { padding: 1rem; }
 .table-wrap { padding: 0; overflow-x: auto; }
