@@ -125,15 +125,21 @@ def _apply_claim_status_filter(query, claim_status: str):
     return query.filter(Claim.status == claim_status)
 
 
+def _user_display_name(u: Optional[User]) -> Optional[str]:
+    if not u:
+        return None
+    return (u.full_name if u.full_name else None) or u.username
+
+
 def _vetting_snapshot(obj, db: Session) -> dict:
     pharmacy_name = None
     doctor_name = None
     if getattr(obj, "pharmacy_vetted_by", None):
         u = db.query(User).filter(User.id == obj.pharmacy_vetted_by).first()
-        pharmacy_name = (u.full_name if u and u.full_name else None) or (u.username if u else None)
+        pharmacy_name = _user_display_name(u)
     if getattr(obj, "doctor_vetted_by", None):
         u = db.query(User).filter(User.id == obj.doctor_vetted_by).first()
-        doctor_name = (u.full_name if u and u.full_name else None) or (u.username if u else None)
+        doctor_name = _user_display_name(u)
     # Flags are independent and persist after claims-manager finalize
     return {
         "pharmacy_vetted": bool(obj.pharmacy_vetted_at),
@@ -145,6 +151,34 @@ def _vetting_snapshot(obj, db: Session) -> dict:
         "doctor_vetted_by": obj.doctor_vetted_by,
         "doctor_vetted_by_name": doctor_name,
     }
+
+
+def _ownership_snapshot(obj, db: Session) -> dict:
+    """Ownership is a workload signal only — does not restrict who can vet."""
+    assigned_to_name = None
+    assigned_by_name = None
+    assigned_to_id = getattr(obj, "assigned_to_id", None)
+    assigned_by_id = getattr(obj, "assigned_by_id", None)
+    if assigned_to_id:
+        assigned_to_name = _user_display_name(
+            db.query(User).filter(User.id == assigned_to_id).first()
+        )
+    if assigned_by_id:
+        assigned_by_name = _user_display_name(
+            db.query(User).filter(User.id == assigned_by_id).first()
+        )
+    assigned_at = getattr(obj, "assigned_at", None)
+    return {
+        "assigned_to_id": assigned_to_id,
+        "assigned_to_name": assigned_to_name,
+        "assigned_at": assigned_at.isoformat() if assigned_at else None,
+        "assigned_by_id": assigned_by_id,
+        "assigned_by_name": assigned_by_name,
+        "assignment_note": getattr(obj, "assignment_note", None),
+    }
+
+
+ASSIGNABLE_ROLES = ("Doctor", "PA", "Claims", "Pharmacy", "Pharmacy Head", "Admin")
 
 
 def _list_vet_fields(claim: Optional[Claim], db: Session) -> dict:
@@ -165,7 +199,7 @@ def _list_vet_fields(claim: Optional[Claim], db: Session) -> dict:
 
 
 def _ensure_claim_vetting_columns(db: Session) -> None:
-    """Ensure vetting columns exist on claims and claim_xml_import_items."""
+    """Ensure vetting + ownership columns exist on claims and claim_xml_import_items."""
     bind = db.get_bind()
     dialect = bind.dialect.name if hasattr(bind, "dialect") else ""
     specs = [
@@ -177,6 +211,11 @@ def _ensure_claim_vetting_columns(db: Session) -> None:
         ("claim_xml_import_items", "pharmacy_vetted_by", "INTEGER NULL"),
         ("claim_xml_import_items", "doctor_vetted_at", "DATETIME NULL"),
         ("claim_xml_import_items", "doctor_vetted_by", "INTEGER NULL"),
+        ("claim_xml_import_items", "assigned_to_id", "INTEGER NULL"),
+        ("claim_xml_import_items", "assigned_at", "DATETIME NULL"),
+        ("claim_xml_import_items", "assigned_by_id", "INTEGER NULL"),
+        ("claim_xml_import_items", "assignment_note", "VARCHAR(255) NULL"),
+        ("claim_xml_import_batches", "demarcation_rules", "JSON NULL"),
     ]
     for table, col, typ in specs:
         try:
@@ -4295,6 +4334,7 @@ def list_ghims_import_batches(
             "flagged_count": sum(1 for i in (b.items or []) if i.status == "flagged"),
             "pharmacy_vetted_count": sum(1 for i in (b.items or []) if i.pharmacy_vetted_at),
             "doctor_vetted_count": sum(1 for i in (b.items or []) if i.doctor_vetted_at),
+            "assigned_count": sum(1 for i in (b.items or []) if getattr(i, "assigned_to_id", None)),
         }
         for b in batches
     ]
@@ -4309,6 +4349,7 @@ def get_ghims_import_batch(
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
     """Get one imported XML batch with mapped claim records (fast by default)."""
+    _ensure_claim_vetting_columns(db)
     batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found.")
@@ -4327,6 +4368,22 @@ def get_ghims_import_batch(
         totals_by_id = totals_payload["totals"]
         batch_revenue = totals_payload["total_revenue"]
 
+    # Resolve user display names once for vetting + ownership (avoid N+1)
+    name_ids = set()
+    for i in items:
+        for uid in (
+            getattr(i, "pharmacy_vetted_by", None),
+            getattr(i, "doctor_vetted_by", None),
+            getattr(i, "assigned_to_id", None),
+            getattr(i, "assigned_by_id", None),
+        ):
+            if uid:
+                name_ids.add(uid)
+    names_by_id: Dict[int, str] = {}
+    if name_ids:
+        for u in db.query(User).filter(User.id.in_(name_ids)).all():
+            names_by_id[u.id] = _user_display_name(u) or str(u.id)
+
     rows = []
     for i in items:
         p = i.payload or {}
@@ -4342,6 +4399,9 @@ def get_ghims_import_batch(
             visit_start_date = str(date_of_service).strip() or None
         member_no = str(p.get("memberNo") or "").strip() or None
         hin = str(p.get("hin") or "").strip() or None
+        assigned_to_id = getattr(i, "assigned_to_id", None)
+        assigned_by_id = getattr(i, "assigned_by_id", None)
+        assigned_at = getattr(i, "assigned_at", None)
         row = {
             "id": i.id,
             "row_index": i.row_index,
@@ -4362,7 +4422,20 @@ def get_ghims_import_batch(
             "missing_sections": missing_sections,
             "has_missing_sections": len(missing_sections) > 0,
             "no_clinical_sections": len(missing_sections) == 4,
-            **_vetting_snapshot(i, db),
+            "pharmacy_vetted": bool(i.pharmacy_vetted_at),
+            "pharmacy_vetted_at": i.pharmacy_vetted_at.isoformat() if i.pharmacy_vetted_at else None,
+            "pharmacy_vetted_by": i.pharmacy_vetted_by,
+            "pharmacy_vetted_by_name": names_by_id.get(i.pharmacy_vetted_by) if i.pharmacy_vetted_by else None,
+            "doctor_vetted": bool(i.doctor_vetted_at),
+            "doctor_vetted_at": i.doctor_vetted_at.isoformat() if i.doctor_vetted_at else None,
+            "doctor_vetted_by": i.doctor_vetted_by,
+            "doctor_vetted_by_name": names_by_id.get(i.doctor_vetted_by) if i.doctor_vetted_by else None,
+            "assigned_to_id": assigned_to_id,
+            "assigned_to_name": names_by_id.get(assigned_to_id) if assigned_to_id else None,
+            "assigned_at": assigned_at.isoformat() if assigned_at else None,
+            "assigned_by_id": assigned_by_id,
+            "assigned_by_name": names_by_id.get(assigned_by_id) if assigned_by_id else None,
+            "assignment_note": getattr(i, "assignment_note", None),
         }
         if include_totals:
             row["total_claim_amount"] = totals_by_id.get(i.id, 0.0)
@@ -4373,6 +4446,7 @@ def get_ghims_import_batch(
         "file_name": batch.file_name,
         "uploaded_at": batch.uploaded_at.isoformat() if batch.uploaded_at else None,
         "claim_count": batch.claim_count,
+        "demarcation_rules": getattr(batch, "demarcation_rules", None) or [],
         "claims": rows,
     }
     if include_totals:
@@ -4591,6 +4665,7 @@ def get_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    _ensure_claim_vetting_columns(db)
     payload = item.payload or {}
     claim_summary = compute_claim_summary_from_ghims_payload(
         db, payload, price_cache=PriceAmountCache.build(db)
@@ -4606,6 +4681,7 @@ def get_ghims_import_item(
         "claim_summary": claim_summary,
         "claimit_errors": _get_claimit_errors_for_import_item(db, item),
         **_vetting_snapshot(item, db),
+        **_ownership_snapshot(item, db),
     }
 
 
@@ -4826,6 +4902,412 @@ def bulk_update_ghims_import_items_status(
 
     db.commit()
     return {"updated": len(items), "action": action, "item_ids": sorted([i.id for i in items])}
+
+
+class GhimsAssignBody(BaseModel):
+    """Assign or clear ownership on one imported claim (does not restrict vetting)."""
+    assigned_to_id: Optional[int] = None  # null clears ownership
+    assignment_note: Optional[str] = None
+
+
+class GhimsAssignRule(BaseModel):
+    """
+    One demarcation rule within a batch.
+
+    Criteria are AND-combined: a claim must match the row range (if set)
+    AND service filter (if set) AND attendance (if set) AND specialty (if set)
+    AND age range (if set). Within each multi-select list, matching is OR.
+    Later rules overwrite earlier ones on the same claim.
+    """
+    assigned_to_id: Optional[int] = None  # null = unassign matching claims
+    assignment_note: Optional[str] = None
+    row_from: Optional[int] = None
+    row_to: Optional[int] = None
+    item_ids: Optional[List[int]] = None
+    # Inclusive patient age in years (from DOB). Either end may be omitted.
+    age_from: Optional[int] = None
+    age_to: Optional[int] = None
+    # Single values kept for backward compatibility with earlier clients
+    type_of_service: Optional[str] = None
+    type_of_attendance: Optional[str] = None
+    specialty_attended: Optional[str] = None
+    # Preferred multi-select fields
+    types_of_service: Optional[List[str]] = None
+    types_of_attendance: Optional[List[str]] = None
+    specialties_attended: Optional[List[str]] = None
+
+
+class GhimsBulkAssignBody(BaseModel):
+    rules: List[GhimsAssignRule]
+    # When true (default for full demarcation plans): clear all ownership first, then apply rules in order.
+    # When false: only touch claims matched by the rules (used for "assign selected").
+    replace_plan: bool = False
+    # Persist these rules on the batch so they can be reopened and edited
+    save_plan: bool = False
+
+
+def _payload_str(payload: dict, *keys) -> str:
+    for k in keys:
+        v = payload.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def _normalize_str_list(*parts) -> List[str]:
+    out: List[str] = []
+    for part in parts:
+        if part is None:
+            continue
+        if isinstance(part, str):
+            val = part.strip()
+            if val:
+                out.append(val)
+            continue
+        if isinstance(part, (list, tuple, set)):
+            for x in part:
+                val = str(x or "").strip()
+                if val:
+                    out.append(val)
+    # preserve order, unique
+    seen = set()
+    uniq = []
+    for v in out:
+        key = v.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(v)
+    return uniq
+
+
+def _rule_services(rule: GhimsAssignRule) -> List[str]:
+    return [s.upper() for s in _normalize_str_list(rule.types_of_service, rule.type_of_service)]
+
+
+def _rule_attendances(rule: GhimsAssignRule) -> List[str]:
+    return _normalize_str_list(rule.types_of_attendance, rule.type_of_attendance)
+
+
+def _rule_specialties(rule: GhimsAssignRule) -> List[str]:
+    return _normalize_str_list(rule.specialties_attended, rule.specialty_attended)
+
+
+def _claim_age_years_from_payload(payload: dict, as_of: Optional[date] = None) -> Optional[int]:
+    """Age in whole years from claim DOB; None if DOB missing/invalid."""
+    raw = _payload_str(payload or {}, "dateOfBirth", "date_of_birth")
+    if not raw:
+        return None
+    dob: Optional[date] = None
+    try:
+        if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+            dob = date.fromisoformat(raw[:10])
+        else:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            dob = parsed.date()
+    except Exception:
+        try:
+            parsed = datetime.strptime(raw[:10], "%Y-%m-%d")
+            dob = parsed.date()
+        except Exception:
+            return None
+    if not dob:
+        return None
+    today = as_of or date.today()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    return age if age >= 0 else None
+
+
+def _rule_has_age_filter(rule: GhimsAssignRule) -> bool:
+    return rule.age_from is not None or rule.age_to is not None
+
+
+def _rule_has_payload_filters(rule: GhimsAssignRule) -> bool:
+    return bool(
+        _rule_services(rule)
+        or _rule_attendances(rule)
+        or _rule_specialties(rule)
+        or _rule_has_age_filter(rule)
+    )
+
+
+def _item_matches_filters(item: ClaimXmlImportItem, rule: GhimsAssignRule) -> bool:
+    p = item.payload or {}
+    services = _rule_services(rule)
+    attendances = _rule_attendances(rule)
+    specialties = _rule_specialties(rule)
+
+    if services:
+        item_svc = _payload_str(p, "typeOfService", "type_of_service").upper()
+        if item_svc not in services:
+            return False
+    if attendances:
+        item_att = _payload_str(p, "typeOfAttendance", "type_of_attendance")
+        allowed = {a.upper() for a in attendances}
+        if item_att.upper() not in allowed:
+            return False
+    if specialties:
+        item_spec = _payload_str(p, "specialtyAttended", "specialty_attended")
+        allowed = {s.upper() for s in specialties}
+        if item_spec.upper() not in allowed:
+            return False
+    if _rule_has_age_filter(rule):
+        if rule.age_from is not None and rule.age_to is not None and rule.age_from > rule.age_to:
+            raise HTTPException(status_code=400, detail="age_from must be <= age_to.")
+        age = _claim_age_years_from_payload(p)
+        if age is None:
+            return False
+        if rule.age_from is not None and age < rule.age_from:
+            return False
+        if rule.age_to is not None and age > rule.age_to:
+            return False
+    return True
+
+
+def _resolve_assign_targets(batch_items: List[ClaimXmlImportItem], rule: GhimsAssignRule) -> List[ClaimXmlImportItem]:
+    """
+    Resolve which items a rule targets.
+
+    - item_ids: exact IDs
+    - filters only: all claims matching service/attendance/specialty/age
+    - row range only: XML row_index between from–to
+    - row range + filters: among claims that match the filters (in XML order),
+      take the 1st–Nth matching claims by ordinal position (from–to).
+      Example: from=1,to=547 + OPD + Adults → first 547 OPD adult claims,
+      skipping kids / non-OPD / other specialties in between.
+    """
+    if rule.item_ids:
+        wanted = set(int(x) for x in rule.item_ids)
+        return [i for i in batch_items if i.id in wanted]
+
+    has_range = rule.row_from is not None or rule.row_to is not None
+    has_filters = _rule_has_payload_filters(rule)
+    if not has_range and not has_filters:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Each rule needs item_ids, a row_from/row_to range, and/or "
+                "type_of_service / type_of_attendance / specialty_attended / age_from/age_to filters."
+            ),
+        )
+
+    if has_range:
+        if rule.row_from is None or rule.row_to is None:
+            raise HTTPException(status_code=400, detail="row_from and row_to are both required for range assignment.")
+        if rule.row_from > rule.row_to:
+            raise HTTPException(status_code=400, detail="row_from must be <= row_to.")
+
+    if _rule_has_age_filter(rule) and rule.age_from is not None and rule.age_to is not None:
+        if rule.age_from > rule.age_to:
+            raise HTTPException(status_code=400, detail="age_from must be <= age_to.")
+
+    # Filters first (XML order preserved from batch_items)
+    if has_filters:
+        filtered = [i for i in batch_items if _item_matches_filters(i, rule)]
+        if not has_range:
+            return filtered
+        # from–to = 1-based ordinal among filtered matches (not raw XML row_index)
+        return [
+            item
+            for ordinal, item in enumerate(filtered, start=1)
+            if rule.row_from <= ordinal <= rule.row_to
+        ]
+
+    # No filters: from–to is literal XML row_index
+    return [
+        i
+        for i in batch_items
+        if i.row_index is not None and rule.row_from <= i.row_index <= rule.row_to
+    ]
+
+
+def _apply_ownership(item: ClaimXmlImportItem, assigned_to_id: Optional[int], note: Optional[str], by_user_id: int) -> None:
+    note_val = (note or "").strip() or None
+    if assigned_to_id is None:
+        item.assigned_to_id = None
+        item.assigned_at = None
+        item.assigned_by_id = None
+        item.assignment_note = None
+        return
+    item.assigned_to_id = assigned_to_id
+    item.assigned_at = datetime.utcnow()
+    item.assigned_by_id = by_user_id
+    item.assignment_note = note_val
+
+
+def _serialize_assign_rule(rule: GhimsAssignRule) -> dict:
+    """Persistable rule dict for demarcation_rules JSON."""
+    return {
+        "assigned_to_id": rule.assigned_to_id,
+        "assignment_note": (rule.assignment_note or "").strip() or None,
+        "row_from": rule.row_from,
+        "row_to": rule.row_to,
+        "age_from": rule.age_from,
+        "age_to": rule.age_to,
+        "types_of_service": _rule_services(rule) or None,
+        "types_of_attendance": _rule_attendances(rule) or None,
+        "specialties_attended": _rule_specialties(rule) or None,
+        # omit item_ids from saved plans — those are one-off selected assigns
+        "item_ids": sorted(set(int(x) for x in rule.item_ids)) if rule.item_ids else None,
+    }
+
+
+@router.get("/ghims-import/assignees")
+def list_ghims_import_assignees(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Active staff who can be claim owners (Doctor, PA, Claims, Pharmacy, Admin)."""
+    from app.models.user_role import UserRole
+
+    primary = (
+        db.query(User)
+        .filter(User.is_active == True, User.role.in_(ASSIGNABLE_ROLES))  # noqa: E712
+        .all()
+    )
+    extra_ids = [
+        r.user_id
+        for r in db.query(UserRole.user_id).filter(UserRole.role.in_(ASSIGNABLE_ROLES)).distinct().all()
+    ]
+    extra = []
+    if extra_ids:
+        extra = (
+            db.query(User)
+            .filter(User.is_active == True, User.id.in_(extra_ids))  # noqa: E712
+            .all()
+        )
+    by_id = {u.id: u for u in primary}
+    for u in extra:
+        by_id[u.id] = u
+    users = sorted(by_id.values(), key=lambda u: ((u.full_name or u.username or "").lower(), u.id))
+    return [
+        {
+            "id": u.id,
+            "full_name": u.full_name,
+            "username": u.username,
+            "role": u.role,
+            "label": _user_display_name(u) or u.username,
+        }
+        for u in users
+    ]
+
+
+@router.patch("/ghims-import/items/{item_id}/assign")
+def assign_ghims_import_item(
+    item_id: int,
+    body: GhimsAssignBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Set or clear ownership on one imported claim. Does not affect who can vet."""
+    _ensure_claim_vetting_columns(db)
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if body.assigned_to_id is not None:
+        owner = db.query(User).filter(User.id == body.assigned_to_id, User.is_active == True).first()  # noqa: E712
+        if not owner:
+            raise HTTPException(status_code=404, detail="Assignee user not found or inactive.")
+    _apply_ownership(item, body.assigned_to_id, body.assignment_note, current_user.id)
+    db.commit()
+    db.refresh(item)
+    return {"id": item.id, **_ownership_snapshot(item, db)}
+
+
+@router.post("/ghims-import/batches/{batch_id}/assign")
+def bulk_assign_ghims_import_batch(
+    batch_id: int,
+    body: GhimsBulkAssignBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """
+    Demarcate ownership within a GHIMS import batch.
+
+    Rules are applied in order (later rules overwrite earlier ones on the same claim).
+    With replace_plan=True, all ownership is cleared first so editing a saved plan is reliable.
+    Ownership is informational only — anyone with vet permission can still vet.
+    """
+    _ensure_claim_vetting_columns(db)
+    if not body.rules:
+        raise HTTPException(status_code=400, detail="At least one assignment rule is required.")
+
+    batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+
+    batch_items = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.batch_id == batch_id)
+        .order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id)
+        .all()
+    )
+
+    # Validate assignees up front
+    assignee_ids = {r.assigned_to_id for r in body.rules if r.assigned_to_id is not None}
+    if assignee_ids:
+        found = {
+            u.id
+            for u in db.query(User).filter(User.id.in_(assignee_ids), User.is_active == True).all()  # noqa: E712
+        }
+        missing = sorted(assignee_ids - found)
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Assignee user(s) not found or inactive: {missing}")
+
+    if body.replace_plan:
+        for item in batch_items:
+            _apply_ownership(item, None, None, current_user.id)
+
+    rule_results = []
+    touched_ids = set()
+    for idx, rule in enumerate(body.rules):
+        targets = _resolve_assign_targets(batch_items, rule)
+        note = rule.assignment_note
+        for item in targets:
+            _apply_ownership(item, rule.assigned_to_id, note, current_user.id)
+            touched_ids.add(item.id)
+        rule_results.append({
+            "rule_index": idx,
+            "matched": len(targets),
+            "assigned_to_id": rule.assigned_to_id,
+            "assignment_note": (note or "").strip() or None,
+            "row_from": rule.row_from,
+            "row_to": rule.row_to,
+            "age_from": rule.age_from,
+            "age_to": rule.age_to,
+            "types_of_service": _rule_services(rule) or None,
+            "types_of_attendance": _rule_attendances(rule) or None,
+            "specialties_attended": _rule_specialties(rule) or None,
+        })
+
+    if body.save_plan:
+        # Persist plan without one-off item_ids selections
+        plan_rules = []
+        for rule in body.rules:
+            if rule.item_ids and not (
+                rule.row_from is not None
+                or rule.row_to is not None
+                or _rule_has_payload_filters(rule)
+            ):
+                # skip pure selected-item assigns from the saved plan
+                continue
+            serialized = _serialize_assign_rule(rule)
+            serialized.pop("item_ids", None)
+            plan_rules.append(serialized)
+        batch.demarcation_rules = plan_rules
+
+    db.commit()
+    return {
+        "batch_id": batch_id,
+        "updated": len(touched_ids),
+        "item_ids": sorted(touched_ids),
+        "rules": rule_results,
+        "demarcation_rules": getattr(batch, "demarcation_rules", None) or [],
+        "replace_plan": body.replace_plan,
+    }
 
 
 @router.post("/ghims-import/export")

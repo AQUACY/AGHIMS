@@ -932,6 +932,15 @@ export const claimsAPI = {
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
   bulkUpdateGhimsImportItemsStatus: (itemIds, action, comment = null) =>
     api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action, comment }),
+  getGhimsImportAssignees: () => api.get('/claims/ghims-import/assignees'),
+  assignGhimsImportItem: (itemId, { assigned_to_id = null, assignment_note = null } = {}) =>
+    api.patch(`/claims/ghims-import/items/${itemId}/assign`, { assigned_to_id, assignment_note }),
+  bulkAssignGhimsImportBatch: (batchId, rules, { replace_plan = false, save_plan = false } = {}) =>
+    api.post(`/claims/ghims-import/batches/${batchId}/assign`, {
+      rules,
+      replace_plan: !!replace_plan,
+      save_plan: !!save_plan,
+    }),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
   // CFX convert / diff tools
   previewCxf: (formData) =>
