@@ -60,17 +60,37 @@ body {
 .light-gradient,
 .dark-gradient {
   background:
-    radial-gradient(ellipse 80% 60% at 10% -10%, rgba(59, 130, 246, 0.18), transparent 55%),
-    radial-gradient(ellipse 60% 50% at 90% 10%, rgba(6, 182, 212, 0.12), transparent 50%),
-    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(59, 130, 246, 0.08), transparent 55%),
+    radial-gradient(
+      ellipse 80% 60% at 10% -10%,
+      color-mix(in srgb, var(--hms-accent) 18%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 90% 10%,
+      color-mix(in srgb, var(--hms-healthcare) 12%, transparent),
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 50% 40% at 50% 100%,
+      color-mix(in srgb, var(--hms-accent) 8%, transparent),
+      transparent 55%
+    ),
     var(--hms-bg-primary);
 }
 
 .body--light .light-gradient,
 .body--light .dark-gradient {
   background:
-    radial-gradient(ellipse 70% 50% at 0% 0%, rgba(59, 130, 246, 0.06), transparent 55%),
-    radial-gradient(ellipse 50% 40% at 100% 0%, rgba(6, 182, 212, 0.04), transparent 50%),
+    radial-gradient(
+      ellipse 70% 50% at 0% 0%,
+      color-mix(in srgb, var(--hms-accent) 6%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 50% 40% at 100% 0%,
+      color-mix(in srgb, var(--hms-healthcare) 4%, transparent),
+      transparent 50%
+    ),
     var(--hms-bg-primary);
 }
 

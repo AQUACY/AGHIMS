@@ -1197,14 +1197,29 @@ def search_price_items_all_tables(
     service_type: str = None,
     file_type: str = None,
     status_filter: str = "active",
+    sub_category_2: str = None,
+    insurance_covered: str = None,
 ):
     """
     Search price list items across all tables
     file_type: procedure, surgery, product, unmapped_drg, or None (search all)
     status_filter: "active" (default), "archived", or "all"
+    sub_category_2: optional product Sub Category 2 filter (e.g. Pharmacy)
+    insurance_covered: optional "yes" / "no" (products and procedures)
     """
     results = []
     status = (status_filter or "active").strip().lower()
+    sub2 = (sub_category_2 or "").strip() or None
+    insurance = (insurance_covered or "").strip().lower() or None
+    if insurance and insurance not in ("yes", "no"):
+        insurance = None
+
+    # Sub Category 2 only applies to products — when set, skip other file types
+    # unless caller explicitly asked for a non-product type (then return empty).
+    if sub2 and file_type and file_type != "product":
+        return results
+    if sub2 and file_type is None:
+        file_type = "product"
 
     def apply_active_filter(query, model):
         if status == "archived":
@@ -1214,9 +1229,15 @@ def search_price_items_all_tables(
         # default: active only
         return query.filter(model.is_active == True)
 
+    def apply_insurance_filter(query, model):
+        if not insurance or not hasattr(model, "insurance_covered"):
+            return query
+        return query.filter(func.lower(model.insurance_covered) == insurance)
+
     # Determine which tables to search
-    if file_type == 'procedure' or file_type is None:
+    if (file_type == 'procedure' or file_type is None) and not sub2:
         query = apply_active_filter(db.query(ProcedurePrice), ProcedurePrice)
+        query = apply_insurance_filter(query, ProcedurePrice)
         if search_term:
             query = query.filter(
                 (ProcedurePrice.g_drg_code.contains(search_term)) |
@@ -1226,7 +1247,7 @@ def search_price_items_all_tables(
             query = query.filter(ProcedurePrice.service_type == service_type)
         results.extend([('procedure', item) for item in query.all()])
 
-    if file_type == 'surgery' or file_type is None:
+    if (file_type == 'surgery' or file_type is None) and not sub2 and not insurance:
         query = apply_active_filter(db.query(SurgeryPrice), SurgeryPrice)
         if search_term:
             query = query.filter(
@@ -1239,6 +1260,7 @@ def search_price_items_all_tables(
 
     if file_type == 'product' or file_type is None:
         query = apply_active_filter(db.query(ProductPrice), ProductPrice)
+        query = apply_insurance_filter(query, ProductPrice)
         if search_term:
             query = query.filter(
                 (ProductPrice.medication_code.contains(search_term)) |
@@ -1252,9 +1274,11 @@ def search_price_items_all_tables(
                 (func.lower(ProductPrice.sub_category_1) == func.lower(service_type)) |
                 (func.lower(ProductPrice.sub_category_2) == func.lower(service_type))
             )
+        if sub2:
+            query = query.filter(func.lower(ProductPrice.sub_category_2) == func.lower(sub2))
         results.extend([('product', item) for item in query.all()])
 
-    if file_type == 'unmapped_drg' or file_type is None:
+    if (file_type == 'unmapped_drg' or file_type is None) and not sub2 and not insurance:
         query = apply_active_filter(db.query(UnmappedDRGPrice), UnmappedDRGPrice)
         if search_term:
             query = query.filter(

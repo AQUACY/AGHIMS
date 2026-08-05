@@ -749,12 +749,14 @@ export const priceListAPI = {
     }
     return api.get('/price-list/icd10/search', { params });
   },
-  searchPriceItems: (searchTerm = null, serviceType = null, fileType = null, statusFilter = 'active') => {
+  searchPriceItems: (searchTerm = null, serviceType = null, fileType = null, statusFilter = 'active', subCategory2 = null, insuranceCovered = null) => {
     const params = {};
     if (searchTerm) params.search_term = searchTerm;
     if (serviceType) params.service_type = serviceType;
     if (fileType) params.file_type = fileType;
     if (statusFilter) params.status_filter = statusFilter;
+    if (subCategory2) params.sub_category_2 = subCategory2;
+    if (insuranceCovered) params.insurance_covered = insuranceCovered;
     return api.get('/price-list/search', { params });
   },
   getDrgCodesFromIcd10: (icd10Code) => {
@@ -800,16 +802,19 @@ export const priceListAPI = {
     }
     return api.get('/price-list/drg-codes/search', { params });
   },
-  search: (searchTerm, serviceType, fileType, statusFilter = 'active') => 
+  search: (searchTerm, serviceType, fileType, statusFilter = 'active', subCategory2 = null, insuranceCovered = null) => 
     api.get('/price-list/search', { 
       params: { 
         search_term: searchTerm || undefined,
         service_type: serviceType || undefined,
         file_type: fileType || undefined,
         status_filter: statusFilter || 'active',
+        sub_category_2: subCategory2 || undefined,
+        insurance_covered: insuranceCovered || undefined,
       } 
     }),
   getServiceTypes: () => api.get('/price-list/service-types'),
+  getProductSubcategories: () => api.get('/price-list/product-subcategories'),
   getProceduresByServiceType: (serviceType) =>
     api.get('/price-list/procedures/by-service-type', {
       params: { service_type: serviceType }
@@ -817,6 +822,8 @@ export const priceListAPI = {
   /** Get all surgery price list items (file type surgery) for major surgery selection. */
   getSurgeries: () => api.get('/price-list/surgeries'),
   updateItem: (fileType, id, data) => api.put(`/price-list/item/${fileType}/${id}`, data),
+  bulkClear: (fileType, data) =>
+    api.post(`/price-list/bulk-clear/${fileType}`, data),
 };
 
 // Claims endpoints

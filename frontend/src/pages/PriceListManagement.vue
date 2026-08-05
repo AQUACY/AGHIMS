@@ -229,9 +229,14 @@
           <div class="panel-title">Price list items</div>
           <div class="panel-sub">Search, filter, and edit tariffs by code, department, and file type</div>
         </div>
-        <HmsButton variant="primary" size="sm" @click="openAddDialog">
-          Add New Price
-        </HmsButton>
+        <div class="row q-gutter-sm items-center">
+          <HmsButton variant="primary" size="sm" @click="openAddDialog">
+            Add New Price
+          </HmsButton>
+          <HmsButton variant="danger" size="sm" @click="openBulkClearDialog">
+            Clear category…
+          </HmsButton>
+        </div>
       </div>
       <div class="panel-body">
         <div class="row q-gutter-md q-mb-md">
@@ -264,7 +269,20 @@
             class="col-12 col-md-2"
             filled
             clearable
-            @update:model-value="searchItems"
+            @update:model-value="onFileTypeFilterChange"
+          />
+          <q-select
+            v-model="searchSubCategory2"
+            :options="subCategory2Options"
+            label="Sub Category 2"
+            class="col-12 col-md-2"
+            filled
+            clearable
+            use-input
+            input-debounce="0"
+            @filter="filterSubCategory2Options"
+            @update:model-value="onSubCategory2Change"
+            hint="Pharmacy, Non-Drug Consumables, …"
           />
           <q-select
             v-model="searchStatusFilter"
@@ -276,6 +294,18 @@
             filled
             @update:model-value="searchItems"
             hint="Active, archived, or all"
+          />
+          <q-select
+            v-model="searchInsuranceCovered"
+            :options="insuranceFilterOptions"
+            emit-value
+            map-options
+            label="Insurance Covered"
+            class="col-12 col-md-2"
+            filled
+            clearable
+            @update:model-value="searchItems"
+            hint="Yes / No (products & procedures)"
           />
           <div class="col-12 col-md-2 flex items-center">
             <HmsButton variant="secondary" size="sm" @click="searchItems">
@@ -306,6 +336,12 @@
             <q-td :props="props">
               <q-badge v-if="props.value" color="blue" :label="props.value" />
               <span v-else class="text-grey">N/A</span>
+            </q-td>
+          </template>
+          <template v-slot:body-cell-sub_category_2="props">
+            <q-td :props="props">
+              <q-badge v-if="props.value" color="teal" :label="props.value" />
+              <span v-else class="text-grey">—</span>
             </q-td>
           </template>
           <template v-slot:body-cell-base_rate="props">
@@ -501,11 +537,67 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Bulk clear by file type -->
+    <q-dialog v-model="showBulkClearDialog" persistent>
+      <q-card style="min-width: 480px; max-width: 90vw">
+        <q-card-section>
+          <div class="text-h6">Clear price list category</div>
+          <div class="text-body2 text-grey-8 q-mt-sm">
+            Archives (or permanently deletes) all items of one file type so you can
+            re-upload a replacement list. Prefer <strong>Archive</strong> — archived
+            items can still be found with Status = Archived.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-gutter-md">
+          <q-select
+            v-model="bulkClearForm.fileType"
+            :options="fileTypes"
+            filled
+            label="Category to clear *"
+            hint="e.g. product — leaves procedures/surgeries untouched"
+          />
+          <q-select
+            v-if="bulkClearForm.fileType === 'product'"
+            v-model="bulkClearForm.subCategory2"
+            :options="['', 'Pharmacy', 'Non-Drug Consumables', 'Non-Consumables', 'Stationery', 'Laboratory Consumables', 'Consumables']"
+            filled
+            clearable
+            label="Product sub-category (optional)"
+            hint="Leave empty to clear all products. Use Pharmacy to spare consumables."
+          />
+          <q-select
+            v-model="bulkClearForm.mode"
+            :options="bulkClearModeOptions"
+            emit-value
+            map-options
+            filled
+            label="Action *"
+          />
+          <q-input
+            v-model="bulkClearForm.confirm"
+            filled
+            :label="`Type '${bulkClearForm.fileType || '…'}' to confirm *`"
+            :hint="`Must match the category exactly (${bulkClearForm.fileType || '…'})`"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup :disable="bulkClearing" />
+          <q-btn
+            color="negative"
+            :label="bulkClearForm.mode === 'hard' ? 'Permanently delete' : 'Archive category'"
+            :loading="bulkClearing"
+            :disable="!canSubmitBulkClear"
+            @click="submitBulkClear"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useBillingStore } from '../stores/billing';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
@@ -533,18 +625,44 @@ const uploadingIcd10 = ref(false);
 const icd10UploadResults = ref(null);
 const showUploadReport = ref(false);
 const lastUploadReport = ref(null);
+const showBulkClearDialog = ref(false);
+const bulkClearing = ref(false);
+const bulkClearForm = ref({
+  fileType: 'product',
+  mode: 'archive',
+  confirm: '',
+  subCategory2: 'Pharmacy',
+});
+const bulkClearModeOptions = [
+  { label: 'Archive (recommended — hides from app, recoverable)', value: 'archive' },
+  { label: 'Permanently delete (Admin only)', value: 'hard' },
+];
+
+const canSubmitBulkClear = computed(() => {
+  const ft = (bulkClearForm.value.fileType || '').trim();
+  const conf = (bulkClearForm.value.confirm || '').trim().toLowerCase();
+  return !!ft && conf === ft.toLowerCase();
+});
 const searchTerm = ref('');
 const searchServiceType = ref(null);
 const searchFileType = ref(null);
+const searchSubCategory2 = ref(null);
 const searchStatusFilter = ref('active');
+const searchInsuranceCovered = ref(null);
 const loading = ref(false);
 const serviceTypeOptions = ref([]);
+const subCategory2Options = ref([]);
+const allSubCategory2Options = ref([]);
 
 const fileTypes = ['procedure', 'surgery', 'product', 'unmapped_drg'];
 const statusFilterOptions = [
   { label: 'Active', value: 'active' },
   { label: 'Archived', value: 'archived' },
   { label: 'All', value: 'all' },
+];
+const insuranceFilterOptions = [
+  { label: 'Yes', value: 'yes' },
+  { label: 'No', value: 'no' },
 ];
 const priceListItems = ref([]);
 
@@ -567,6 +685,7 @@ const priceColumns = [
   { name: 'g_drg_code', label: 'Code (G-DRG/Medication)', field: 'g_drg_code', align: 'left', sortable: true },
   { name: 'service_name', label: 'Name (Service/Product)', field: 'service_name', align: 'left', sortable: true },
   { name: 'service_type', label: 'Category/Dept', field: 'service_type', align: 'left', sortable: true },
+  { name: 'sub_category_2', label: 'Sub Category 2', field: 'sub_category_2', align: 'left', sortable: true },
   { name: 'is_active', label: 'Status', field: 'is_active', align: 'center', sortable: true },
   { name: 'base_rate', label: 'Base Rate (Cash)', field: 'base_rate', align: 'right', sortable: true },
   { name: 'claim_amount', label: 'Claim Amount', field: 'claim_amount', align: 'right', sortable: true },
@@ -598,6 +717,50 @@ const filterServiceTypes = (val, update) => {
       );
     }
   });
+};
+
+const filterSubCategory2Options = (val, update) => {
+  update(() => {
+    const all = allSubCategory2Options.value || [];
+    if (!val) {
+      subCategory2Options.value = all;
+    } else {
+      const q = val.toLowerCase();
+      subCategory2Options.value = all.filter((v) => String(v).toLowerCase().includes(q));
+    }
+  });
+};
+
+const onFileTypeFilterChange = () => {
+  if (searchFileType.value && searchFileType.value !== 'All' && searchFileType.value !== 'product') {
+    searchSubCategory2.value = null;
+  }
+  searchItems();
+};
+
+const onSubCategory2Change = () => {
+  if (searchSubCategory2.value) {
+    searchFileType.value = 'product';
+  }
+  searchItems();
+};
+
+const loadProductSubcategories = async () => {
+  try {
+    const res = await priceListAPI.getProductSubcategories();
+    allSubCategory2Options.value = res.data || [];
+    subCategory2Options.value = [...allSubCategory2Options.value];
+  } catch (e) {
+    allSubCategory2Options.value = [
+      'Pharmacy',
+      'Non-Drug Consumables',
+      'Non-Consumables',
+      'Stationery',
+      'Laboratory Consumables',
+      'Consumables',
+    ];
+    subCategory2Options.value = [...allSubCategory2Options.value];
+  }
 };
 
 const formatCurrency = (amount) => {
@@ -638,11 +801,15 @@ const searchItems = async () => {
     const serviceType = searchServiceType.value || null;
     const fileType = searchFileType.value === 'All' || !searchFileType.value ? null : searchFileType.value;
     const statusFilter = searchStatusFilter.value || 'active';
+    const subCategory2 = searchSubCategory2.value || null;
+    const insuranceCovered = searchInsuranceCovered.value || null;
     const items = await billingStore.searchPriceItems(
       searchTerm.value || '',
       serviceType,
       fileType,
-      statusFilter
+      statusFilter,
+      subCategory2,
+      insuranceCovered
     );
     priceListItems.value = items;
     // Update service type options for autocomplete
@@ -743,8 +910,9 @@ const downloadProductCSV = async () => {
   }
 };
 
-onMounted(() => {
-  searchItems(); // Load all items initially
+onMounted(async () => {
+  await loadProductSubcategories();
+  await searchItems();
 });
 
 // Add dialog
@@ -797,6 +965,53 @@ const openAddDialog = () => {
     is_active: true
   };
   showAddDialog.value = true;
+};
+
+const openBulkClearDialog = () => {
+  bulkClearForm.value = {
+    fileType: searchFileType.value && searchFileType.value !== 'All' ? searchFileType.value : 'product',
+    mode: 'archive',
+    confirm: '',
+    subCategory2: 'Pharmacy',
+  };
+  showBulkClearDialog.value = true;
+};
+
+const submitBulkClear = async () => {
+  if (!canSubmitBulkClear.value) return;
+
+  const fileType = bulkClearForm.value.fileType;
+  const mode = bulkClearForm.value.mode;
+  const sub =
+    fileType === 'product' && bulkClearForm.value.subCategory2
+      ? bulkClearForm.value.subCategory2
+      : null;
+
+  bulkClearing.value = true;
+  try {
+    const response = await priceListAPI.bulkClear(fileType, {
+      mode,
+      confirm: fileType,
+      sub_category_2: sub || null,
+    });
+    showBulkClearDialog.value = false;
+    $q.notify({
+      type: 'positive',
+      message: response.data?.message || `Cleared ${fileType} items`,
+      position: 'top',
+    });
+    searchStatusFilter.value = mode === 'archive' ? 'archived' : 'active';
+    searchFileType.value = fileType;
+    await searchItems();
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to clear category',
+      position: 'top',
+    });
+  } finally {
+    bulkClearing.value = false;
+  }
 };
 
 const saveAddItem = async () => {
