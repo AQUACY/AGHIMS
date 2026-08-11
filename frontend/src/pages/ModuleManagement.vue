@@ -38,6 +38,17 @@
           :loading="togglingClaims"
           @update:model-value="updateClaimsToggle"
         />
+        <div class="text-caption q-mt-md q-mb-sm">
+          Optional AI assistant for ClaimIT prep (ZOOM specialty → OPDC, Ghana Card → HIN). Recommendations require human approval.
+        </div>
+        <q-toggle
+          :model-value="aiClaimsVettingActive"
+          label="AI Claims Vetting"
+          color="primary"
+          :loading="togglingAiVetting"
+          :disable="!claimsModuleActive"
+          @update:model-value="updateAiClaimsVettingToggle"
+        />
       </q-card-section>
     </q-card>
 
@@ -249,13 +260,21 @@ const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 /** Mode toggles are super-admin only; hide these module rows from the table for everyone else. */
 const GHIMS_MODULE_KEY = 'ghims';
 const CLAIMS_MODULE_KEY = 'claims';
+const AI_CLAIMS_VETTING_MODULE_KEY = 'ai_claims_vetting';
 const APP_MODE_MODULE_KEY_SET = new Set(Object.values(APP_MODE_MODULE_KEYS));
 /** Shown in dedicated toggles above, not the modules table */
-const DEDICATED_TOGGLE_MODULE_KEYS = new Set([...APP_MODE_MODULE_KEY_SET, GHIMS_MODULE_KEY, CLAIMS_MODULE_KEY]);
+const DEDICATED_TOGGLE_MODULE_KEYS = new Set([
+  ...APP_MODE_MODULE_KEY_SET,
+  GHIMS_MODULE_KEY,
+  CLAIMS_MODULE_KEY,
+  AI_CLAIMS_VETTING_MODULE_KEY,
+]);
 const togglingMode = ref(null);
 const togglingGhims = ref(false);
 const togglingClaims = ref(false);
+const togglingAiVetting = ref(false);
 const claimsModuleActive = ref(false);
+const aiClaimsVettingActive = ref(false);
 const ghimsCardMode = ref(false);
 const modeToggles = ref({
   hms: true,
@@ -365,6 +384,15 @@ const loadClaimsToggle = async () => {
   }
 };
 
+const loadAiClaimsVettingToggle = async () => {
+  try {
+    await moduleSettingsStore.fetchModuleStatus(AI_CLAIMS_VETTING_MODULE_KEY);
+    aiClaimsVettingActive.value = moduleSettingsStore.isModuleActive(AI_CLAIMS_VETTING_MODULE_KEY);
+  } catch (error) {
+    console.error('Error loading AI Claims Vetting status:', error);
+  }
+};
+
 const updateClaimsToggle = async (value) => {
   const previousValue = claimsModuleActive.value;
   claimsModuleActive.value = value;
@@ -373,6 +401,9 @@ const updateClaimsToggle = async (value) => {
     await moduleSettingsAPI.update(CLAIMS_MODULE_KEY, { is_active: value });
     moduleSettingsStore.clearCache();
     await moduleSettingsStore.fetchModuleStatus(CLAIMS_MODULE_KEY);
+    if (!value && aiClaimsVettingActive.value) {
+      await updateAiClaimsVettingToggle(false);
+    }
     $q.notify({
       type: 'positive',
       message: value ? 'Claims module activated' : 'Claims module deactivated',
@@ -388,6 +419,39 @@ const updateClaimsToggle = async (value) => {
     });
   } finally {
     togglingClaims.value = false;
+  }
+};
+
+const updateAiClaimsVettingToggle = async (value) => {
+  const previousValue = aiClaimsVettingActive.value;
+  aiClaimsVettingActive.value = value;
+  try {
+    togglingAiVetting.value = true;
+    // Ensure module row exists (bootstrap) via status, then update
+    try {
+      await moduleSettingsAPI.getStatus(AI_CLAIMS_VETTING_MODULE_KEY);
+    } catch {
+      /* ignore — update may create via admin list bootstrap */
+    }
+    await moduleSettingsAPI.update(AI_CLAIMS_VETTING_MODULE_KEY, { is_active: value });
+    moduleSettingsStore.clearCache();
+    await moduleSettingsStore.fetchModuleStatus(AI_CLAIMS_VETTING_MODULE_KEY);
+    aiClaimsVettingActive.value = moduleSettingsStore.isModuleActive(AI_CLAIMS_VETTING_MODULE_KEY);
+    $q.notify({
+      type: 'positive',
+      message: value ? 'AI Claims Vetting activated' : 'AI Claims Vetting deactivated',
+      position: 'top',
+    });
+  } catch (error) {
+    aiClaimsVettingActive.value = previousValue;
+    console.error('Error updating AI Claims Vetting toggle:', error);
+    $q.notify({
+      type: 'negative',
+      message: error.response?.data?.detail || 'Failed to update AI Claims Vetting setting',
+      position: 'top',
+    });
+  } finally {
+    togglingAiVetting.value = false;
   }
 };
 
@@ -549,6 +613,7 @@ onMounted(() => {
   loadModules();
   loadGhimsToggle();
   loadClaimsToggle();
+  loadAiClaimsVettingToggle();
   loadModeSetup();
 });
 </script>

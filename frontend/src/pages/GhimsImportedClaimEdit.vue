@@ -50,6 +50,20 @@
           />
           <q-badge v-if="vetting.pharmacy_vetted" color="teal" label="Pharmacy" />
           <q-badge v-if="vetting.doctor_vetted" color="indigo" label="Doctor" />
+          <q-badge
+            v-if="ownership.assigned_to_name"
+            color="blue-grey"
+            :label="ownership.assignment_note ? `Owner: ${ownership.assigned_to_name} (${ownership.assignment_note})` : `Owner: ${ownership.assigned_to_name}`"
+          />
+          <q-badge v-else color="grey-5" text-color="grey-9" label="Unassigned" />
+        </div>
+        <div
+          v-if="vetting.pharmacy_vetted_by_name || vetting.doctor_vetted_by_name"
+          class="text-caption text-grey-7 q-mt-xs"
+        >
+          <span v-if="vetting.pharmacy_vetted_by_name">Pharmacy vetted by {{ vetting.pharmacy_vetted_by_name }}</span>
+          <span v-if="vetting.pharmacy_vetted_by_name && vetting.doctor_vetted_by_name"> · </span>
+          <span v-if="vetting.doctor_vetted_by_name">Doctor vetted by {{ vetting.doctor_vetted_by_name }}</span>
         </div>
       </div>
     </div>
@@ -105,6 +119,14 @@
         <div class="text-subtitle2">Flag reason</div>
         <div class="text-body2">{{ flagComment }}</div>
       </q-banner>
+
+      <AiClaimVettingPanel
+        :item-id="itemId"
+        :disabled="status === 'finalized'"
+        :auto-run="false"
+        class="q-mb-md"
+        @payload-updated="onAiPayloadUpdated"
+      />
 
       <q-card flat bordered>
         <q-card-section>
@@ -670,7 +692,11 @@
           :label="vetting.pharmacy_vetted ? 'Revert pharmacy vet' : 'Vet by Pharmacy'"
           :loading="vettingPharmacy"
           @click="vetByPharmacy"
-        />
+        >
+          <q-tooltip v-if="vetting.pharmacy_vetted_by_name">
+            Pharmacy vetted by {{ vetting.pharmacy_vetted_by_name }}
+          </q-tooltip>
+        </q-btn>
         <q-btn
           v-if="status !== 'finalized' && canVetDoctor"
           :color="vetting.doctor_vetted ? 'orange-9' : 'indigo-7'"
@@ -680,7 +706,11 @@
           :label="vetting.doctor_vetted ? 'Revert doctor vet' : 'Vet by Doctor'"
           :loading="vettingDoctor"
           @click="vetByDoctor"
-        />
+        >
+          <q-tooltip v-if="vetting.doctor_vetted_by_name">
+            Doctor vetted by {{ vetting.doctor_vetted_by_name }}
+          </q-tooltip>
+        </q-btn>
         <q-btn v-if="status !== 'finalized'" type="submit" color="primary" label="Save and Finalize" :loading="saving" />
         <q-btn v-if="status !== 'finalized'" color="negative" :label="status === 'flagged' ? 'Flagged' : 'Flag claim'" :disable="status === 'flagged'" outline :loading="saving" @click="flagClaim" />
       </div>
@@ -842,6 +872,7 @@
 import { ref, reactive, computed, watch } from 'vue';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
+import AiClaimVettingPanel from '../components/claims/AiClaimVettingPanel.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
@@ -887,6 +918,11 @@ const vetting = reactive({
   doctor_vetted_at: null,
   doctor_vetted_by_name: null,
 });
+const ownership = reactive({
+  assigned_to_id: null,
+  assigned_to_name: null,
+  assignment_note: null,
+});
 const canVetPharmacy = computed(() =>
   authStore.canAccess(['Pharmacy', 'Pharmacy Head', 'Claims', 'Admin'])
 );
@@ -902,6 +938,9 @@ function applyVettingFromItem(data = {}) {
   vetting.doctor_vetted = !!data.doctor_vetted || !!data.doctor_vetted_at;
   vetting.doctor_vetted_at = data.doctor_vetted_at || null;
   vetting.doctor_vetted_by_name = data.doctor_vetted_by_name || null;
+  ownership.assigned_to_id = data.assigned_to_id ?? null;
+  ownership.assigned_to_name = data.assigned_to_name || null;
+  ownership.assignment_note = data.assignment_note || null;
 }
 
 async function vetByPharmacy() {
@@ -2313,6 +2352,12 @@ async function onConvertGhanaCardToHin() {
   } finally {
     convertingGhanaCard.value = false;
   }
+}
+
+function onAiPayloadUpdated(nextPayload) {
+  if (!nextPayload || typeof nextPayload !== 'object') return;
+  Object.assign(payload, normalize(nextPayload));
+  syncGhimsServiceDateSnapshot();
 }
 
 async function onGetGhimsClaimCcc() {

@@ -51,7 +51,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { motion } from 'motion-v';
 import { usePreferredReducedMotion } from '@vueuse/core';
@@ -66,18 +66,31 @@ import {
   GitCompareArrows,
   BadgeDollarSign,
   BookOpen,
+  Sparkles,
+  Bot,
 } from 'lucide-vue-next';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsCard from '../components/ui/HmsCard.vue';
+import { moduleSettingsAPI } from '../services/api';
 
 const router = useRouter();
 const preferredReducedMotion = usePreferredReducedMotion();
 const reduceMotion = computed(() => preferredReducedMotion.value === 'reduce');
+const aiVettingActive = ref(false);
 
 const go = (path) => router.push(path);
 
-const groups = [
-  {
+onMounted(async () => {
+  try {
+    const res = await moduleSettingsAPI.getStatus('ai_claims_vetting');
+    aiVettingActive.value = !!res.data?.is_active;
+  } catch {
+    aiVettingActive.value = false;
+  }
+});
+
+const groups = computed(() => {
+  const work = {
     id: 'work',
     label: 'Daily work',
     note: 'Overview, generate, and export for ClaimIT',
@@ -107,8 +120,9 @@ const groups = [
         bg: 'var(--hms-info-muted)',
       },
     ],
-  },
-  {
+  };
+
+  const fix = {
     id: 'fix',
     label: 'Import & fix',
     note: 'ClaimIT corrections, GHIMS XML, and CFX tools',
@@ -138,8 +152,33 @@ const groups = [
         bg: 'var(--hms-accent-muted)',
       },
     ],
-  },
-  {
+  };
+
+  const intelligence = {
+    id: 'intelligence',
+    label: 'Intelligence',
+    note: 'Optional AI-assisted ClaimIT prep — human approval required',
+    modules: [
+      {
+        title: 'AI Vetting',
+        hint: 'Phase 1 / Coding / Thorough rules scans — approve corrections in one report',
+        path: '/claims/ai-vetting',
+        icon: Sparkles,
+        color: 'var(--hms-healthcare)',
+        bg: 'var(--hms-healthcare-muted)',
+      },
+      {
+        title: 'Local AI Assist',
+        hint: 'Pick claims → Ollama reviews them → work recommendations (review only)',
+        path: '/claims/ai-local-assist',
+        icon: Bot,
+        color: 'var(--hms-accent)',
+        bg: 'var(--hms-accent-muted)',
+      },
+    ],
+  };
+
+  const refs = {
     id: 'refs',
     label: 'References',
     note: 'Templates, tariffs, and ICD–DRG coding aids',
@@ -169,8 +208,10 @@ const groups = [
         bg: 'var(--hms-info-muted)',
       },
     ],
-  },
-];
+  };
+
+  return aiVettingActive.value ? [work, fix, intelligence, refs] : [work, fix, refs];
+});
 </script>
 
 <style scoped>
