@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { Dark } from 'quasar';
+import { useFacilityStore } from './facility';
 
 export const useThemeStore = defineStore('theme', {
   state: () => {
@@ -40,6 +41,12 @@ export const useThemeStore = defineStore('theme', {
       document.body.classList.toggle('body--light', !this.isDark);
       document.documentElement.classList.toggle('body--light', !this.isDark);
       document.documentElement.classList.toggle('body--dark', this.isDark);
+      // Re-apply facility brand colors for the active mode (or clear to defaults)
+      try {
+        useFacilityStore().applyBranding(this.isDark);
+      } catch {
+        /* pinia may not be ready during very early boot */
+      }
     },
 
     initTheme() {
