@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class SuggestedAction(BaseModel):
     """Machine-readable correction the human can approve."""
 
-    type: str  # set_specialty | convert_ghana_card_to_hin
+    type: str  # set_specialty | convert_ghana_card_to_hin | set_diagnosis_gdrg | set_procedure_gdrg | review_*
     field: Optional[str] = None
     value: Optional[str] = None
     details: Dict[str, Any] = Field(default_factory=dict)

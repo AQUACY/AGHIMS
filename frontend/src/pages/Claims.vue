@@ -67,6 +67,7 @@ import {
   BadgeDollarSign,
   BookOpen,
   Sparkles,
+  Bot,
 } from 'lucide-vue-next';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsCard from '../components/ui/HmsCard.vue';
@@ -160,11 +161,19 @@ const groups = computed(() => {
     modules: [
       {
         title: 'AI Vetting',
-        hint: 'Batch-scan imports for ZOOM specialty & Ghana Card → HIN',
+        hint: 'Phase 1 / Coding / Thorough rules scans — approve corrections in one report',
         path: '/claims/ai-vetting',
         icon: Sparkles,
         color: 'var(--hms-healthcare)',
         bg: 'var(--hms-healthcare-muted)',
+      },
+      {
+        title: 'Local AI Assist',
+        hint: 'Pick claims → Ollama reviews them → work recommendations (review only)',
+        path: '/claims/ai-local-assist',
+        icon: Bot,
+        color: 'var(--hms-accent)',
+        bg: 'var(--hms-accent-muted)',
       },
     ],
   };

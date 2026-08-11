@@ -229,6 +229,12 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/ai-local-assist',
+        name: 'AiLocalAssist',
+        component: () => import('../pages/AiLocalAssist.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/ghims-import/batch/:batchId',
         name: 'GhimsXmlImportBatch',
         component: () => import('../pages/GhimsXmlImport.vue'),
@@ -729,6 +735,7 @@ const routeModuleMap = {
   'ClaimsReports': 'claims',
   'ClaimsCxfTools': 'claims',
   'AiClaimsVetting': 'claims',
+  'AiLocalAssist': 'claims',
   'EditClaim': 'claims',
   'GenerateClaim': 'claims',
   'IPD': 'ipd',

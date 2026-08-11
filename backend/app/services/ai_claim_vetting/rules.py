@@ -27,12 +27,12 @@ def _principal_gdrg(payload: Dict[str, Any]) -> str:
             if not isinstance(dx, dict):
                 continue
             if str(dx.get("isPrincipal") or dx.get("is_principal") or "").strip() in ("1", "true", "True"):
-                gdrg = (dx.get("gdrg") or dx.get("GDRG") or "").strip()
+                gdrg = (dx.get("gdrgCode") or dx.get("gdrg") or dx.get("GDRG") or "").strip()
                 if gdrg:
                     return gdrg
         for dx in diagnoses:
             if isinstance(dx, dict):
-                gdrg = (dx.get("gdrg") or dx.get("GDRG") or "").strip()
+                gdrg = (dx.get("gdrgCode") or dx.get("gdrg") or dx.get("GDRG") or "").strip()
                 if gdrg:
                     return gdrg
     return ""

@@ -71,6 +71,7 @@ EXPORTABLE_CLAIM_STATUSES = frozenset({
     "pharmacy_vetted",
     "doctor_vetted",
     "vetted",
+    "ai_vetted",
 })
 
 

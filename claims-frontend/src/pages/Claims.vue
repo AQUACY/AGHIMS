@@ -68,7 +68,24 @@
             <q-icon name="auto_awesome" size="64px" color="cyan" class="q-mb-md" />
             <div class="text-h6 text-weight-medium">AI Vetting</div>
             <div class="text-caption text-grey-7 q-mt-sm">
-              Batch-scan imports for ZOOM specialty and Ghana Card → HIN, then correct in one pass.
+              Phase 1 / Coding / Thorough rules scans — approve corrections in one report.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div v-if="aiVettingActive" class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card ai-tile"
+          flat
+          bordered
+          @click="$router.push('/claims/ai-local-assist')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="smart_toy" size="64px" color="primary" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Local AI Assist</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Pick claims → Ollama reviews them → work recommendations (review only).
             </div>
           </q-card-section>
         </q-card>

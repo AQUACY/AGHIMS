@@ -8,8 +8,21 @@
       <div class="aiv-hero__eyebrow">Claims intelligence</div>
       <h1 class="aiv-hero__title">AI Vetting</h1>
       <p class="aiv-hero__lede">
-        Scan imported GHIMS claims for ClaimIT blockers, then approve corrections in one pass.
+        Run ClaimIT prep and coding checks in the background, then work findings here —
+        nothing changes until a human approves.
       </p>
+      <div v-if="moduleActive" class="aiv-hero__status">
+        <span class="aiv-chip" data-tone="ok">Human approval required</span>
+        <span
+          class="aiv-chip"
+          :data-tone="aiStatus?.provider === 'ollama' ? (aiStatus.ollama_online ? 'ok' : 'warn') : 'muted'"
+        >
+          {{ aiEngineLabel }}
+        </span>
+        <span v-if="jobRunning" class="aiv-chip" data-tone="run">
+          Scanning… {{ job?.processed_items || 0 }}/{{ job?.total_items || 0 }}
+        </span>
+      </div>
       <div class="aiv-hero__actions">
         <button type="button" class="aiv-ghost" @click="$router.push('/claims')">← Claims home</button>
         <button
@@ -19,6 +32,15 @@
           @click="$router.push('/claims/ghims-import')"
         >
           Open imports
+        </button>
+        <button
+          v-if="moduleActive"
+          type="button"
+          class="aiv-ghost"
+          :disabled="loadingAiStatus"
+          @click="loadAiStatus"
+        >
+          Refresh AI status
         </button>
       </div>
     </header>
@@ -75,36 +97,82 @@
         >
           <div class="aiv-panel__head">
             <div>
-              <div class="aiv-panel__kicker">02 — Scope</div>
-              <h2 class="aiv-panel__title">What to scan</h2>
+              <div class="aiv-panel__kicker">02 — Scan lane</div>
+              <h2 class="aiv-panel__title">What to run</h2>
             </div>
           </div>
 
           <div v-if="!selectedBatchId" class="aiv-muted">Select an import batch to continue.</div>
           <template v-else>
-            <div class="aiv-scope-row">
-              <label class="aiv-radio">
-                <input v-model="scopeMode" type="radio" value="all" />
-                <span>All claims (including finalized)</span>
-              </label>
-              <label class="aiv-radio">
-                <input v-model="scopeMode" type="radio" value="open" />
-                <span>All non-finalized only</span>
-              </label>
-              <label class="aiv-radio">
-                <input v-model="scopeMode" type="radio" value="selected" />
-                <span>Selected claims only</span>
-              </label>
+            <div class="aiv-lanes">
+              <button
+                type="button"
+                class="aiv-lane"
+                :class="{ 'aiv-lane--active': analysisMode === 'phase1' }"
+                @click="analysisMode = 'phase1'"
+              >
+                <div class="aiv-lane__phase">Phase 1</div>
+                <div class="aiv-lane__title">ClaimIT prep</div>
+                <p class="aiv-lane__copy">ZOOM specialty → OPDC · Ghana Card Member No → HIN</p>
+              </button>
+              <button
+                type="button"
+                class="aiv-lane"
+                :class="{ 'aiv-lane--active': analysisMode === 'coding' }"
+                @click="analysisMode = 'coding'"
+              >
+                <div class="aiv-lane__phase">Coding</div>
+                <div class="aiv-lane__title">Diagnosis GDRG</div>
+                <p class="aiv-lane__copy">Phase 1 plus ICD-10 ↔ diagnosis GDRG mismatch checks</p>
+              </button>
+              <button
+                type="button"
+                class="aiv-lane"
+                :class="{ 'aiv-lane--active': analysisMode === 'thorough' }"
+                @click="setThoroughMode"
+              >
+                <div class="aiv-lane__phase">Thorough</div>
+                <div class="aiv-lane__title">Assigned review</div>
+                <p class="aiv-lane__copy">Pick 1–2 claims · procedures, medicines &amp; investigations</p>
+              </button>
             </div>
-            <p v-if="scopeMode === 'all'" class="aiv-muted q-mt-sm">
-              Finalized claims are scanned for the report. Applying corrections still requires reopening those claims first.
-            </p>
+
+            <div class="aiv-scope-block">
+              <div class="aiv-scope-block__label">Claim set</div>
+              <div class="aiv-scope-row">
+                <label class="aiv-radio" :class="{ 'aiv-radio--disabled': analysisMode === 'thorough' }">
+                  <input v-model="scopeMode" type="radio" value="all" :disabled="analysisMode === 'thorough'" />
+                  <span>All claims (including finalized)</span>
+                </label>
+                <label class="aiv-radio" :class="{ 'aiv-radio--disabled': analysisMode === 'thorough' }">
+                  <input v-model="scopeMode" type="radio" value="open" :disabled="analysisMode === 'thorough'" />
+                  <span>All non-finalized only</span>
+                </label>
+                <label class="aiv-radio">
+                  <input v-model="scopeMode" type="radio" value="selected" />
+                  <span>{{ analysisMode === 'thorough' ? 'Assigned claims (required)' : 'Selected claims only' }}</span>
+                </label>
+              </div>
+              <p v-if="scopeMode === 'all' && analysisMode !== 'thorough'" class="aiv-muted q-mt-sm">
+                Finalized claims appear in the report; applying corrections still needs reopen first.
+              </p>
+              <p v-if="analysisMode === 'thorough'" class="aiv-muted q-mt-sm">
+                Thorough is for validating AI on a small set before a full batch run. Max 10 claims.
+              </p>
+            </div>
 
             <div v-if="loadingClaims" class="aiv-muted q-mt-md">Loading claims…</div>
             <div v-else-if="scopeMode === 'selected'" class="aiv-claim-picker q-mt-md">
               <div class="aiv-picker-bar">
                 <span class="aiv-muted">{{ selectedClaimIds.length }} selected</span>
-                <button type="button" class="aiv-ghost aiv-ghost--sm" @click="selectAllClaims">Select all</button>
+                <button
+                  v-if="analysisMode !== 'thorough'"
+                  type="button"
+                  class="aiv-ghost aiv-ghost--sm"
+                  @click="selectAllClaims"
+                >
+                  Select all
+                </button>
                 <button type="button" class="aiv-ghost aiv-ghost--sm" @click="selectAllScannable">Non-finalized</button>
                 <button type="button" class="aiv-ghost aiv-ghost--sm" @click="selectedClaimIds = []">Clear</button>
               </div>
@@ -155,7 +223,10 @@
         class="aiv-panel aiv-progress"
       >
         <div class="aiv-progress__top">
-          <span class="aiv-status" :data-status="job.status">Job #{{ job.id }} · {{ job.status }}</span>
+          <span class="aiv-status" :data-status="job.status">
+            Job #{{ job.id }} · {{ job.status }}
+            <template v-if="job.analysis_mode"> · {{ job.analysis_mode }}</template>
+          </span>
           <span class="aiv-muted">
             {{ job.processed_items }}/{{ job.total_items }}
             <template v-if="job.findings_count != null"> · {{ job.findings_count }} findings</template>
@@ -176,13 +247,13 @@
           <div>
             <div class="aiv-panel__kicker">03 — Report</div>
             <h2 class="aiv-panel__title">
-              Findings
+              Intelligence workspace
               <span v-if="report" class="aiv-count">{{ report.pending_total || 0 }}</span>
             </h2>
           </div>
           <div v-if="selectedIds.length" class="aiv-bulk-bar">
             <span>{{ selectedIds.length }} selected</span>
-            <button type="button" class="aiv-primary aiv-primary--sm" :disabled="correcting" @click="bulkCorrect(null, [...selectedIds])">
+            <button type="button" class="aiv-primary aiv-primary--sm" :disabled="correcting" @click="bulkCorrectSelected">
               Correct selected
             </button>
             <button type="button" class="aiv-ghost aiv-ghost--sm" :disabled="correcting" @click="bulkReject([...selectedIds])">
@@ -193,81 +264,319 @@
 
         <div v-if="!selectedBatchId" class="aiv-muted">Choose a batch to load or generate a report.</div>
         <div v-else-if="loadingReport && !report" class="aiv-muted">Loading report…</div>
+        <div v-else-if="jobRunning && (!report || report.pending_total === 0)" class="aiv-muted">
+          Scan in progress — findings will appear here as claims finish
+          ({{ job?.processed_items || 0 }}/{{ job?.total_items || 0 }}).
+        </div>
         <div v-else-if="report && report.pending_total === 0 && !jobRunning" class="aiv-empty">
           <div class="aiv-empty__mark">✓</div>
-          <div>No pending Phase-1 issues for this batch.</div>
+          <div>No pending issues for this batch.</div>
         </div>
 
-        <div v-for="group in reportGroups" :key="group.rule_code" class="aiv-group">
-          <div class="aiv-group__head">
-            <div>
-              <h3 class="aiv-group__title">{{ group.label }}</h3>
-              <div class="aiv-muted">{{ group.pending_count }} claim(s)</div>
-            </div>
-            <div class="aiv-group__actions">
-              <label class="aiv-check-all">
-                <input
-                  type="checkbox"
-                  :checked="isGroupFullySelected(group)"
-                  :indeterminate.prop="isGroupPartiallySelected(group)"
-                  @change="toggleGroup(group, $event.target.checked)"
-                />
-                Select all
-              </label>
-              <button
-                type="button"
-                class="aiv-primary aiv-primary--sm"
-                :disabled="!selectedInGroup(group).length || correcting"
-                @click="bulkCorrect(group.rule_code, selectedInGroup(group))"
-              >
-                Correct {{ selectedInGroup(group).length || '' }}
-              </button>
-            </div>
+        <template v-else-if="report && report.pending_total > 0">
+          <div class="aiv-summary">
+            <button
+              v-for="lane in reportLanes"
+              :key="lane.id"
+              type="button"
+              class="aiv-summary__tile"
+              :class="{ 'aiv-summary__tile--active': activeLane === lane.id, 'aiv-summary__tile--empty': !lane.count }"
+              :disabled="!lane.count"
+              @click="selectLane(lane.id)"
+            >
+              <span class="aiv-summary__kicker">{{ lane.label }}</span>
+              <span class="aiv-summary__value">{{ lane.count }}</span>
+              <span class="aiv-summary__hint">{{ lane.hint }}</span>
+            </button>
           </div>
 
-          <div class="aiv-table-wrap">
-            <table class="aiv-table">
-              <thead>
-                <tr>
-                  <th></th>
-                  <th>Claim</th>
-                  <th>Client</th>
-                  <th>Member</th>
-                  <th>Specialty</th>
-                  <th>Finding</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in group.findings" :key="row.id">
-                  <td>
-                    <input
-                      type="checkbox"
-                      :checked="selectedIds.includes(row.id)"
-                      @change="toggleFinding(row.id, $event.target.checked)"
-                    />
-                  </td>
-                  <td class="mono">{{ row.claim_claim_id || '—' }}</td>
-                  <td>{{ row.client_name || '—' }}</td>
-                  <td class="mono">{{ row.member_no || '—' }}</td>
-                  <td>{{ row.specialty_attended || '—' }}</td>
-                  <td>
-                    <div class="aiv-finding">{{ row.finding }}</div>
-                    <div class="aiv-muted">{{ row.recommendation }}</div>
-                  </td>
-                  <td class="aiv-table__end">
+          <div class="aiv-workspace">
+            <aside class="aiv-nav">
+              <div class="aiv-nav__search">
+                <input
+                  v-model="reportQuery"
+                  type="search"
+                  class="aiv-nav__input"
+                  placeholder="Filter claim, client, member…"
+                />
+              </div>
+              <div
+                v-for="lane in reportLanes.filter((l) => l.count)"
+                :key="`nav-${lane.id}`"
+                class="aiv-nav__section"
+              >
+                <div class="aiv-nav__section-title">{{ lane.label }}</div>
+                <button
+                  v-for="cat in lane.categories"
+                  :key="cat.rule_code"
+                  type="button"
+                  class="aiv-nav__item"
+                  :class="{ 'aiv-nav__item--active': activeRuleCode === cat.rule_code }"
+                  @click="selectCategory(lane.id, cat.rule_code)"
+                >
+                  <span class="aiv-nav__item-label">{{ cat.label }}</span>
+                  <span class="aiv-nav__item-count">{{ cat.pending_count }}</span>
+                </button>
+              </div>
+            </aside>
+
+            <div class="aiv-detail">
+              <div v-if="!activeGroup" class="aiv-muted">Select a category on the left.</div>
+              <template v-else>
+                <div class="aiv-detail__head">
+                  <div>
+                    <div class="aiv-detail__phase">{{ laneLabel(activeLane) }}</div>
+                    <h3 class="aiv-detail__title">
+                      {{ activeGroup.label || friendlyRuleLabel(activeGroup.rule_code) }}
+                    </h3>
+                    <p class="aiv-muted">
+                      {{ filteredActiveFindings.length }} of {{ activeGroup.pending_count }} shown
+                      <template v-if="reportQuery"> · filtered</template>
+                    </p>
+                  </div>
+                  <div class="aiv-detail__actions">
+                    <label class="aiv-check-all">
+                      <input
+                        type="checkbox"
+                        :checked="isGroupFullySelected(activeGroup)"
+                        :indeterminate.prop="isGroupPartiallySelected(activeGroup)"
+                        @change="toggleGroup(activeGroup, $event.target.checked)"
+                      />
+                      Select all
+                    </label>
+                    <button
+                      v-if="!isDrgChoiceGroup(activeGroup.rule_code) && !isReviewOnlyGroup(activeGroup.rule_code)"
+                      type="button"
+                      class="aiv-primary aiv-primary--sm"
+                      :disabled="!selectedInGroup(activeGroup).length || correcting"
+                      @click="bulkCorrect(activeGroup.rule_code, selectedInGroup(activeGroup))"
+                    >
+                      Correct {{ selectedInGroup(activeGroup).length || '' }}
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="!filteredActiveFindings.length" class="aiv-muted aiv-detail__empty">
+                  No findings match this filter.
+                </div>
+
+                <div class="aiv-cards">
+                  <article
+                    v-for="(row, idx) in filteredActiveFindings"
+                    :key="row.id"
+                    class="aiv-card"
+                    :class="{ 'aiv-card--selected': selectedIds.includes(row.id) }"
+                  >
+                    <div class="aiv-card__top">
+                      <label class="aiv-card__check">
+                        <input
+                          type="checkbox"
+                          :checked="selectedIds.includes(row.id)"
+                          @change="toggleFinding(row.id, $event.target.checked)"
+                        />
+                        <span class="aiv-card__index">{{ idx + 1 }}</span>
+                      </label>
+                      <div class="aiv-card__identity">
+                        <div class="aiv-card__claim mono">{{ row.claim_claim_id || '—' }}</div>
+                        <div class="aiv-card__client">{{ row.client_name || '—' }}</div>
+                      </div>
+                      <div class="aiv-card__meta">
+                        <span class="aiv-meta-chip" title="Member No">{{ row.member_no || '—' }}</span>
+                        <span class="aiv-meta-chip" title="Specialty">{{ row.specialty_attended || '—' }}</span>
+                        <span
+                          v-if="row.severity"
+                          class="aiv-sev"
+                          :data-sev="row.severity"
+                        >{{ row.severity.replace('_', ' ') }}</span>
+                      </div>
+                    </div>
+
+                    <div class="aiv-card__body">
+                      <div class="aiv-finding">{{ row.finding }}</div>
+                      <div class="aiv-muted">{{ row.recommendation }}</div>
+                      <details v-if="row.explanation" class="aiv-details">
+                        <summary>Why this flagged</summary>
+                        <p>{{ row.explanation }}</p>
+                      </details>
+                    </div>
+
+                    <div class="aiv-card__foot">
+                      <div v-if="isDrgChoiceGroup(activeGroup.rule_code)" class="aiv-card__drg">
+                        <label class="aiv-card__drg-label">Correct GDRG</label>
+                        <select
+                          class="aiv-select"
+                          :value="chosenDrg[row.id] || preferredDrg(row) || ''"
+                          @change="setChosenDrg(row.id, $event.target.value)"
+                        >
+                          <option value="" disabled>Choose GDRG…</option>
+                          <option
+                            v-for="opt in allowedDrgs(row)"
+                            :key="`${row.id}-${opt.drg_code}`"
+                            :value="opt.drg_code"
+                          >
+                            {{ opt.drg_code }}{{ opt.drg_description ? ` — ${opt.drg_description}` : '' }}
+                          </option>
+                        </select>
+                      </div>
+                      <div class="aiv-card__btns">
+                        <button
+                          v-if="isDrgChoiceGroup(activeGroup.rule_code)"
+                          type="button"
+                          class="aiv-primary aiv-primary--sm"
+                          :disabled="correcting || !(chosenDrg[row.id] || preferredDrg(row))"
+                          @click="acceptDrgFinding(row)"
+                        >
+                          Apply
+                        </button>
+                    <button
+                      v-else-if="isReviewOnlyFinding(row)"
+                      type="button"
+                      class="aiv-ghost aiv-ghost--sm"
+                      :disabled="correcting"
+                      @click="markEdited(row.id)"
+                    >
+                      Mark edited
+                    </button>
+                    <button
+                      v-else
+                      type="button"
+                      class="aiv-primary aiv-primary--sm"
+                      :disabled="correcting"
+                      @click="acceptFinding(row)"
+                    >
+                      Apply
+                    </button>
                     <button
                       type="button"
                       class="aiv-ghost aiv-ghost--sm"
                       :disabled="!row.source_id"
                       @click="openClaim(row.source_id)"
                     >
-                      Open
+                      Open claim
                     </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <section
+        class="aiv-panel aiv-rules"
+      >
+        <div class="aiv-panel__head">
+          <div>
+            <div class="aiv-panel__kicker">04 — Facility rules</div>
+            <h2 class="aiv-panel__title">Teach the scanner</h2>
+            <p class="aiv-muted q-mt-xs">
+              Add ClaimIT quirks here (leading hyphens, HIN shape, etc.). No developer script required —
+              new rules run on the next Phase 1 / coding / thorough scan.
+            </p>
+          </div>
+          <div class="aiv-bulk-bar">
+            <button type="button" class="aiv-ghost aiv-ghost--sm" :disabled="loadingRules" @click="loadRules">
+              Refresh
+            </button>
+            <button type="button" class="aiv-primary aiv-primary--sm" @click="openRuleForm()">
+              Add rule
+            </button>
+          </div>
+        </div>
+
+        <div v-if="loadingRules" class="aiv-muted">Loading rules…</div>
+        <div v-else-if="!facilityRules.length" class="aiv-muted">No facility rules yet.</div>
+        <div v-else class="aiv-rules-list">
+          <article
+            v-for="rule in facilityRules"
+            :key="rule.id"
+            class="aiv-rule"
+            :class="{ 'aiv-rule--off': !rule.enabled }"
+          >
+            <div class="aiv-rule__main">
+              <div class="aiv-rule__top">
+                <span class="aiv-rule__name">{{ rule.name }}</span>
+                <span v-if="rule.is_system" class="aiv-pill">System</span>
+                <span class="aiv-sev" :data-sev="rule.severity">{{ rule.severity }}</span>
+                <span class="aiv-pill">{{ rule.enabled ? 'On' : 'Off' }}</span>
+              </div>
+              <div class="aiv-muted aiv-rule__cond">
+                {{ rule.condition?.field }} · {{ rule.condition?.op }}
+                <template v-if="rule.condition?.value != null && rule.condition?.value !== ''">
+                  · {{ rule.condition.value }}
+                </template>
+              </div>
+              <div v-if="rule.description" class="aiv-muted aiv-rule__desc">{{ rule.description }}</div>
+            </div>
+            <div class="aiv-rule__actions">
+              <button type="button" class="aiv-ghost aiv-ghost--sm" @click="toggleRuleEnabled(rule)">
+                {{ rule.enabled ? 'Disable' : 'Enable' }}
+              </button>
+              <button type="button" class="aiv-ghost aiv-ghost--sm" @click="openRuleForm(rule)">Edit</button>
+              <button type="button" class="aiv-ghost aiv-ghost--sm" @click="removeRule(rule)">
+                {{ rule.is_system ? 'Disable' : 'Delete' }}
+              </button>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="ruleFormOpen" class="aiv-rule-form">
+          <h3 class="aiv-detail__title">{{ ruleForm.id ? 'Edit rule' : 'New rule' }}</h3>
+          <div class="aiv-rule-form__grid">
+            <label class="aiv-field">
+              <span>Name</span>
+              <input v-model="ruleForm.name" class="aiv-nav__input" />
+            </label>
+            <label class="aiv-field">
+              <span>Severity</span>
+              <select v-model="ruleForm.severity" class="aiv-select">
+                <option v-for="s in (rulesMeta.severities || ['critical','warning','review_needed'])" :key="s" :value="s">
+                  {{ s }}
+                </option>
+              </select>
+            </label>
+            <label class="aiv-field">
+              <span>Field</span>
+              <select v-model="ruleForm.condition.field" class="aiv-select">
+                <option v-for="f in (rulesMeta.fields || [])" :key="f" :value="f">{{ f }}</option>
+              </select>
+            </label>
+            <label class="aiv-field">
+              <span>Operator</span>
+              <select v-model="ruleForm.condition.op" class="aiv-select">
+                <option v-for="op in (rulesMeta.ops || [])" :key="op" :value="op">{{ op }}</option>
+              </select>
+            </label>
+            <label class="aiv-field">
+              <span>Value</span>
+              <input v-model="ruleForm.condition.value" class="aiv-nav__input" placeholder="e.g. - or 8" />
+            </label>
+            <label class="aiv-field">
+              <span>Suggested fix</span>
+              <select v-model="ruleForm.action_type" class="aiv-select">
+                <option v-for="t in (rulesMeta.action_types || [])" :key="t" :value="t">{{ t }}</option>
+              </select>
+            </label>
+            <label class="aiv-field aiv-field--wide">
+              <span>Description</span>
+              <input v-model="ruleForm.description" class="aiv-nav__input" />
+            </label>
+            <label class="aiv-field aiv-field--wide">
+              <span>Finding text (optional, use {value})</span>
+              <input v-model="ruleForm.finding_template" class="aiv-nav__input" />
+            </label>
+            <label class="aiv-field aiv-field--wide">
+              <span>Recommendation (optional)</span>
+              <input v-model="ruleForm.recommendation_template" class="aiv-nav__input" />
+            </label>
+          </div>
+          <div class="aiv-cta-row">
+            <button type="button" class="aiv-primary" :disabled="savingRule" @click="saveRuleForm">
+              {{ savingRule ? 'Saving…' : 'Save rule' }}
+            </button>
+            <button type="button" class="aiv-ghost" @click="ruleFormOpen = false">Cancel</button>
           </div>
         </div>
       </section>
@@ -283,15 +592,17 @@ import { claimsAPI, aiClaimVettingAPI, moduleSettingsAPI } from '../services/api
 
 const $q = useQuasar();
 const $router = useRouter();
-
 const moduleChecking = ref(true);
 const moduleActive = ref(false);
+const aiStatus = ref(null);
+const loadingAiStatus = ref(false);
 const batches = ref([]);
 const loadingBatches = ref(false);
 const selectedBatchId = ref(null);
 const batchClaims = ref([]);
 const loadingClaims = ref(false);
 const scopeMode = ref('all'); // all | open | selected
+const analysisMode = ref('phase1'); // phase1 | coding | thorough
 const selectedClaimIds = ref([]);
 
 const starting = ref(false);
@@ -301,7 +612,31 @@ const error = ref('');
 const job = ref(null);
 const report = ref(null);
 const selectedIds = ref([]);
+const chosenDrg = ref({});
+const reportQuery = ref('');
+const activeLane = ref('phase1');
+const activeRuleCode = ref(null);
+const facilityRules = ref([]);
+const rulesMeta = ref({ fields: [], ops: [], severities: [], action_types: [] });
+const loadingRules = ref(false);
+const savingRule = ref(false);
+const ruleFormOpen = ref(false);
+const ruleForm = ref(emptyRuleForm());
 let pollTimer = null;
+
+function emptyRuleForm() {
+  return {
+    id: null,
+    name: '',
+    description: '',
+    severity: 'warning',
+    enabled: true,
+    condition: { field: 'memberNo', op: 'starts_with', value: '' },
+    action_type: 'review_only',
+    finding_template: '',
+    recommendation_template: '',
+  };
+}
 
 const jobRunning = computed(() => ['queued', 'running'].includes(job.value?.status));
 
@@ -311,21 +646,244 @@ const scannableClaims = computed(() =>
 
 const runLabel = computed(() => {
   if (starting.value || jobRunning.value) return 'Scanning…';
+  const mode = analysisMode.value;
   if (scopeMode.value === 'selected') {
     const n = selectedClaimIds.value.length;
-    return n ? `Run AI on ${n} selected` : 'Select claims to scan';
+    if (!n) {
+      if (mode === 'thorough') return 'Select 1–2 claims for thorough review';
+      if (mode === 'phase1') return 'Select claims for Phase 1';
+      return 'Select claims for coding scan';
+    }
+    if (mode === 'thorough') return `Thorough review ${n} claim(s)`;
+    if (mode === 'phase1') return `Run Phase 1 on ${n}`;
+    return `Run coding scan on ${n}`;
   }
-  if (scopeMode.value === 'open') return 'Run AI on non-finalized';
-  return 'Run AI on all claims';
+  const setLabel = scopeMode.value === 'open' ? 'non-finalized' : 'all claims';
+  if (mode === 'phase1') return `Run Phase 1 on ${setLabel}`;
+  if (mode === 'coding') return `Run coding scan on ${setLabel}`;
+  return `Run AI on ${setLabel}`;
 });
 
 const reportGroups = computed(() => report.value?.groups || []);
 
+const aiEngineLabel = computed(() => {
+  const s = aiStatus.value;
+  if (!s) return 'AI engine…';
+  if (s.provider === 'ollama') {
+    const model = s.model || 'local model';
+    return s.ollama_online ? `Local AI · ${model}` : `Local AI offline · ${model}`;
+  }
+  return 'Rules engine (no LLM)';
+});
+
 const RULE_LABELS = {
   specialty_zoom: 'ZOOM specialty → OPDC',
   ghana_card_member_no: 'Ghana Card Member No → HIN',
+  diagnosis_drg_mismatch: 'Diagnosis GDRG mismatch',
+  diagnosis_icd_unmapped: 'Diagnosis ICD unmapped',
+  procedure_drg_mismatch: 'Procedure GDRG mismatch',
+  procedure_gdrg_unknown: 'Procedure GDRG unknown',
+  medicine_code_unknown: 'Medicine code unknown',
+  investigation_gdrg_unknown: 'Investigation GDRG unknown',
 };
 
+const PHASE1_RULES = new Set([
+  'specialty_zoom',
+  'ghana_card_member_no',
+  'member_no_leading_hyphen',
+  'member_no_length_not_8',
+  'hin_format_check',
+]);
+const CODING_RULES = new Set(['diagnosis_drg_mismatch', 'diagnosis_icd_unmapped']);
+const THOROUGH_RULES = new Set([
+  'procedure_drg_mismatch',
+  'procedure_gdrg_unknown',
+  'medicine_code_unknown',
+  'investigation_gdrg_unknown',
+]);
+
+const DRG_CHOICE_RULES = new Set(['diagnosis_drg_mismatch', 'procedure_drg_mismatch']);
+const REVIEW_ONLY_RULES = new Set([
+  'diagnosis_icd_unmapped',
+  'procedure_gdrg_unknown',
+  'medicine_code_unknown',
+  'investigation_gdrg_unknown',
+  'member_no_length_not_8',
+  'hin_format_check',
+]);
+
+function friendlyRuleLabel(ruleCode) {
+  if (RULE_LABELS[ruleCode]) return RULE_LABELS[ruleCode];
+  if (String(ruleCode || '').startsWith('llm_')) {
+    return String(ruleCode)
+      .replace(/^llm_review_?/i, '')
+      .replace(/^llm_/i, '')
+      .replace(/_/g, ' ')
+      .trim() || 'Local AI review';
+  }
+  return ruleCode;
+}
+
+function ruleLane(ruleCode) {
+  if (String(ruleCode || '').startsWith('llm_')) return 'ai';
+  if (PHASE1_RULES.has(ruleCode)) return 'phase1';
+  if (CODING_RULES.has(ruleCode)) return 'coding';
+  if (THOROUGH_RULES.has(ruleCode)) return 'thorough';
+  return 'phase1';
+}
+
+function laneLabel(id) {
+  if (id === 'phase1') return 'Phase 1 · ClaimIT';
+  if (id === 'coding') return 'Coding intelligence';
+  if (id === 'thorough') return 'Thorough review';
+  if (id === 'ai') return 'Local AI assist';
+  return id;
+}
+
+const reportLanes = computed(() => {
+  const groups = reportGroups.value;
+  const byLane = {
+    phase1: [],
+    coding: [],
+    thorough: [],
+    ai: [],
+  };
+  for (const g of groups) {
+    byLane[ruleLane(g.rule_code)]?.push({
+      ...g,
+      label: g.label || friendlyRuleLabel(g.rule_code),
+    });
+  }
+  return [
+    {
+      id: 'phase1',
+      label: 'Phase 1',
+      hint: 'ClaimIT prep',
+      categories: byLane.phase1,
+      count: byLane.phase1.reduce((n, g) => n + (g.pending_count || 0), 0),
+    },
+    {
+      id: 'coding',
+      label: 'Coding',
+      hint: 'Diagnosis GDRG',
+      categories: byLane.coding,
+      count: byLane.coding.reduce((n, g) => n + (g.pending_count || 0), 0),
+    },
+    {
+      id: 'thorough',
+      label: 'Thorough',
+      hint: 'Proc · med · inv',
+      categories: byLane.thorough,
+      count: byLane.thorough.reduce((n, g) => n + (g.pending_count || 0), 0),
+    },
+    {
+      id: 'ai',
+      label: 'AI assist',
+      hint: 'Local model · review only',
+      categories: byLane.ai,
+      count: byLane.ai.reduce((n, g) => n + (g.pending_count || 0), 0),
+    },
+  ];
+});
+
+const activeGroup = computed(() => {
+  if (!activeRuleCode.value) return null;
+  return reportGroups.value.find((g) => g.rule_code === activeRuleCode.value) || null;
+});
+
+const filteredActiveFindings = computed(() => {
+  const rows = activeGroup.value?.findings || [];
+  const q = reportQuery.value.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter((row) => {
+    const hay = [
+      row.claim_claim_id,
+      row.client_name,
+      row.member_no,
+      row.specialty_attended,
+      row.finding,
+      row.recommendation,
+    ]
+      .map((x) => String(x || '').toLowerCase())
+      .join(' ');
+    return hay.includes(q);
+  });
+});
+
+function selectLane(laneId) {
+  activeLane.value = laneId;
+  const lane = reportLanes.value.find((l) => l.id === laneId);
+  const first = lane?.categories?.[0];
+  activeRuleCode.value = first?.rule_code || null;
+}
+
+function selectCategory(laneId, ruleCode) {
+  activeLane.value = laneId;
+  activeRuleCode.value = ruleCode;
+}
+
+function syncReportSelection() {
+  const lanes = reportLanes.value.filter((l) => l.count);
+  if (!lanes.length) {
+    activeRuleCode.value = null;
+    return;
+  }
+  const currentOk = lanes.some((l) =>
+    l.categories.some((c) => c.rule_code === activeRuleCode.value)
+  );
+  if (currentOk) return;
+  const preferred = lanes.find((l) => l.id === activeLane.value) || lanes[0];
+  activeLane.value = preferred.id;
+  activeRuleCode.value = preferred.categories[0]?.rule_code || null;
+}
+
+function setThoroughMode() {
+  analysisMode.value = 'thorough';
+  scopeMode.value = 'selected';
+}
+
+function isDrgChoiceGroup(ruleCode) {
+  return DRG_CHOICE_RULES.has(ruleCode);
+}
+
+function isReviewOnlyGroup(ruleCode) {
+  if (REVIEW_ONLY_RULES.has(ruleCode)) return true;
+  if (String(ruleCode || '').startsWith('llm_')) return true;
+  return false;
+}
+
+function isReviewOnlyFinding(row) {
+  const type = row?.suggested_action?.type || '';
+  const code = row?.rule_code || '';
+  if (String(type).startsWith('review_')) return true;
+  if (String(code).startsWith('llm_')) return true;
+  return isReviewOnlyGroup(code);
+}
+
+function isAutoApplyFinding(row) {
+  if (isDrgChoiceGroup(row?.rule_code)) return false;
+  if (isReviewOnlyFinding(row)) return false;
+  return true;
+}
+
+function findingNeedsReopen(row) {
+  return String(row?.item_status || '').toLowerCase() === 'finalized';
+}
+
+function allowedDrgs(row) {
+  const details = row?.suggested_action?.details || {};
+  return Array.isArray(details.allowed_drgs) ? details.allowed_drgs : [];
+}
+
+function preferredDrg(row) {
+  const action = row?.suggested_action || {};
+  const details = action.details || {};
+  return (action.value || details.preferred || '').trim();
+}
+
+function setChosenDrg(findingId, value) {
+  chosenDrg.value = { ...chosenDrg.value, [findingId]: value };
+}
 function formatDate(value) {
   if (!value) return '—';
   try {
@@ -357,6 +915,24 @@ async function checkModule() {
     moduleActive.value = false;
   } finally {
     moduleChecking.value = false;
+  }
+  if (moduleActive.value) {
+    await loadAiStatus();
+  }
+}
+
+async function loadAiStatus() {
+  loadingAiStatus.value = true;
+  try {
+    const res = await aiClaimVettingAPI.getStatus();
+    aiStatus.value = res.data || null;
+    if (res.data && typeof res.data.module_active === 'boolean') {
+      moduleActive.value = res.data.module_active;
+    }
+  } catch {
+    aiStatus.value = null;
+  } finally {
+    loadingAiStatus.value = false;
   }
 }
 
@@ -409,32 +985,44 @@ function selectAllClaims() {
   selectedClaimIds.value = (batchClaims.value || []).map((r) => r.id);
 }
 
-async function loadReport() {
+async function loadReport({ quiet = false } = {}) {
   if (!selectedBatchId.value) return;
-  loadingReport.value = true;
-  error.value = '';
+  if (!quiet) {
+    loadingReport.value = true;
+    error.value = '';
+  }
   try {
     const res = await aiClaimVettingAPI.getBatchReport(selectedBatchId.value);
     report.value = res.data || null;
-    if (res.data?.latest_job) job.value = res.data.latest_job;
+    if (res.data?.latest_job && !jobRunning.value) {
+      job.value = res.data.latest_job;
+    } else if (res.data?.latest_job && job.value?.id === res.data.latest_job.id) {
+      job.value = res.data.latest_job;
+    }
     const alive = new Set(
       (res.data?.groups || []).flatMap((g) => (g.findings || []).map((f) => f.id))
     );
     selectedIds.value = selectedIds.value.filter((id) => alive.has(id));
+    syncReportSelection();
   } catch (e) {
     if (e.response?.status === 403) moduleActive.value = false;
-    else error.value = e.response?.data?.detail || e.message || 'Failed to load report';
+    else if (!quiet) error.value = e.response?.data?.detail || e.message || 'Failed to load report';
   } finally {
-    loadingReport.value = false;
+    if (!quiet) loadingReport.value = false;
   }
 }
 
 async function pollJob(jobId) {
   stopPoll();
+  let ticks = 0;
   pollTimer = setInterval(async () => {
     try {
       const res = await aiClaimVettingAPI.getJob(jobId);
       job.value = res.data;
+      ticks += 1;
+      if (ticks === 1 || ticks % 3 === 0) {
+        await loadReport({ quiet: true });
+      }
       if (!['queued', 'running'].includes(res.data?.status)) {
         stopPoll();
         await loadReport();
@@ -443,7 +1031,7 @@ async function pollJob(jobId) {
             type: res.data.findings_count ? 'warning' : 'positive',
             message: res.data.findings_count
               ? `Scan complete — ${res.data.findings_count} finding(s)`
-              : 'Scan complete — no Phase-1 issues',
+              : 'Scan complete — no issues found',
             position: 'top',
           });
         } else if (res.data?.status === 'failed') {
@@ -458,6 +1046,24 @@ async function pollJob(jobId) {
 
 async function startAnalyze() {
   if (!selectedBatchId.value) return;
+  if (analysisMode.value === 'thorough') {
+    if (scopeMode.value !== 'selected' || !selectedClaimIds.value.length) {
+      $q.notify({
+        type: 'warning',
+        message: 'Thorough mode: select 1–2 claims to assign for careful review.',
+        position: 'top',
+      });
+      return;
+    }
+    if (selectedClaimIds.value.length > 10) {
+      $q.notify({
+        type: 'warning',
+        message: 'Thorough mode is limited to 10 claims. Deselect some first.',
+        position: 'top',
+      });
+      return;
+    }
+  }
   starting.value = true;
   error.value = '';
   try {
@@ -471,11 +1077,12 @@ async function startAnalyze() {
     const res = await aiClaimVettingAPI.startBatchAnalyze(selectedBatchId.value, {
       item_ids: itemIds && itemIds.length ? itemIds : null,
       include_finalized: includeFinalized,
+      mode: analysisMode.value,
     });
     job.value = res.data;
     $q.notify({
       type: 'info',
-      message: `Scanning ${res.data.total_items} claim(s) in the background…`,
+      message: `Scanning ${res.data.total_items} claim(s) (${analysisMode.value}) in the background…`,
       position: 'top',
     });
     await pollJob(res.data.id);
@@ -523,8 +1130,150 @@ function openClaim(itemId) {
   window.open(route.href, '_blank');
 }
 
+async function acceptDrgFinding(row) {
+  const value = (chosenDrg.value[row.id] || preferredDrg(row) || '').trim();
+  if (!value) {
+    $q.notify({ type: 'warning', message: 'Choose a GDRG before applying.', position: 'top' });
+    return;
+  }
+  if (!(await confirmReopenIfNeeded(row))) return;
+  correcting.value = true;
+  try {
+    const res = await aiClaimVettingAPI.decideFinding(row.id, {
+      decision: 'accept',
+      chosen_value: value,
+    });
+    $q.notify({
+      type: 'positive',
+      message: res.data?.message || `Applied GDRG ${value}`,
+      position: 'top',
+    });
+    const next = { ...chosenDrg.value };
+    delete next[row.id];
+    chosenDrg.value = next;
+    await loadReport();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to apply GDRG',
+      position: 'top',
+    });
+  } finally {
+    correcting.value = false;
+  }
+}
+
+async function confirmReopenIfNeeded(rowOrIds) {
+  const rows = Array.isArray(rowOrIds)
+    ? (reportGroups.value || [])
+        .flatMap((g) => g.findings || [])
+        .filter((f) => rowOrIds.includes(f.id))
+    : [rowOrIds];
+  const finalized = rows.filter((r) => findingNeedsReopen(r));
+  if (!finalized.length) return true;
+  return new Promise((resolve) => {
+    $q.dialog({
+      title: 'Reopen finalized claim?',
+      message:
+        finalized.length === 1
+          ? `Claim ${finalized[0].claim_claim_id || finalized[0].source_id} is finalized. Accepting will reopen it, apply the correction, then you can re-finalize when ready.`
+          : `${finalized.length} selected claim(s) are finalized. Accepting will reopen them, apply corrections, then you can re-finalize when ready.`,
+      cancel: true,
+      persistent: true,
+      ok: { label: 'Reopen & apply', color: 'primary' },
+    })
+      .onOk(() => resolve(true))
+      .onCancel(() => resolve(false))
+      .onDismiss(() => resolve(false));
+  });
+}
+
+async function acceptFinding(row) {
+  if (!(await confirmReopenIfNeeded(row))) return;
+  correcting.value = true;
+  try {
+    const res = await aiClaimVettingAPI.decideFinding(row.id, { decision: 'accept' });
+    $q.notify({
+      type: 'positive',
+      message: res.data?.message || 'Applied',
+      position: 'top',
+    });
+    await loadReport();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to apply',
+      position: 'top',
+    });
+  } finally {
+    correcting.value = false;
+  }
+}
+
+async function markEdited(findingId) {
+  correcting.value = true;
+  try {
+    await aiClaimVettingAPI.decideFinding(findingId, {
+      decision: 'edited',
+      note: 'Reviewed / corrected manually from AI Vetting console',
+    });
+    $q.notify({ type: 'positive', message: 'Marked as edited', position: 'top' });
+    await loadReport();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to update finding',
+      position: 'top',
+    });
+  } finally {
+    correcting.value = false;
+  }
+}
+
+async function bulkCorrectSelected() {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return;
+  const autoIds = [];
+  let skippedChoice = 0;
+  let skippedReview = 0;
+  for (const group of reportGroups.value) {
+    for (const f of group.findings || []) {
+      if (!ids.includes(f.id)) continue;
+      if (isDrgChoiceGroup(group.rule_code)) skippedChoice += 1;
+      else if (isReviewOnlyFinding(f)) skippedReview += 1;
+      else autoIds.push(f.id);
+    }
+  }
+  if (skippedChoice || skippedReview) {
+    $q.notify({
+      type: 'info',
+      message: [
+        skippedChoice ? `${skippedChoice} DRG row(s) need a chosen code (use Apply).` : '',
+        skippedReview ? `${skippedReview} review-only row(s) — open claim then Mark edited.` : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+      position: 'top',
+    });
+  }
+  if (!autoIds.length) return;
+  await bulkCorrect(null, autoIds);
+}
+
 async function bulkCorrect(ruleCode, findingIds) {
   if (!findingIds?.length) return;
+  if (ruleCode && (isDrgChoiceGroup(ruleCode) || isReviewOnlyGroup(ruleCode))) {
+    $q.notify({
+      type: 'info',
+      message: isDrgChoiceGroup(ruleCode)
+        ? 'Choose the correct GDRG on each row, then Apply.'
+        : 'Open the claim to fix the code, then Mark edited.',
+      position: 'top',
+    });
+    return;
+  }
+  if (!(await confirmReopenIfNeeded(findingIds))) return;
+
   const isHin =
     ruleCode === 'ghana_card_member_no' ||
     (!ruleCode &&
@@ -602,12 +1351,165 @@ watch(scopeMode, () => {
   if (scopeMode.value !== 'selected') selectedClaimIds.value = [];
 });
 
+watch(analysisMode, (mode) => {
+  if (mode === 'thorough') scopeMode.value = 'selected';
+});
+
+watch(reportGroups, () => {
+  syncReportSelection();
+});
+
 onMounted(async () => {
   await checkModule();
-  if (moduleActive.value) await loadBatches();
+  if (moduleActive.value) {
+    await loadBatches();
+    await loadRules();
+  }
 });
 
 onBeforeUnmount(stopPoll);
+
+async function loadRules() {
+  loadingRules.value = true;
+  try {
+    const [rulesRes, metaRes] = await Promise.all([
+      aiClaimVettingAPI.listRules(),
+      aiClaimVettingAPI.getRulesMeta(),
+    ]);
+    facilityRules.value = rulesRes.data || [];
+    rulesMeta.value = metaRes.data || rulesMeta.value;
+  } catch (e) {
+    if (e.response?.status !== 403) {
+      $q.notify({
+        type: 'negative',
+        message: e.response?.data?.detail || 'Failed to load facility rules',
+        position: 'top',
+      });
+    }
+  } finally {
+    loadingRules.value = false;
+  }
+}
+
+function openRuleForm(rule = null) {
+  if (rule) {
+    ruleForm.value = {
+      id: rule.id,
+      name: rule.name || '',
+      description: rule.description || '',
+      severity: rule.severity || 'warning',
+      enabled: !!rule.enabled,
+      condition: {
+        field: rule.condition?.field || 'memberNo',
+        op: rule.condition?.op || 'starts_with',
+        value: rule.condition?.value ?? '',
+        skip_if_ghana_card: !!rule.condition?.skip_if_ghana_card,
+        skip_if_hin_shaped: !!rule.condition?.skip_if_hin_shaped,
+      },
+      action_type: rule.suggested_action?.type || 'review_only',
+      finding_template: rule.finding_template || '',
+      recommendation_template: rule.recommendation_template || '',
+    };
+  } else {
+    ruleForm.value = emptyRuleForm();
+    if (rulesMeta.value.fields?.length) {
+      ruleForm.value.condition.field = rulesMeta.value.fields[0];
+    }
+  }
+  ruleFormOpen.value = true;
+}
+
+async function saveRuleForm() {
+  const form = ruleForm.value;
+  if (!form.name?.trim()) {
+    $q.notify({ type: 'warning', message: 'Name is required', position: 'top' });
+    return;
+  }
+  const payload = {
+    name: form.name.trim(),
+    description: form.description || null,
+    severity: form.severity,
+    enabled: form.enabled !== false,
+    analysis_modes: ['phase1', 'coding', 'thorough'],
+    condition: {
+      field: form.condition.field,
+      op: form.condition.op,
+      value: form.condition.value,
+      ...(form.condition.skip_if_ghana_card ? { skip_if_ghana_card: true } : {}),
+      ...(form.condition.skip_if_hin_shaped ? { skip_if_hin_shaped: true } : {}),
+    },
+    suggested_action: {
+      type: form.action_type || 'review_only',
+      field: form.condition.field,
+      value: form.action_type === 'strip_prefix' ? form.condition.value : undefined,
+      details:
+        form.action_type === 'strip_prefix'
+          ? { prefix: form.condition.value || '-' }
+          : {},
+    },
+    finding_template: form.finding_template || null,
+    recommendation_template: form.recommendation_template || null,
+  };
+  savingRule.value = true;
+  try {
+    if (form.id) {
+      await aiClaimVettingAPI.updateRule(form.id, payload);
+    } else {
+      await aiClaimVettingAPI.createRule(payload);
+    }
+    ruleFormOpen.value = false;
+    await loadRules();
+    $q.notify({ type: 'positive', message: 'Rule saved', position: 'top' });
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to save rule',
+      position: 'top',
+    });
+  } finally {
+    savingRule.value = false;
+  }
+}
+
+async function toggleRuleEnabled(rule) {
+  try {
+    await aiClaimVettingAPI.updateRule(rule.id, { enabled: !rule.enabled });
+    await loadRules();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || 'Failed to update rule',
+      position: 'top',
+    });
+  }
+}
+
+async function removeRule(rule) {
+  const ok = await new Promise((resolve) => {
+    $q.dialog({
+      title: rule.is_system ? 'Disable system rule?' : 'Delete rule?',
+      message: rule.is_system
+        ? 'System rules are disabled, not deleted, so you can turn them back on later.'
+        : `Delete “${rule.name}”?`,
+      cancel: true,
+      persistent: true,
+    })
+      .onOk(() => resolve(true))
+      .onCancel(() => resolve(false))
+      .onDismiss(() => resolve(false));
+  });
+  if (!ok) return;
+  try {
+    await aiClaimVettingAPI.deleteRule(rule.id);
+    await loadRules();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || 'Failed to remove rule',
+      position: 'top',
+    });
+  }
+}
 </script>
 
 <style scoped>
@@ -668,6 +1570,48 @@ onBeforeUnmount(stopPoll);
   font-size: var(--hms-text-base);
   line-height: var(--hms-leading-relaxed);
   max-width: 34rem;
+}
+
+.aiv-hero__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+.aiv-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  font-size: var(--hms-text-xs);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-secondary);
+}
+
+.aiv-chip[data-tone='ok'] {
+  border-color: color-mix(in srgb, var(--hms-success) 35%, var(--hms-border));
+  background: color-mix(in srgb, var(--hms-success) 12%, transparent);
+  color: var(--hms-success);
+}
+
+.aiv-chip[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--hms-warning) 40%, var(--hms-border));
+  background: color-mix(in srgb, var(--hms-warning) 14%, transparent);
+  color: var(--hms-warning);
+}
+
+.aiv-chip[data-tone='run'] {
+  border-color: color-mix(in srgb, var(--hms-accent) 40%, var(--hms-border));
+  background: color-mix(in srgb, var(--hms-accent) 12%, transparent);
+  color: var(--hms-accent);
+}
+
+.aiv-chip[data-tone='muted'] {
+  color: var(--hms-text-muted);
 }
 
 .aiv-hero__actions {
@@ -802,6 +1746,28 @@ onBeforeUnmount(stopPoll);
   cursor: pointer;
   font-size: var(--hms-text-sm);
   color: var(--hms-text-primary);
+}
+
+.aiv-radio--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.aiv-select {
+  max-width: 16rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--hms-radius-md, 8px);
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg, var(--hms-surface));
+  color: var(--hms-text-primary);
+  font-size: var(--hms-text-sm);
+}
+
+.aiv-explain {
+  margin-top: 0.25rem;
+  font-size: var(--hms-text-xs);
+  max-width: 28rem;
 }
 
 .aiv-claim-picker {
@@ -971,6 +1937,77 @@ onBeforeUnmount(stopPoll);
 
 .aiv-report { margin-top: 1rem; }
 
+.aiv-lanes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.65rem;
+}
+
+@media (max-width: 900px) {
+  .aiv-lanes { grid-template-columns: 1fr; }
+}
+
+.aiv-lane {
+  text-align: left;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  color: var(--hms-text-primary);
+  border-radius: var(--hms-radius-xl);
+  padding: 0.85rem 0.9rem;
+  cursor: pointer;
+  transition: border-color var(--hms-duration-fast) var(--hms-ease-out),
+    background var(--hms-duration-fast) var(--hms-ease-out),
+    transform var(--hms-duration-fast) var(--hms-ease-out);
+}
+
+.aiv-lane:hover {
+  background: var(--hms-surface-hover);
+  transform: translateY(-1px);
+}
+
+.aiv-lane--active {
+  border-color: color-mix(in srgb, var(--hms-accent) 55%, var(--hms-border));
+  background: var(--hms-accent-muted);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hms-accent) 25%, transparent);
+}
+
+.aiv-lane__phase {
+  font-size: var(--hms-text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--hms-accent);
+  font-weight: 650;
+}
+
+.aiv-lane__title {
+  margin-top: 0.35rem;
+  font-weight: 700;
+  font-size: var(--hms-text-base);
+  letter-spacing: var(--hms-tracking-tight);
+}
+
+.aiv-lane__copy {
+  margin: 0.35rem 0 0;
+  font-size: var(--hms-text-xs);
+  line-height: var(--hms-leading-normal);
+  color: var(--hms-text-muted);
+}
+
+.aiv-scope-block {
+  margin-top: 1.1rem;
+  padding-top: 0.95rem;
+  border-top: 1px solid var(--hms-border);
+}
+
+.aiv-scope-block__label {
+  font-size: var(--hms-text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  font-weight: 650;
+  margin-bottom: 0.55rem;
+}
+
 .aiv-bulk-bar {
   display: flex;
   flex-wrap: wrap;
@@ -999,70 +2036,381 @@ onBeforeUnmount(stopPoll);
   font-weight: 700;
 }
 
-.aiv-group {
-  margin-top: 1.35rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--hms-border);
+.aiv-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1rem;
 }
 
-.aiv-group__head {
+@media (max-width: 720px) {
+  .aiv-summary { grid-template-columns: 1fr; }
+}
+
+.aiv-summary__tile {
+  text-align: left;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-surface);
+  border-radius: var(--hms-radius-xl);
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  color: var(--hms-text-primary);
+  transition: border-color var(--hms-duration-fast) var(--hms-ease-out),
+    background var(--hms-duration-fast) var(--hms-ease-out);
+}
+
+.aiv-summary__tile:hover:not(:disabled) {
+  background: var(--hms-surface-hover);
+}
+
+.aiv-summary__tile--active {
+  border-color: color-mix(in srgb, var(--hms-accent) 50%, var(--hms-border));
+  background: var(--hms-accent-muted);
+}
+
+.aiv-summary__tile--empty,
+.aiv-summary__tile:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.aiv-summary__kicker {
+  display: block;
+  font-size: var(--hms-text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  font-weight: 650;
+}
+
+.aiv-summary__value {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: clamp(1.5rem, 2.4vw, 1.9rem);
+  font-weight: 750;
+  letter-spacing: var(--hms-tracking-tight);
+  line-height: 1.1;
+}
+
+.aiv-summary__hint {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+
+.aiv-workspace {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-2xl);
+  overflow: hidden;
+  min-height: 420px;
+  background: var(--hms-surface);
+}
+
+@media (max-width: 900px) {
+  .aiv-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+.aiv-nav {
+  border-right: 1px solid var(--hms-border);
+  background: var(--hms-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+@media (max-width: 900px) {
+  .aiv-nav {
+    border-right: none;
+    border-bottom: 1px solid var(--hms-border);
+    max-height: 260px;
+  }
+}
+
+.aiv-nav__search {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--hms-border);
+}
+
+.aiv-nav__input {
+  width: 100%;
+  border: 1px solid var(--hms-border);
+  background: var(--hms-panel-bg);
+  color: var(--hms-text-primary);
+  border-radius: var(--hms-radius-lg);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  font-size: var(--hms-text-sm);
+}
+
+.aiv-nav__input:focus {
+  outline: 2px solid color-mix(in srgb, var(--hms-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.aiv-nav__section {
+  padding: 0.75rem 0.55rem 0.35rem;
+}
+
+.aiv-nav__section-title {
+  padding: 0 0.45rem 0.4rem;
+  font-size: var(--hms-text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hms-text-muted);
+  font-weight: 650;
+}
+
+.aiv-nav__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--hms-text-primary);
+  border-radius: var(--hms-radius-lg);
+  padding: 0.55rem 0.6rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--hms-text-sm);
+}
+
+.aiv-nav__item:hover {
+  background: var(--hms-surface-hover);
+}
+
+.aiv-nav__item--active {
+  background: var(--hms-accent-muted);
+  color: var(--hms-accent);
+  font-weight: 650;
+}
+
+.aiv-nav__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiv-nav__item-count {
+  flex-shrink: 0;
+  min-width: 1.4rem;
+  text-align: center;
+  font-size: var(--hms-text-xs);
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--hms-radius-full);
+  background: color-mix(in srgb, var(--hms-text-muted) 14%, transparent);
+}
+
+.aiv-detail {
+  padding: 1rem 1.1rem 1.2rem;
+  overflow: auto;
+  max-height: 70vh;
+}
+
+.aiv-detail__head {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--hms-border);
 }
 
-.aiv-group__title {
-  margin: 0;
+.aiv-detail__phase {
+  font-size: var(--hms-text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hms-accent);
+  font-weight: 650;
+}
+
+.aiv-detail__title {
+  margin: 0.2rem 0 0;
   font-size: var(--hms-text-lg);
   font-weight: 700;
   letter-spacing: var(--hms-tracking-tight);
   color: var(--hms-text-primary);
 }
 
-.aiv-group__actions {
+.aiv-detail__actions {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
 }
 
-.aiv-table-wrap {
-  overflow: auto;
+.aiv-detail__empty {
+  padding: 1.5rem 0;
+}
+
+.aiv-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.aiv-card {
   border: 1px solid var(--hms-border);
   border-radius: var(--hms-radius-xl);
+  background: var(--hms-panel-bg);
+  padding: 0.9rem 1rem;
+  transition: border-color var(--hms-duration-fast) var(--hms-ease-out),
+    box-shadow var(--hms-duration-fast) var(--hms-ease-out);
+}
+
+.aiv-card--selected {
+  border-color: color-mix(in srgb, var(--hms-accent) 45%, var(--hms-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--hms-accent) 20%, transparent);
+}
+
+.aiv-card__top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .aiv-card__top {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .aiv-card__meta {
+    grid-column: 1 / -1;
+  }
+}
+
+.aiv-card__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+.aiv-card__index {
+  width: 1.4rem;
+  height: 1.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--hms-radius-full);
+  font-size: var(--hms-text-xs);
+  font-weight: 700;
+  color: var(--hms-text-muted);
   background: var(--hms-surface);
 }
 
-.aiv-table {
-  width: 100%;
-  border-collapse: collapse;
+.aiv-card__claim {
+  font-weight: 700;
   font-size: var(--hms-text-sm);
 }
 
-.aiv-table th {
-  text-align: left;
-  padding: 0.65rem 0.75rem;
-  font-size: var(--hms-text-xs);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.aiv-card__client {
+  margin-top: 0.15rem;
+  font-size: var(--hms-text-sm);
+  color: var(--hms-text-secondary);
+}
+
+.aiv-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.aiv-meta-chip {
+  font-family: var(--hms-font-mono);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--hms-radius-md, 8px);
+  background: var(--hms-surface);
   color: var(--hms-text-muted);
-  background: var(--hms-bg-elevated);
-  border-bottom: 1px solid var(--hms-border);
+  border: 1px solid var(--hms-border);
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.aiv-table td {
-  padding: 0.7rem 0.75rem;
-  border-bottom: 1px solid var(--hms-border);
-  vertical-align: top;
-  color: var(--hms-text-primary);
+.aiv-sev {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--hms-radius-full);
+  background: var(--hms-surface);
+  color: var(--hms-text-muted);
 }
 
-.aiv-table__end {
-  text-align: right;
-  white-space: nowrap;
+.aiv-sev[data-sev='critical'] {
+  color: var(--hms-critical);
+  background: var(--hms-critical-muted);
+}
+
+.aiv-sev[data-sev='warning'] {
+  color: var(--hms-warning);
+  background: color-mix(in srgb, var(--hms-warning) 16%, transparent);
+}
+
+.aiv-card__body {
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--hms-border);
+}
+
+.aiv-details {
+  margin-top: 0.55rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+}
+
+.aiv-details summary {
+  cursor: pointer;
+  color: var(--hms-text-secondary);
+  font-weight: 600;
+}
+
+.aiv-details p {
+  margin: 0.4rem 0 0;
+  line-height: var(--hms-leading-relaxed);
+}
+
+.aiv-card__foot {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.aiv-card__drg {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.aiv-card__drg-label {
+  display: block;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+  margin-bottom: 0.3rem;
+  font-weight: 650;
+}
+
+.aiv-card__btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
 }
 
 .aiv-finding {
@@ -1073,5 +2421,90 @@ onBeforeUnmount(stopPoll);
 .mono {
   font-family: var(--hms-font-mono);
   font-size: 0.82em;
+}
+
+.aiv-rules {
+  margin-top: 1rem;
+}
+
+.aiv-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.aiv-rule {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--hms-border);
+  border-radius: var(--hms-radius-xl);
+  background: var(--hms-surface);
+}
+
+.aiv-rule--off {
+  opacity: 0.55;
+}
+
+.aiv-rule__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.aiv-rule__name {
+  font-weight: 700;
+  font-size: var(--hms-text-base);
+}
+
+.aiv-rule__cond {
+  margin-top: 0.25rem;
+  font-family: var(--hms-font-mono);
+  font-size: 0.78rem;
+}
+
+.aiv-rule__desc {
+  margin-top: 0.35rem;
+  max-width: 40rem;
+}
+
+.aiv-rule__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.aiv-rule-form {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hms-border);
+}
+
+.aiv-rule-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .aiv-rule-form__grid { grid-template-columns: 1fr; }
+}
+
+.aiv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: var(--hms-text-xs);
+  color: var(--hms-text-muted);
+  font-weight: 650;
+}
+
+.aiv-field--wide {
+  grid-column: 1 / -1;
 }
 </style>

@@ -20,7 +20,7 @@ from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
 from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
-from app.models.ai_claim_vetting import AiClaimVettingFinding, AiClaimVettingJob
+from app.models.ai_claim_vetting import AiClaimVettingFinding, AiClaimVettingJob, AiClaimVettingRule
 from app.models.consultation_notes import ConsultationNotes
 from app.models.doctor_note_entry import DoctorNoteEntry
 from app.models.admission import AdmissionRecommendation
@@ -115,6 +115,7 @@ __all__ = [
     "ClaimXmlImportItem",
     "AiClaimVettingFinding",
     "AiClaimVettingJob",
+    "AiClaimVettingRule",
     "ConsultationNotes",
     "DoctorNoteEntry",
     "AdmissionRecommendation",

@@ -20,6 +20,7 @@ class AiClaimVettingJob(Base):
     processed_items = Column(Integer, nullable=False, default=0)
     findings_count = Column(Integer, nullable=False, default=0)
     item_ids = Column(JSON, nullable=True)  # requested item ids
+    analysis_mode = Column(String(20), nullable=False, default="standard")  # standard | thorough
     error_message = Column(Text, nullable=True)
     summary_by_rule = Column(JSON, nullable=True)  # {rule_code: count} after complete
 
@@ -65,3 +66,33 @@ class AiClaimVettingFinding(Base):
     decided_by = relationship("User", foreign_keys=[decided_by_id])
     created_by = relationship("User", foreign_keys=[created_by_id])
     job = relationship("AiClaimVettingJob", back_populates="findings")
+
+
+class AiClaimVettingRule(Base):
+    """Facility-owned configurable vetting rule (manager CRUD)."""
+
+    __tablename__ = "ai_claim_vetting_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule_code = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    severity = Column(String(30), nullable=False, default="warning")
+    priority = Column(Integer, nullable=False, default=100)
+    analysis_modes = Column(JSON, nullable=True)  # ["phase1","coding","thorough"]
+    applies_to = Column(String(30), nullable=False, default="ghims_import")
+    is_system = Column(Boolean, nullable=False, default=False)  # seeded; can disable, limited edit
+    condition = Column("condition", JSON, nullable=False)  # reserved word in MySQL — explicit name
+    suggested_action = Column(JSON, nullable=True)
+    finding_template = Column(String(500), nullable=True)
+    recommendation_template = Column(Text, nullable=True)
+    requires_human_review = Column(Boolean, nullable=False, default=True)
+
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=utcnow_callable, nullable=False)
+    updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable, nullable=True)
+
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_id])

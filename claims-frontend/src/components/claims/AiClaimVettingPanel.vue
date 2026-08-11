@@ -16,7 +16,22 @@
         />
       </div>
       <div class="text-caption text-grey-7 q-mb-md">
-        Phase 1: flags ZOOM specialty and Ghana Card Member No. Recommendations need your approval — nothing is changed automatically.
+        Choose a scan lane. Phase 1 is ClaimIT prep only; Coding adds diagnosis GDRG;
+        Thorough adds procedures / medicines / investigations. Nothing changes until you approve.
+      </div>
+      <div class="row q-gutter-sm q-mb-md items-center">
+        <q-option-group
+          v-model="analysisMode"
+          :options="[
+            { label: 'Phase 1', value: 'phase1' },
+            { label: 'Coding', value: 'coding' },
+            { label: 'Thorough', value: 'thorough' },
+          ]"
+          type="radio"
+          dense
+          inline
+          color="primary"
+        />
       </div>
 
       <q-banner v-if="summary && !findings.length && !analyzing" class="bg-green-1" rounded dense>
@@ -47,14 +62,27 @@
             <div class="text-subtitle2">{{ f.finding }}</div>
             <div class="text-body2 q-mt-xs">{{ f.explanation }}</div>
             <div class="text-body2 text-weight-medium q-mt-sm">Suggested: {{ f.recommendation }}</div>
+            <div v-if="isDrgChoice(f)" class="q-mt-sm">
+              <q-select
+                dense
+                outlined
+                emit-value
+                map-options
+                label="Correct GDRG"
+                :options="drgOptions(f)"
+                v-model="chosenDrg[f.id]"
+                style="max-width: 360px"
+              />
+            </div>
             <div class="row q-gutter-sm q-mt-md">
               <q-btn
+                v-if="!isReviewOnly(f)"
                 color="positive"
                 unelevated
                 dense
-                label="Accept"
+                :label="isDrgChoice(f) ? 'Apply GDRG' : 'Accept'"
                 :loading="decidingId === f.id && decidingAction === 'accept'"
-                :disable="disabled || decidingId === f.id"
+                :disable="disabled || decidingId === f.id || (isDrgChoice(f) && !chosenDrgValue(f))"
                 @click="decide(f, 'accept')"
               />
               <q-btn
@@ -119,9 +147,49 @@ const summary = ref('');
 const error = ref('');
 const decidingId = ref(null);
 const decidingAction = ref('');
+const analysisMode = ref('phase1');
+const chosenDrg = ref({});
 
 const pendingFindings = computed(() => findings.value.filter((f) => f.status === 'pending'));
 const resolvedFindings = computed(() => findings.value.filter((f) => f.status !== 'pending'));
+
+const DRG_CHOICE = new Set(['diagnosis_drg_mismatch', 'procedure_drg_mismatch']);
+const REVIEW_ONLY = new Set([
+  'diagnosis_icd_unmapped',
+  'procedure_gdrg_unknown',
+  'medicine_code_unknown',
+  'investigation_gdrg_unknown',
+]);
+
+function isDrgChoice(f) {
+  return DRG_CHOICE.has(f?.rule_code);
+}
+
+function isReviewOnly(f) {
+  const code = f?.rule_code || '';
+  const actionType = f?.suggested_action?.type || '';
+  if (REVIEW_ONLY.has(code)) return true;
+  if (code.startsWith('llm_')) return true;
+  if (String(actionType).startsWith('review_')) return true;
+  return false;
+}
+
+function drgOptions(f) {
+  const allowed = f?.suggested_action?.details?.allowed_drgs || [];
+  return allowed.map((a) => ({
+    label: a.drg_description ? `${a.drg_code} — ${a.drg_description}` : a.drg_code,
+    value: a.drg_code,
+  }));
+}
+
+function preferredDrg(f) {
+  const action = f?.suggested_action || {};
+  return (action.value || action.details?.preferred || '').trim();
+}
+
+function chosenDrgValue(f) {
+  return (chosenDrg.value[f.id] || preferredDrg(f) || '').trim();
+}
 
 function severityColor(sev) {
   if (sev === 'critical') return 'negative';
@@ -162,9 +230,18 @@ async function runAnalyze() {
   analyzing.value = true;
   error.value = '';
   try {
-    const res = await aiClaimVettingAPI.analyzeGhimsItem(props.itemId);
+    const res = await aiClaimVettingAPI.analyzeGhimsItem(props.itemId, {
+      mode: analysisMode.value,
+    });
     summary.value = res.data?.summary || '';
     findings.value = Array.isArray(res.data?.findings) ? res.data.findings : [];
+    const nextChosen = { ...chosenDrg.value };
+    for (const f of findings.value) {
+      if (isDrgChoice(f) && preferredDrg(f) && !nextChosen[f.id]) {
+        nextChosen[f.id] = preferredDrg(f);
+      }
+    }
+    chosenDrg.value = nextChosen;
     if (!findings.value.length && Array.isArray(res.data?.preview_findings)) {
       // No persisted rows when clean — keep summary
     }
@@ -189,7 +266,18 @@ async function decide(finding, decision) {
   decidingId.value = finding.id;
   decidingAction.value = decision;
   try {
-    const res = await aiClaimVettingAPI.decideFinding(finding.id, { decision });
+    const payload = { decision };
+    if (decision === 'accept' && isDrgChoice(finding)) {
+      const value = chosenDrgValue(finding);
+      if (!value) {
+        $q.notify({ type: 'warning', message: 'Choose a GDRG first', position: 'top' });
+        decidingId.value = null;
+        decidingAction.value = '';
+        return;
+      }
+      payload.chosen_value = value;
+    }
+    const res = await aiClaimVettingAPI.decideFinding(finding.id, payload);
     const updated = res.data?.finding;
     if (updated) {
       const idx = findings.value.findIndex((f) => f.id === updated.id);
@@ -204,9 +292,11 @@ async function decide(finding, decision) {
       position: 'top',
     });
   } catch (e) {
+    const detail = e.response?.data?.detail || e.message || 'Failed to record decision';
+    // Offer reopen path is now automatic — surface message only
     $q.notify({
       type: 'negative',
-      message: e.response?.data?.detail || e.message || 'Failed to record decision',
+      message: detail,
       position: 'top',
     });
   } finally {

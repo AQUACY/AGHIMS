@@ -969,36 +969,59 @@ export const claimsAPI = {
 
 /** AI Claims Vetting (optional module: ai_claims_vetting) */
 export const aiClaimVettingAPI = {
+  getStatus: () => api.get('/ai-claim-vetting/status'),
   analyzeSample: (payload) => api.post('/ai-claim-vetting/analyze', payload),
-  analyzeGhimsItem: (itemId) => api.post(`/ai-claim-vetting/ghims-items/${itemId}/analyze`),
+  analyzeGhimsItem: (itemId, { mode = 'phase1' } = {}) =>
+    api.post(`/ai-claim-vetting/ghims-items/${itemId}/analyze`, null, {
+      params: { mode },
+    }),
   listGhimsFindings: (itemId, statusFilter = null) =>
     api.get(`/ai-claim-vetting/ghims-items/${itemId}/findings`, {
       params: statusFilter ? { status_filter: statusFilter } : {},
     }),
-  decideFinding: (findingId, { decision, note = null, otac = null } = {}) =>
+  decideFinding: (findingId, { decision, note = null, otac = null, chosen_value = null } = {}) =>
     api.post(`/ai-claim-vetting/findings/${findingId}/decide`, {
       decision,
       ...(note ? { note } : {}),
       ...(otac ? { otac } : {}),
+      ...(chosen_value ? { chosen_value } : {}),
     }),
-  startBatchAnalyze: (batchId, { item_ids = null, include_finalized = false } = {}) =>
+  startBatchAnalyze: (batchId, { item_ids = null, include_finalized = false, mode = 'phase1' } = {}) =>
     api.post(`/ai-claim-vetting/batches/${batchId}/analyze`, {
       item_ids: item_ids && item_ids.length ? item_ids : null,
       include_finalized: !!include_finalized,
+      mode: mode || 'phase1',
     }),
+  startLlmAssist: (batchId, { item_ids, note = null } = {}) =>
+    api.post(`/ai-claim-vetting/batches/${batchId}/llm-assist`, {
+      item_ids: item_ids || [],
+      ...(note ? { note } : {}),
+    }, { timeout: 120000 }),
   getJob: (jobId) => api.get(`/ai-claim-vetting/jobs/${jobId}`),
-  getLatestBatchJob: (batchId) => api.get(`/ai-claim-vetting/batches/${batchId}/jobs/latest`),
-  getBatchReport: (batchId, statusFilter = 'pending') =>
-    api.get(`/ai-claim-vetting/batches/${batchId}/report`, {
-      params: { status_filter: statusFilter },
+  getLatestBatchJob: (batchId, { mode = null } = {}) =>
+    api.get(`/ai-claim-vetting/batches/${batchId}/jobs/latest`, {
+      params: mode ? { mode } : {},
     }),
-  bulkDecideFindings: ({ finding_ids, decision, note = null, otac = null }) =>
+  getBatchReport: (batchId, statusFilter = 'pending', { scope = 'rules' } = {}) =>
+    api.get(`/ai-claim-vetting/batches/${batchId}/report`, {
+      params: { status_filter: statusFilter, scope },
+    }),
+  bulkDecideFindings: ({ finding_ids, decision, note = null, otac = null, chosen_value = null }) =>
     api.post('/ai-claim-vetting/findings/bulk-decide', {
       finding_ids,
       decision,
       ...(note ? { note } : {}),
       ...(otac ? { otac } : {}),
+      ...(chosen_value ? { chosen_value } : {}),
     }, { timeout: 600000 }),
+  listRules: (enabledOnly = false) =>
+    api.get('/ai-claim-vetting/rules', { params: enabledOnly ? { enabled_only: true } : {} }),
+  getRulesMeta: () => api.get('/ai-claim-vetting/rules/meta'),
+  draftRuleFromText: (instruction) =>
+    api.post('/ai-claim-vetting/rules/draft-from-text', { instruction }, { timeout: 120000 }),
+  createRule: (payload) => api.post('/ai-claim-vetting/rules', payload),
+  updateRule: (ruleId, payload) => api.patch(`/ai-claim-vetting/rules/${ruleId}`, payload),
+  deleteRule: (ruleId) => api.delete(`/ai-claim-vetting/rules/${ruleId}`),
 };
 
 /** Claims analytics: dashboard aggregates + advice */
