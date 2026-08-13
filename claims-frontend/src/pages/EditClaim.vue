@@ -1082,6 +1082,7 @@ import {
   applyServiceDateChangeToEditForm,
 } from '../utils/claimGetCcc';
 import { claimLineRowClass } from '../utils/claimMedicineCoverage';
+import { sortClaimMedicinesByDateAsc } from '../utils/claimMedicineSort';
 import { useFacilityStore, DEFAULT_FACILITY_DISPLAY_NAME } from '../stores/facility';
 
 const facilityStore = useFacilityStore();
@@ -2154,9 +2155,10 @@ const loadClaimData = async () => {
       };
     });
     
-    // Reset and populate prescriptions
+    // Reset and populate prescriptions (earliest service date first)
+    const prescriptionsSorted = sortClaimMedicinesByDateAsc(data.prescriptions || []);
     prescriptionsList.value = Array.from({ length: prescriptionsLength }, (_, idx) => {
-      const presc = data.prescriptions && data.prescriptions[idx] ? data.prescriptions[idx] : null;
+      const presc = prescriptionsSorted[idx] || null;
       return {
         index: idx,
         id: presc?.id || null,

@@ -1393,6 +1393,7 @@ import {
   claimLineRowClass,
 } from '../utils/claimMedicineCoverage';
 import { getClaimsNavPosition } from '../utils/claimNav';
+import { sortClaimMedicinesByDateAsc } from '../utils/claimMedicineSort';
 
 const facilityStore = useFacilityStore();
 const authStore = useAuthStore();
@@ -3265,9 +3266,10 @@ const loadClaimData = async () => {
       };
     });
     
-    // Reset and populate prescriptions
+    // Reset and populate prescriptions (earliest service date first)
+    const prescriptionsSorted = sortClaimMedicinesByDateAsc(data.prescriptions || []);
     prescriptionsList.value = Array.from({ length: prescriptionsLength }, (_, idx) => {
-      const presc = data.prescriptions && data.prescriptions[idx] ? data.prescriptions[idx] : null;
+      const presc = prescriptionsSorted[idx] || null;
       return {
         index: idx,
         id: presc?.id || null,

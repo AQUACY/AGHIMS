@@ -900,6 +900,7 @@ import {
   claimLineSectionClass,
 } from '../utils/claimMedicineCoverage';
 import { getGhimsNavPosition } from '../utils/claimNav';
+import { sortClaimMedicinesByDateAsc } from '../utils/claimMedicineSort';
 
 const route = useRoute();
 const $router = useRouter();
@@ -2276,7 +2277,7 @@ function normalize(p) {
     typeOfAttendance: p.typeOfAttendance || '',
     specialtyAttended: p.specialtyAttended || '',
     diagnoses: Array.isArray(p.diagnoses) ? p.diagnoses : [],
-    medicines: Array.isArray(p.medicines) ? p.medicines : [],
+    medicines: sortClaimMedicinesByDateAsc(Array.isArray(p.medicines) ? p.medicines : []),
     investigations: Array.isArray(p.investigations) ? p.investigations : [],
     procedures: Array.isArray(p.procedures) ? p.procedures : [],
     dateOfService: Array.isArray(p.dateOfService) ? p.dateOfService : [],

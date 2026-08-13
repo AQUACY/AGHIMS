@@ -464,6 +464,7 @@ import {
   normalizeInsuranceCovered,
   claimLineSectionClass,
 } from '../utils/claimMedicineCoverage';
+import { sortClaimMedicinesByDateAsc } from '../utils/claimMedicineSort';
 
 const route = useRoute();
 const $q = useQuasar();
@@ -1130,7 +1131,7 @@ function normalize(p) {
     typeOfAttendance: p.typeOfAttendance || '',
     specialtyAttended: p.specialtyAttended || '',
     diagnoses: Array.isArray(p.diagnoses) ? p.diagnoses : [],
-    medicines: Array.isArray(p.medicines) ? p.medicines : [],
+    medicines: sortClaimMedicinesByDateAsc(Array.isArray(p.medicines) ? p.medicines : []),
     investigations: Array.isArray(p.investigations) ? p.investigations : [],
     procedures: Array.isArray(p.procedures) ? p.procedures : [],
     dateOfService: Array.isArray(p.dateOfService) ? p.dateOfService : [],
