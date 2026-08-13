@@ -1,5 +1,8 @@
 """
-Facility branding (display name, facility code, brand colors) for multi-site deployments.
+Facility branding (display name, facility code) and per-user theme colors.
+
+Facility identity is shared. Brand colors are stored per user so one person's
+theme does not affect another.
 """
 import re
 from typing import Optional
@@ -9,8 +12,10 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.dependencies import require_admin_or_super_admin
+from app.core.dependencies import get_current_user, require_admin_or_super_admin
 from app.models.facility_settings import FacilitySettings
+from app.models.user import User
+from app.models.user_brand_preferences import UserBrandPreferences
 
 router = APIRouter(prefix="/facility-settings", tags=["facility-settings"])
 
@@ -50,7 +55,35 @@ def _get_or_create_facility(db: Session) -> FacilitySettings:
     return row
 
 
+def _get_or_create_user_theme(db: Session, user_id: int) -> UserBrandPreferences:
+    row = (
+        db.query(UserBrandPreferences)
+        .filter(UserBrandPreferences.user_id == user_id)
+        .first()
+    )
+    if not row:
+        row = UserBrandPreferences(user_id=user_id)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def _theme_public(row: Optional[UserBrandPreferences]) -> "UserThemePublic":
+    if not row:
+        return UserThemePublic()
+    return UserThemePublic(
+        bg_color_light=(row.bg_color_light or "").strip() or None,
+        bg_color_dark=(row.bg_color_dark or "").strip() or None,
+        accent_color=(row.accent_color or "").strip() or None,
+        text_color_light=(row.text_color_light or "").strip() or None,
+        text_color_dark=(row.text_color_dark or "").strip() or None,
+    )
+
+
 def _to_public(row: FacilitySettings) -> "FacilitySettingsPublic":
+    # Colors on facility_settings are legacy login defaults only; active UI
+    # uses per-user theme. Public payload still exposes them for the login page.
     return FacilitySettingsPublic(
         display_name=(row.display_name or DEFAULT_DISPLAY_NAME).strip() or DEFAULT_DISPLAY_NAME,
         facility_code=(row.facility_code or "").strip() or None,
@@ -72,9 +105,22 @@ class FacilitySettingsPublic(BaseModel):
     text_color_dark: Optional[str] = None
 
 
-class FacilitySettingsUpdate(BaseModel):
+class FacilityIdentityUpdate(BaseModel):
+    """Shared facility name/code. Colors are not updated here."""
+
     display_name: str = Field(..., min_length=1, max_length=255)
     facility_code: Optional[str] = Field(None, max_length=64)
+
+
+class UserThemePublic(BaseModel):
+    bg_color_light: Optional[str] = None
+    bg_color_dark: Optional[str] = None
+    accent_color: Optional[str] = None
+    text_color_light: Optional[str] = None
+    text_color_dark: Optional[str] = None
+
+
+class UserThemeUpdate(BaseModel):
     bg_color_light: Optional[str] = Field(None, max_length=7)
     bg_color_dark: Optional[str] = Field(None, max_length=7)
     accent_color: Optional[str] = Field(None, max_length=7)
@@ -92,22 +138,50 @@ class FacilitySettingsUpdate(BaseModel):
 
 @router.get("/public", response_model=FacilitySettingsPublic)
 def get_facility_settings_public(db: Session = Depends(get_db)):
-    """Branding for login page and unauthenticated views (no auth)."""
+    """Facility identity (+ optional login-page color defaults). No auth."""
     row = _get_or_create_facility(db)
     return _to_public(row)
 
 
 @router.put("/", response_model=FacilitySettingsPublic)
 def update_facility_settings(
-    data: FacilitySettingsUpdate,
+    data: FacilityIdentityUpdate,
     db: Session = Depends(get_db),
     _user=Depends(require_admin_or_super_admin()),
 ):
+    """Update shared facility name/code only (Admin). Colors are per-user."""
     row = _get_or_create_facility(db)
     row.display_name = (data.display_name or "").strip() or DEFAULT_DISPLAY_NAME
     code = (data.facility_code or "").strip()
     row.facility_code = code if code else None
-    # Explicit null/empty clears brand colors back to theme defaults
+    db.commit()
+    db.refresh(row)
+    return _to_public(row)
+
+
+@router.get("/my-theme", response_model=UserThemePublic)
+def get_my_theme(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Current user's personal brand colors."""
+    row = (
+        db.query(UserBrandPreferences)
+        .filter(UserBrandPreferences.user_id == current_user.id)
+        .first()
+    )
+    return _theme_public(row)
+
+
+@router.put("/my-theme", response_model=UserThemePublic)
+def update_my_theme(
+    data: UserThemeUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save personal brand colors for the signed-in user only."""
+    row = _get_or_create_user_theme(db, current_user.id)
+    # Explicit null/empty clears that slot back to theme defaults
     row.bg_color_light = data.bg_color_light
     row.bg_color_dark = data.bg_color_dark
     row.accent_color = data.accent_color
@@ -115,4 +189,4 @@ def update_facility_settings(
     row.text_color_dark = data.text_color_dark
     db.commit()
     db.refresh(row)
-    return _to_public(row)
+    return _theme_public(row)

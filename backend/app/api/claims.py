@@ -3153,7 +3153,11 @@ def get_claim_edit_details(
     # Get prescriptions from claim detail table (or fallback to encounter prescriptions)
     claim_prescriptions = db.query(ClaimPrescription)\
         .filter(ClaimPrescription.claim_id == claim.id)\
-        .order_by(ClaimPrescription.display_order)\
+        .order_by(
+            ClaimPrescription.service_date.asc(),
+            ClaimPrescription.display_order.asc(),
+            ClaimPrescription.id.asc(),
+        )\
         .all()
     
     prescriptions_list = []
@@ -3255,6 +3259,13 @@ def get_claim_edit_details(
                         "duration": presc.duration or "",
                         "unparsed": presc.unparsed or "",
                     })
+
+    # Earliest service date first; undated rows stay after dated ones
+    def _prescription_date_key(row):
+        raw = (row.get("date") or "").strip()
+        return raw[:10] if raw else "9999-99-99"
+
+    prescriptions_list.sort(key=_prescription_date_key)
     
     # Pad to 5 prescriptions (only for OPD claims, IPD can have more)
     if not is_ipd:

@@ -248,6 +248,20 @@
           </q-item-section>
         </q-item>
         <q-item
+          clickable
+          v-ripple
+          :to="{ name: 'InventoryMyThemeColors' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="palette" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>My theme colors</q-item-label>
+          </q-item-section>
+        </q-item>
+        <q-item
           v-if="canAccessAuditLogs"
           clickable
           v-ripple

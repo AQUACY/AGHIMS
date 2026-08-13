@@ -293,7 +293,7 @@
           <q-markup-table flat dense bordered separator="horizontal" wrap-cells>
             <thead>
               <tr>
-                <th class="text-left">Row #</th>
+                <th class="text-left">#</th>
                 <th class="text-left">
                   <div class="row items-center q-gutter-xs no-wrap">
                     <span>Select</span>
@@ -318,8 +318,8 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in pagedClaims" :key="row.id">
-                <td>{{ row.row_index != null ? row.row_index : '—' }}</td>
+              <tr v-for="(row, pageIndex) in pagedClaims" :key="row.id">
+                <td>{{ ((currentPage - 1) * rowsPerPage) + pageIndex + 1 }}</td>
                 <td>
                   <q-checkbox
                     :model-value="selectedBulkItemIds.includes(row.id)"
@@ -457,6 +457,10 @@
             Without filters: XML row numbers. Later rules overwrite earlier ones — if a chip shows
             “547 match → 428 final”, later rules took 119 of those claims.
           </div>
+          <div v-if="demarcateDialogBusy" class="row items-center q-gutter-sm q-mt-sm text-caption text-grey-7">
+            <q-spinner size="18px" color="primary" />
+            <span>Loading rules &amp; match counts…</span>
+          </div>
         </q-card-section>
         <q-card-section class="q-pt-none q-gutter-md" style="max-height: 70vh; overflow: auto">
           <div
@@ -470,14 +474,14 @@
                 dense
                 size="sm"
                 outline
-                :color="previewRuleStats(rule, idx).kept < previewRuleStats(rule, idx).matched ? 'orange' : 'primary'"
+                :color="(demarcatePreviews[idx]?.kept ?? 0) < (demarcatePreviews[idx]?.matched ?? 0) ? 'orange' : 'primary'"
                 class="q-ml-sm"
-                :label="previewRuleLabel(rule, idx)"
+                :label="demarcatePreviewLabel(idx)"
               >
-                <q-tooltip v-if="previewRuleStats(rule, idx).kept < previewRuleStats(rule, idx).matched">
-                  This rule matches {{ previewRuleStats(rule, idx).matched }} claims, but later rules
-                  overwrite {{ previewRuleStats(rule, idx).matched - previewRuleStats(rule, idx).kept }} of them.
-                  Final ownership for this rule: {{ previewRuleStats(rule, idx).kept }}.
+                <q-tooltip v-if="(demarcatePreviews[idx]?.kept ?? 0) < (demarcatePreviews[idx]?.matched ?? 0)">
+                  This rule matches {{ demarcatePreviews[idx].matched }} claims, but later rules
+                  overwrite {{ demarcatePreviews[idx].matched - demarcatePreviews[idx].kept }} of them.
+                  Final ownership for this rule: {{ demarcatePreviews[idx].kept }}.
                 </q-tooltip>
               </q-chip>
               <q-space />
@@ -595,7 +599,8 @@
           <q-btn
             color="deep-purple"
             label="Save & re-apply plan"
-            :loading="assigning"
+            :loading="assigning || demarcateDialogBusy"
+            :disable="demarcateDialogBusy"
             unelevated
             @click="applyDemarcation"
           />
@@ -606,7 +611,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -650,6 +655,9 @@ const statusLoadingItemId = ref(null);
 const bulkUpdating = ref(false);
 const assigning = ref(false);
 const showDemarcateDialog = ref(false);
+const demarcateDialogBusy = ref(false);
+const demarcatePreviews = ref([]);
+let demarcatePreviewTimer = null;
 const assignees = ref([]);
 const assigneeFilterOptions = ref([]);
 const demarcateRules = ref([]);
@@ -844,8 +852,8 @@ function claimMatchesFiltersOnly(row, rule) {
 }
 
 /** Resolve targets the same way as the backend (filters first, then ordinal slice). */
-function resolveRuleTargets(rule) {
-  const rows = [...(currentBatch.value?.claims || [])].sort((a, b) => {
+function getSortedBatchClaims() {
+  return [...(currentBatch.value?.claims || [])].sort((a, b) => {
     const ra = Number(a.row_index);
     const rb = Number(b.row_index);
     const aOk = Number.isFinite(ra);
@@ -854,6 +862,10 @@ function resolveRuleTargets(rule) {
     if (aOk !== bOk) return aOk ? -1 : 1;
     return Number(a.id) - Number(b.id);
   });
+}
+
+function resolveRuleTargets(rule, sortedRows = null) {
+  const rows = sortedRows || getSortedBatchClaims();
 
   const hasFrom = rule.row_from != null && rule.row_from !== '';
   const hasTo = rule.row_to != null && rule.row_to !== '';
@@ -883,41 +895,52 @@ function resolveRuleTargets(rule) {
   });
 }
 
-/** Final owner id per claim after applying all rules in order (later wins). */
-function projectFinalOwners(rules) {
-  const map = new Map();
-  (rules || []).forEach((rule) => {
-    resolveRuleTargets(rule).forEach((row) => {
-      map.set(Number(row.id), rule.assigned_to_id == null ? null : Number(rule.assigned_to_id));
+/** One-pass preview stats for all rules (avoids O(rules² × claims) template thrash). */
+function computeAllDemarcatePreviews(rules) {
+  const list = Array.isArray(rules) ? rules : [];
+  if (!list.length) return [];
+  const sortedRows = getSortedBatchClaims();
+  const targetsPerRule = list.map((rule) => resolveRuleTargets(rule, sortedRows));
+  const finalOwners = new Map();
+  list.forEach((rule, i) => {
+    const owner = rule.assigned_to_id == null ? null : Number(rule.assigned_to_id);
+    targetsPerRule[i].forEach((row) => {
+      finalOwners.set(Number(row.id), owner);
     });
   });
-  return map;
+  return list.map((rule, idx) => {
+    const targets = targetsPerRule[idx];
+    const matched = targets.length;
+    const wantOwner = rule.assigned_to_id == null ? null : Number(rule.assigned_to_id);
+    const kept = targets.filter((row) => {
+      const finalOwner = finalOwners.has(Number(row.id))
+        ? finalOwners.get(Number(row.id))
+        : undefined;
+      if (wantOwner == null) return finalOwner == null;
+      return Number(finalOwner) === wantOwner;
+    }).length;
+    return { matched, kept, stolen: Math.max(0, matched - kept), ruleIndex: idx };
+  });
 }
 
-function previewRuleStats(rule, idx) {
-  const targets = resolveRuleTargets(rule);
-  const matched = targets.length;
-  const finalOwners = projectFinalOwners(demarcateRules.value);
-  const wantOwner = rule.assigned_to_id == null ? null : Number(rule.assigned_to_id);
-  const kept = targets.filter((row) => {
-    const finalOwner = finalOwners.has(Number(row.id))
-      ? finalOwners.get(Number(row.id))
-      : undefined;
-    if (wantOwner == null) return finalOwner == null;
-    return Number(finalOwner) === wantOwner;
-  }).length;
-  return { matched, kept, stolen: Math.max(0, matched - kept), ruleIndex: idx };
+function refreshDemarcatePreviewsNow() {
+  demarcatePreviews.value = computeAllDemarcatePreviews(demarcateRules.value);
 }
 
-function previewRuleLabel(rule, idx) {
-  const { matched, kept } = previewRuleStats(rule, idx);
-  if (matched === 0) return '0 match';
-  if (kept < matched) return `${matched} match → ${kept} final`;
-  return `${matched} match`;
+function scheduleDemarcatePreviewRefresh() {
+  if (demarcatePreviewTimer) clearTimeout(demarcatePreviewTimer);
+  demarcatePreviewTimer = setTimeout(() => {
+    demarcatePreviewTimer = null;
+    refreshDemarcatePreviewsNow();
+  }, 250);
 }
 
-function previewMatchCount(rule) {
-  return resolveRuleTargets(rule).length;
+function demarcatePreviewLabel(idx) {
+  const stats = demarcatePreviews.value[idx];
+  if (!stats) return demarcateDialogBusy.value ? '…' : '0 match';
+  if (stats.matched === 0) return '0 match';
+  if (stats.kept < stats.matched) return `${stats.matched} match → ${stats.kept} final`;
+  return `${stats.matched} match`;
 }
 
 const STANDARD_ATTENDANCE_TYPES = ['EAE', 'CFU', 'ANC', 'PNC'];
@@ -1322,15 +1345,25 @@ function removeDemarcateRule(idx) {
 
 async function openDemarcateDialog() {
   if (!canDemarcate.value) return;
-  if (!assignees.value.length) await loadAssignees();
-  assigneeFilterOptions.value = mapAssigneesToOptions(assignees.value);
-  const saved = currentBatch.value?.demarcation_rules;
-  if (Array.isArray(saved) && saved.length) {
-    demarcateRules.value = saved.map(normalizeSavedRule);
-  } else {
-    demarcateRules.value = [blankDemarcateRule()];
-  }
+  // Open immediately so the UI doesn't freeze before paint
+  demarcateDialogBusy.value = true;
+  demarcatePreviews.value = [];
+  demarcateRules.value = [blankDemarcateRule()];
   showDemarcateDialog.value = true;
+  await nextTick();
+  try {
+    if (!assignees.value.length) await loadAssignees();
+    assigneeFilterOptions.value = mapAssigneesToOptions(assignees.value);
+    const saved = currentBatch.value?.demarcation_rules;
+    if (Array.isArray(saved) && saved.length) {
+      demarcateRules.value = saved.map(normalizeSavedRule);
+    }
+    // Yield once more so the dialog chrome paints, then compute match chips
+    await nextTick();
+    refreshDemarcatePreviewsNow();
+  } finally {
+    demarcateDialogBusy.value = false;
+  }
 }
 
 function buildRulePayload(rule) {
@@ -1380,7 +1413,7 @@ async function applyDemarcation() {
   }
   assigning.value = true;
   try {
-    const beforeStats = demarcateRules.value.map((rule, idx) => previewRuleStats(rule, idx));
+    const beforeStats = computeAllDemarcatePreviews(demarcateRules.value);
     const res = await claimsAPI.bulkAssignGhimsImportBatch(viewingBatchId.value, rules, {
       replace_plan: true,
       save_plan: true,
@@ -1755,6 +1788,15 @@ watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialt
   currentPage.value = 1;
   persistFilterState();
 });
+
+watch(
+  demarcateRules,
+  () => {
+    if (!showDemarcateDialog.value) return;
+    scheduleDemarcatePreviewRefresh();
+  },
+  { deep: true },
+);
 
 watch(maxPages, (m) => {
   if (currentPage.value > m) currentPage.value = m;
