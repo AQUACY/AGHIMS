@@ -199,6 +199,18 @@ export const HMS_NAV_GROUPS = [
       },
     ],
   },
+  {
+    id: 'preferences',
+    label: 'Preferences',
+    items: [
+      {
+        id: 'my-theme',
+        label: 'My theme colors',
+        icon: 'palette',
+        to: { name: 'MyThemeColors' },
+      },
+    ],
+  },
 ];
 
 export const CLAIMS_NAV_GROUPS = [
@@ -231,8 +243,19 @@ export const CLAIMS_NAV_GROUPS = [
       },
     ],
   },
+  {
+    id: 'claims-preferences',
+    label: 'Preferences',
+    items: [
+      {
+        id: 'claims-my-theme',
+        label: 'My theme colors',
+        icon: 'palette',
+        to: { name: 'ClaimsMyThemeColors' },
+      },
+    ],
+  },
 ];
-
 /** Flat list of all navigable items (for favorites lookup / command palette). */
 export function flattenNavItems(groups) {
   return groups.flatMap((g) => g.items.map((item) => ({ ...item, group: g.label })));

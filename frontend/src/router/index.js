@@ -43,6 +43,12 @@ const routes = [
         meta: { requiresAuth: true },
       },
       {
+        path: '/my-theme',
+        name: 'MyThemeColors',
+        component: () => import('../pages/MyThemeColors.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
         path: '/patients/register',
         name: 'PatientRegistration',
         component: () => import('../pages/PatientRegistration.vue'),
@@ -275,6 +281,12 @@ const routes = [
         name: 'ClaimsIcd10DrgMapping',
         component: () => import('../pages/Icd10DrgMapping.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Billing', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/my-theme',
+        name: 'ClaimsMyThemeColors',
+        component: () => import('../pages/MyThemeColors.vue'),
+        meta: { requiresAuth: true },
       },
       {
         path: '/admin/price-list',
@@ -539,6 +551,12 @@ const routes = [
         meta: { requiresAuth: true },
       },
       {
+        path: 'my-theme',
+        name: 'InventoryMyThemeColors',
+        component: () => import('../pages/MyThemeColors.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
         path: 'audit-logs',
         name: 'InventoryModeAuditLogs',
         component: () => import('../pages/AuditLogs.vue'),
@@ -579,6 +597,12 @@ const routes = [
         path: 'profile',
         name: 'CompanionProfile',
         component: () => import('../pages/UserProfile.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: 'my-theme',
+        name: 'CompanionMyThemeColors',
+        component: () => import('../pages/MyThemeColors.vue'),
         meta: { requiresAuth: true },
       },
       {
@@ -869,7 +893,8 @@ router.beforeEach(async (to, from, next) => {
         !isClaimsRoute &&
         to.path !== '/license-setup' &&
         to.path !== '/choose-mode' &&
-        to.path !== '/profile'
+        to.path !== '/profile' &&
+        to.path !== '/my-theme'
       ) {
         next('/claims');
         return;

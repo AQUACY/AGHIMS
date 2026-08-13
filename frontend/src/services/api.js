@@ -1362,6 +1362,8 @@ export const moduleSettingsAPI = {
 export const facilitySettingsAPI = {
   getPublic: () => api.get('/facility-settings/public'),
   update: (data) => api.put('/facility-settings/', data),
+  getMyTheme: () => api.get('/facility-settings/my-theme'),
+  updateMyTheme: (data) => api.put('/facility-settings/my-theme', data),
 };
 
 export const licenseAPI = {

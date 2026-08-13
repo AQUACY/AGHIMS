@@ -77,6 +77,7 @@ from app.models.companion_active_oxygen import CompanionActiveOxygen
 from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
 from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
 from app.models.facility_settings import FacilitySettings
+from app.models.user_brand_preferences import UserBrandPreferences
 from app.models.app_license_state import AppLicenseState
 from app.models.app_license_activation_log import AppLicenseActivationLog
 
@@ -179,6 +180,7 @@ __all__ = [
     "CompanionGovernmentOpdExport",
     "CompanionGovernmentIpdExport",
     "FacilitySettings",
+    "UserBrandPreferences",
     "AppLicenseState",
     "AppLicenseActivationLog",
 ]
