@@ -957,19 +957,55 @@ function normalizeDuration(value) {
   return compact;
 }
 
-function validateMedicineDoses(medicines) {
-  const invalidSectionIndexes = [];
+function medicineRowHasData(med) {
+  return Boolean(
+    String(med?.medicineCode || '').trim()
+    || String(med?.dispensedQty || '').trim()
+    || String(med?.serviceDate || '').trim()
+    || String(med?.prescription?.dose || '').trim()
+    || String(med?.prescription?.frequency || '').trim()
+    || String(med?.prescription?.duration || '').trim()
+    || String(med?.prescription?.unparsed || '').trim()
+  );
+}
+
+function validateMedicineFields(medicines) {
+  const problems = [];
   (medicines || []).forEach((med, index) => {
+    if (!medicineRowHasData(med)) return;
     const dose = normalizeDose(med?.prescription?.dose);
-    if (!dose) {
-      invalidSectionIndexes.push(index + 1);
-      return;
-    }
-    if (med?.prescription && typeof med.prescription === 'object') {
+    if (med?.prescription && typeof med.prescription === 'object' && dose) {
       med.prescription.dose = dose;
     }
+    if (med?.prescription && typeof med.prescription === 'object') {
+      med.prescription.duration = normalizeDuration(med.prescription.duration, { commit: true });
+    }
+    const missing = [];
+    if (!String(med?.medicineCode || '').trim()) missing.push('medicine code');
+    if (!String(med?.dispensedQty || '').trim()) missing.push('quantity');
+    if (!String(med?.serviceDate || '').trim()) missing.push('date');
+    if (!String(med?.prescription?.dose || '').trim()) missing.push('dose');
+    if (!String(med?.prescription?.frequency || '').trim()) missing.push('frequency');
+    if (!String(med?.prescription?.duration || '').trim()) missing.push('duration');
+    if (missing.length) problems.push({ section: index + 1, missing });
   });
-  return invalidSectionIndexes;
+  return problems;
+}
+
+function assertMedicineFieldsOrThrow(medicines, action = 'saving') {
+  const problems = validateMedicineFields(medicines);
+  if (!problems.length) return;
+  const parts = problems.map((p) => `section ${p.section} missing ${p.missing.join(', ')}`);
+  throw new Error(
+    `Cannot complete ${action}: drug fields incomplete. ${parts.join('; ')}. `
+    + 'Fill medicine code, quantity, date, dose, frequency, and duration.'
+  );
+}
+
+function validateMedicineDoses(medicines) {
+  return validateMedicineFields(medicines)
+    .filter((p) => p.missing.includes('dose'))
+    .map((p) => p.section);
 }
 
 function validateDiagnosisGdrg(diagnoses) {
@@ -1255,10 +1291,7 @@ async function saveAndFinalize() {
     if (invalidDiagnosisSections.length) {
       throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
     }
-    const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
-    if (invalidDoseSections.length) {
-      throw new Error(`Medicine section(s) missing dose. Please enter dose: ${invalidDoseSections.join(', ')}`);
-    }
+    assertMedicineFieldsOrThrow(clean.medicines || [], 'saving');
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
     clean.procedures = (clean.procedures || []).map(({ serviceDate, gdrgCode, description, icd10, diagnosis }) => ({ serviceDate, gdrgCode, description, icd10, diagnosis }));
@@ -1306,10 +1339,7 @@ async function flagClaim() {
     if (invalidDiagnosisSections.length) {
       throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
     }
-    const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
-    if (invalidDoseSections.length) {
-      throw new Error(`Medicine section(s) missing dose. Please enter dose: ${invalidDoseSections.join(', ')}`);
-    }
+    assertMedicineFieldsOrThrow(clean.medicines || [], 'saving');
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
     clean.procedures = (clean.procedures || []).map(({ serviceDate, gdrgCode, description, icd10, diagnosis }) => ({ serviceDate, gdrgCode, description, icd10, diagnosis }));

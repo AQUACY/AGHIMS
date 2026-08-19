@@ -1088,6 +1088,8 @@ def vet_claim(
             claim.doctor_vetted_at = None
             claim.doctor_vetted_by = None
     else:
+        if by == "pharmacy":
+            _assert_claim_prescriptions_complete_for_pharmacy(claim)
         now = datetime.utcnow()
         if by == "pharmacy":
             claim.pharmacy_vetted_at = now
@@ -4594,6 +4596,113 @@ def _normalize_medicine_duration(raw_duration: str) -> str:
     return compact
 
 
+def _ghims_medicine_row_has_data(med: dict, prescription: Optional[dict] = None) -> bool:
+    prescription = prescription if isinstance(prescription, dict) else (med.get("prescription") if isinstance(med.get("prescription"), dict) else {})
+    return bool(
+        str(med.get("medicineCode") or "").strip()
+        or str(med.get("dispensedQty") or "").strip()
+        or str(med.get("serviceDate") or "").strip()
+        or str(prescription.get("dose") or "").strip()
+        or str(prescription.get("frequency") or "").strip()
+        or str(prescription.get("duration") or "").strip()
+        or str(prescription.get("unparsed") or "").strip()
+    )
+
+
+def _ghims_medicine_missing_fields(med: dict, prescription: dict) -> List[str]:
+    """Required drug fields for save/finalize and pharmacy vetting."""
+    missing: List[str] = []
+    if not str(med.get("medicineCode") or "").strip():
+        missing.append("medicine code")
+    qty = str(med.get("dispensedQty") or "").strip()
+    if not qty:
+        missing.append("quantity")
+    if not str(med.get("serviceDate") or "").strip():
+        missing.append("date")
+    if not str(prescription.get("dose") or "").strip():
+        missing.append("dose")
+    if not str(prescription.get("frequency") or "").strip():
+        missing.append("frequency")
+    if not str(prescription.get("duration") or "").strip():
+        missing.append("duration")
+    return missing
+
+
+def _assert_ghims_medicines_complete(payload: dict, *, action: str = "saving") -> None:
+    """Raise 400 listing every incomplete drug row (same rules for save and pharmacy vet)."""
+    medicines = (payload or {}).get("medicines")
+    if not isinstance(medicines, list):
+        return
+    problems: List[str] = []
+    for idx, med in enumerate(medicines):
+        if not isinstance(med, dict):
+            continue
+        prescription = med.get("prescription") if isinstance(med.get("prescription"), dict) else {}
+        if not _ghims_medicine_row_has_data(med, prescription):
+            continue
+        missing = _ghims_medicine_missing_fields(med, prescription)
+        if missing:
+            problems.append(f"section {idx + 1} missing {', '.join(missing)}")
+    if problems:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot complete {action}: drug fields incomplete. "
+                + "; ".join(problems)
+                + ". Fill medicine code, quantity, date, dose, frequency, and duration."
+            ),
+        )
+
+
+def _assert_claim_prescriptions_complete_for_pharmacy(claim: Claim) -> None:
+    """Require full prescription fields before pharmacy vet on HMS claims."""
+    prescriptions = list(getattr(claim, "claim_prescriptions", None) or [])
+    problems: List[str] = []
+    for idx, presc in enumerate(prescriptions):
+        has_data = bool(
+            str(getattr(presc, "code", None) or "").strip()
+            or str(getattr(presc, "description", None) or "").strip()
+            or getattr(presc, "quantity", None)
+            or str(getattr(presc, "dose", None) or "").strip()
+            or str(getattr(presc, "frequency", None) or "").strip()
+            or str(getattr(presc, "duration", None) or "").strip()
+            or str(getattr(presc, "unparsed", None) or "").strip()
+            or getattr(presc, "service_date", None)
+        )
+        if not has_data:
+            continue
+        missing: List[str] = []
+        if not str(getattr(presc, "code", None) or "").strip():
+            missing.append("medicine code")
+        if not str(getattr(presc, "description", None) or "").strip():
+            missing.append("medicine name")
+        try:
+            qty = int(getattr(presc, "quantity", 0) or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if qty <= 0:
+            missing.append("quantity")
+        if not getattr(presc, "service_date", None):
+            missing.append("date")
+        if not str(getattr(presc, "dose", None) or "").strip():
+            missing.append("dose")
+        if not str(getattr(presc, "frequency", None) or "").strip():
+            missing.append("frequency")
+        if not str(getattr(presc, "duration", None) or "").strip():
+            missing.append("duration")
+        if missing:
+            problems.append(f"medicine {idx + 1} missing {', '.join(missing)}")
+    if problems:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot pharmacy-vet: drug fields incomplete. "
+                + "; ".join(problems)
+                + ". Fill medicine code, name, quantity, date, dose, frequency, and duration."
+            ),
+        )
+
+
 def _reorder_ghims_diagnoses_principal_first(payload: dict) -> None:
     """Put the diagnosis matching principalGDRG first (export and UI section order)."""
     diagnoses = payload.get("diagnoses")
@@ -4699,29 +4808,22 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
         if not isinstance(prescription, dict):
             raise HTTPException(status_code=400, detail=f"Invalid prescription at medicine section {idx + 1}.")
 
+        if not _ghims_medicine_row_has_data(med, prescription):
+            continue
+
         normalized_dose = _normalize_medicine_dose(prescription.get("dose", ""))
-        if not normalized_dose:
+        prescription["dose"] = normalized_dose
+        prescription["duration"] = _normalize_medicine_duration(prescription.get("duration", ""))
+        prescription["frequency"] = str(prescription.get("frequency") or "").strip()
+
+        missing = _ghims_medicine_missing_fields(med, prescription)
+        if missing:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Medicine section {idx + 1}: missing dose. Please enter dose before saving."
+                    f"Medicine section {idx + 1}: missing {', '.join(missing)}. "
+                    "Please enter medicine code, quantity, date, dose, frequency, and duration before saving."
                 ),
-            )
-        prescription["dose"] = normalized_dose
-        prescription["duration"] = _normalize_medicine_duration(prescription.get("duration", ""))
-        service_date = str(med.get("serviceDate") or "").strip()
-        has_any_medicine_data = bool(
-            str(med.get("medicineCode") or "").strip()
-            or str(med.get("dispensedQty") or "").strip()
-            or str(prescription.get("dose") or "").strip()
-            or str(prescription.get("frequency") or "").strip()
-            or str(prescription.get("duration") or "").strip()
-            or str(prescription.get("unparsed") or "").strip()
-        )
-        if has_any_medicine_data and not service_date:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Medicine section {idx + 1}: missing service date. Please enter date before saving.",
             )
 
     return normalized_payload
@@ -4805,6 +4907,8 @@ def vet_ghims_import_item(
             item.doctor_vetted_at = None
             item.doctor_vetted_by = None
     else:
+        if by == "pharmacy":
+            _assert_ghims_medicines_complete(item.payload or {}, action="pharmacy vetting")
         now = datetime.utcnow()
         if by == "pharmacy":
             item.pharmacy_vetted_at = now
