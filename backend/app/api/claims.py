@@ -1628,16 +1628,21 @@ def export_claims_batch(
     missing = [i for i in body.claim_ids if i not in found_ids]
     if missing:
         raise HTTPException(status_code=404, detail=f"Claims not found: {missing}")
-    not_exportable = [c.id for c in claims if not _claim_is_exportable(c)]
+    not_exportable = [c for c in claims if not _claim_is_exportable(c)]
     if not_exportable:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Can only export claims that are finalized by claims manager, "
-                "or vetted by pharmacy/doctor. Not exportable: "
-                + ", ".join(str(i) for i in not_exportable[:20])
-            ),
+        labels = [
+            f"{c.claim_id} (status: {c.status or 'unknown'})"
+            for c in not_exportable[:40]
+        ]
+        extra = len(not_exportable) - len(labels)
+        detail = (
+            "Cannot export — these claims are not finalized (or pharmacy/doctor vetted). "
+            "Finalize them, then export again: "
+            + "; ".join(labels)
         )
+        if extra > 0:
+            detail += f"; …and {extra} more"
+        raise HTTPException(status_code=400, detail=detail)
     xml_content = generate_claim_xml(claims, db)
     t2 = time.perf_counter()
     filename = f"NHIS_CLA_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xml"
@@ -4191,6 +4196,15 @@ def get_claimit_report_batch(
     if claim_ids_from_report:
         claims_in_db = db.query(Claim).filter(Claim.claim_id.in_(claim_ids_from_report)).all()
         claims_by_claim_id = {c.claim_id: c for c in claims_in_db}
+    ghims_item_ids = [e.ghims_import_item_id for e in errors if e.ghims_import_item_id]
+    ghims_items_by_id = {}
+    if ghims_item_ids:
+        ghims_items = (
+            db.query(ClaimXmlImportItem)
+            .filter(ClaimXmlImportItem.id.in_(ghims_item_ids))
+            .all()
+        )
+        ghims_items_by_id = {i.id: i for i in ghims_items}
     completed_by_ids = {e.completed_by_id for e in errors if e.completed_by_id}
     users_by_id = {}
     if completed_by_ids:
@@ -4206,7 +4220,15 @@ def get_claimit_report_batch(
     error_rows = []
     for e in errors:
         claim_in_db = claims_by_claim_id.get(e.claim_claim_id)
+        ghims_item = ghims_items_by_id.get(e.ghims_import_item_id) if e.ghims_import_item_id else None
         completed_by_user = users_by_id.get(e.completed_by_id) if e.completed_by_id else None
+        claim_status = claim_in_db.status if claim_in_db else None
+        ghims_status = ghims_item.status if ghims_item else None
+        exportable = False
+        if ghims_item is not None:
+            exportable = _import_item_is_exportable(ghims_item)
+        elif claim_in_db is not None:
+            exportable = _claim_is_exportable(claim_in_db)
         error_rows.append({
             "id": e.id,
             "claim_claim_id": e.claim_claim_id,
@@ -4214,8 +4236,10 @@ def get_claimit_report_batch(
             "error_messages": e.error_messages or [],
             "row_index": e.row_index,
             "claim_id": claim_in_db.id if claim_in_db else None,
-            "claim_status": claim_in_db.status if claim_in_db else None,
+            "claim_status": claim_status,
             "ghims_import_item_id": e.ghims_import_item_id,
+            "ghims_import_item_status": ghims_status,
+            "exportable": exportable,
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,
             "completed_by_id": e.completed_by_id,
             "completed_by_name": (completed_by_user.username or completed_by_user.email or str(completed_by_user.id)) if completed_by_user else None,
@@ -4234,6 +4258,24 @@ def get_claimit_report_batch(
     }
 
 
+@router.delete("/claimit-report/batches/{batch_id}")
+def delete_claimit_report_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Permanently delete an uploaded ClaimIT report batch and its error rows."""
+    batch = db.query(ClaimItReportBatch).filter(ClaimItReportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    file_name = batch.file_name
+    error_count = batch.error_count or 0
+    db.delete(batch)
+    db.commit()
+    return {"deleted": True, "batch_id": batch_id, "file_name": file_name, "error_count": error_count}
+
+
 class ClaimItErrorCompleteBody(BaseModel):
     completed: bool = True
 
@@ -4247,7 +4289,12 @@ def set_claimit_error_completed(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "create")),
 ):
-    """Mark a batch error row as completed (or uncomplete) so other officers know not to rework it."""
+    """Mark a batch error row as completed (or uncomplete) so other officers know not to rework it.
+
+    Completing requires the linked claim / GHIMS import item to be exportable
+    (finalized or pharmacy/doctor vetted), matching export rules.
+    """
+    _ensure_claim_vetting_columns(db)
     err = (
         db.query(ClaimItReportError)
         .filter(ClaimItReportError.id == error_id, ClaimItReportError.batch_id == batch_id)
@@ -4256,6 +4303,29 @@ def set_claimit_error_completed(
     if not err:
         raise HTTPException(status_code=404, detail="Error row not found.")
     if body.completed:
+        gate_msg = None
+        if err.ghims_import_item_id:
+            item = (
+                db.query(ClaimXmlImportItem)
+                .filter(ClaimXmlImportItem.id == err.ghims_import_item_id)
+                .first()
+            )
+            if item is not None and not _import_item_is_exportable(item):
+                gate_msg = (
+                    f"Claim {err.claim_claim_id} is not finalized for export "
+                    f"(current status: {item.status or 'unknown'}). "
+                    "Finalize or pharmacy/doctor-vet it before marking completed."
+                )
+        else:
+            claim = db.query(Claim).filter(Claim.claim_id == err.claim_claim_id).first()
+            if claim is not None and not _claim_is_exportable(claim):
+                gate_msg = (
+                    f"Claim {err.claim_claim_id} is not finalized for export "
+                    f"(current status: {claim.status or 'unknown'}). "
+                    "Finalize or pharmacy/doctor-vet it before marking completed."
+                )
+        if gate_msg:
+            raise HTTPException(status_code=400, detail=gate_msg)
         from app.core.datetime_utils import utcnow
         err.completed_at = utcnow()
         err.completed_by_id = get_effective_creator_id(db, current_user)
@@ -5339,15 +5409,21 @@ def export_ghims_import_items(
     )
     if len(items) != len(set(body.item_ids)):
         raise HTTPException(status_code=404, detail="Some imported claims were not found.")
-    not_exportable = [i.id for i in items if not _import_item_is_exportable(i)]
+    not_exportable = [i for i in items if not _import_item_is_exportable(i)]
     if not_exportable:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Only finalized or pharmacy/doctor-vetted imported claims can be exported. "
-                "Not exportable: " + ", ".join(str(i) for i in not_exportable[:20])
-            ),
+        labels = [
+            f"{(i.claim_claim_id or i.id)} (status: {i.status or 'unknown'})"
+            for i in not_exportable[:40]
+        ]
+        extra = len(not_exportable) - len(labels)
+        detail = (
+            "Cannot export — these imported claims are not finalized (or pharmacy/doctor vetted). "
+            "Finalize them, then export again: "
+            + "; ".join(labels)
         )
+        if extra > 0:
+            detail += f"; …and {extra} more"
+        raise HTTPException(status_code=400, detail=detail)
     payloads = []
     ghana_card_claims = []
     for i in sorted(items, key=lambda x: x.row_index or 0):

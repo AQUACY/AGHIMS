@@ -167,6 +167,7 @@ export const claimsAPI = {
     }),
   getClaimitBatches: () => api.get('/claimit-report/batches'),
   getClaimitBatch: (batchId) => api.get(`/claimit-report/batches/${batchId}`),
+  deleteClaimitBatch: (batchId) => api.delete(`/claimit-report/batches/${batchId}`),
   setClaimitErrorComplete: (batchId, errorId, completed) =>
     api.patch(`/claimit-report/batches/${batchId}/errors/${errorId}/complete`, { completed }),
 };

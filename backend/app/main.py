@@ -91,6 +91,7 @@ if not cors_origins:
         "http://localhost:9001/",  # Production (with trailing slash)
         "http://10.10.16.50:9000/",
         "http://10.10.16.50:9000",
+        "http://192.168.1.253:9000"
     ]
 
 # Always allow hosted claims / app frontends (even when CORS_ORIGINS is set)

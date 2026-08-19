@@ -1656,7 +1656,7 @@ const attendanceOptions = [
   { label: 'PNC', value: 'PNC' },
 ];
 const SPECIALTY_ATTENDED_CODES = [
-  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPTH', 'ORTH', 'PAED', 'PSUR', 'RSUR',
+  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPHT', 'ORTH', 'PAED', 'PSUR', 'RSUR',
 ];
 const specialtyAttendedOptions = computed(() => {
   const base = SPECIALTY_ATTENDED_CODES.map((code) => ({ label: code, value: code }));
@@ -2106,6 +2106,8 @@ function syncPrincipalFromProcedures({ syncSpecialty = false } = {}) {
   } else if (String(services.specialty_code || '').trim().toUpperCase() === 'ZOOM') {
     // Legacy claims may still have ZOOM stored — normalize to OPDC
     services.specialty_code = 'OPDC';
+  } else if (String(services.specialty_code || '').trim().toUpperCase() === 'OPTH') {
+    services.specialty_code = 'OPHT';
   }
 }
 
@@ -3167,7 +3169,10 @@ const loadClaimData = async () => {
       first_visit: data.encounter.created_at ? data.encounter.created_at.split('T')[0] : '',
       second_visit: data.encounter.finalized_at ? data.encounter.finalized_at.split('T')[0] : '',
       type_of_attendance: data.claim.type_of_attendance || 'EAE',
-      specialty_code: data.claim.specialty_attended || '',
+      specialty_code: (() => {
+        const s = String(data.claim.specialty_attended || '').trim().toUpperCase();
+        return s === 'OPTH' ? 'OPHT' : (data.claim.specialty_attended || '');
+      })(),
       outcome: data.claim.service_outcome || 'DISC',
       all_inclusive: !data.claim.is_unbundled,
       principal_gdrg: data.claim.principal_gdrg || '',

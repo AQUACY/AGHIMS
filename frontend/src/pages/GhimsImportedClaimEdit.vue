@@ -1036,7 +1036,7 @@ const attendanceTypeOptions = [
   { label: 'PNC', value: 'PNC' },
 ];
 const SPECIALTY_ATTENDED_CODES = [
-  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPTH', 'ORTH', 'PAED', 'PSUR', 'RSUR',
+  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPHT', 'ORTH', 'PAED', 'PSUR', 'RSUR',
 ];
 const specialtyAttendedOptions = computed(() => {
   const base = SPECIALTY_ATTENDED_CODES.map((code) => ({ label: code, value: code }));
@@ -1490,6 +1490,9 @@ function reorderDiagnosesWithPrincipalFirst({ syncSpecialty = false } = {}) {
   } else if (String(payload.specialtyAttended || '').trim().toUpperCase() === 'ZOOM') {
     // Legacy claims may still have ZOOM stored — normalize to OPDC
     payload.specialtyAttended = 'OPDC';
+  } else if (String(payload.specialtyAttended || '').trim().toUpperCase() === 'OPTH') {
+    // Typo legacy specialty code — NHIA ophthalmology specialty is OPHT
+    payload.specialtyAttended = 'OPHT';
   }
 }
 
@@ -2275,7 +2278,10 @@ function normalize(p) {
     dateOfBirth: p.dateOfBirth || '',
     typeOfService: p.typeOfService || '',
     typeOfAttendance: p.typeOfAttendance || '',
-    specialtyAttended: p.specialtyAttended || '',
+    specialtyAttended: (() => {
+      const s = String(p.specialtyAttended || '').trim().toUpperCase();
+      return s === 'OPTH' ? 'OPHT' : (p.specialtyAttended || '');
+    })(),
     diagnoses: Array.isArray(p.diagnoses) ? p.diagnoses : [],
     medicines: sortClaimMedicinesByDateAsc(Array.isArray(p.medicines) ? p.medicines : []),
     investigations: Array.isArray(p.investigations) ? p.investigations : [],
