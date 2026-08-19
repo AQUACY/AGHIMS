@@ -1393,6 +1393,7 @@ import {
   claimLineRowClass,
 } from '../utils/claimMedicineCoverage';
 import { getClaimsNavPosition } from '../utils/claimNav';
+import { sortClaimMedicinesByDateAsc } from '../utils/claimMedicineSort';
 
 const facilityStore = useFacilityStore();
 const authStore = useAuthStore();
@@ -1446,6 +1447,12 @@ async function vetByPharmacy() {
   }
   vettingPharmacy.value = true;
   try {
+    if (!clearing) {
+      assertClaimPrescriptionFieldsOrThrow(prescriptionsList.value, 'pharmacy vetting');
+      await validateCoveredMedicinesOrThrow();
+      // Persist current drug edits before vet so backend checks the latest rows
+      await claimsAPI.updateDetailed(claimId.value, buildClaimPayload());
+    }
     const res = await claimsAPI.vetClaim(claimId.value, 'pharmacy', clearing);
     applyVettingFromClaim(res.data || {});
     $q.notify({
@@ -1453,7 +1460,12 @@ async function vetByPharmacy() {
       message: clearing ? 'Pharmacy vet removed' : 'Pharmacy vet recorded',
     });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update pharmacy vet' });
+    $q.notify({
+      type: 'negative',
+      multiLine: true,
+      timeout: 12000,
+      message: e.response?.data?.detail || e.message || 'Failed to update pharmacy vet',
+    });
   } finally {
     vettingPharmacy.value = false;
   }
@@ -1655,7 +1667,7 @@ const attendanceOptions = [
   { label: 'PNC', value: 'PNC' },
 ];
 const SPECIALTY_ATTENDED_CODES = [
-  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPTH', 'ORTH', 'PAED', 'PSUR', 'RSUR',
+  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPHT', 'ORTH', 'PAED', 'PSUR', 'RSUR',
 ];
 const specialtyAttendedOptions = computed(() => {
   const base = SPECIALTY_ATTENDED_CODES.map((code) => ({ label: code, value: code }));
@@ -2105,6 +2117,8 @@ function syncPrincipalFromProcedures({ syncSpecialty = false } = {}) {
   } else if (String(services.specialty_code || '').trim().toUpperCase() === 'ZOOM') {
     // Legacy claims may still have ZOOM stored — normalize to OPDC
     services.specialty_code = 'OPDC';
+  } else if (String(services.specialty_code || '').trim().toUpperCase() === 'OPTH') {
+    services.specialty_code = 'OPHT';
   }
 }
 
@@ -2704,6 +2718,38 @@ async function validateCoveredMedicinesOrThrow() {
   }
 }
 
+function assertClaimPrescriptionFieldsOrThrow(rows, action = 'saving') {
+  const problems = [];
+  (rows || []).forEach((row, index) => {
+    const hasData = Boolean(
+      String(row?.description || '').trim()
+      || String(row?.code || '').trim()
+      || Number(row?.quantity) > 0
+      || String(row?.date || '').trim()
+      || String(row?.dose || '').trim()
+      || String(row?.frequency || '').trim()
+      || String(row?.duration || '').trim()
+      || String(row?.unparsed || '').trim()
+    );
+    if (!hasData) return;
+    const missing = [];
+    if (!String(row?.code || '').trim()) missing.push('medicine code');
+    if (!String(row?.description || '').trim()) missing.push('medicine name');
+    if (!(Number(row?.quantity) > 0)) missing.push('quantity');
+    if (!String(row?.date || '').trim()) missing.push('date');
+    if (!String(row?.dose || '').trim()) missing.push('dose');
+    if (!String(row?.frequency || '').trim()) missing.push('frequency');
+    if (!String(row?.duration || '').trim()) missing.push('duration');
+    if (missing.length) problems.push(`medicine ${index + 1} missing ${missing.join(', ')}`);
+  });
+  if (problems.length) {
+    throw new Error(
+      `Cannot complete ${action}: drug fields incomplete. ${problems.join('; ')}. `
+      + 'Fill medicine code, name, quantity, date, dose, frequency, and duration.'
+    );
+  }
+}
+
 const deleteInvestigation = (index) => {
   $q.dialog({
     title: 'Delete Investigation',
@@ -3084,6 +3130,7 @@ const saveAndFinalize = async (e) => {
   }
   saving.value = true;
   try {
+    assertClaimPrescriptionFieldsOrThrow(prescriptionsList.value, 'saving');
     await validateCoveredMedicinesOrThrow();
     // Save claim data directly (do not reload after save to avoid overwriting with stale data)
     const claimData = buildClaimPayload();
@@ -3098,7 +3145,7 @@ const saveAndFinalize = async (e) => {
   } catch (error) {
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to save and finalize claim',
+      message: error.response?.data?.detail || error.message || 'Failed to save and finalize claim',
     });
   } finally {
     saving.value = false;
@@ -3166,7 +3213,10 @@ const loadClaimData = async () => {
       first_visit: data.encounter.created_at ? data.encounter.created_at.split('T')[0] : '',
       second_visit: data.encounter.finalized_at ? data.encounter.finalized_at.split('T')[0] : '',
       type_of_attendance: data.claim.type_of_attendance || 'EAE',
-      specialty_code: data.claim.specialty_attended || '',
+      specialty_code: (() => {
+        const s = String(data.claim.specialty_attended || '').trim().toUpperCase();
+        return s === 'OPTH' ? 'OPHT' : (data.claim.specialty_attended || '');
+      })(),
       outcome: data.claim.service_outcome || 'DISC',
       all_inclusive: !data.claim.is_unbundled,
       principal_gdrg: data.claim.principal_gdrg || '',
@@ -3265,9 +3315,10 @@ const loadClaimData = async () => {
       };
     });
     
-    // Reset and populate prescriptions
+    // Reset and populate prescriptions (earliest service date first)
+    const prescriptionsSorted = sortClaimMedicinesByDateAsc(data.prescriptions || []);
     prescriptionsList.value = Array.from({ length: prescriptionsLength }, (_, idx) => {
-      const presc = data.prescriptions && data.prescriptions[idx] ? data.prescriptions[idx] : null;
+      const presc = prescriptionsSorted[idx] || null;
       return {
         index: idx,
         id: presc?.id || null,
@@ -3507,6 +3558,7 @@ const onSaveChangesInViewMode = async () => {
   }).onOk(async () => {
     saving.value = true;
     try {
+      assertClaimPrescriptionFieldsOrThrow(prescriptionsList.value, 'saving');
       await validateCoveredMedicinesOrThrow();
       const claimData = buildClaimPayload();
       await claimsAPI.updateDetailed(claimId.value, claimData);
@@ -3520,7 +3572,7 @@ const onSaveChangesInViewMode = async () => {
     } catch (error) {
       $q.notify({
         type: 'negative',
-        message: error.response?.data?.detail || 'Failed to save and finalize claim',
+        message: error.response?.data?.detail || error.message || 'Failed to save and finalize claim',
       });
     } finally {
       saving.value = false;
@@ -3534,6 +3586,7 @@ const saveClaim = async (e) => {
   }
   saving.value = true;
   try {
+    assertClaimPrescriptionFieldsOrThrow(prescriptionsList.value, 'saving');
     await validateCoveredMedicinesOrThrow();
     const claimData = buildClaimPayload();
     await claimsAPI.updateDetailed(claimId.value, claimData);
@@ -3546,7 +3599,7 @@ const saveClaim = async (e) => {
   } catch (error) {
     $q.notify({
       type: 'negative',
-      message: error.response?.data?.detail || 'Failed to save claim',
+      message: error.response?.data?.detail || error.message || 'Failed to save claim',
     });
   } finally {
     saving.value = false;

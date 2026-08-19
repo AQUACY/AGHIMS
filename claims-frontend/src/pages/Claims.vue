@@ -56,16 +56,65 @@
           </q-card-section>
         </q-card>
       </div>
+
+      <div v-if="aiVettingActive" class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card ai-tile"
+          flat
+          bordered
+          @click="$router.push('/claims/ai-vetting')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="auto_awesome" size="64px" color="cyan" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">AI Vetting</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Phase 1 / Coding / Thorough rules scans — approve corrections in one report.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div v-if="aiVettingActive" class="col-12 col-sm-6 col-md-4">
+        <q-card
+          class="claims-module-tile cursor-pointer glass-card ai-tile"
+          flat
+          bordered
+          @click="$router.push('/claims/ai-local-assist')"
+        >
+          <q-card-section class="text-center q-pa-xl">
+            <q-icon name="smart_toy" size="64px" color="primary" class="q-mb-md" />
+            <div class="text-h6 text-weight-medium">Local AI Assist</div>
+            <div class="text-caption text-grey-7 q-mt-sm">
+              Pick claims → Ollama reviews them → work recommendations (review only).
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
   </q-page>
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router';
+import { onMounted, ref } from 'vue';
+import { moduleSettingsAPI } from '../services/api';
+
+const aiVettingActive = ref(false);
+
+onMounted(async () => {
+  try {
+    const res = await moduleSettingsAPI.getStatus('ai_claims_vetting');
+    aiVettingActive.value = !!res.data?.is_active;
+  } catch {
+    aiVettingActive.value = false;
+  }
+});
 </script>
 
 <style scoped>
 .claims-module-tile:hover {
   background: rgba(0, 0, 0, 0.03);
+}
+.ai-tile {
+  border-color: rgba(0, 188, 212, 0.35) !important;
 }
 </style>

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { authAPI } from '../services/api';
 import { Notify } from 'quasar';
+import { useFacilityStore } from './facility';
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -75,7 +76,12 @@ export const useAuthStore = defineStore('auth', {
         
         // Fetch user info
         await this.fetchUser();
-        
+        try {
+          await useFacilityStore().fetchMyTheme();
+        } catch {
+          /* theme is optional */
+        }
+
         this.isAuthenticated = true;
         Notify.create({
           type: 'positive',
@@ -152,6 +158,11 @@ export const useAuthStore = defineStore('auth', {
       this.isAuthenticated = false;
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user');
+      try {
+        useFacilityStore().clearPersonalTheme();
+      } catch {
+        /* pinia may not be ready */
+      }
     },
 
     initAuth() {
@@ -166,6 +177,9 @@ export const useAuthStore = defineStore('auth', {
         } else {
           this.fetchUser();
         }
+        useFacilityStore()
+          .fetchMyTheme()
+          .catch(() => {});
       }
     },
 

@@ -49,6 +49,16 @@ const routes = [
         component: () => import('../pages/GhimsXmlImport.vue'),
       },
       {
+        path: 'claims/ai-vetting',
+        name: 'AiClaimsVetting',
+        component: () => import('../pages/AiClaimsVetting.vue'),
+      },
+      {
+        path: 'claims/ai-local-assist',
+        name: 'AiLocalAssist',
+        component: () => import('../pages/AiLocalAssist.vue'),
+      },
+      {
         path: 'claims/ghims-import/batch/:batchId',
         name: 'GhimsXmlImportBatch',
         component: () => import('../pages/GhimsXmlImport.vue'),

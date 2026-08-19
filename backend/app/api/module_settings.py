@@ -38,6 +38,12 @@ MODE_MODULE_DEFAULTS = {
         "category": "core",
         "display_order": 1004,
     },
+    "ai_claims_vetting": {
+        "module_name": "AI Claims Vetting",
+        "description": "Optional AI-assisted claims vetting (ZOOM specialty, Ghana Card→HIN, and later clinical checks). Recommendations require human approval.",
+        "category": "administrative",
+        "display_order": 1005,
+    },
 }
 
 
@@ -56,7 +62,7 @@ def ensure_bootstrap_modules(db: Session) -> None:
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=False if module_key == "ghims" else True,
+                is_active=False if module_key in ("ghims", "ai_claims_vetting") else True,
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,
@@ -218,7 +224,7 @@ def get_module_status(
     """Get module status (public endpoint - no auth required for checking status)"""
     module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
     if not module:
-        default_active = False if module_key == "ghims" else True
+        default_active = False if module_key in ("ghims", "ai_claims_vetting") else True
         return ModuleStatusResponse(
             module_key=module_key,
             is_active=default_active,
@@ -255,7 +261,7 @@ def update_module_setting(
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=False if module_key == "ghims" else True,
+                is_active=False if module_key in ("ghims", "ai_claims_vetting") else True,
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,
@@ -318,7 +324,7 @@ def toggle_module(
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=False if module_key == "ghims" else True,
+                is_active=False if module_key in ("ghims", "ai_claims_vetting") else True,
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,

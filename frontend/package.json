@@ -6,7 +6,8 @@
     "dev": "quasar dev",
     "build": "quasar build",
     "preview:frontend-path": "quasar build && node scripts/preview-nested-frontend.cjs",
-    "lint": "eslint --ext .js,.ts,.vue src"
+    "lint": "eslint --ext .js,.ts,.vue src",
+    "postinstall": "node scripts/patch-tailwind-merge.cjs"
   },
   "dependencies": {
     "@quasar/extras": "^1.16.9",
@@ -22,7 +23,7 @@
     "motion-v": "^2.3.0",
     "pinia": "^2.1.7",
     "quasar": "^2.14.2",
-    "tailwind-merge": "^3.6.0",
+    "tailwind-merge": "^2.6.1",
     "vue": "^3.4.3",
     "vue-router": "^4.2.5",
     "vue-sonner": "^2.0.9",

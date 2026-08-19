@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     NHIA_SSL_VERIFY: bool = True
     NHIA_SSL_CA_BUNDLE: str = ""  # Optional path to custom CA bundle (.pem)
     NHIA_DEFAULT_CARD_TYPE: str = "NHISCARD"  # NHISCARD or GHANACARD on CCC portal
+
+    # AI Claim Vetting — local Ollama optional; rules provider is default
+    AI_CLAIM_VETTING_PROVIDER: str = "rules"  # rules | ollama
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "llama3.2"
+    OLLAMA_TIMEOUT_SECONDS: float = 90.0
+    # Batch jobs stay fast: rules only unless explicitly enabled (LLM is ~20–90s per claim).
+    AI_CLAIM_VETTING_BATCH_USE_LLM: bool = False
+    OLLAMA_BATCH_TIMEOUT_SECONDS: float = 25.0
     
     @property
     def DATABASE_URL(self) -> str:

@@ -80,7 +80,35 @@ module.exports = configure(function (ctx) {
       publicPath,
       env: {
         API_BASE_URL: apiBaseUrl,
-      }
+      },
+      // Vite 2 / esbuild 0.14 cannot parse TS `satisfies` in tailwind-merge src.
+      // Quasar often sets resolve.alias as an array — merge carefully and force dist.
+      extendViteConf(viteConf) {
+        const twMergeBundle = path.resolve(
+          __dirname,
+          'node_modules/tailwind-merge/dist/bundle-mjs.mjs'
+        );
+        viteConf.resolve = viteConf.resolve || {};
+        const aliasEntry = { find: 'tailwind-merge', replacement: twMergeBundle };
+        if (Array.isArray(viteConf.resolve.alias)) {
+          viteConf.resolve.alias = [
+            aliasEntry,
+            ...viteConf.resolve.alias.filter((a) => {
+              const find = a && typeof a === 'object' ? a.find : a;
+              return find !== 'tailwind-merge';
+            }),
+          ];
+        } else {
+          viteConf.resolve.alias = {
+            ...(viteConf.resolve.alias || {}),
+            'tailwind-merge': twMergeBundle,
+          };
+        }
+        viteConf.optimizeDeps = viteConf.optimizeDeps || {};
+        const exclude = new Set(viteConf.optimizeDeps.exclude || []);
+        exclude.add('tailwind-merge');
+        viteConf.optimizeDeps.exclude = [...exclude];
+      },
     },
     devServer: {
       port: 9000,

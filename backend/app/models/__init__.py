@@ -20,6 +20,7 @@ from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
 from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
+from app.models.ai_claim_vetting import AiClaimVettingFinding, AiClaimVettingJob, AiClaimVettingRule
 from app.models.consultation_notes import ConsultationNotes
 from app.models.doctor_note_entry import DoctorNoteEntry
 from app.models.admission import AdmissionRecommendation
@@ -76,6 +77,7 @@ from app.models.companion_active_oxygen import CompanionActiveOxygen
 from app.models.companion_government_opd_export import CompanionGovernmentOpdExport
 from app.models.companion_government_ipd_export import CompanionGovernmentIpdExport
 from app.models.facility_settings import FacilitySettings
+from app.models.user_brand_preferences import UserBrandPreferences
 from app.models.app_license_state import AppLicenseState
 from app.models.app_license_activation_log import AppLicenseActivationLog
 
@@ -112,6 +114,9 @@ __all__ = [
     "ClaimItReportError",
     "ClaimXmlImportBatch",
     "ClaimXmlImportItem",
+    "AiClaimVettingFinding",
+    "AiClaimVettingJob",
+    "AiClaimVettingRule",
     "ConsultationNotes",
     "DoctorNoteEntry",
     "AdmissionRecommendation",
@@ -175,6 +180,7 @@ __all__ = [
     "CompanionGovernmentOpdExport",
     "CompanionGovernmentIpdExport",
     "FacilitySettings",
+    "UserBrandPreferences",
     "AppLicenseState",
     "AppLicenseActivationLog",
 ]

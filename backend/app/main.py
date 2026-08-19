@@ -40,6 +40,7 @@ from app.api import (
     facility_settings,
     inventory_analytics,
     inventory_reports,
+    ai_claim_vetting,
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -90,6 +91,7 @@ if not cors_origins:
         "http://localhost:9001/",  # Production (with trailing slash)
         "http://10.10.16.50:9000/",
         "http://10.10.16.50:9000",
+        "http://192.168.1.253:9000"
     ]
 
 # Always allow hosted claims / app frontends (even when CORS_ORIGINS is set)
@@ -237,6 +239,7 @@ app.include_router(management.router, prefix="/api")
 app.include_router(facility_settings.router, prefix="/api")
 app.include_router(inventory_analytics.router, prefix="/api")
 app.include_router(inventory_reports.router, prefix="/api")
+app.include_router(ai_claim_vetting.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

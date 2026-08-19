@@ -877,6 +877,7 @@ export const claimsAPI = {
     }),
   getClaimitBatches: () => api.get('/claims/claimit-report/batches'),
   getClaimitBatch: (batchId) => api.get(`/claims/claimit-report/batches/${batchId}`),
+  deleteClaimitBatch: (batchId) => api.delete(`/claims/claimit-report/batches/${batchId}`),
   setClaimitErrorComplete: (batchId, errorId, completed) =>
     api.patch(`/claims/claimit-report/batches/${batchId}/errors/${errorId}/complete`, { completed }),
   // GHIMS XML import batches
@@ -899,7 +900,73 @@ export const claimsAPI = {
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
   bulkUpdateGhimsImportItemsStatus: (itemIds, action, comment = null) =>
     api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action, comment }),
+  getGhimsImportAssignees: () => api.get('/claims/ghims-import/assignees'),
+  assignGhimsImportItem: (itemId, { assigned_to_id = null, assignment_note = null } = {}) =>
+    api.patch(`/claims/ghims-import/items/${itemId}/assign`, { assigned_to_id, assignment_note }),
+  bulkAssignGhimsImportBatch: (batchId, rules, { replace_plan = false, save_plan = false } = {}) =>
+    api.post(`/claims/ghims-import/batches/${batchId}/assign`, {
+      rules,
+      replace_plan: !!replace_plan,
+      save_plan: !!save_plan,
+    }),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
+};
+
+/** AI Claims Vetting (optional module: ai_claims_vetting) */
+export const aiClaimVettingAPI = {
+  getStatus: () => api.get('/ai-claim-vetting/status'),
+  analyzeSample: (payload) => api.post('/ai-claim-vetting/analyze', payload),
+  analyzeGhimsItem: (itemId, { mode = 'phase1' } = {}) =>
+    api.post(`/ai-claim-vetting/ghims-items/${itemId}/analyze`, null, {
+      params: { mode },
+    }),
+  listGhimsFindings: (itemId, statusFilter = null) =>
+    api.get(`/ai-claim-vetting/ghims-items/${itemId}/findings`, {
+      params: statusFilter ? { status_filter: statusFilter } : {},
+    }),
+  decideFinding: (findingId, { decision, note = null, otac = null, chosen_value = null } = {}) =>
+    api.post(`/ai-claim-vetting/findings/${findingId}/decide`, {
+      decision,
+      ...(note ? { note } : {}),
+      ...(otac ? { otac } : {}),
+      ...(chosen_value ? { chosen_value } : {}),
+    }),
+  startBatchAnalyze: (batchId, { item_ids = null, include_finalized = false, mode = 'phase1' } = {}) =>
+    api.post(`/ai-claim-vetting/batches/${batchId}/analyze`, {
+      item_ids: item_ids && item_ids.length ? item_ids : null,
+      include_finalized: !!include_finalized,
+      mode: mode || 'phase1',
+    }),
+  startLlmAssist: (batchId, { item_ids, note = null } = {}) =>
+    api.post(`/ai-claim-vetting/batches/${batchId}/llm-assist`, {
+      item_ids: item_ids || [],
+      ...(note ? { note } : {}),
+    }, { timeout: 120000 }),
+  getJob: (jobId) => api.get(`/ai-claim-vetting/jobs/${jobId}`),
+  getLatestBatchJob: (batchId, { mode = null } = {}) =>
+    api.get(`/ai-claim-vetting/batches/${batchId}/jobs/latest`, {
+      params: mode ? { mode } : {},
+    }),
+  getBatchReport: (batchId, statusFilter = 'pending', { scope = 'rules' } = {}) =>
+    api.get(`/ai-claim-vetting/batches/${batchId}/report`, {
+      params: { status_filter: statusFilter, scope },
+    }),
+  bulkDecideFindings: ({ finding_ids, decision, note = null, otac = null, chosen_value = null }) =>
+    api.post('/ai-claim-vetting/findings/bulk-decide', {
+      finding_ids,
+      decision,
+      ...(note ? { note } : {}),
+      ...(otac ? { otac } : {}),
+      ...(chosen_value ? { chosen_value } : {}),
+    }, { timeout: 600000 }),
+  listRules: (enabledOnly = false) =>
+    api.get('/ai-claim-vetting/rules', { params: enabledOnly ? { enabled_only: true } : {} }),
+  getRulesMeta: () => api.get('/ai-claim-vetting/rules/meta'),
+  draftRuleFromText: (instruction) =>
+    api.post('/ai-claim-vetting/rules/draft-from-text', { instruction }, { timeout: 120000 }),
+  createRule: (payload) => api.post('/ai-claim-vetting/rules', payload),
+  updateRule: (ruleId, payload) => api.patch(`/ai-claim-vetting/rules/${ruleId}`, payload),
+  deleteRule: (ruleId) => api.delete(`/ai-claim-vetting/rules/${ruleId}`),
 };
 
 /** Claims analytics: dashboard aggregates + advice */

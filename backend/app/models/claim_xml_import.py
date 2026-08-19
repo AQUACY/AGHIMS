@@ -17,6 +17,8 @@ class ClaimXmlImportBatch(Base):
     uploaded_at = Column(DateTime, default=utcnow_callable)
     uploaded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     claim_count = Column(Integer, default=0)
+    # Saved demarcation plan (list of rules) so managers can reopen and edit
+    demarcation_rules = Column(JSON, nullable=True)
 
     items = relationship("ClaimXmlImportItem", back_populates="batch", cascade="all, delete-orphan")
 
@@ -29,7 +31,7 @@ class ClaimXmlImportItem(Base):
     batch_id = Column(Integer, ForeignKey("claim_xml_import_batches.id"), nullable=False, index=True)
     claim_claim_id = Column(String(50), nullable=False, index=True)  # CLA-XXXXX from XML
     row_index = Column(Integer, nullable=True)
-    status = Column(String(30), nullable=False, default="draft")  # draft | flagged | pharmacy_vetted | doctor_vetted | vetted | finalized
+    status = Column(String(30), nullable=False, default="draft")  # draft | flagged | pharmacy_vetted | doctor_vetted | vetted | ai_vetted | finalized
     payload = Column(JSON, nullable=False)  # editable claim payload parsed from XML
     finalized_at = Column(DateTime, nullable=True)
     flag_comment = Column(String(800), nullable=True)
@@ -39,5 +41,11 @@ class ClaimXmlImportItem(Base):
     pharmacy_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     doctor_vetted_at = Column(DateTime, nullable=True)
     doctor_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Ownership / demarcation (workload signal only — does not restrict who can vet)
+    assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    assigned_at = Column(DateTime, nullable=True)
+    assigned_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assignment_note = Column(String(255), nullable=True)  # e.g. "OPD", "ANC", "Pedis OPD + IPD"
 
     batch = relationship("ClaimXmlImportBatch", back_populates="items")

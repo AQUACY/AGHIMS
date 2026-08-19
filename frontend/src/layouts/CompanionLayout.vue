@@ -215,6 +215,18 @@
           <q-item-label>Profile</q-item-label>
         </q-item>
         <q-item
+          clickable
+          v-ripple
+          :to="{ name: 'CompanionMyThemeColors' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="palette" />
+          </q-item-section>
+          <q-item-label>My theme colors</q-item-label>
+        </q-item>
+        <q-item
           v-if="isSuperAdmin"
           clickable
           v-ripple

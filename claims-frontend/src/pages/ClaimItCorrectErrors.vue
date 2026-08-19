@@ -5,6 +5,16 @@
       <div class="text-h4 q-ml-sm text-weight-bold glass-text">
         {{ viewingBatchId ? `Batch: ${currentBatch?.file_name || ''}` : 'Correct Errors' }}
       </div>
+      <q-space />
+      <q-btn
+        v-if="viewingBatchId && currentBatch"
+        flat
+        color="negative"
+        icon="delete"
+        label="Delete batch"
+        :loading="deletingBatchId === viewingBatchId"
+        @click="deleteBatch(currentBatch)"
+      />
     </div>
 
     <!-- Upload (when not viewing a batch) -->
@@ -84,7 +94,20 @@
               </q-item-label>
             </q-item-section>
             <q-item-section side>
-              <q-btn flat dense round icon="chevron_right" />
+              <div class="row q-gutter-xs items-center no-wrap" @click.stop>
+                <q-btn
+                  flat
+                  dense
+                  round
+                  color="negative"
+                  icon="delete"
+                  :loading="deletingBatchId === b.id"
+                  @click="deleteBatch(b)"
+                >
+                  <q-tooltip>Delete this uploaded report</q-tooltip>
+                </q-btn>
+                <q-btn flat dense round icon="chevron_right" />
+              </div>
             </q-item-section>
           </q-item>
         </q-list>
@@ -147,13 +170,13 @@
             <div>
               <span class="text-caption text-grey-7">Errors / warnings in this batch: </span>
               <strong>{{ filteredErrors.length }}</strong>
-              <span v-if="outcomeFilter !== 'all'" class="text-caption text-grey-7"> (filtered from {{ batchErrors.length }})</span>
+              <span v-if="outcomeFilter !== 'all' || completedFilter !== 'all'" class="text-caption text-grey-7"> (filtered from {{ batchErrors.length }})</span>
             </div>
             <q-btn
               color="primary"
               :label="exportButtonLabel"
               icon="download"
-              :disable="exportableClaimIds.length === 0"
+              :disable="exportableTotal === 0"
               :loading="exportingBatch"
               @click="exportBatchClaims"
             />
@@ -180,12 +203,37 @@
               ]"
               @update:model-value="paginationPage = 1"
             />
-            <q-checkbox
-              v-model="hideCompleted"
-              label="Hide completed"
+            <q-btn-toggle
+              v-model="completedFilter"
+              no-caps
               dense
-              class="q-ml-md"
+              toggle-color="teal"
+              class="q-ml-sm"
+              :options="[
+                { label: 'Any status', value: 'all' },
+                { label: 'Not completed', value: 'open' },
+                { label: 'Completed only', value: 'completed' },
+              ]"
               @update:model-value="paginationPage = 1"
+            />
+            <q-checkbox
+              class="q-ml-md"
+              dense
+              :model-value="allFilteredExportSelected"
+              :indeterminate="someFilteredExportSelected"
+              :disable="filteredExportableTotal === 0"
+              label="Select all in filter"
+              @update:model-value="toggleSelectAllFiltered"
+            />
+            <q-btn
+              flat
+              dense
+              no-caps
+              color="teal"
+              icon="done_all"
+              label="Select all completed"
+              :disable="completedExportableTotal === 0"
+              @click="selectAllCompleted"
             />
             <q-space />
             <div class="row items-center q-gutter-sm">
@@ -242,7 +290,10 @@
           <div class="row items-center">
             <div class="col-grow">
               <span class="text-weight-medium">Claim {{ err.claim_claim_id }}</span>
-              <span v-if="err.claim_status" class="q-ml-sm text-caption">({{ err.claim_status }})</span>
+              <span v-if="rowWorkflowStatus(err)" class="q-ml-sm text-caption">
+                ({{ statusLabel(rowWorkflowStatus(err)) }})
+                <span v-if="!rowIsExportReady(err)" class="text-orange-9"> · finalize before complete/export</span>
+              </span>
             </div>
             <div class="q-gutter-sm">
               <q-btn
@@ -268,16 +319,17 @@
                 disable
               />
               <q-checkbox
-                v-if="err.claim_id"
-                :model-value="selectedClaimIds.includes(err.claim_id)"
-                :label="'Export'"
-                @update:model-value="toggleExport(err.claim_id, $event)"
+                v-if="rowExportTarget(err)"
+                :model-value="isRowExportSelected(err)"
+                label="Export"
+                @update:model-value="toggleRowExport(err, $event)"
               />
               <q-btn
                 size="sm"
                 :color="err.completed_at ? 'grey' : 'positive'"
                 :label="err.completed_at ? 'Mark not completed' : 'Mark as completed'"
                 :loading="completingErrorId === err.id"
+                :disable="!err.completed_at && !rowIsExportReady(err)"
                 outline
                 @click="toggleCompleted(err)"
               />
@@ -307,6 +359,8 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import { isClaimExportable, statusLabel } from '../utils/claimVetting';
+import { parseExportErrorDetail, exportErrorMessage } from '../utils/exportErrorDetail';
 
 const STORAGE_KEY = 'claimit_batch_selections';
 
@@ -317,14 +371,16 @@ const $q = useQuasar();
 const uploading = ref(false);
 const uploadFile = ref(null);
 const batches = ref([]);
+const deletingBatchId = ref(null);
 const viewingBatchId = ref(null);
 const currentBatch = ref(null);
 const batchErrors = ref([]);
 const selectedClaimIds = ref([]);
+const selectedItemIds = ref([]);
 const exportingBatch = ref(false);
 const selectionsLocked = ref(false);
 const outcomeFilter = ref('all');
-const hideCompleted = ref(false);
+const completedFilter = ref('all'); // all | open | completed
 const rowsPerPage = ref(25);
 const paginationPage = ref(1);
 const completingErrorId = ref(null);
@@ -373,21 +429,53 @@ function saveStoredSelections(data) {
   } catch (_) {}
 }
 
+/** Prefer GHIMS import item for re-import export; otherwise HMS claim. */
+function rowExportTarget(err) {
+  if (err?.ghims_import_item_id != null) return { kind: 'item', id: Number(err.ghims_import_item_id) };
+  if (err?.claim_id != null) return { kind: 'claim', id: Number(err.claim_id) };
+  return null;
+}
+
+function collectExportTargets(errors) {
+  const claimIds = [];
+  const itemIds = [];
+  const seenClaim = new Set();
+  const seenItem = new Set();
+  for (const e of errors || []) {
+    const t = rowExportTarget(e);
+    if (!t || Number.isNaN(t.id)) continue;
+    if (t.kind === 'item') {
+      if (!seenItem.has(t.id)) {
+        seenItem.add(t.id);
+        itemIds.push(t.id);
+      }
+    } else if (!seenClaim.has(t.id)) {
+      seenClaim.add(t.id);
+      claimIds.push(t.id);
+    }
+  }
+  return { claimIds, itemIds };
+}
+
 function applySelectionsForBatch(batchId, errors) {
   const stored = getStoredSelections();
   const key = String(batchId);
   const entry = stored[key];
-  const validIds = (errors || []).filter((e) => e.claim_id != null).map((e) => Number(e.claim_id));
-  const validSet = new Set(validIds);
-  if (entry?.locked && Array.isArray(entry.claimIds)) {
+  const { claimIds: validClaimIds, itemIds: validItemIds } = collectExportTargets(errors);
+  const validClaimSet = new Set(validClaimIds);
+  const validItemSet = new Set(validItemIds);
+  if (entry?.locked) {
     selectionsLocked.value = true;
-    // Normalize stored IDs (JSON may have numbers or strings) and keep only those still in batch
-    selectedClaimIds.value = entry.claimIds
-      .map((id) => Number(id))
-      .filter((id) => !Number.isNaN(id) && validSet.has(id));
+    selectedClaimIds.value = Array.isArray(entry.claimIds)
+      ? entry.claimIds.map((id) => Number(id)).filter((id) => !Number.isNaN(id) && validClaimSet.has(id))
+      : [];
+    selectedItemIds.value = Array.isArray(entry.itemIds)
+      ? entry.itemIds.map((id) => Number(id)).filter((id) => !Number.isNaN(id) && validItemSet.has(id))
+      : [];
   } else {
     selectionsLocked.value = entry?.locked ?? false;
-    selectedClaimIds.value = [...validIds];
+    selectedClaimIds.value = [...validClaimIds];
+    selectedItemIds.value = [...validItemIds];
   }
 }
 
@@ -398,6 +486,7 @@ function persistSelectionsForCurrentBatch() {
   stored[String(id)] = {
     locked: selectionsLocked.value,
     claimIds: selectedClaimIds.value.map((id) => Number(id)),
+    itemIds: selectedItemIds.value.map((id) => Number(id)),
   };
   saveStoredSelections(stored);
 }
@@ -410,7 +499,8 @@ function onLockToggled(locked) {
 const filteredErrors = computed(() => {
   let list = batchErrors.value;
   if (outcomeFilter.value !== 'all') list = list.filter((e) => e.outcome === outcomeFilter.value);
-  if (hideCompleted.value) list = list.filter((e) => !e.completed_at);
+  if (completedFilter.value === 'open') list = list.filter((e) => !e.completed_at);
+  if (completedFilter.value === 'completed') list = list.filter((e) => !!e.completed_at);
   return list;
 });
 
@@ -473,6 +563,7 @@ function goBack() {
     currentBatch.value = null;
     batchErrors.value = [];
     selectedClaimIds.value = [];
+    selectedItemIds.value = [];
     $router.replace('/claims/correct-errors').catch(() => {});
     loadGhimsBatches();
   } else {
@@ -487,6 +578,37 @@ async function loadBatches() {
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load batches' });
   }
+}
+
+function deleteBatch(batch) {
+  if (!batch?.id) return;
+  $q.dialog({
+    title: 'Delete error report?',
+    message:
+      `Permanently delete “${batch.file_name}” and its ${batch.error_count || 0} error/warning row(s)? This cannot be undone.`,
+    cancel: { label: 'Keep', flat: true, color: 'primary' },
+    ok: { label: 'Delete', color: 'negative', unelevated: true },
+    persistent: true,
+  }).onOk(async () => {
+    deletingBatchId.value = batch.id;
+    try {
+      await claimsAPI.deleteClaimitBatch(batch.id);
+      if (viewingBatchId.value === batch.id) {
+        viewingBatchId.value = null;
+        currentBatch.value = null;
+        batchErrors.value = [];
+        selectedClaimIds.value = [];
+        selectedItemIds.value = [];
+        $router.replace('/claims/correct-errors').catch(() => {});
+      }
+      await loadBatches();
+      $q.notify({ type: 'positive', message: 'Error report deleted' });
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to delete report' });
+    } finally {
+      deletingBatchId.value = null;
+    }
+  });
 }
 
 async function uploadReport() {
@@ -532,6 +654,7 @@ async function uploadReport() {
 async function openBatch(id) {
   viewingBatchId.value = id;
   outcomeFilter.value = 'all';
+  completedFilter.value = 'all';
   paginationPage.value = 1;
   $router.replace({ path: `/claims/correct-errors/batch/${id}` }).catch(() => {});
   try {
@@ -558,69 +681,209 @@ function editGhimsImportItem(itemId) {
 async function toggleCompleted(err) {
   const batchId = viewingBatchId.value;
   if (batchId == null) return;
+  const markingComplete = !err.completed_at;
+  if (markingComplete && !rowIsExportReady(err)) {
+    const st = rowWorkflowStatus(err) || 'unknown';
+    $q.notify({
+      type: 'warning',
+      multiLine: true,
+      timeout: 10000,
+      message:
+        `${err.claim_claim_id} is not finalized for export (status: ${statusLabel(st)}). `
+        + 'Finalize or pharmacy/doctor-vet the claim first, then mark completed.',
+    });
+    return;
+  }
   completingErrorId.value = err.id;
   try {
-    const completed = !err.completed_at;
-    await claimsAPI.setClaimitErrorComplete(batchId, err.id, completed);
+    await claimsAPI.setClaimitErrorComplete(batchId, err.id, markingComplete);
     const res = await claimsAPI.getClaimitBatch(batchId);
     batchErrors.value = res.data?.errors || [];
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update' });
+    $q.notify({
+      type: 'negative',
+      multiLine: true,
+      timeout: 12000,
+      message: e.response?.data?.detail || 'Failed to update',
+    });
   } finally {
     completingErrorId.value = null;
   }
 }
 
-function toggleExport(claimId, checked) {
-  const id = Number(claimId);
-  if (checked) {
-    if (!selectedClaimIds.value.includes(id)) selectedClaimIds.value.push(id);
+function rowWorkflowStatus(err) {
+  return err?.ghims_import_item_status || err?.claim_status || '';
+}
+
+function rowIsExportReady(err) {
+  if (err?.exportable === true) return true;
+  if (err?.exportable === false) return false;
+  const status = rowWorkflowStatus(err);
+  if (!status && !err?.claim_id && !err?.ghims_import_item_id) return false;
+  return isClaimExportable({ status, claim_status: status });
+}
+
+function isRowExportSelected(err) {
+  const t = rowExportTarget(err);
+  if (!t) return false;
+  if (t.kind === 'item') return selectedItemIds.value.includes(t.id);
+  return selectedClaimIds.value.includes(t.id);
+}
+
+function toggleRowExport(err, checked) {
+  const t = rowExportTarget(err);
+  if (!t) return;
+  if (t.kind === 'item') {
+    if (checked) {
+      if (!selectedItemIds.value.includes(t.id)) selectedItemIds.value.push(t.id);
+    } else {
+      selectedItemIds.value = selectedItemIds.value.filter((i) => i !== t.id);
+    }
+  } else if (checked) {
+    if (!selectedClaimIds.value.includes(t.id)) selectedClaimIds.value.push(t.id);
   } else {
-    selectedClaimIds.value = selectedClaimIds.value.filter((i) => i !== id);
+    selectedClaimIds.value = selectedClaimIds.value.filter((i) => i !== t.id);
   }
   if (selectionsLocked.value) {
     nextTick(() => persistSelectionsForCurrentBatch());
   }
 }
 
-// Claim IDs to export: only those that are selected AND in the current filter (so filtering to "Errors only" exports only selected errors)
-const exportableClaimIds = computed(() => {
-  const selected = selectedClaimIds.value;
-  const inFilter = new Set((filteredErrors.value || []).map((e) => e.claim_id).filter(Boolean));
-  return selected.filter((id) => inFilter.has(id));
+const filteredExportTargets = computed(() => collectExportTargets(filteredErrors.value));
+const completedExportTargets = computed(() =>
+  collectExportTargets((batchErrors.value || []).filter((e) => e.completed_at))
+);
+
+const filteredExportableTotal = computed(
+  () => filteredExportTargets.value.claimIds.length + filteredExportTargets.value.itemIds.length
+);
+const completedExportableTotal = computed(
+  () => completedExportTargets.value.claimIds.length + completedExportTargets.value.itemIds.length
+);
+
+const allFilteredExportSelected = computed(() => {
+  const { claimIds, itemIds } = filteredExportTargets.value;
+  if (!claimIds.length && !itemIds.length) return false;
+  return (
+    claimIds.every((id) => selectedClaimIds.value.includes(id))
+    && itemIds.every((id) => selectedItemIds.value.includes(id))
+  );
 });
 
+const someFilteredExportSelected = computed(() => {
+  if (!filteredExportableTotal.value || allFilteredExportSelected.value) return false;
+  const { claimIds, itemIds } = filteredExportTargets.value;
+  return (
+    claimIds.some((id) => selectedClaimIds.value.includes(id))
+    || itemIds.some((id) => selectedItemIds.value.includes(id))
+  );
+});
+
+function applyTargetSelection(claimIds, itemIds, mode) {
+  if (mode === 'add') {
+    const claimSet = new Set(selectedClaimIds.value.map(Number));
+    const itemSet = new Set(selectedItemIds.value.map(Number));
+    claimIds.forEach((id) => claimSet.add(id));
+    itemIds.forEach((id) => itemSet.add(id));
+    selectedClaimIds.value = [...claimSet];
+    selectedItemIds.value = [...itemSet];
+  } else if (mode === 'remove') {
+    const removeClaim = new Set(claimIds);
+    const removeItem = new Set(itemIds);
+    selectedClaimIds.value = selectedClaimIds.value.filter((id) => !removeClaim.has(Number(id)));
+    selectedItemIds.value = selectedItemIds.value.filter((id) => !removeItem.has(Number(id)));
+  }
+  if (selectionsLocked.value) {
+    nextTick(() => persistSelectionsForCurrentBatch());
+  }
+}
+
+function toggleSelectAllFiltered(checked) {
+  const { claimIds, itemIds } = filteredExportTargets.value;
+  applyTargetSelection(claimIds, itemIds, checked ? 'add' : 'remove');
+}
+
+function selectAllCompleted() {
+  const { claimIds, itemIds } = completedExportTargets.value;
+  if (!claimIds.length && !itemIds.length) {
+    $q.notify({ type: 'warning', message: 'No completed claims available to select for export' });
+    return;
+  }
+  applyTargetSelection(claimIds, itemIds, 'add');
+  completedFilter.value = 'completed';
+  paginationPage.value = 1;
+  $q.notify({
+    type: 'positive',
+    message: `Selected ${claimIds.length + itemIds.length} completed claim(s). Click Export to download.`,
+  });
+}
+
+const exportableClaimIds = computed(() => {
+  const inFilter = new Set(filteredExportTargets.value.claimIds);
+  return selectedClaimIds.value.filter((id) => inFilter.has(Number(id)));
+});
+
+const exportableItemIds = computed(() => {
+  const inFilter = new Set(filteredExportTargets.value.itemIds);
+  return selectedItemIds.value.filter((id) => inFilter.has(Number(id)));
+});
+
+const exportableTotal = computed(
+  () => exportableClaimIds.value.length + exportableItemIds.value.length
+);
+
 const exportButtonLabel = computed(() => {
-  const n = exportableClaimIds.value.length;
-  if (outcomeFilter.value !== 'all') {
+  const n = exportableTotal.value;
+  const hasFilter = outcomeFilter.value !== 'all' || completedFilter.value !== 'all';
+  if (hasFilter) {
     return n ? `Export ${n} selected (current filter) for re-import` : 'Export selected (current filter)';
   }
   return n ? `Export ${n} selected for re-import` : 'Export selected for re-import';
 });
 
+async function downloadXmlBlob(res, filename) {
+  const blob = new Blob([res.data], { type: 'application/xml' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 async function exportBatchClaims() {
-  const ids = exportableClaimIds.value;
-  if (ids.length === 0) return;
+  const claimIds = exportableClaimIds.value;
+  const itemIds = exportableItemIds.value;
+  if (!claimIds.length && !itemIds.length) return;
   exportingBatch.value = true;
+  const base = currentBatch.value?.file_name?.replace(/\.[^.]+$/, '') || 'export';
   try {
-    const res = await claimsAPI.exportBatch(ids);
-    const blob = new Blob([res.data], { type: 'application/xml' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `NHIS_CLA_batch_${currentBatch.value?.file_name?.replace(/\.[^.]+$/, '') || 'export'}.xml`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
+    let total = 0;
+    if (claimIds.length) {
+      const res = await claimsAPI.exportBatch(claimIds);
+      await downloadXmlBlob(res, `NHIS_CLA_batch_${base}${itemIds.length ? '_hms' : ''}.xml`);
+      total += claimIds.length;
+    }
+    if (itemIds.length) {
+      const res = await claimsAPI.exportGhimsImportItems(itemIds);
+      await downloadXmlBlob(res, `NHIS_CLA_batch_${base}${claimIds.length ? '_ghims' : ''}.xml`);
+      total += itemIds.length;
+    }
     $q.notify({
       type: 'positive',
-      message: `${ids.length} claim(s) exported for re-import to ClaimIT`,
+      message: `${total} claim(s) exported for re-import to ClaimIT`,
     });
   } catch (e) {
+    const detail = await parseExportErrorDetail(e);
+    const message = exportErrorMessage(detail) || 'Export failed';
     $q.notify({
       type: 'negative',
-      message: e.response?.data?.detail || 'Export failed',
+      multiLine: true,
+      timeout: 0,
+      actions: [{ label: 'Dismiss', color: 'white' }],
+      message,
     });
   } finally {
     exportingBatch.value = false;

@@ -102,7 +102,6 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { authAPI } from '../services/api';
-
 const $q = useQuasar();
 const router = useRouter();
 const authStore = useAuthStore();

@@ -50,6 +50,20 @@
           />
           <q-badge v-if="vetting.pharmacy_vetted" color="teal" label="Pharmacy" />
           <q-badge v-if="vetting.doctor_vetted" color="indigo" label="Doctor" />
+          <q-badge
+            v-if="ownership.assigned_to_name"
+            color="blue-grey"
+            :label="ownership.assignment_note ? `Owner: ${ownership.assigned_to_name} (${ownership.assignment_note})` : `Owner: ${ownership.assigned_to_name}`"
+          />
+          <q-badge v-else color="grey-5" text-color="grey-9" label="Unassigned" />
+        </div>
+        <div
+          v-if="vetting.pharmacy_vetted_by_name || vetting.doctor_vetted_by_name"
+          class="text-caption text-grey-7 q-mt-xs"
+        >
+          <span v-if="vetting.pharmacy_vetted_by_name">Pharmacy vetted by {{ vetting.pharmacy_vetted_by_name }}</span>
+          <span v-if="vetting.pharmacy_vetted_by_name && vetting.doctor_vetted_by_name"> · </span>
+          <span v-if="vetting.doctor_vetted_by_name">Doctor vetted by {{ vetting.doctor_vetted_by_name }}</span>
         </div>
       </div>
     </div>
@@ -105,6 +119,14 @@
         <div class="text-subtitle2">Flag reason</div>
         <div class="text-body2">{{ flagComment }}</div>
       </q-banner>
+
+      <AiClaimVettingPanel
+        :item-id="itemId"
+        :disabled="status === 'finalized'"
+        :auto-run="false"
+        class="q-mb-md"
+        @payload-updated="onAiPayloadUpdated"
+      />
 
       <q-card flat bordered>
         <q-card-section>
@@ -670,7 +692,11 @@
           :label="vetting.pharmacy_vetted ? 'Revert pharmacy vet' : 'Vet by Pharmacy'"
           :loading="vettingPharmacy"
           @click="vetByPharmacy"
-        />
+        >
+          <q-tooltip v-if="vetting.pharmacy_vetted_by_name">
+            Pharmacy vetted by {{ vetting.pharmacy_vetted_by_name }}
+          </q-tooltip>
+        </q-btn>
         <q-btn
           v-if="status !== 'finalized' && canVetDoctor"
           :color="vetting.doctor_vetted ? 'orange-9' : 'indigo-7'"
@@ -680,7 +706,11 @@
           :label="vetting.doctor_vetted ? 'Revert doctor vet' : 'Vet by Doctor'"
           :loading="vettingDoctor"
           @click="vetByDoctor"
-        />
+        >
+          <q-tooltip v-if="vetting.doctor_vetted_by_name">
+            Doctor vetted by {{ vetting.doctor_vetted_by_name }}
+          </q-tooltip>
+        </q-btn>
         <q-btn v-if="status !== 'finalized'" type="submit" color="primary" label="Save and Finalize" :loading="saving" />
         <q-btn v-if="status !== 'finalized'" color="negative" :label="status === 'flagged' ? 'Flagged' : 'Flag claim'" :disable="status === 'flagged'" outline :loading="saving" @click="flagClaim" />
       </div>
@@ -842,6 +872,7 @@
 import { ref, reactive, computed, watch } from 'vue';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
+import AiClaimVettingPanel from '../components/claims/AiClaimVettingPanel.vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI, priceListAPI } from '../services/api';
@@ -869,6 +900,7 @@ import {
   claimLineSectionClass,
 } from '../utils/claimMedicineCoverage';
 import { getGhimsNavPosition } from '../utils/claimNav';
+import { sortClaimMedicinesByDateAsc } from '../utils/claimMedicineSort';
 
 const route = useRoute();
 const $router = useRouter();
@@ -887,6 +919,11 @@ const vetting = reactive({
   doctor_vetted_at: null,
   doctor_vetted_by_name: null,
 });
+const ownership = reactive({
+  assigned_to_id: null,
+  assigned_to_name: null,
+  assignment_note: null,
+});
 const canVetPharmacy = computed(() =>
   authStore.canAccess(['Pharmacy', 'Pharmacy Head', 'Claims', 'Admin'])
 );
@@ -902,6 +939,46 @@ function applyVettingFromItem(data = {}) {
   vetting.doctor_vetted = !!data.doctor_vetted || !!data.doctor_vetted_at;
   vetting.doctor_vetted_at = data.doctor_vetted_at || null;
   vetting.doctor_vetted_by_name = data.doctor_vetted_by_name || null;
+  ownership.assigned_to_id = data.assigned_to_id ?? null;
+  ownership.assigned_to_name = data.assigned_to_name || null;
+  ownership.assignment_note = data.assignment_note || null;
+}
+
+async function buildGhimsSavePayload(action = 'saving') {
+  reorderDiagnosesWithPrincipalFirst();
+  const clean = normalize(payload);
+  validateCoveredMedicinesOrThrow(payload.medicines);
+  const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
+  if (missingMedicineDates.length) {
+    throw new Error(`Medicine section(s) missing service date. Please enter date: medicine section(s): ${missingMedicineDates.join(', ')}`);
+  }
+  if (missingInvestigationDates.length) {
+    throw new Error(`Investigation section(s) missing service date. Please enter date: investigation section(s): ${missingInvestigationDates.join(', ')}`);
+  }
+  if (missingProcedureDates.length) {
+    throw new Error(`Procedure section(s) missing service date. Please enter date: procedure section(s): ${missingProcedureDates.join(', ')}`);
+  }
+  const invalidDiagnosisSections = validateDiagnosisGdrg(clean.diagnoses || []);
+  if (invalidDiagnosisSections.length) {
+    throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
+  }
+  assertMedicineFieldsOrThrow(clean.medicines || [], action);
+  (payload.medicines || []).forEach((m) => syncPrescriptionUnparsed(m));
+  (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
+  clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
+  clean.procedures = (clean.procedures || []).map(({ serviceDate, gdrgCode, description, icd10, diagnosis }) => ({ serviceDate, gdrgCode, description, icd10, diagnosis }));
+  clean.medicines = (clean.medicines || []).map((m) => ({
+    medicineCode: m.medicineCode,
+    dispensedQty: m.dispensedQty,
+    serviceDate: m.serviceDate,
+    prescription: {
+      dose: m.prescription?.dose || '',
+      frequency: m.prescription?.frequency || '',
+      duration: normalizeDuration(m.prescription?.duration, { commit: true }),
+      unparsed: m.prescription?.unparsed || '',
+    },
+  }));
+  return clean;
 }
 
 async function vetByPharmacy() {
@@ -920,6 +997,11 @@ async function vetByPharmacy() {
   }
   vettingPharmacy.value = true;
   try {
+    if (!clearing) {
+      // Same completeness rules as save/finalize — persist first so vet uses current drug data
+      const clean = await buildGhimsSavePayload('pharmacy vetting');
+      await claimsAPI.updateGhimsImportItem(itemId.value, clean);
+    }
     const res = await claimsAPI.vetGhimsImportItem(itemId.value, 'pharmacy', clearing);
     applyVettingFromItem(res.data || {});
     $q.notify({
@@ -927,7 +1009,12 @@ async function vetByPharmacy() {
       message: clearing ? 'Pharmacy vet removed' : 'Pharmacy vet recorded',
     });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update pharmacy vet' });
+    $q.notify({
+      type: 'negative',
+      multiLine: true,
+      timeout: 12000,
+      message: e.response?.data?.detail || e.message || 'Failed to update pharmacy vet',
+    });
   } finally {
     vettingPharmacy.value = false;
   }
@@ -996,7 +1083,7 @@ const attendanceTypeOptions = [
   { label: 'PNC', value: 'PNC' },
 ];
 const SPECIALTY_ATTENDED_CODES = [
-  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPTH', 'ORTH', 'PAED', 'PSUR', 'RSUR',
+  'ASUR', 'DENT', 'ENTH', 'MEDI', 'OBGY', 'OPDC', 'OPHT', 'ORTH', 'PAED', 'PSUR', 'RSUR',
 ];
 const specialtyAttendedOptions = computed(() => {
   const base = SPECIALTY_ATTENDED_CODES.map((code) => ({ label: code, value: code }));
@@ -1450,6 +1537,9 @@ function reorderDiagnosesWithPrincipalFirst({ syncSpecialty = false } = {}) {
   } else if (String(payload.specialtyAttended || '').trim().toUpperCase() === 'ZOOM') {
     // Legacy claims may still have ZOOM stored — normalize to OPDC
     payload.specialtyAttended = 'OPDC';
+  } else if (String(payload.specialtyAttended || '').trim().toUpperCase() === 'OPTH') {
+    // Typo legacy specialty code — NHIA ophthalmology specialty is OPHT
+    payload.specialtyAttended = 'OPHT';
   }
 }
 
@@ -2031,19 +2121,63 @@ function normalizeDuration(value, { commit = false } = {}) {
   return compact;
 }
 
-function validateMedicineDoses(medicines) {
-  const invalidSectionIndexes = [];
+function medicineRowHasData(med) {
+  return Boolean(
+    String(med?.medicineCode || '').trim()
+    || String(med?.dispensedQty || '').trim()
+    || String(med?.serviceDate || '').trim()
+    || String(med?.prescription?.dose || '').trim()
+    || String(med?.prescription?.frequency || '').trim()
+    || String(med?.prescription?.duration || '').trim()
+    || String(med?.prescription?.unparsed || '').trim()
+  );
+}
+
+function validateMedicineFields(medicines) {
+  /** Returns list of { section, missing: string[] } for incomplete drug rows. */
+  const problems = [];
   (medicines || []).forEach((med, index) => {
+    if (!medicineRowHasData(med)) return;
     const dose = normalizeDose(med?.prescription?.dose);
-    if (!dose) {
-      invalidSectionIndexes.push(index + 1);
-      return;
-    }
-    if (med?.prescription && typeof med.prescription === 'object') {
+    if (med?.prescription && typeof med.prescription === 'object' && dose) {
       med.prescription.dose = dose;
     }
+    if (med?.prescription && typeof med.prescription === 'object') {
+      med.prescription.duration = normalizeDuration(med.prescription.duration, { commit: true });
+    }
+    const missing = [];
+    if (!String(med?.medicineCode || '').trim()) missing.push('medicine code');
+    if (!String(med?.dispensedQty || '').trim()) missing.push('quantity');
+    if (!String(med?.serviceDate || '').trim()) missing.push('date');
+    if (!String(med?.prescription?.dose || '').trim()) missing.push('dose');
+    if (!String(med?.prescription?.frequency || '').trim()) missing.push('frequency');
+    if (!String(med?.prescription?.duration || '').trim()) missing.push('duration');
+    if (missing.length) problems.push({ section: index + 1, missing });
   });
-  return invalidSectionIndexes;
+  return problems;
+}
+
+/** @deprecated use validateMedicineFields — kept for callers that only need dose section indexes */
+function validateMedicineDoses(medicines) {
+  return validateMedicineFields(medicines)
+    .filter((p) => p.missing.includes('dose'))
+    .map((p) => p.section);
+}
+
+function formatMedicineFieldProblems(problems, action = 'saving') {
+  if (!problems.length) return '';
+  const parts = problems.map((p) => `section ${p.section} missing ${p.missing.join(', ')}`);
+  return (
+    `Cannot complete ${action}: drug fields incomplete. ${parts.join('; ')}. `
+    + 'Fill medicine code, quantity, date, dose, frequency, and duration.'
+  );
+}
+
+function assertMedicineFieldsOrThrow(medicines, action = 'saving') {
+  const problems = validateMedicineFields(medicines);
+  if (problems.length) {
+    throw new Error(formatMedicineFieldProblems(problems, action));
+  }
 }
 
 function validateDiagnosisGdrg(diagnoses) {
@@ -2235,9 +2369,12 @@ function normalize(p) {
     dateOfBirth: p.dateOfBirth || '',
     typeOfService: p.typeOfService || '',
     typeOfAttendance: p.typeOfAttendance || '',
-    specialtyAttended: p.specialtyAttended || '',
+    specialtyAttended: (() => {
+      const s = String(p.specialtyAttended || '').trim().toUpperCase();
+      return s === 'OPTH' ? 'OPHT' : (p.specialtyAttended || '');
+    })(),
     diagnoses: Array.isArray(p.diagnoses) ? p.diagnoses : [],
-    medicines: Array.isArray(p.medicines) ? p.medicines : [],
+    medicines: sortClaimMedicinesByDateAsc(Array.isArray(p.medicines) ? p.medicines : []),
     investigations: Array.isArray(p.investigations) ? p.investigations : [],
     procedures: Array.isArray(p.procedures) ? p.procedures : [],
     dateOfService: Array.isArray(p.dateOfService) ? p.dateOfService : [],
@@ -2313,6 +2450,12 @@ async function onConvertGhanaCardToHin() {
   } finally {
     convertingGhanaCard.value = false;
   }
+}
+
+function onAiPayloadUpdated(nextPayload) {
+  if (!nextPayload || typeof nextPayload !== 'object') return;
+  Object.assign(payload, normalize(nextPayload));
+  syncGhimsServiceDateSnapshot();
 }
 
 async function onGetGhimsClaimCcc() {
@@ -2397,42 +2540,7 @@ async function load() {
 async function saveAndFinalize() {
   saving.value = true;
   try {
-    reorderDiagnosesWithPrincipalFirst();
-    const clean = normalize(payload);
-    validateCoveredMedicinesOrThrow(payload.medicines);
-    const { missingMedicineDates, missingInvestigationDates, missingProcedureDates } = validateServiceDates(clean);
-    if (missingMedicineDates.length) {
-      throw new Error(`Medicine section(s) missing service date. Please enter date: medicine section(s): ${missingMedicineDates.join(', ')}`);
-    }
-    if (missingInvestigationDates.length) {
-      throw new Error(`Investigation section(s) missing service date. Please enter date: investigation section(s): ${missingInvestigationDates.join(', ')}`);
-    }
-    if (missingProcedureDates.length) {
-      throw new Error(`Procedure section(s) missing service date. Please enter date: procedure section(s): ${missingProcedureDates.join(', ')}`);
-    }
-    const invalidDiagnosisSections = validateDiagnosisGdrg(clean.diagnoses || []);
-    if (invalidDiagnosisSections.length) {
-      throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
-    }
-    const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
-    if (invalidDoseSections.length) {
-      throw new Error(`Medicine section(s) missing dose. Please enter dose: ${invalidDoseSections.join(', ')}`);
-    }
-    (payload.medicines || []).forEach((m) => syncPrescriptionUnparsed(m));
-    (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
-    clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
-    clean.procedures = (clean.procedures || []).map(({ serviceDate, gdrgCode, description, icd10, diagnosis }) => ({ serviceDate, gdrgCode, description, icd10, diagnosis }));
-    clean.medicines = (clean.medicines || []).map((m) => ({
-      medicineCode: m.medicineCode,
-      dispensedQty: m.dispensedQty,
-      serviceDate: m.serviceDate,
-      prescription: {
-        dose: m.prescription?.dose || '',
-        frequency: m.prescription?.frequency || '',
-        duration: normalizeDuration(m.prescription?.duration, { commit: true }),
-        unparsed: m.prescription?.unparsed || '',
-      },
-    }));
+    const clean = await buildGhimsSavePayload();
     await claimsAPI.updateGhimsImportItem(itemId.value, clean);
     if (status.value !== 'finalized') {
       await claimsAPI.finalizeGhimsImportItem(itemId.value);
@@ -2466,10 +2574,7 @@ async function flagClaim() {
     if (invalidDiagnosisSections.length) {
       throw new Error(`Diagnosis section(s) missing GDRG. Please enter GDRG before saving: ${invalidDiagnosisSections.join(', ')}`);
     }
-    const invalidDoseSections = validateMedicineDoses(clean.medicines || []);
-    if (invalidDoseSections.length) {
-      throw new Error(`Medicine section(s) missing dose. Please enter dose: ${invalidDoseSections.join(', ')}`);
-    }
+    assertMedicineFieldsOrThrow(clean.medicines || [], 'flagging');
     (payload.medicines || []).forEach((m) => syncPrescriptionUnparsed(m));
     (clean.medicines || []).forEach((m) => applyUnparsedPrescriptionFields(m));
     clean.investigations = (clean.investigations || []).map(({ serviceDate, gdrgCode }) => ({ serviceDate, gdrgCode }));
