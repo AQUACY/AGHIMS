@@ -73,9 +73,12 @@ def resolve_specialty_attended(
     Specialty for ClaimIT XML / claim storage.
     Prefer the saved specialty when set. ZOOM is never a valid specialty
     (ZOOM* GDRGs such as dressings use OPDC).
+    OPTH is a legacy typo for ophthalmology; NHIA code is OPHT.
     """
     spec = (specialty or "").strip().upper()
     principal = (principal_gdrg or "").strip().upper()
+    if spec == "OPTH":
+        spec = "OPHT"
     if spec and spec != "ZOOM":
         return spec
     if spec == "ZOOM" or principal.startswith("ZOOM"):

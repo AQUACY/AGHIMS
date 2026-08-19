@@ -606,9 +606,21 @@ def export_ghims_import_items(
     )
     if len(items) != len(set(body.item_ids)):
         raise HTTPException(status_code=404, detail="Some imported claims were not found.")
-    not_finalized = [i.id for i in items if i.status != "finalized"]
+    not_finalized = [i for i in items if i.status != "finalized"]
     if not_finalized:
-        raise HTTPException(status_code=400, detail="Only finalized imported claims can be exported.")
+        labels = [
+            f"{(i.claim_claim_id or i.id)} (status: {i.status or 'unknown'})"
+            for i in not_finalized[:40]
+        ]
+        extra = len(not_finalized) - len(labels)
+        detail = (
+            "Cannot export — these imported claims are not finalized. "
+            "Finalize them, then export again: "
+            + "; ".join(labels)
+        )
+        if extra > 0:
+            detail += f"; …and {extra} more"
+        raise HTTPException(status_code=400, detail=detail)
     payloads = []
     for i in sorted(items, key=lambda x: x.row_index or 0):
         p = dict(i.payload or {})

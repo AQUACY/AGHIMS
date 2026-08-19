@@ -5,6 +5,16 @@
       <div class="text-h4 q-ml-sm text-weight-bold glass-text">
         {{ viewingBatchId ? `Batch: ${currentBatch?.file_name || ''}` : 'Correct Errors' }}
       </div>
+      <q-space />
+      <q-btn
+        v-if="viewingBatchId && currentBatch"
+        flat
+        color="negative"
+        icon="delete"
+        label="Delete batch"
+        :loading="deletingBatchId === viewingBatchId"
+        @click="deleteBatch(currentBatch)"
+      />
     </div>
 
     <!-- Upload (when not viewing a batch) -->
@@ -77,7 +87,20 @@
               </q-item-label>
             </q-item-section>
             <q-item-section side>
-              <q-btn flat dense round icon="chevron_right" />
+              <div class="row q-gutter-xs items-center no-wrap" @click.stop>
+                <q-btn
+                  flat
+                  dense
+                  round
+                  color="negative"
+                  icon="delete"
+                  :loading="deletingBatchId === b.id"
+                  @click="deleteBatch(b)"
+                >
+                  <q-tooltip>Delete this uploaded report</q-tooltip>
+                </q-btn>
+                <q-btn flat dense round icon="chevron_right" />
+              </div>
             </q-item-section>
           </q-item>
         </q-list>
@@ -135,7 +158,7 @@
             <div>
               <span class="text-caption text-grey-7">Errors / warnings in this batch: </span>
               <strong>{{ filteredErrors.length }}</strong>
-              <span v-if="outcomeFilter !== 'all'" class="text-caption text-grey-7"> (filtered from {{ batchErrors.length }})</span>
+              <span v-if="outcomeFilter !== 'all' || completedFilter !== 'all'" class="text-caption text-grey-7"> (filtered from {{ batchErrors.length }})</span>
             </div>
             <q-btn
               color="primary"
@@ -168,12 +191,37 @@
               ]"
               @update:model-value="paginationPage = 1"
             />
-            <q-checkbox
-              v-model="hideCompleted"
-              label="Hide completed"
+            <q-btn-toggle
+              v-model="completedFilter"
+              no-caps
               dense
-              class="q-ml-md"
+              toggle-color="teal"
+              class="q-ml-sm"
+              :options="[
+                { label: 'Any status', value: 'all' },
+                { label: 'Not completed', value: 'open' },
+                { label: 'Completed only', value: 'completed' },
+              ]"
               @update:model-value="paginationPage = 1"
+            />
+            <q-checkbox
+              class="q-ml-md"
+              dense
+              :model-value="allFilteredExportSelected"
+              :indeterminate="someFilteredExportSelected"
+              :disable="filteredExportableItemIds.length === 0"
+              label="Select all in filter"
+              @update:model-value="toggleSelectAllFiltered"
+            />
+            <q-btn
+              flat
+              dense
+              no-caps
+              color="teal"
+              icon="done_all"
+              label="Select all completed"
+              :disable="completedExportableItemIds.length === 0"
+              @click="selectAllCompleted"
             />
             <q-space />
             <div class="row items-center q-gutter-sm">
@@ -230,7 +278,10 @@
           <div class="row items-center">
             <div class="col-grow">
               <span class="text-weight-medium">Claim {{ err.claim_claim_id }}</span>
-              <span v-if="err.ghims_import_item_status" class="q-ml-sm text-caption">({{ err.ghims_import_item_status }})</span>
+              <span v-if="err.ghims_import_item_status" class="q-ml-sm text-caption">
+                ({{ statusLabel(err.ghims_import_item_status) }})
+                <span v-if="!rowIsExportReady(err)" class="text-orange-9"> · finalize before complete/export</span>
+              </span>
             </div>
             <div class="q-gutter-sm">
               <q-btn
@@ -259,6 +310,7 @@
                 :color="err.completed_at ? 'grey' : 'positive'"
                 :label="err.completed_at ? 'Mark not completed' : 'Mark as completed'"
                 :loading="completingErrorId === err.id"
+                :disable="!err.completed_at && !rowIsExportReady(err)"
                 outline
                 @click="toggleCompleted(err)"
               />
@@ -288,6 +340,8 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { claimsAPI } from '../services/api';
+import { isManagerFinalized, statusLabel } from '../utils/claimVetting';
+import { parseExportErrorDetail, exportErrorMessage } from '../utils/exportErrorDetail';
 
 const STORAGE_KEY = 'suhum_claimit_batch_selections';
 
@@ -296,6 +350,7 @@ const $router = useRouter();
 const $q = useQuasar();
 
 const uploading = ref(false);
+const deletingBatchId = ref(null);
 const uploadFile = ref(null);
 const batches = ref([]);
 const viewingBatchId = ref(null);
@@ -305,7 +360,7 @@ const selectedItemIds = ref([]);
 const exportingBatch = ref(false);
 const selectionsLocked = ref(false);
 const outcomeFilter = ref('all');
-const hideCompleted = ref(false);
+const completedFilter = ref('all'); // all | open | completed
 const rowsPerPage = ref(25);
 const paginationPage = ref(1);
 const completingErrorId = ref(null);
@@ -385,7 +440,8 @@ function onLockToggled(locked) {
 const filteredErrors = computed(() => {
   let list = batchErrors.value;
   if (outcomeFilter.value !== 'all') list = list.filter((e) => e.outcome === outcomeFilter.value);
-  if (hideCompleted.value) list = list.filter((e) => !e.completed_at);
+  if (completedFilter.value === 'open') list = list.filter((e) => !e.completed_at);
+  if (completedFilter.value === 'completed') list = list.filter((e) => !!e.completed_at);
   return list;
 });
 
@@ -464,6 +520,36 @@ async function loadBatches() {
   }
 }
 
+function deleteBatch(batch) {
+  if (!batch?.id) return;
+  $q.dialog({
+    title: 'Delete error report?',
+    message:
+      `Permanently delete “${batch.file_name}” and its ${batch.error_count || 0} error/warning row(s)? This cannot be undone.`,
+    cancel: { label: 'Keep', flat: true, color: 'primary' },
+    ok: { label: 'Delete', color: 'negative', unelevated: true },
+    persistent: true,
+  }).onOk(async () => {
+    deletingBatchId.value = batch.id;
+    try {
+      await claimsAPI.deleteClaimitBatch(batch.id);
+      if (viewingBatchId.value === batch.id) {
+        viewingBatchId.value = null;
+        currentBatch.value = null;
+        batchErrors.value = [];
+        selectedItemIds.value = [];
+        $router.replace('/correct-errors').catch(() => {});
+      }
+      await loadBatches();
+      $q.notify({ type: 'positive', message: 'Error report deleted' });
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to delete report' });
+    } finally {
+      deletingBatchId.value = null;
+    }
+  });
+}
+
 async function uploadReport() {
   if (!uploadFile.value) return;
   uploading.value = true;
@@ -502,6 +588,7 @@ async function uploadReport() {
 async function openBatch(id) {
   viewingBatchId.value = id;
   outcomeFilter.value = 'all';
+  completedFilter.value = 'all';
   paginationPage.value = 1;
   $router.replace({ path: `/correct-errors/batch/${id}` }).catch(() => {});
   try {
@@ -523,17 +610,38 @@ function editGhimsImportItem(itemId) {
 async function toggleCompleted(err) {
   const batchId = viewingBatchId.value;
   if (batchId == null) return;
+  const markingComplete = !err.completed_at;
+  if (markingComplete && !rowIsExportReady(err)) {
+    const st = err.ghims_import_item_status || 'unknown';
+    $q.notify({
+      type: 'warning',
+      multiLine: true,
+      timeout: 10000,
+      message:
+        `${err.claim_claim_id} is not finalized (status: ${statusLabel(st)}). `
+        + 'Finalize the GHIMS claim first, then mark completed.',
+    });
+    return;
+  }
   completingErrorId.value = err.id;
   try {
-    const completed = !err.completed_at;
-    await claimsAPI.setClaimitErrorComplete(batchId, err.id, completed);
+    await claimsAPI.setClaimitErrorComplete(batchId, err.id, markingComplete);
     const res = await claimsAPI.getClaimitBatch(batchId);
     batchErrors.value = res.data?.errors || [];
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update' });
+    $q.notify({
+      type: 'negative',
+      multiLine: true,
+      timeout: 12000,
+      message: e.response?.data?.detail || 'Failed to update',
+    });
   } finally {
     completingErrorId.value = null;
   }
+}
+
+function rowIsExportReady(err) {
+  return isManagerFinalized({ status: err?.ghims_import_item_status, claim_status: err?.ghims_import_item_status });
 }
 
 function toggleExport(itemId, checked) {
@@ -548,16 +656,76 @@ function toggleExport(itemId, checked) {
   }
 }
 
-// Claim IDs to export: only those that are selected AND in the current filter (so filtering to "Errors only" exports only selected errors)
+const filteredExportableItemIds = computed(() =>
+  (filteredErrors.value || [])
+    .map((e) => e.ghims_import_item_id)
+    .filter(Boolean)
+    .map((id) => Number(id))
+);
+
+const completedExportableItemIds = computed(() =>
+  (batchErrors.value || [])
+    .filter((e) => e.completed_at && e.ghims_import_item_id)
+    .map((e) => Number(e.ghims_import_item_id))
+);
+
+const allFilteredExportSelected = computed(() => {
+  const ids = filteredExportableItemIds.value;
+  return ids.length > 0 && ids.every((id) => selectedItemIds.value.includes(id));
+});
+
+const someFilteredExportSelected = computed(() => {
+  const ids = filteredExportableItemIds.value;
+  if (!ids.length || allFilteredExportSelected.value) return false;
+  return ids.some((id) => selectedItemIds.value.includes(id));
+});
+
+function toggleSelectAllFiltered(checked) {
+  const ids = filteredExportableItemIds.value;
+  if (checked) {
+    const set = new Set(selectedItemIds.value.map(Number));
+    ids.forEach((id) => set.add(id));
+    selectedItemIds.value = [...set];
+  } else {
+    const remove = new Set(ids);
+    selectedItemIds.value = selectedItemIds.value.filter((id) => !remove.has(Number(id)));
+  }
+  if (selectionsLocked.value) {
+    nextTick(() => persistSelectionsForCurrentBatch());
+  }
+}
+
+function selectAllCompleted() {
+  const ids = completedExportableItemIds.value;
+  if (!ids.length) {
+    $q.notify({ type: 'warning', message: 'No completed claims available to select for export' });
+    return;
+  }
+  const set = new Set(selectedItemIds.value.map(Number));
+  ids.forEach((id) => set.add(id));
+  selectedItemIds.value = [...set];
+  completedFilter.value = 'completed';
+  paginationPage.value = 1;
+  if (selectionsLocked.value) {
+    nextTick(() => persistSelectionsForCurrentBatch());
+  }
+  $q.notify({
+    type: 'positive',
+    message: `Selected ${ids.length} completed claim(s). Click Export to download.`,
+  });
+}
+
+// Item IDs to export: only those that are selected AND in the current filter
 const exportableItemIds = computed(() => {
   const selected = selectedItemIds.value;
-  const inFilter = new Set((filteredErrors.value || []).map((e) => e.ghims_import_item_id).filter(Boolean));
-  return selected.filter((id) => inFilter.has(id));
+  const inFilter = new Set(filteredExportableItemIds.value);
+  return selected.filter((id) => inFilter.has(Number(id)));
 });
 
 const exportButtonLabel = computed(() => {
   const n = exportableItemIds.value.length;
-  if (outcomeFilter.value !== 'all') {
+  const hasFilter = outcomeFilter.value !== 'all' || completedFilter.value !== 'all';
+  if (hasFilter) {
     return n ? `Export ${n} selected (current filter) for re-import` : 'Export selected (current filter)';
   }
   return n ? `Export ${n} selected for re-import` : 'Export selected for re-import';
@@ -583,9 +751,14 @@ async function exportBatchClaims() {
       message: `${ids.length} claim(s) exported for re-import to ClaimIT`,
     });
   } catch (e) {
+    const detail = await parseExportErrorDetail(e);
+    const message = exportErrorMessage(detail) || 'Export failed';
     $q.notify({
       type: 'negative',
-      message: e.response?.data?.detail || 'Export failed',
+      multiLine: true,
+      timeout: 0,
+      actions: [{ label: 'Dismiss', color: 'white' }],
+      message,
     });
   } finally {
     exportingBatch.value = false;

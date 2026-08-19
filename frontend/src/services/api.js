@@ -908,6 +908,7 @@ export const claimsAPI = {
     }),
   getClaimitBatches: () => api.get('/claims/claimit-report/batches'),
   getClaimitBatch: (batchId) => api.get(`/claims/claimit-report/batches/${batchId}`),
+  deleteClaimitBatch: (batchId) => api.delete(`/claims/claimit-report/batches/${batchId}`),
   setClaimitErrorComplete: (batchId, errorId, completed) =>
     api.patch(`/claims/claimit-report/batches/${batchId}/errors/${errorId}/complete`, { completed }),
   // GHIMS XML import batches

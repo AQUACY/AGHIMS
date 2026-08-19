@@ -239,6 +239,7 @@ def get_claimit_report_batch(
             "row_index": error.row_index,
             "ghims_import_item_id": error.ghims_import_item_id,
             "ghims_import_item_status": ghims_item.status if ghims_item else None,
+            "exportable": bool(ghims_item and (ghims_item.status or "").strip().lower() == "finalized"),
             "completed_at": error.completed_at.isoformat() if error.completed_at else None,
             "completed_by_id": error.completed_by_id,
             "completed_by_name": (
@@ -258,6 +259,23 @@ def get_claimit_report_batch(
         "ghims_import_claim_count": ghims_import_claim_count,
         "errors": error_rows,
     }
+
+
+@router.delete("/batches/{batch_id}")
+def delete_claimit_report_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permanently delete an uploaded ClaimIT report batch and its error rows."""
+    batch = db.query(ClaimItReportBatch).filter(ClaimItReportBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found.")
+    file_name = batch.file_name
+    error_count = batch.error_count or 0
+    db.delete(batch)
+    db.commit()
+    return {"deleted": True, "batch_id": batch_id, "file_name": file_name, "error_count": error_count}
 
 
 class ClaimItErrorCompleteBody(BaseModel):
@@ -280,6 +298,21 @@ def set_claimit_error_completed(
     if not error:
         raise HTTPException(status_code=404, detail="Error row not found.")
     if body.completed:
+        if error.ghims_import_item_id:
+            item = (
+                db.query(ClaimXmlImportItem)
+                .filter(ClaimXmlImportItem.id == error.ghims_import_item_id)
+                .first()
+            )
+            if item is not None and (item.status or "").strip().lower() != "finalized":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Claim {error.claim_claim_id} is not finalized for export "
+                        f"(current status: {item.status or 'unknown'}). "
+                        "Finalize it before marking completed."
+                    ),
+                )
         error.completed_at = utcnow()
         error.completed_by_id = current_user.id
     else:
