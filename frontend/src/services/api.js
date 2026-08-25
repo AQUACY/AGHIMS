@@ -1294,6 +1294,24 @@ export const misReportsAPI = {
       responseType: 'blob'
     });
   },
+  getDrugsDispensed: (startDate, endDate, medicineCode = null, medicineName = null, source = 'all') => {
+    const params = { start_date: startDate, end_date: endDate, source: source || 'all' };
+    if (medicineCode) params.medicine_code = medicineCode;
+    if (medicineName) params.medicine_name = medicineName;
+    return api.get('/mis-reports/drugs-dispensed', { params });
+  },
+  exportDrugsDispensed: (startDate, endDate, medicineCode = null, medicineName = null, source = 'all', clinicName = null) => {
+    const params = { start_date: startDate, end_date: endDate, source: source || 'all' };
+    if (medicineCode) params.medicine_code = medicineCode;
+    if (medicineName) params.medicine_name = medicineName;
+    if (clinicName != null && String(clinicName).trim() !== '') {
+      params.clinic_name = String(clinicName).trim();
+    }
+    return api.get('/mis-reports/drugs-dispensed/export', {
+      params,
+      responseType: 'blob'
+    });
+  },
 };
 
 export const wardsAPI = {
