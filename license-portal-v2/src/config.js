@@ -8,11 +8,12 @@ function env(name, fallback = "") {
 }
 
 function unquote(value) {
-  const s = String(value || "").trim();
+  let s = String(value || "").replace(/^\uFEFF/, "").trim();
+  s = s.replace(/[\u200B-\u200D\uFEFF]/g, "");
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    return s.slice(1, -1);
+    s = s.slice(1, -1).trim();
   }
-  return s;
+  return s.replace(/[\r\n\t]/g, "");
 }
 
 function mysqlHost(raw) {
@@ -36,6 +37,17 @@ function envBool(name, fallback = false) {
 
 const ROOT = path.join(__dirname, "..");
 const PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", "http://127.0.0.1:9500").replace(/\/$/, "");
+
+function hostingerPersistentAppRoot(buildRoot) {
+  const resolved = path.resolve(buildRoot);
+  const match = resolved.match(/^(.*)[/\\]hbuilds[/\\]versions[/\\][^/\\]+[/\\]?nodejs$/i);
+  if (!match) return "";
+  return path.join(match[1], "nodejs");
+}
+
+const PERSISTENT_ROOT = hostingerPersistentAppRoot(ROOT);
+const DATA_ROOT =
+  PERSISTENT_ROOT && fs.existsSync(PERSISTENT_ROOT) ? PERSISTENT_ROOT : ROOT;
 
 const config = {
   ROOT,
@@ -73,18 +85,58 @@ const config = {
     : PUBLIC_BASE_URL.startsWith("https://"),
   host: env("HOST", "0.0.0.0"),
   port: envInt("PORT", 9500),
-  dataDir: path.join(ROOT, "data"),
-  documentsDir: path.join(ROOT, "data", "documents"),
-  brandingDir: path.join(ROOT, "data", "branding"),
+  dataDir: path.join(DATA_ROOT, "data"),
+  documentsDir: path.join(DATA_ROOT, "data", "documents"),
+  brandingDir: path.join(DATA_ROOT, "data", "branding"),
 };
 
-function resolvedPrivateKeyPem() {
-  const file = config.rsaPrivateKeyFile;
+function privateKeyFileCandidates() {
+  const file = unquote(config.rsaPrivateKeyFile);
+  const base = file ? path.basename(file) : "license_private.pem";
+  const out = [];
+  const add = (p) => {
+    if (p && !out.includes(p)) out.push(p);
+  };
   if (file) {
-    const abs = path.isAbsolute(file) ? file : path.resolve(ROOT, file);
-    return fs.readFileSync(abs, "utf8").trim();
+    add(path.isAbsolute(file) ? file : path.resolve(ROOT, file));
   }
-  return (config.rsaPrivateKeyPem || "").trim();
+  add(path.resolve(ROOT, base));
+  if (PERSISTENT_ROOT) add(path.join(PERSISTENT_ROOT, base));
+  if (process.env.HOME) add(path.join(process.env.HOME, base));
+  add(path.join(ROOT, "license_private.pem"));
+  return out;
+}
+
+let cachedPrivateKeyPem = "";
+
+function resolvedPrivateKeyPem() {
+  if (cachedPrivateKeyPem) return cachedPrivateKeyPem;
+  const inline = (config.rsaPrivateKeyPem || "").trim();
+  if (/BEGIN [A-Z ]*PRIVATE KEY/.test(inline)) {
+    cachedPrivateKeyPem = inline;
+    return cachedPrivateKeyPem;
+  }
+  const tried = [];
+  for (const abs of privateKeyFileCandidates()) {
+    tried.push(abs);
+    try {
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+        cachedPrivateKeyPem = fs.readFileSync(abs, "utf8").trim();
+        console.log(`RSA private key loaded from ${abs}`);
+        return cachedPrivateKeyPem;
+      }
+    } catch (_) {
+      /* try next */
+    }
+  }
+  const hint = PERSISTENT_ROOT
+    ? path.join(PERSISTENT_ROOT, "license_private.pem")
+    : "/home/USER/domains/YOUR_DOMAIN/nodejs/license_private.pem";
+  throw new Error(
+    `RSA private key not found. Upload license_private.pem to ${hint} ` +
+      `(outside hbuilds) and set RSA_PRIVATE_KEY_FILE to that absolute path, or set RSA_PRIVATE_KEY_PEM. ` +
+      `Tried: ${tried.join(", ")}`
+  );
 }
 
 module.exports = { config, resolvedPrivateKeyPem };

@@ -24,6 +24,7 @@ const {
   serializeCustomer,
   serializeLicense,
   createCheckout,
+  retryPaymentById,
   fulfillByReference,
   getPaymentStatus,
   issueManual,
@@ -32,6 +33,7 @@ const {
   signedLicenseForPayment,
   refreshDocumentPdf,
   previewNextPeriod,
+  findPaymentByReference,
 } = require("./payments");
 const { ghsToPesewas, parseDatetime, utcNow, toIsoZ, parseAdminDatetime, toSqlDatetime } = require("./dates");
 const { verifyWebhookSignature } = require("./paystack");
@@ -145,15 +147,25 @@ function mountRoutes(app) {
     })
   );
 
+  app.post(
+    "/api/payments/:id/retry",
+    authRequired,
+    customerRequired,
+    asyncHandler(async (req, res) => {
+      const result = await retryPaymentById(req.params.id, req.user);
+      res.json(result);
+    })
+  );
+
   app.get(
     "/api/pay/status",
     authRequired,
     asyncHandler(async (req, res) => {
       const reference = String(req.query.reference || "").trim();
       if (!reference) return res.status(400).json({ error: "reference is required" });
-      const { rows } = await getDb().query("SELECT * FROM payments WHERE paystack_reference = ?", [reference]);
-      if (!rows.length) return res.status(404).json({ error: "Unknown payment reference" });
-      if (req.user.role !== "admin" && Number(req.user.customer_id) !== Number(rows[0].customer_id)) {
+      const payment = await findPaymentByReference(reference);
+      if (!payment) return res.status(404).json({ error: "Unknown payment reference" });
+      if (req.user.role !== "admin" && Number(req.user.customer_id) !== Number(payment.customer_id)) {
         return res.status(403).json({ error: "Not allowed" });
       }
       const result = await getPaymentStatus(reference);

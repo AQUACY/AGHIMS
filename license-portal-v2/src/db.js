@@ -323,6 +323,9 @@ async function ensurePaymentPeriodColumns(db) {
     if (!names.includes("period_until")) {
       await db.query("ALTER TABLE payments ADD COLUMN period_until TEXT NULL");
     }
+    if (!names.includes("paystack_prior_refs")) {
+      await db.query("ALTER TABLE payments ADD COLUMN paystack_prior_refs TEXT NULL");
+    }
     return;
   }
   const cols = await db.query(
@@ -335,6 +338,9 @@ async function ensurePaymentPeriodColumns(db) {
   }
   if (!names.includes("period_until")) {
     await db.query("ALTER TABLE payments ADD COLUMN period_until DATETIME NULL");
+  }
+  if (!names.includes("paystack_prior_refs")) {
+    await db.query("ALTER TABLE payments ADD COLUMN paystack_prior_refs TEXT NULL");
   }
 }
 

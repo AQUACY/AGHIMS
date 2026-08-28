@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS payments (
   paid_at TEXT NULL,
   period_from TEXT NULL,
   period_until TEXT NULL,
+  paystack_prior_refs TEXT NULL,
   raw_payload TEXT NULL,
   notes TEXT NULL,
   created_at TEXT NOT NULL,

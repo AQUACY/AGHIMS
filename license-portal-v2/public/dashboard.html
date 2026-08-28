@@ -99,7 +99,7 @@
 
     <section class="card" style="margin-top:1.1rem">
       <h2>Payment history</h2>
-      <p class="muted">Each successful payment keeps its own license JSON, invoice, and receipt. Download an earlier month if you need to restore that file on HMS.</p>
+      <p class="muted">Pending or failed Paystack rows can be retried for that same month. A MoMo prompt that never arrived does not skip you ahead — pay the unpaid month first.</p>
       <div id="history"></div>
     </section>
   </main>
@@ -129,23 +129,51 @@
       el("docs").innerHTML = html || "<p class='muted'>Documents will appear after checkout.</p>";
     }
 
-    function renderHistory(payments) {
+    function renderHistory(payments, nextPeriod) {
       if (!payments.length) {
         el("history").innerHTML = "<p class='muted'>No payments yet.</p>";
         return;
       }
-      let html = "<table><thead><tr><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th><th></th></tr></thead><tbody>";
       for (const p of payments) {
+        const retry = p.can_retry && periodsAlign(p, nextPeriod)
+          ? `<button type="button" class="ghost compact" data-retry="${p.id}">Retry</button>`
+          : "—";
         html += `<tr>
           <td>${escapeHtml(p.period_label || p.period_title || fmtDt(p.paid_at || p.created_at))}</td>
           <td>${escapeHtml(p.amount_label)}</td>
           <td>${statusPill(p.status)}</td>
           <td><code>${escapeHtml(p.reference)}</code></td>
           <td>${fileLinks(p) || "—"}</td>
+          <td>${retry}</td>
         </tr>`;
       }
       html += "</tbody></table>";
       el("history").innerHTML = html;
+    }
+
+    function periodsAlign(payment, nextPeriod) {
+      if (!payment.period_from || !nextPeriod || !nextPeriod.valid_from) return true;
+      const a = Date.parse(String(payment.period_from).includes("T") || String(payment.period_from).endsWith("Z")
+        ? payment.period_from
+        : String(payment.period_from).replace(" ", "T") + "Z");
+      const b = Date.parse(nextPeriod.valid_from);
+      return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) < 2000;
+    }
+
+    async function startCheckout(path) {
+      el("pay-msg").textContent = "";
+      const data = await api(path, { method: "POST", body: {} });
+      if (data.fulfilled && data.payment && data.payment.status === "success") {
+        el("pay-msg").textContent = "Paystack already confirmed this payment. Reloading…";
+        await load();
+        return;
+      }
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+        return;
+      }
+      throw new Error("Paystack did not return a checkout URL");
     }
 
     async function load() {
@@ -187,23 +215,36 @@
         el("status-pill").innerHTML = statusPill("pending");
       }
       renderDocs(me.payments || []);
-      renderHistory(me.payments || []);
+      renderHistory(me.payments || [], np);
+      const openPay = (me.payments || []).find((p) => p.can_retry && periodsAlign(p, np));
+      if (openPay) {
+        el("btn-pay").textContent = openPay.status === "pending" ? "Continue payment" : "Retry payment";
+        el("status-pill").innerHTML = statusPill(openPay.status);
+      } else {
+        el("btn-pay").textContent = "Pay with Paystack";
+      }
     }
 
     el("btn-logout").addEventListener("click", logout);
     el("btn-pay").addEventListener("click", async () => {
-      el("pay-msg").textContent = "";
       el("btn-pay").disabled = true;
       try {
-        const data = await api("/api/pay/initialize", { method: "POST", body: {} });
-        if (data.authorization_url) {
-          window.location.href = data.authorization_url;
-          return;
-        }
-        throw new Error("Paystack did not return a checkout URL");
+        await startCheckout("/api/pay/initialize");
       } catch (e) {
         el("pay-msg").textContent = e.message;
         el("btn-pay").disabled = false;
+      }
+    });
+    el("history").addEventListener("click", async (ev) => {
+      const btn = ev.target.closest("[data-retry]");
+      if (!btn) return;
+      btn.disabled = true;
+      el("pay-msg").textContent = "";
+      try {
+        await startCheckout("/api/payments/" + btn.getAttribute("data-retry") + "/retry");
+      } catch (e) {
+        el("pay-msg").textContent = e.message;
+        btn.disabled = false;
       }
     });
 

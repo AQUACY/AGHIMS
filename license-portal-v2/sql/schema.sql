@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS payments (
   paid_at DATETIME NULL,
   period_from DATETIME NULL,
   period_until DATETIME NULL,
+  paystack_prior_refs TEXT NULL,
   raw_payload TEXT NULL,
   notes TEXT NULL,
   created_at DATETIME NOT NULL,

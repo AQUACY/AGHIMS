@@ -88,7 +88,34 @@
       }
       document.getElementById("title").textContent = "Still confirming";
       document.getElementById("detail").textContent =
-        "Paystack has not confirmed yet. Open the dashboard shortly — the receipt appears after the webhook arrives.";
+        "Paystack has not confirmed yet. If the MoMo prompt did not arrive, retry this payment from the dashboard — it will charge the same month, not the next one.";
+      try {
+        const data = await api("/api/pay/status?reference=" + encodeURIComponent(reference));
+        if (data.payment && data.payment.can_retry) {
+          const actions = document.querySelector(".actions");
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "gold";
+          btn.textContent = "Retry this payment";
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              const retry = await api("/api/payments/" + data.payment.id + "/retry", { method: "POST", body: {} });
+              if (retry.authorization_url) {
+                window.location.href = retry.authorization_url;
+                return;
+              }
+              window.location.href = "/dashboard";
+            } catch (e) {
+              document.getElementById("msg").textContent = e.message;
+              btn.disabled = false;
+            }
+          });
+          actions.insertBefore(btn, actions.firstChild);
+        }
+      } catch (_) {
+        /* dashboard retry still works */
+      }
     }
     poll();
   </script>

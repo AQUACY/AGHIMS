@@ -91,8 +91,46 @@ async function main() {
     if (created.json.login.password !== "it-pass-1234") throw new Error("password not returned");
 
     const { getDb, nowSql } = require("../src/db");
-    const pendingRef = "LPV2-smoke-ref-1";
     const ts = nowSql();
+    await getDb().query(
+      `INSERT INTO payments
+        (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,
+         duration_months, status, channel, paid_at, period_from, period_until, raw_payload, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        customerId,
+        null,
+        "LPV2-smoke-open",
+        null,
+        250000,
+        "GHS",
+        1,
+        "pending",
+        "paystack",
+        null,
+        "2026-09-01 00:00:00",
+        "2026-09-30 23:59:59",
+        null,
+        null,
+        ts,
+        ts,
+      ]
+    );
+    const itLoginOpen = await req(server, "/api/auth/login", {
+      method: "POST",
+      body: { email: "it@ridge.test", password: "it-pass-1234" },
+    });
+    if (itLoginOpen.status !== 200) throw new Error(`it login: ${itLoginOpen.text}`);
+    const meOpen = await req(server, "/api/me", { token: itLoginOpen.json.access_token });
+    const nextFrom = meOpen.json && meOpen.json.next_period && meOpen.json.next_period.valid_from;
+    if (!String(nextFrom || "").startsWith("2026-09-01")) {
+      throw new Error(`open pending must not skip next month, got ${JSON.stringify(meOpen.json && meOpen.json.next_period)}`);
+    }
+    const openRow = (meOpen.json.payments || [])[0];
+    if (!openRow || !openRow.can_retry) throw new Error("pending Paystack row should be retryable");
+    await getDb().query("DELETE FROM payments WHERE customer_id = ?", [customerId]);
+
+    const pendingRef = "LPV2-smoke-ref-1";
     await getDb().query(
       `INSERT INTO payments
         (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,

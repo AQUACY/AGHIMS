@@ -347,6 +347,20 @@ function selftestCalendar() {
   if (toIsoZ(anniversary.validUntil) !== "2026-09-28T12:18:03Z") {
     throw new Error(`expected anniversary end, got ${toIsoZ(anniversary.validUntil)}`);
   }
+  const previewIgnoresPending = computePurchasedPeriod(null, 1, now, [], "2026-08-31 23:59:59");
+  const withPending = computePurchasedPeriod(
+    null,
+    1,
+    now,
+    [{ period_until: "2026-09-30 23:59:59" }],
+    "2026-08-31 23:59:59"
+  );
+  if (toIsoZ(previewIgnoresPending.validFrom) !== "2026-09-01T00:00:00Z") {
+    throw new Error("next unpaid month without pending rows should stay September");
+  }
+  if (toIsoZ(withPending.validFrom) !== "2026-10-01T00:00:00Z") {
+    throw new Error("open pending coverage still stacks when explicitly passed in");
+  }
   console.log("license calendar selftest ok");
 }
 

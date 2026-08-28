@@ -70,7 +70,7 @@ You can instead skip the workflow and use Hostinger’s GitHub button: connect r
    - `src/server.js`, or
    - `app.js` (loads the same server — some hPanel layouts expect `app.js` in the app root)
 3. Set `PORT` from Hostinger (do not hard-code). The app already listens on `process.env.PORT`.
-4. Store `license_private.pem` **outside** `public_html` / the public folder, e.g. `/home/USER/license_private.pem`, and set `RSA_PRIVATE_KEY_FILE` to that path.
+4. Store `license_private.pem` in the **stable** Node folder, not a Hostinger `hbuilds/versions/...` path (those folders change every deploy). Example: `/home/USER/domains/your-domain/nodejs/license_private.pem`. Set `RSA_PRIVATE_KEY_FILE` to that **absolute** path. Relative `./license_private.pem` is also resolved there after this build.
 5. `PUBLIC_BASE_URL=https://your-domain.tld` (no trailing slash).
 6. Paystack dashboard:
    - Callback is `${PUBLIC_BASE_URL}/pay/return`
