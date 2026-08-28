@@ -150,9 +150,7 @@ async function initDb() {
   fs.mkdirSync(config.brandingDir, { recursive: true });
 
   if (config.databaseMode === "mysql") {
-    const pool = await mysql.createPool({
-      host: config.mysql.host,
-      port: config.mysql.port,
+    const poolOpts = {
       user: config.mysql.user,
       password: config.mysql.password,
       database: config.mysql.database,
@@ -161,11 +159,32 @@ async function initDb() {
       namedPlaceholders: false,
       charset: "utf8mb4",
       dateStrings: true,
-    });
+      family: 4,
+    };
+    if (config.mysql.socketPath) {
+      poolOpts.socketPath = config.mysql.socketPath;
+    } else {
+      poolOpts.host = config.mysql.host;
+      poolOpts.port = config.mysql.port;
+    }
+    const pool = await mysql.createPool(poolOpts);
     db = new MysqlDb(pool);
     const schema = fs.readFileSync(path.join(config.ROOT, "sql", "schema.mysql.sql"), "utf8");
-    for (const stmt of splitSql(schema)) {
-      await db.query(stmt);
+    try {
+      for (const stmt of splitSql(schema)) {
+        await db.query(stmt);
+      }
+    } catch (err) {
+      const code = err && err.code;
+      if (code === "ER_ACCESS_DENIED_ERROR") {
+        const seen = String(err.message || "");
+        throw new Error(
+          `${seen} Use MYSQL_HOST=127.0.0.1 (not localhost) so Node does not connect as ::1. ` +
+            `Password must match hPanel with no quotes. The database user must be assigned to ` +
+            `${config.mysql.database} with ALL PRIVILEGES.`
+        );
+      }
+      throw err;
     }
   } else {
     const SQL = await initSqlJs({

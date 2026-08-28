@@ -7,6 +7,22 @@ function env(name, fallback = "") {
   return v === undefined || v === null ? fallback : String(v);
 }
 
+function unquote(value) {
+  const s = String(value || "").trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function mysqlHost(raw) {
+  const host = unquote(raw) || "localhost";
+  // Node resolves "localhost" to IPv6 ::1 first. Hostinger MySQL users are
+  // typically user@localhost / user@127.0.0.1, not user@::1.
+  if (host.toLowerCase() === "localhost") return "127.0.0.1";
+  return host;
+}
+
 function envInt(name, fallback) {
   const n = parseInt(env(name, String(fallback)), 10);
   return Number.isFinite(n) ? n : fallback;
@@ -26,11 +42,12 @@ const config = {
   databaseMode: env("DATABASE_MODE", "sqlite").toLowerCase(),
   sqlitePath: path.resolve(ROOT, env("SQLITE_DB_PATH", "./data/license_portal_v2.db")),
   mysql: {
-    host: env("MYSQL_HOST", "localhost"),
+    host: mysqlHost(env("MYSQL_HOST", "localhost")),
     port: envInt("MYSQL_PORT", 3306),
-    user: env("MYSQL_USER", "root"),
-    password: env("MYSQL_PASSWORD", ""),
-    database: env("MYSQL_DATABASE", "hms_licenses_v2"),
+    user: unquote(env("MYSQL_USER", "root")),
+    password: unquote(env("MYSQL_PASSWORD", "")),
+    database: unquote(env("MYSQL_DATABASE", "hms_licenses_v2")),
+    socketPath: unquote(env("MYSQL_SOCKET", "")),
   },
   issuerSlug: env("ISSUER_SLUG", "").trim(),
   distributionId: env("DISTRIBUTION_ID", "").trim(),
