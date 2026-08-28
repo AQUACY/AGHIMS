@@ -50,6 +50,7 @@
         </div>
         <div class="actions">
           <button type="button" class="gold" id="btn-pay">Pay with Paystack</button>
+          <button type="button" class="gold" id="btn-retry-open" style="display:none">Retry payment</button>
           <a class="btn ghost" id="dl-license" href="/api/license/signed.json" style="display:none">Download license JSON</a>
         </div>
         <p class="err" id="pay-msg"></p>
@@ -99,8 +100,8 @@
 
     <section class="card" style="margin-top:1.1rem">
       <h2>Payment history</h2>
-      <p class="muted">Pending or failed Paystack rows can be retried for that same month. A MoMo prompt that never arrived does not skip you ahead — pay the unpaid month first.</p>
-      <div id="history"></div>
+      <p class="muted">If you closed or cancelled Paystack, use <strong>Retry payment</strong> on that row. It opens a new checkout for the same month.</p>
+      <div id="history" class="table-wrap"></div>
     </section>
   </main>
   <script src="/js/api.js"></script>
@@ -129,15 +130,15 @@
       el("docs").innerHTML = html || "<p class='muted'>Documents will appear after checkout.</p>";
     }
 
-    function renderHistory(payments, nextPeriod) {
+    function renderHistory(payments) {
       if (!payments.length) {
         el("history").innerHTML = "<p class='muted'>No payments yet.</p>";
         return;
       }
-      let html = "<table><thead><tr><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th><th></th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th><th>Action</th></tr></thead><tbody>";
       for (const p of payments) {
-        const retry = p.can_retry && periodsAlign(p, nextPeriod)
-          ? `<button type="button" class="ghost compact" data-retry="${p.id}">Retry</button>`
+        const retry = paymentRetryable(p)
+          ? `<button type="button" class="gold compact" data-retry="${p.id}">Retry payment</button>`
           : "—";
         html += `<tr>
           <td>${escapeHtml(p.period_label || p.period_title || fmtDt(p.paid_at || p.created_at))}</td>
@@ -145,20 +146,11 @@
           <td>${statusPill(p.status)}</td>
           <td><code>${escapeHtml(p.reference)}</code></td>
           <td>${fileLinks(p) || "—"}</td>
-          <td>${retry}</td>
+          <td class="action-cell">${retry}</td>
         </tr>`;
       }
       html += "</tbody></table>";
       el("history").innerHTML = html;
-    }
-
-    function periodsAlign(payment, nextPeriod) {
-      if (!payment.period_from || !nextPeriod || !nextPeriod.valid_from) return true;
-      const a = Date.parse(String(payment.period_from).includes("T") || String(payment.period_from).endsWith("Z")
-        ? payment.period_from
-        : String(payment.period_from).replace(" ", "T") + "Z");
-      const b = Date.parse(nextPeriod.valid_from);
-      return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) < 2000;
     }
 
     async function startCheckout(path) {
@@ -215,13 +207,22 @@
         el("status-pill").innerHTML = statusPill("pending");
       }
       renderDocs(me.payments || []);
-      renderHistory(me.payments || [], np);
-      const openPay = (me.payments || []).find((p) => p.can_retry && periodsAlign(p, np));
+      renderHistory(me.payments || []);
+      const openPay = (me.payments || []).find((p) => paymentRetryable(p));
+      const retryOpen = el("btn-retry-open");
       if (openPay) {
-        el("btn-pay").textContent = openPay.status === "pending" ? "Continue payment" : "Retry payment";
-        el("status-pill").innerHTML = statusPill(openPay.status);
+        el("btn-pay").style.display = "none";
+        retryOpen.style.display = "inline-flex";
+        retryOpen.textContent = "Retry payment";
+        retryOpen.setAttribute("data-retry", String(openPay.id));
+        el("status-pill").innerHTML = statusPill(openPay.status === "pending" ? "pending" : "failed");
+        el("import-hint").textContent =
+          "Your last Paystack checkout did not finish. Retry payment to open a new MoMo or card prompt for the same month.";
       } else {
+        el("btn-pay").style.display = "inline-flex";
         el("btn-pay").textContent = "Pay with Paystack";
+        retryOpen.style.display = "none";
+        retryOpen.removeAttribute("data-retry");
       }
     }
 
@@ -235,18 +236,21 @@
         el("btn-pay").disabled = false;
       }
     });
-    el("history").addEventListener("click", async (ev) => {
-      const btn = ev.target.closest("[data-retry]");
+    async function runRetry(btn) {
       if (!btn) return;
+      const id = btn.getAttribute("data-retry");
+      if (!id) return;
       btn.disabled = true;
       el("pay-msg").textContent = "";
       try {
-        await startCheckout("/api/payments/" + btn.getAttribute("data-retry") + "/retry");
+        await startCheckout("/api/payments/" + id + "/retry");
       } catch (e) {
         el("pay-msg").textContent = e.message;
         btn.disabled = false;
       }
-    });
+    }
+    el("btn-retry-open").addEventListener("click", (ev) => runRetry(ev.currentTarget));
+    el("history").addEventListener("click", (ev) => runRetry(ev.target.closest("[data-retry]")));
 
     load().catch((e) => { el("pay-msg").textContent = e.message; });
   </script>

@@ -62,7 +62,7 @@ function paymentCanRetry(p) {
   if (!p) return false;
   if (p.channel === "manual") return false;
   const status = String(p.status || "").toLowerCase();
-  return status === "pending" || status === "failed";
+  return status === "pending" || status === "failed" || status === "abandoned";
 }
 
 function parsePriorRefs(value) {
@@ -330,12 +330,6 @@ async function retryPayment(payment, user) {
     [],
     customer.billing_deadline
   );
-  if (payment.period_from && payment.period_until && !samePeriod(payment, due)) {
-    throw httpError(
-      400,
-      `This checkout is for ${periodMonthTitle(payment.period_from) || "another month"}. Use Pay with Paystack for ${periodMonthTitle(due.validFrom)} first.`
-    );
-  }
 
   try {
     const data = await verifyTransaction(payment.paystack_reference);
@@ -564,16 +558,30 @@ async function fulfillPayment(payment, rawPayload) {
   };
 }
 
+async function markCheckoutUnpaid(payment, reason) {
+  if (!payment || payment.status === "success") return payment;
+  await getDb().query(
+    `UPDATE payments SET status = ?, notes = ?, updated_at = ? WHERE id = ? AND status != ?`,
+    ["failed", reason || "Checkout cancelled or abandoned", nowSql(), payment.id, "success"]
+  );
+  const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [payment.id]);
+  return rows[0] || payment;
+}
+
 async function verifyAndFulfill(reference) {
   const data = await verifyTransaction(reference);
   if (!data || data.status !== "success") {
-    const payment = await findPaymentByReference(reference);
+    let payment = await findPaymentByReference(reference);
     if (payment && payment.status === "success") {
       return fulfillByReference(reference, null);
     }
+    const ps = String((data && data.status) || "").toLowerCase();
+    if (payment && (ps === "abandoned" || ps === "failed" || ps === "reversed")) {
+      payment = await markCheckoutUnpaid(payment, `Paystack: ${ps}`);
+    }
     return {
       payment: payment ? serializePayment(payment, await documentsForPayment(payment.id)) : null,
-      pending: true,
+      pending: ps !== "failed" && ps !== "abandoned" && ps !== "reversed",
       paystack_status: data && data.status,
     };
   }
