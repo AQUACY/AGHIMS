@@ -65,7 +65,7 @@ You can instead skip the workflow and use Hostinger’s GitHub button: connect r
 
 ### Manual Hostinger setup
 
-1. Create a MySQL database in hPanel. Put the credentials in environment variables with `DATABASE_MODE=mysql`. Set `MYSQL_HOST=127.0.0.1` (not `localhost` — Node would connect as IPv6 `::1` and Hostinger denies that user). Do not wrap the password in quotes. The MySQL user must be **assigned** to the database with ALL PRIVILEGES.
+1. Create a MySQL database in hPanel. Put the credentials in environment variables with `DATABASE_MODE=mysql`. Set `MYSQL_HOST=127.0.0.1` (not `localhost` — Node would connect as IPv6 `::1` and Hostinger denies that user). In **Databases → Remote MySQL** add Access Host `127.0.0.1` (Hostinger users are `user@localhost`, which is not the same as `user@127.0.0.1`). Do not wrap the password in quotes. The MySQL user must be **assigned** to the database with ALL PRIVILEGES. If TCP still fails, set `MYSQL_SOCKET=/tmp/mysql.sock`.
 2. Create a Node.js application (Node 18+). Application root = this folder. Startup file:
    - `src/server.js`, or
    - `app.js` (loads the same server — some hPanel layouts expect `app.js` in the app root)

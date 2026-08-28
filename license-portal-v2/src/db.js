@@ -144,30 +144,103 @@ class SqliteDb {
 
 let db;
 
+function isLocalMysqlHost(host) {
+  const h = String(host || "").toLowerCase();
+  return !h || h === "localhost" || h === "127.0.0.1" || h === "::1";
+}
+
+function detectMysqlSocket() {
+  if (config.mysql.socketPath) return config.mysql.socketPath;
+  if (!isLocalMysqlHost(config.mysql.host)) return "";
+  const candidates = [
+    process.env.MYSQL_UNIX_PORT,
+    "/tmp/mysql.sock",
+    "/var/run/mysqld/mysqld.sock",
+    "/run/mysqld/mysqld.sock",
+    "/var/lib/mysql/mysql.sock",
+  ].filter(Boolean);
+  return candidates.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch (_) {
+      return false;
+    }
+  }) || "";
+}
+
+function mysqlPoolBase() {
+  return {
+    user: config.mysql.user,
+    password: config.mysql.password,
+    database: config.mysql.database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    namedPlaceholders: false,
+    charset: "utf8mb4",
+    dateStrings: true,
+  };
+}
+
+async function tryMysqlPool(extra) {
+  const pool = mysql.createPool({ ...mysqlPoolBase(), ...extra });
+  try {
+    await pool.execute("SELECT 1");
+    return pool;
+  } catch (err) {
+    try {
+      await pool.end();
+    } catch (_) {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
+function mysqlAccessDeniedHelp(err) {
+  const seen = String((err && err.message) || "");
+  return (
+    `${seen} Hostinger's MySQL user is usually '${config.mysql.user}'@'localhost' (Unix socket), ` +
+    `which is a different account from '${config.mysql.user}'@'127.0.0.1'. ` +
+    `In hPanel → Databases → Remote MySQL add Access Host 127.0.0.1 (and localhost). ` +
+    `Assign that user to ${config.mysql.database} with ALL PRIVILEGES. ` +
+    `Reset the password and paste it into Node env with no quotes. ` +
+    `If /tmp/mysql.sock exists, set MYSQL_SOCKET=/tmp/mysql.sock so Node logs in as @localhost.`
+  );
+}
+
+async function connectMysql() {
+  const attempts = [];
+  const socket = detectMysqlSocket();
+  if (socket) attempts.push({ label: `socket ${socket}`, extra: { socketPath: socket } });
+  attempts.push({
+    label: `tcp ${config.mysql.host}:${config.mysql.port}`,
+    extra: { host: config.mysql.host, port: config.mysql.port },
+  });
+
+  let lastErr;
+  for (const attempt of attempts) {
+    try {
+      const pool = await tryMysqlPool(attempt.extra);
+      console.log(`MySQL connected via ${attempt.label} as ${config.mysql.user} / ${config.mysql.database}`);
+      return pool;
+    } catch (err) {
+      lastErr = err;
+      console.error(`MySQL ${attempt.label} failed: ${err.message}`);
+    }
+  }
+  if (lastErr && lastErr.code === "ER_ACCESS_DENIED_ERROR") {
+    throw new Error(mysqlAccessDeniedHelp(lastErr));
+  }
+  throw lastErr;
+}
+
 async function initDb() {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(config.documentsDir, { recursive: true });
   fs.mkdirSync(config.brandingDir, { recursive: true });
 
   if (config.databaseMode === "mysql") {
-    const poolOpts = {
-      user: config.mysql.user,
-      password: config.mysql.password,
-      database: config.mysql.database,
-      waitForConnections: true,
-      connectionLimit: 10,
-      namedPlaceholders: false,
-      charset: "utf8mb4",
-      dateStrings: true,
-      family: 4,
-    };
-    if (config.mysql.socketPath) {
-      poolOpts.socketPath = config.mysql.socketPath;
-    } else {
-      poolOpts.host = config.mysql.host;
-      poolOpts.port = config.mysql.port;
-    }
-    const pool = await mysql.createPool(poolOpts);
+    const pool = await connectMysql();
     db = new MysqlDb(pool);
     const schema = fs.readFileSync(path.join(config.ROOT, "sql", "schema.mysql.sql"), "utf8");
     try {
@@ -175,14 +248,8 @@ async function initDb() {
         await db.query(stmt);
       }
     } catch (err) {
-      const code = err && err.code;
-      if (code === "ER_ACCESS_DENIED_ERROR") {
-        const seen = String(err.message || "");
-        throw new Error(
-          `${seen} Use MYSQL_HOST=127.0.0.1 (not localhost) so Node does not connect as ::1. ` +
-            `Password must match hPanel with no quotes. The database user must be assigned to ` +
-            `${config.mysql.database} with ALL PRIVILEGES.`
-        );
+      if (err && err.code === "ER_ACCESS_DENIED_ERROR") {
+        throw new Error(mysqlAccessDeniedHelp(err));
       }
       throw err;
     }
