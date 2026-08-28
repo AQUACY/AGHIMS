@@ -43,14 +43,14 @@ function fmtDt(value) {
 
 function statusPill(status) {
   const s = String(status || "").toLowerCase();
-  const cls = s === "success" || s === "active" ? "ok" : s === "pending" || s === "abandoned" ? "warn" : s === "failed" ? "bad" : "idle";
+  const cls = s === "success" || s === "active" ? "ok" : s === "pending" || s === "abandoned" || s === "patch" ? "warn" : s === "failed" ? "bad" : "idle";
   return `<span class="pill ${cls}">${escapeHtml(s || "unknown")}</span>`;
 }
 
 function paymentRetryable(p) {
   if (!p) return false;
+  if (p.is_patch || String(p.channel || "").toLowerCase() === "manual" || String(p.channel || "").toLowerCase() === "patch") return false;
   if (p.can_retry === true) return true;
-  if (String(p.channel || "").toLowerCase() === "manual") return false;
   const s = String(p.status || "").toLowerCase();
   return s === "pending" || s === "failed" || s === "abandoned";
 }

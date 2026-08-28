@@ -167,22 +167,26 @@ async function main() {
     const issued = await req(server, `/api/admin/customers/${customerId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "smoke" },
+      body: { notes: "smoke", period_from: "2026-09-01T00:00:00Z", period_until: "2026-09-30T23:59:59Z" },
     });
     if (issued.status !== 200) throw new Error(`issue-manual: ${issued.text}`);
     const licenseId = issued.json.license.license_id;
-    if (!issued.json.payment.invoice || !issued.json.payment.receipt) {
-      throw new Error("missing invoice/receipt");
-    }
+    if (!issued.json.payment.is_patch) throw new Error("manual issue should be a patch license");
     if (!issued.json.payment.license_url) throw new Error("missing payment license_url");
+    if (issued.json.payment.download_label !== "Patch license JSON") throw new Error("patch download label");
+    if (issued.json.payment.invoice || issued.json.payment.receipt) {
+      throw new Error("patch license should not create invoice or receipt");
+    }
     const firstPayId = issued.json.payment.id;
     const firstLicense = await req(server, issued.json.payment.license_url, { token: adminToken });
     if (firstLicense.status !== 200) throw new Error(`payment license: ${firstLicense.text}`);
+    const disp = String(firstLicense.headers.get("content-disposition") || "");
+    if (!disp.includes("patch-license")) throw new Error(`expected patch-license filename, got ${disp}`);
 
     const issuedAgain = await req(server, `/api/admin/customers/${customerId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "smoke second month" },
+      body: { notes: "smoke second month", period_from: "2026-10-01T00:00:00Z", period_until: "2026-10-31T23:59:59Z" },
     });
     if (issuedAgain.status !== 200) throw new Error(`issue-manual 2: ${issuedAgain.text}`);
     const secondLicense = await req(server, issuedAgain.json.payment.license_url, { token: adminToken });
@@ -257,6 +261,21 @@ async function main() {
     if (historic.json.claims.valid_from !== firstLicense.json.claims.valid_from) {
       throw new Error("IT manager should download the original month from history");
     }
+    if (!String(me.json.next_period && me.json.next_period.valid_from || "").startsWith("2026-10-01")) {
+      throw new Error(`patch must not skip the next paid month, got ${JSON.stringify(me.json.next_period)}`);
+    }
+    const receiptPay = (me.json.payments || []).find((p) => p.receipt && !p.is_patch);
+    if (!receiptPay) throw new Error("Paystack payment should still have a receipt PDF");
+    const refuseSub = await req(server, `/api/admin/payments/${receiptPay.id}`, { method: "DELETE", token: adminToken });
+    if (refuseSub.status !== 400) {
+      throw new Error(`expected 400 deleting subscription payment, got ${refuseSub.status} ${refuseSub.text}`);
+    }
+    const deleted = await req(server, `/api/admin/payments/${firstPayId}`, { method: "DELETE", token: adminToken });
+    if (deleted.status !== 200) throw new Error(`delete patch: ${deleted.text}`);
+    const gone = await req(server, `/api/payments/${firstPayId}/license.json`, { token: adminToken });
+    if (gone.status === 200) throw new Error("deleted patch license should not download");
+    const stillSecond = await req(server, issuedAgain.json.payment.license_url, { token: adminToken });
+    if (stillSecond.status !== 200) throw new Error("remaining patch should still download");
     const claims = signed.json.claims;
     if (!String(claims.valid_from).endsWith("T00:00:00Z")) {
       throw new Error(`license should start at 00:00:00, got ${claims.valid_from}`);
@@ -268,7 +287,7 @@ async function main() {
       throw new Error(`next_period missing: ${me.text}`);
     }
 
-    const pdf = await req(server, issued.json.payment.receipt.url, { token: itToken });
+    const pdf = await req(server, receiptPay.receipt.url, { token: itToken });
     if (pdf.status !== 200 || !pdf.text.startsWith("%PDF")) {
       throw new Error(`receipt pdf missing, status ${pdf.status}`);
     }
@@ -325,7 +344,11 @@ async function main() {
     const coverIssue = await req(server, `/api/admin/customers/${coverId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "covering now" },
+      body: {
+        notes: "covering now",
+        period_from: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        period_until: new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString(),
+      },
     });
     if (coverIssue.status !== 200) throw new Error(`cover issue: ${coverIssue.text}`);
     const denied = await req(server, "/api/license/current", {
@@ -342,17 +365,40 @@ async function main() {
     if (current.status !== 200 || !current.json.ok || !current.json.document) {
       throw new Error(`current license pull: ${current.text}`);
     }
+    const coverIssue2 = await req(server, `/api/admin/customers/${coverId}/issue-manual`, {
+      method: "POST",
+      token: adminToken,
+      body: {
+        notes: "newer covering patch",
+        period_from: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+        period_until: new Date(Date.now() + 11 * 24 * 3600 * 1000).toISOString(),
+      },
+    });
+    if (coverIssue2.status !== 200) throw new Error(`cover issue 2: ${coverIssue2.text}`);
+    const replaced = await req(server, "/api/license/current", {
+      method: "POST",
+      headers: { "X-License-Server-Key": "smoke-verify-secret" },
+      body: { facility_code: "COVER01" },
+    });
+    if (replaced.status !== 200 || !replaced.json.ok) throw new Error(`replaced pull: ${replaced.text}`);
+    if (replaced.json.document.claims.valid_from === current.json.document.claims.valid_from) {
+      throw new Error("newer covering patch should replace the HMS current file");
+    }
     await req(server, `/api/admin/customers/${coverId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "future month" },
+      body: {
+        notes: "future month",
+        period_from: new Date(Date.now() + 40 * 24 * 3600 * 1000).toISOString(),
+        period_until: new Date(Date.now() + 70 * 24 * 3600 * 1000).toISOString(),
+      },
     });
     const stillCurrent = await req(server, "/api/license/current", {
       method: "POST",
       headers: { "X-License-Server-Key": "smoke-verify-secret" },
       body: { facility_code: "COVER01" },
     });
-    if (stillCurrent.json.document.claims.valid_from !== current.json.document.claims.valid_from) {
+    if (stillCurrent.json.document.claims.valid_from !== replaced.json.document.claims.valid_from) {
       throw new Error("HMS pull must keep the in-force month, not a future prepaid month");
     }
 

@@ -100,7 +100,7 @@
 
     <section class="card" style="margin-top:1.1rem">
       <h2>Payment history</h2>
-      <p class="muted">If you closed or cancelled Paystack, use <strong>Retry payment</strong> on that row. It opens a new checkout for the same month.</p>
+      <p class="muted">If you closed or cancelled Paystack, use <strong>Retry payment</strong> on that row. It opens a new checkout for the same month. A <strong>patch</strong> row is a manually issued file, not a Paystack payment — pay here when you want the usual subscription month to replace it.</p>
       <div id="history" class="table-wrap"></div>
     </section>
   </main>
@@ -110,7 +110,7 @@
 
     function fileLinks(p) {
       return [
-        p.license_url ? `<a href="${p.license_url}">License JSON</a>` : "",
+        p.license_url ? `<a href="${p.license_url}">${escapeHtml(p.download_label || "License JSON")}</a>` : "",
         p.invoice ? `<a href="${p.invoice.url}">Invoice</a>` : "",
         p.receipt ? `<a href="${p.receipt.url}">Receipt</a>` : "",
       ].filter(Boolean).join(" · ");
@@ -124,7 +124,7 @@
       }
       let html = "";
       if (paid.period_label) html += `<p class="muted">${escapeHtml(paid.period_label)}</p>`;
-      if (paid.license_url) html += `<p><a href="${paid.license_url}">License JSON</a></p>`;
+      if (paid.license_url) html += `<p><a href="${paid.license_url}">${escapeHtml(paid.download_label || "License JSON")}</a></p>`;
       if (paid.invoice) html += `<p><a href="${paid.invoice.url}">Invoice ${escapeHtml(paid.invoice.doc_number)}</a></p>`;
       if (paid.receipt) html += `<p><a href="${paid.receipt.url}">Receipt ${escapeHtml(paid.receipt.doc_number)}</a></p>`;
       el("docs").innerHTML = html || "<p class='muted'>Documents will appear after checkout.</p>";
@@ -143,7 +143,7 @@
         html += `<tr>
           <td>${escapeHtml(p.period_label || p.period_title || fmtDt(p.paid_at || p.created_at))}</td>
           <td>${escapeHtml(p.amount_label)}</td>
-          <td>${statusPill(p.status)}</td>
+          <td>${p.is_patch ? statusPill("patch") : statusPill(p.status)}</td>
           <td><code>${escapeHtml(p.reference)}</code></td>
           <td>${fileLinks(p) || "—"}</td>
           <td class="action-cell">${retry}</td>
@@ -191,13 +191,21 @@
       if (latestPaid && latestPaid.license_url) {
         el("dl-license").href = latestPaid.license_url;
         el("dl-license").style.display = "inline-flex";
-        el("dl-license").textContent = latestPaid.period_title
-          ? `Download ${latestPaid.period_title} license`
-          : "Download latest license JSON";
-        el("current-line").textContent = latestPaid.period_label
-          ? `Latest paid file: ${latestPaid.period_label}. Earlier months are in Payment history.`
-          : "Latest paid license is ready. Earlier months are in Payment history.";
-        el("status-pill").innerHTML = statusPill("active");
+        el("dl-license").textContent = latestPaid.is_patch
+          ? (latestPaid.download_label || "Patch license JSON")
+          : latestPaid.period_title
+            ? `Download ${latestPaid.period_title} license`
+            : "Download latest license JSON";
+        if (latestPaid.is_patch) {
+          el("current-line").textContent = latestPaid.period_label
+            ? `Patch license (not a subscription payment): ${latestPaid.period_label}. HMS Renew from portal will replace the current file if this window covers today.`
+            : "A patch license is ready. HMS Renew from portal will apply it if the window covers today.";
+        } else {
+          el("current-line").textContent = latestPaid.period_label
+            ? `Latest paid file: ${latestPaid.period_label}. Earlier months are in Payment history.`
+            : "Latest paid license is ready. Earlier months are in Payment history.";
+        }
+        el("status-pill").innerHTML = latestPaid.is_patch ? statusPill("patch") : statusPill("active");
       } else if (me.license) {
         el("current-line").textContent = `Current file on this portal: ${fmtPeriod(me.license.valid_from, me.license.valid_until)}`;
         el("dl-license").style.display = "inline-flex";

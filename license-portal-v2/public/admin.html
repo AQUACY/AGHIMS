@@ -70,9 +70,15 @@
           <p class="err" id="form-msg"></p>
           <div id="secret-box"></div>
           <div id="detail-actions" style="display:none">
+            <p class="kicker" style="margin-top:1.2rem">Patch license</p>
+            <p class="muted">A patch is not a subscription payment and does not move the renewal deadline above. Set the coverage window, issue it, then download <strong>Patch license JSON</strong>. HMS <strong>Renew from portal</strong> will replace the current file if that window covers today. Paying later on the hospital dashboard also replaces it.</p>
+            <label>Patch starts</label>
+            <input id="patch_from" type="datetime-local" />
+            <label>Patch ends</label>
+            <input id="patch_until" type="datetime-local" />
             <div class="actions">
               <button type="button" class="gold" id="btn-reset">Reset password</button>
-              <button type="button" class="ghost" id="btn-manual">Issue license (bank / manual)</button>
+              <button type="button" class="ghost" id="btn-manual">Issue patch license</button>
               <a class="btn ghost" id="btn-signed" href="#" style="display:none">Download latest signed.json</a>
             </div>
             <div id="detail-payments"></div>
@@ -119,6 +125,16 @@
       if (name === "branding") refreshLogoPreview();
     }
 
+    function setPatchDefaults() {
+      const start = new Date();
+      start.setUTCSeconds(0, 0);
+      const end = new Date(start.getTime());
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      end.setUTCSeconds(end.getUTCSeconds() - 1);
+      el("patch_from").value = start.toISOString().slice(0, 16);
+      el("patch_until").value = end.toISOString().slice(0, 16);
+    }
+
     function clearForm() {
       selectedId = null;
       el("edit-id").value = "";
@@ -131,6 +147,7 @@
       el("secret-box").innerHTML = "";
       el("detail-actions").style.display = "none";
       el("btn-signed").style.display = "none";
+      setPatchDefaults();
     }
 
     function fillForm(c) {
@@ -156,6 +173,7 @@
         el("btn-signed").style.display = "none";
       }
       loadDetail(c.id);
+      setPatchDefaults();
     }
 
     function renderList() {
@@ -194,17 +212,29 @@
         el("detail-payments").innerHTML = "<p class='muted'>No payments yet.</p>";
         return;
       }
-      let html = "<table><thead><tr><th>Coverage</th><th>Status</th><th>Amount</th><th>Files</th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>Coverage</th><th>Kind</th><th>Status</th><th>Files</th><th></th></tr></thead><tbody>";
       for (const p of pays) {
         const files = [
-          p.license_url ? `<a href="${p.license_url}">License</a>` : "",
+          p.license_url ? `<a href="${p.license_url}">${escapeHtml(p.download_label || "License JSON")}</a>` : "",
           p.invoice ? `<a href="${p.invoice.url}">Invoice</a>` : "",
           p.receipt ? `<a href="${p.receipt.url}">Receipt</a>` : "",
         ].filter(Boolean).join(" · ");
-        html += `<tr><td>${escapeHtml(p.period_title || p.period_label || "—")}</td><td>${statusPill(p.status)}</td><td>${escapeHtml(p.amount_label)}</td><td>${files || "—"}</td></tr>`;
+        const del = p.can_delete
+          ? `<button type="button" class="ghost compact" data-del-pay="${p.id}">Delete</button>`
+          : "—";
+        html += `<tr>
+          <td>${escapeHtml(p.period_title || p.period_label || "—")}</td>
+          <td>${p.is_patch ? statusPill("patch") : "Subscription"}</td>
+          <td>${statusPill(p.status)}</td>
+          <td>${files || "—"}</td>
+          <td class="action-cell">${del}</td>
+        </tr>`;
       }
       html += "</tbody></table>";
       el("detail-payments").innerHTML = html;
+      el("detail-payments").querySelectorAll("[data-del-pay]").forEach((btn) => {
+        btn.addEventListener("click", () => deletePatchRow(btn.getAttribute("data-del-pay")));
+      });
     }
 
     async function loadPayments() {
@@ -213,24 +243,31 @@
         el("pay-list").innerHTML = "<p class='muted'>No payments yet.</p>";
         return;
       }
-      let html = "<table><thead><tr><th>Hospital</th><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>Hospital</th><th>Coverage</th><th>Kind</th><th>Status</th><th>Reference</th><th>Files</th><th></th></tr></thead><tbody>";
       for (const p of rows) {
         const files = [
-          p.license_url ? `<a href="${p.license_url}">License</a>` : "",
+          p.license_url ? `<a href="${p.license_url}">${escapeHtml(p.download_label || "License JSON")}</a>` : "",
           p.invoice ? `<a href="${p.invoice.url}">Invoice</a>` : "",
           p.receipt ? `<a href="${p.receipt.url}">Receipt</a>` : "",
         ].filter(Boolean).join(" · ");
+        const del = p.can_delete
+          ? `<button type="button" class="ghost compact" data-del-pay="${p.id}">Delete</button>`
+          : "—";
         html += `<tr>
           <td>${escapeHtml(p.hospital_name)}</td>
           <td>${escapeHtml(p.period_title || p.period_label || "—")}</td>
-          <td>${escapeHtml(p.amount_label)}</td>
+          <td>${p.is_patch ? statusPill("patch") : "Subscription"}</td>
           <td>${statusPill(p.status)}</td>
           <td><code>${escapeHtml(p.reference)}</code></td>
           <td>${files || "—"}</td>
+          <td class="action-cell">${del}</td>
         </tr>`;
       }
       html += "</tbody></table>";
       el("pay-list").innerHTML = html;
+      el("pay-list").querySelectorAll("[data-del-pay]").forEach((btn) => {
+        btn.addEventListener("click", () => deletePatchRow(btn.getAttribute("data-del-pay")));
+      });
     }
 
     function showSecret(title, email, password) {
@@ -361,13 +398,47 @@
       }
     });
 
+    async function deletePatchRow(id) {
+      if (!id) return;
+      if (!confirm("Delete this patch license? Subscription payments are not deleted.")) return;
+      try {
+        await api("/api/admin/payments/" + id, { method: "DELETE" });
+        el("form-msg").className = "ok-msg";
+        el("form-msg").textContent = "Patch license deleted.";
+        if (selectedId) await loadDetail(selectedId);
+        try {
+          await loadPayments();
+        } catch (_) {
+          /* payments tab may not have been opened yet */
+        }
+      } catch (e) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = e.message;
+      }
+    }
+
     el("btn-manual").addEventListener("click", async () => {
       if (!selectedId) return;
-      if (!confirm("Issue a signed license and receipt without Paystack? Use this only if they paid by bank or MoMo outside this portal.")) return;
+      const periodFrom = el("patch_from").value;
+      const periodUntil = el("patch_until").value;
+      if (!periodFrom || !periodUntil) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = "Set the patch start and end first.";
+        return;
+      }
+      if (!confirm("Issue a patch license for this period? It is not a subscription payment. The hospital can Renew from portal in HMS to apply it.")) return;
       try {
-        await api("/api/admin/customers/" + selectedId + "/issue-manual", { method: "POST", body: { notes: "Manual issue from admin" } });
+        const data = await api("/api/admin/customers/" + selectedId + "/issue-manual", {
+          method: "POST",
+          body: {
+            notes: "Patch license from admin",
+            period_from: periodFrom,
+            period_until: periodUntil,
+          },
+        });
         el("form-msg").className = "ok-msg";
-        el("form-msg").textContent = "License issued.";
+        const label = (data.payment && data.payment.period_label) || "the selected period";
+        el("form-msg").textContent = "Patch license issued for " + label + ". Download Patch license JSON below, or have them Renew from portal in HMS.";
         await loadCustomers();
         const c = customers.find((x) => String(x.id) === String(selectedId));
         if (c) fillForm(c);

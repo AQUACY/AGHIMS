@@ -4,7 +4,7 @@ const { getDb, nowSql, lockClause } = require("./db");
 const { getLicenseByCustomer, extendLicenseForCustomer, nextDocNumber, computePurchasedPeriod, serializePeriod, latestPaidPayment, signedDocumentFor } = require("./license");
 const { writeInvoicePdf, writeReceiptPdf, relativeDocumentPath, documentAbsPath } = require("./pdfs");
 const { initializeTransaction, verifyTransaction } = require("./paystack");
-const { formatGhs, pesewasToGhsNumber, randomUuid, utcNow, toSqlDatetime, parseDatetime, formatPeriodLabel, periodMonthTitle, toDatetimeLocalValue } = require("./dates");
+const { formatGhs, pesewasToGhsNumber, randomUuid, utcNow, toSqlDatetime, parseDatetime, parseAdminDatetime, formatPeriodLabel, periodMonthTitle, toDatetimeLocalValue } = require("./dates");
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -44,6 +44,11 @@ function serializeDoc(d) {
   };
 }
 
+function isPatchPayment(p) {
+  const ch = String((p && p.channel) || "").toLowerCase();
+  return ch === "patch" || ch === "manual";
+}
+
 function paymentLicenseUrl(p) {
   if (!p || p.status !== "success" || !p.period_from || !p.period_until) return null;
   return `/api/payments/${p.id}/license.json`;
@@ -55,12 +60,13 @@ function paymentLicenseFilename(payment) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  return `license-${slug || payment.id}.json`;
+  const prefix = isPatchPayment(payment) ? "patch-license" : "license";
+  return `${prefix}-${slug || payment.id}.json`;
 }
 
 function paymentCanRetry(p) {
   if (!p) return false;
-  if (p.channel === "manual") return false;
+  if (isPatchPayment(p)) return false;
   const status = String(p.status || "").toLowerCase();
   return status === "pending" || status === "failed" || status === "abandoned";
 }
@@ -136,7 +142,10 @@ function serializePayment(p, docs = []) {
     period_title: p.period_from ? periodMonthTitle(p.period_from) : null,
     license_id: p.license_id,
     license_url: licenseUrl,
+    is_patch: isPatchPayment(p),
+    download_label: isPatchPayment(p) ? "Patch license JSON" : "License JSON",
     can_retry: paymentCanRetry(p),
+    can_delete: isPatchPayment(p) && String(p.status || "").toLowerCase() === "success",
     notes: p.notes,
     created_at: p.created_at,
     invoice: serializeDoc(use.find((d) => d.doc_type === "invoice")),
@@ -308,8 +317,8 @@ async function retryPayment(payment, user) {
   if (payment.status === "success") {
     throw httpError(400, "This payment already succeeded");
   }
-  if (payment.channel === "manual") {
-    throw httpError(400, "Manual issues cannot be retried through Paystack");
+  if (isPatchPayment(payment)) {
+    throw httpError(400, "Patch licenses cannot be retried through Paystack");
   }
   const customer = await getCustomer(payment.customer_id);
   if (!customer) throw httpError(404, "Hospital account not found");
@@ -376,7 +385,7 @@ async function periodAlreadyPaid(customerId, payment) {
 async function findRetryableForPeriod(customerId, period) {
   const { rows } = await getDb().query(
     `SELECT * FROM payments
-     WHERE customer_id = ? AND channel != 'manual' AND status IN ('pending', 'failed')
+     WHERE customer_id = ? AND channel NOT IN ('manual', 'patch') AND status IN ('pending', 'failed')
      ORDER BY id DESC`,
     [customerId]
   );
@@ -493,19 +502,6 @@ async function fulfillPayment(payment, rawPayload) {
         validFrom: parseDatetime(row.period_from),
         validUntil: parseDatetime(row.period_until),
       };
-      const existingLic = await getLicenseByCustomer(row.customer_id, tx);
-      if (existingLic) {
-        const until = parseDatetime(existingLic.valid_until);
-        if (until && purchased.validUntil && until >= purchased.validUntil) {
-          purchased = computePurchasedPeriod(
-            existingLic,
-            row.duration_months,
-            utcNow(),
-            [],
-            customer.billing_deadline
-          );
-        }
-      }
     }
     const license = await extendLicenseForCustomer(tx, customer, row.duration_months, utcNow(), purchased);
     const ts = nowSql();
@@ -611,28 +607,15 @@ async function getPaymentStatus(reference) {
   }
 }
 
-async function issueManual(customer, { notes, email } = {}) {
-  if (!customer.amount_pesewas || customer.amount_pesewas < 100) {
-    throw httpError(400, "Set a GH₵ amount before issuing a license");
-  }
-  const reference = `MANUAL-${randomUuid()}`;
+async function issueManual(customer, { notes, email, periodFrom, periodUntil } = {}) {
+  const period = resolvePatchPeriod(periodFrom, periodUntil);
+  const reference = `PATCH-${randomUuid()}`;
   const ts = nowSql();
 
   const created = await getDb().withTransaction(async (tx) => {
-    await tx.query(
-      `UPDATE payments SET status = ?, notes = ?, updated_at = ?
-       WHERE customer_id = ? AND status = ?`,
-      ["failed", "Superseded by a manual issue", ts, customer.id, "pending"]
-    );
-    const current = await getLicenseByCustomer(customer.id, tx);
-    const period = computePurchasedPeriod(
-      current,
-      customer.duration_months,
-      utcNow(),
-      [],
-      customer.billing_deadline
-    );
-    const license = await extendLicenseForCustomer(tx, customer, customer.duration_months, utcNow(), period);
+    const license = await extendLicenseForCustomer(tx, customer, customer.duration_months || 1, utcNow(), period, {
+      updateBillingDeadline: false,
+    });
     const inserted = await tx.query(
       `INSERT INTO payments
         (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,
@@ -643,67 +626,104 @@ async function issueManual(customer, { notes, email } = {}) {
         license.license_id,
         reference,
         null,
-        customer.amount_pesewas,
+        0,
         customer.currency || "GHS",
-        customer.duration_months,
+        customer.duration_months || 1,
         "success",
-        "manual",
+        "patch",
         ts,
         toSqlDatetime(period.validFrom),
         toSqlDatetime(period.validUntil),
         null,
-        notes || "Issued without Paystack",
+        notes || "Patch license (not a subscription payment)",
         ts,
         ts,
       ]
     );
-    const paymentId = inserted.insertId;
-    const invoiceNumber = await nextDocNumber(tx, "invoice");
-    const receiptNumber = await nextDocNumber(tx, "receipt");
-    const invoicePath = path.join(config.documentsDir, `${invoiceNumber}.pdf`);
-    const receiptPath = path.join(config.documentsDir, `${receiptNumber}.pdf`);
-    await insertDocument(tx, {
-      paymentId,
-      customerId: customer.id,
-      docType: "invoice",
-      docNumber: invoiceNumber,
-      filePath: invoicePath,
-    });
-    await insertDocument(tx, {
-      paymentId,
-      customerId: customer.id,
-      docType: "receipt",
-      docNumber: receiptNumber,
-      filePath: receiptPath,
-    });
-    const { rows } = await tx.query("SELECT * FROM payments WHERE id = ?", [paymentId]);
-    return { payment: rows[0], license, invoicePath, receiptPath, invoiceNumber, receiptNumber };
+    const { rows } = await tx.query("SELECT * FROM payments WHERE id = ?", [inserted.insertId]);
+    return { payment: rows[0], license };
   });
 
-  const loginEmail = email || (await customerLoginEmail(customer.id));
-  await writeInvoicePdf({
-    filePath: created.invoicePath,
-    number: created.invoiceNumber,
-    customer,
-    email: loginEmail,
-    payment: created.payment,
-    issuedAt: utcNow(),
-  });
-  await writeReceiptPdf({
-    filePath: created.receiptPath,
-    number: created.receiptNumber,
-    customer,
-    email: loginEmail,
-    payment: created.payment,
-    paidAt: created.payment.paid_at,
-    reference,
-  });
-
-  const docs = await documentsForPayment(created.payment.id);
   return {
-    payment: serializePayment(created.payment, docs),
+    payment: serializePayment(created.payment, []),
     license: serializeLicense(created.license),
   };
+}
+
+function resolvePatchPeriod(periodFrom, periodUntil) {
+  const fromRaw = periodFrom;
+  const untilRaw = periodUntil;
+  if (!fromRaw || !untilRaw) {
+    throw httpError(400, "Set the patch license start and end.");
+  }
+  const validFrom = parsePatchBound(fromRaw, false);
+  const validUntil = parsePatchBound(untilRaw, true);
+  if (!validFrom || !validUntil) {
+    throw httpError(400, "Patch license dates are not valid.");
+  }
+  if (validUntil <= validFrom) {
+    throw httpError(400, "Patch license end must be after the start.");
+  }
+  return { validFrom, validUntil };
+}
+
+function parsePatchBound(value, asEnd) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+    return new Date(`${s}:${asEnd ? "59" : "00"}+00:00`);
+  }
+  return parseAdminDatetime(s) || parseDatetime(s);
+}
+
+async function rebuildLicenseWindow(tx, customerId) {
+  const license = await getLicenseByCustomer(customerId, tx);
+  if (!license) return;
+  const { rows } = await tx.query(
+    `SELECT period_from, period_until FROM payments
+     WHERE customer_id = ? AND status = 'success' AND period_from IS NOT NULL AND period_until IS NOT NULL`,
+    [customerId]
+  );
+  let from = null;
+  let until = null;
+  for (const row of rows) {
+    const a = parseDatetime(row.period_from);
+    const b = parseDatetime(row.period_until);
+    if (a && (!from || a < from)) from = a;
+    if (b && (!until || b > until)) until = b;
+  }
+  if (!from || !until) return;
+  await tx.query("UPDATE licenses SET valid_from = ?, valid_until = ?, updated_at = ? WHERE id = ?", [
+    toSqlDatetime(from),
+    toSqlDatetime(until),
+    nowSql(),
+    license.id,
+  ]);
+}
+
+async function deletePatchPayment(paymentId) {
+  const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [paymentId]);
+  const payment = rows[0];
+  if (!payment) throw httpError(404, "Payment not found");
+  if (!isPatchPayment(payment)) {
+    throw httpError(400, "Only patch / manual licenses can be deleted. Subscription payments stay in history.");
+  }
+  const fs = require("fs");
+  const docs = await documentsForPayment(payment.id);
+  await getDb().withTransaction(async (tx) => {
+    for (const doc of docs) {
+      try {
+        const abs = documentAbsPath(doc.file_path);
+        if (fs.existsSync(abs)) fs.unlinkSync(abs);
+      } catch (_) {
+        /* keep deleting the row */
+      }
+      await tx.query("DELETE FROM documents WHERE id = ?", [doc.id]);
+    }
+    await tx.query("DELETE FROM payments WHERE id = ?", [payment.id]);
+    await rebuildLicenseWindow(tx, payment.customer_id);
+  });
+  return { ok: true, id: payment.id };
 }
 
 async function getPaymentForUser(paymentId, user) {
@@ -791,6 +811,7 @@ module.exports = {
   verifyAndFulfill,
   getPaymentStatus,
   issueManual,
+  deletePatchPayment,
   getPaymentForUser,
   signedLicenseForPayment,
   getDocumentForUser,

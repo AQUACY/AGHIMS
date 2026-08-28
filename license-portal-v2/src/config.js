@@ -65,7 +65,7 @@ const config = {
   distributionId: env("DISTRIBUTION_ID", "").trim(),
   rsaPrivateKeyFile: env("RSA_PRIVATE_KEY_FILE", "").trim(),
   rsaPrivateKeyPem: env("RSA_PRIVATE_KEY_PEM", "").trim(),
-  verifySharedSecret: env("VERIFY_SHARED_SECRET", "").trim(),
+  verifySharedSecret: unquote(env("VERIFY_SHARED_SECRET", "")),
   adminEmail: env("PORTAL_ADMIN_EMAIL", env("PORTAL_ADMIN_USERNAME", "license_admin")).trim(),
   adminPassword: env("PORTAL_ADMIN_PASSWORD", ""),
   jwtSecret: env("PORTAL_JWT_SECRET", "change-portal-jwt"),

@@ -25,7 +25,7 @@ function computePurchasedPeriod(existing, durationMonths, now, pendingRows = [],
     if (d && (!cycleEnd || d > cycleEnd)) cycleEnd = d;
   };
   consider(billingDeadline);
-  if (existing) consider(existing.valid_until);
+  if (!cycleEnd && existing) consider(existing.valid_until);
   for (const row of pendingRows || []) {
     if (row && row.period_until) consider(row.period_until);
   }
@@ -144,7 +144,7 @@ async function coveringPaidPayment(customerId, now = utcNow(), runner = null) {
   const { rows } = await db.query(
     `SELECT * FROM payments
      WHERE customer_id = ? AND status = 'success' AND period_from IS NOT NULL AND period_until IS NOT NULL
-     ORDER BY period_until DESC, id DESC`,
+     ORDER BY id DESC`,
     [customerId]
   );
   return rows.find((row) => paymentCovers(row, now)) || null;
@@ -238,7 +238,8 @@ async function currentSignedDocumentForHms({ licenseId, facilityCode }, now = ut
   return { ok: false, reason: "unpaid", license_id: license.license_id };
 }
 
-async function extendLicenseForCustomer(tx, customer, durationMonths, now = utcNow(), purchased = null) {
+async function extendLicenseForCustomer(tx, customer, durationMonths, now = utcNow(), purchased = null, opts = {}) {
+  const updateBillingDeadline = opts.updateBillingDeadline !== false;
   let license = await getLicenseByCustomer(customer.id, tx);
   const pending = purchased ? [] : await pendingPeriodsForCustomer(customer.id, tx);
   const period = purchased || computePurchasedPeriod(license, durationMonths, now, pending, customer.billing_deadline);
@@ -299,11 +300,13 @@ async function extendLicenseForCustomer(tx, customer, durationMonths, now = utcN
   license.purchased_from = toSqlDatetime(period.validFrom);
   license.purchased_until = toSqlDatetime(period.validUntil);
   license.purchased = period;
-  await tx.query("UPDATE customers SET billing_deadline = ?, updated_at = ? WHERE id = ?", [
-    toSqlDatetime(period.validUntil),
-    ts,
-    customer.id,
-  ]);
+  if (updateBillingDeadline) {
+    await tx.query("UPDATE customers SET billing_deadline = ?, updated_at = ? WHERE id = ?", [
+      toSqlDatetime(period.validUntil),
+      ts,
+      customer.id,
+    ]);
+  }
   return license;
 }
 
@@ -360,6 +363,16 @@ function selftestCalendar() {
   }
   if (toIsoZ(withPending.validFrom) !== "2026-10-01T00:00:00Z") {
     throw new Error("open pending coverage still stacks when explicitly passed in");
+  }
+  const patchDoesNotSkip = computePurchasedPeriod(
+    { valid_until: "2026-12-31 23:59:59" },
+    1,
+    now,
+    [],
+    "2026-08-31 23:59:59"
+  );
+  if (toIsoZ(patchDoesNotSkip.validFrom) !== "2026-09-01T00:00:00Z") {
+    throw new Error("a patch license window must not skip the next paid month");
   }
   console.log("license calendar selftest ok");
 }

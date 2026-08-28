@@ -14,7 +14,7 @@ const {
   changeOwnPassword,
 } = require("./auth");
 const { config } = require("./config");
-const { getLicenseByCustomer, getLicenseByPublicId, latestPaidPayment, currentSignedDocumentForHms } = require("./license");
+const { getLicenseByCustomer, getLicenseByPublicId, latestPaidPayment, coveringPaidPayment, currentSignedDocumentForHms } = require("./license");
 const {
   httpError,
   getCustomer,
@@ -28,6 +28,7 @@ const {
   fulfillByReference,
   getPaymentStatus,
   issueManual,
+  deletePatchPayment,
   getDocumentForUser,
   getPaymentForUser,
   signedLicenseForPayment,
@@ -35,7 +36,7 @@ const {
   previewNextPeriod,
   findPaymentByReference,
 } = require("./payments");
-const { ghsToPesewas, parseDatetime, utcNow, toIsoZ, parseAdminDatetime, toSqlDatetime } = require("./dates");
+const { ghsToPesewas, utcNow, toIsoZ, parseAdminDatetime, toSqlDatetime } = require("./dates");
 const { verifyWebhookSignature } = require("./paystack");
 const { documentAbsPath } = require("./pdfs");
 const { getLogo, publicLogoUrl, saveLogo, deleteLogo } = require("./branding");
@@ -415,7 +416,22 @@ function mountRoutes(app) {
       const customer = await getCustomer(req.params.id);
       if (!customer) return res.status(404).json({ error: "Not found" });
       const notes = (req.body && req.body.notes) || "";
-      const result = await issueManual(customer, { notes, email: await customerLoginEmail(customer.id) });
+      const result = await issueManual(customer, {
+        notes,
+        email: await customerLoginEmail(customer.id),
+        periodFrom: req.body && (req.body.period_from || req.body.patch_from),
+        periodUntil: req.body && (req.body.period_until || req.body.patch_until),
+      });
+      res.json(result);
+    })
+  );
+
+  app.delete(
+    "/api/admin/payments/:id",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const result = await deletePatchPayment(req.params.id);
       res.json(result);
     })
   );
@@ -512,9 +528,8 @@ function mountRoutes(app) {
       const row = await getLicenseByPublicId(licenseId);
       if (!row) return res.json({ ok: false, reason: "unknown_license" });
       const now = utcNow();
-      const from = parseDatetime(row.valid_from);
-      const until = parseDatetime(row.valid_until);
-      if (!from || !until || now < from || now > until) {
+      const covering = await coveringPaidPayment(row.customer_id, now);
+      if (!covering) {
         return res.json({ ok: false, reason: "out_of_window" });
       }
       const fc = (row.facility_code || "").trim();
@@ -522,7 +537,7 @@ function mountRoutes(app) {
         const reqFc = String((req.body && req.body.facility_code) || "").trim();
         if (reqFc !== fc) return res.json({ ok: false, reason: "facility_mismatch" });
       }
-      return res.json({ ok: true, valid_until: toIsoZ(row.valid_until) });
+      return res.json({ ok: true, valid_until: toIsoZ(covering.period_until) });
     })
   );
 }
