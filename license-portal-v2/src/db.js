@@ -151,7 +151,6 @@ function isLocalMysqlHost(host) {
 
 function detectMysqlSocket() {
   if (config.mysql.socketPath) return config.mysql.socketPath;
-  if (!isLocalMysqlHost(config.mysql.host)) return "";
   const candidates = [
     process.env.MYSQL_UNIX_PORT,
     "/tmp/mysql.sock",
@@ -198,24 +197,39 @@ async function tryMysqlPool(extra) {
 
 function mysqlAccessDeniedHelp(err) {
   const seen = String((err && err.message) || "");
+  const pwdLen = String(config.mysql.password || "").length;
   return (
-    `${seen} Hostinger's MySQL user is usually '${config.mysql.user}'@'localhost' (Unix socket), ` +
-    `which is a different account from '${config.mysql.user}'@'127.0.0.1'. ` +
-    `In hPanel → Databases → Remote MySQL add Access Host 127.0.0.1 (and localhost). ` +
-    `Assign that user to ${config.mysql.database} with ALL PRIVILEGES. ` +
-    `Reset the password and paste it into Node env with no quotes. ` +
-    `If /tmp/mysql.sock exists, set MYSQL_SOCKET=/tmp/mysql.sock so Node logs in as @localhost.`
+    `${seen} Remote MySQL is not the usual cause on the same Hostinger account. ` +
+    `Set MYSQL_HOST=127.0.0.1 (Hostinger Node docs) — do not use the server public IP. ` +
+    `The Node env password (length ${pwdLen}) does not match user ${config.mysql.user}. ` +
+    `Reset that user's password in Databases, paste it into Node env with no quotes and no # comments, Restart.`
   );
 }
 
 async function connectMysql() {
   const attempts = [];
+  const seen = new Set();
+  const addAttempt = (label, extra) => {
+    const key = extra.socketPath ? `sock:${extra.socketPath}` : `tcp:${extra.host}:${extra.port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    attempts.push({ label, extra });
+  };
+
   const socket = detectMysqlSocket();
-  if (socket) attempts.push({ label: `socket ${socket}`, extra: { socketPath: socket } });
-  attempts.push({
-    label: `tcp ${config.mysql.host}:${config.mysql.port}`,
-    extra: { host: config.mysql.host, port: config.mysql.port },
-  });
+  if (socket) addAttempt(`socket ${socket}`, { socketPath: socket });
+  addAttempt(`tcp 127.0.0.1:${config.mysql.port}`, { host: "127.0.0.1", port: config.mysql.port });
+  if (!isLocalMysqlHost(config.mysql.host)) {
+    addAttempt(`tcp ${config.mysql.host}:${config.mysql.port}`, {
+      host: config.mysql.host,
+      port: config.mysql.port,
+    });
+  }
+
+  console.log(
+    `MySQL connecting as ${config.mysql.user} / ${config.mysql.database} ` +
+      `(password length ${String(config.mysql.password || "").length}, ${attempts.length} attempts)`
+  );
 
   let lastErr;
   for (const attempt of attempts) {
