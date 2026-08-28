@@ -10,8 +10,9 @@
 #
 # GitHub → Settings → Secrets and variables → Actions, add:
 #   HOSTINGER_API_TOKEN   — API token from hPanel
-#   HOSTINGER_USERNAME    — hosting account user, e.g. u123456789 (FTP username without the domain)
-#   HOSTINGER_DOMAIN      — the site domain, e.g. licenses.example.com
+#   HOSTINGER_DOMAIN      — exact site domain from hPanel (no https://, no trailing slash)
+#   HOSTINGER_USERNAME    — optional. FTP user such as u123456789
+#                           (not u123456789.domain.com, not an email, not the FTP host)
 #
 # After that, every push to main that touches the portal (or a manual Run workflow)
 # uploads a zip and starts a Hostinger Node.js build, which installs npm and restarts the app.
@@ -64,8 +65,9 @@ jobs:
 
       - name: Check Hostinger secrets
         run: |
-          if [ -z "$TOKEN" ] || [ -z "$USERNAME" ] || [ -z "$DOMAIN" ]; then
-            echo "Add GitHub Actions secrets HOSTINGER_API_TOKEN, HOSTINGER_USERNAME, and HOSTINGER_DOMAIN."
+          if [ -z "$TOKEN" ] || [ -z "$DOMAIN" ]; then
+            echo "Add GitHub Actions secrets HOSTINGER_API_TOKEN and HOSTINGER_DOMAIN."
+            echo "HOSTINGER_DOMAIN must be the exact domain from hPanel, with no https://."
             exit 1
           fi
 
@@ -90,18 +92,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 <<'PY'
-          import json, os, subprocess, sys, urllib.parse
+          import json, os, re, subprocess, sys, urllib.parse
 
           api = os.environ["API"]
           token = os.environ["TOKEN"]
-          username = os.environ["USERNAME"]
-          domain = os.environ["DOMAIN"]
+          username_hint = (os.environ.get("USERNAME") or "").strip()
+          domain_hint = (os.environ.get("DOMAIN") or "").strip()
           archive = os.environ["ARCHIVE"]
 
-          def curl(args, check=True):
-              cmd = ["curl", "-sS", *args]
-              out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-              return out
+          def curl(args):
+              return subprocess.check_output(["curl", "-sS", *args], stderr=subprocess.STDOUT)
 
           def api_json(method, path, data=None):
               args = [
@@ -123,13 +123,93 @@ jobs:
               if not isinstance(d, dict):
                   return None
               for k in keys:
-                  if d.get(k):
+                  if d.get(k) not in (None, ""):
                       return d[k]
               inner = d.get("data") if isinstance(d.get("data"), dict) else {}
               for k in keys:
-                  if inner.get(k):
+                  if inner.get(k) not in (None, ""):
                       return inner[k]
               return None
+
+          def rows(payload):
+              if isinstance(payload, list):
+                  return payload
+              if not isinstance(payload, dict):
+                  return []
+              for key in ("data", "items", "websites"):
+                  val = payload.get(key)
+                  if isinstance(val, list):
+                      return val
+              return []
+
+          def normalize_domain(value):
+              s = (value or "").strip().lower()
+              s = re.sub(r"^https?://", "", s)
+              s = s.split("/")[0]
+              s = s.split(":")[0]
+              if s.startswith("www."):
+                  s = s[4:]
+              return s
+
+          def site_domain(site):
+              return pick(site, "domain") or ""
+
+          def site_user(site):
+              return pick(site, "username") or ""
+
+          def site_type(site):
+              return pick(site, "website_type", "websiteType") or "unknown"
+
+          wanted = normalize_domain(domain_hint)
+          listing = api_json("GET", "/api/hosting/v1/websites?per_page=100")
+          sites = [s for s in rows(listing) if isinstance(s, dict)]
+          if not sites:
+              print(json.dumps(listing, indent=2)[:4000])
+              raise SystemExit(
+                  "This API token cannot see any websites. Create a Node.js web app in hPanel first, "
+                  "and use a token from that same Hostinger account."
+              )
+
+          print("Websites on this Hostinger token:")
+          for site in sites:
+              print(f"  - {site_domain(site) or '(no domain)'}  user={site_user(site) or '-'}  type={site_type(site)}")
+
+          matches = []
+          for site in sites:
+              d = normalize_domain(site_domain(site))
+              if d == wanted or d.endswith("." + wanted) or wanted.endswith("." + d):
+                  matches.append(site)
+          if not matches:
+              for site in sites:
+                  d = normalize_domain(site_domain(site))
+                  if wanted and wanted in d:
+                      matches.append(site)
+
+          node_matches = [s for s in matches if str(site_type(s)).lower() in ("nodejs", "node.js", "express", "other")]
+          if node_matches:
+              matches = node_matches
+
+          if username_hint:
+              user_matches = [s for s in matches if site_user(s) == username_hint]
+              if user_matches:
+                  matches = user_matches
+
+          if not matches:
+              raise SystemExit(
+                  f"No Hostinger website matched HOSTINGER_DOMAIN={domain_hint!r}. "
+                  "Set that secret to one of the domains listed above, with no https://."
+              )
+
+          site = matches[0]
+          username = site_user(site) or username_hint
+          domain = site_domain(site)
+          if not username or not domain:
+              raise SystemExit("Matched a website but it has no username/domain. Is the Node.js app created in hPanel?")
+
+          print(f"Using website {domain} (username {username}, type {site_type(site)})")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"HOSTINGER_RESOLVED_USER={username}\n")
+              fh.write(f"HOSTINGER_RESOLVED_DOMAIN={domain}\n")
 
           upload = api_json("POST", "/api/hosting/v1/files/upload-urls", {
               "username": username,
@@ -140,7 +220,10 @@ jobs:
           rest = pick(upload, "rest_auth_key", "restAuthKey")
           if not url or not auth:
               print(json.dumps(upload, indent=2))
-              raise SystemExit("Could not get an upload URL. Check HOSTINGER_API_TOKEN, USERNAME, and DOMAIN.")
+              raise SystemExit(
+                  "Could not get an upload URL for the matched website. "
+                  "Confirm the site is a Node.js web app under Websites in hPanel."
+              )
 
           size = os.path.getsize(archive)
           dest = f"{url.rstrip('/')}/{archive}?override=true"
@@ -199,8 +282,8 @@ jobs:
 
           api = os.environ["API"]
           token = os.environ["TOKEN"]
-          username = os.environ["USERNAME"]
-          domain = os.environ["DOMAIN"]
+          username = os.environ.get("HOSTINGER_RESOLVED_USER") or os.environ["USERNAME"]
+          domain = os.environ.get("HOSTINGER_RESOLVED_DOMAIN") or os.environ["DOMAIN"]
           uuid = os.environ["BUILD_UUID"]
           enc_user = urllib.parse.quote(username, safe="")
           enc_domain = urllib.parse.quote(domain, safe="")
