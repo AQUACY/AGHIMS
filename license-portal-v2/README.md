@@ -57,8 +57,8 @@ This repo includes [`.github/workflows/deploy-hostinger.yml`](../.github/workflo
 3. hPanel → **API** → create a token.
 4. GitHub repo → **Settings** → **Secrets and variables** → **Actions**:
    - `HOSTINGER_API_TOKEN`
-   - `HOSTINGER_USERNAME` (FTP user such as `u123456789`)
-   - `HOSTINGER_DOMAIN` (e.g. `licenses.example.com`)
+   - `HOSTINGER_DOMAIN` — exact domain from hPanel, no `https://` (example: `licenses.example.com`)
+   - `HOSTINGER_USERNAME` — optional; FTP user like `u123456789` (not `u123456789.domain.com`)
 5. Push, or **Actions** → **Deploy license portal to Hostinger** → **Run workflow**.
 
 You can instead skip the workflow and use Hostinger’s GitHub button: connect repo `AGHIMS`, **root directory** `license-portal-v2`, entry file `app.js`. Then every push to the connected branch deploys without Actions.
