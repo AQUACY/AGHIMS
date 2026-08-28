@@ -1,0 +1,26 @@
+{
+  "name": "license-portal-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "HMS License Portal v2 — self-serve Paystack renewals, invoices, and signed license files",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test:sign": "node src/cryptoSign.js --selftest && node src/license.js --selftest",
+    "test:smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.12.0",
+    "pdfkit": "^0.16.0",
+    "sql.js": "^1.12.0"
+  }
+}

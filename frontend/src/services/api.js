@@ -1389,6 +1389,7 @@ export const licenseAPI = {
   getPublicStatus: () => api.get('/license/public-status'),
   activate: (document, setupToken) =>
     api.post('/license/activate', { document, setup_token: setupToken }),
+  pullFromPortal: () => api.post('/license/pull-from-portal', {}),
   getStatus: () => api.get('/license/status'),
   getActivationSummary: () => api.get('/license/activation-summary'),
   analyzeDocument: (document) => api.post('/license/analyze', { document }),

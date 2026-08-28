@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Payment received — License Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/dashboard">
+      <div class="mark" data-brand-mark>L</div>
+      <div>
+        <div class="brand-name" data-brand-name>License Portal</div>
+        <div class="brand-sub">Payment</div>
+      </div>
+    </a>
+  </header>
+  <main class="wrap" style="max-width:720px">
+    <section class="card pay-hero">
+      <h1 class="hero-line" id="title">Confirming payment…</h1>
+      <p class="muted" id="detail">We verify with Paystack before issuing the license and receipt.</p>
+      <div id="files"></div>
+      <div id="howto" style="display:none; margin-top:1.4rem">
+        <p class="kicker">Next</p>
+        <ol class="muted" style="padding-left:1.2rem; line-height:1.7">
+          <li>Download the invoice and receipt for management. License JSON is optional backup.</li>
+          <li id="when-import">When this month starts, HMS applies it automatically — or click <strong>Renew from portal</strong> in HMS License.</li>
+          <li>Give invoice and receipt to management.</li>
+        </ol>
+      </div>
+      <div class="actions">
+        <a class="btn ghost" href="/dashboard">Back to dashboard</a>
+      </div>
+      <p class="err" id="msg"></p>
+    </section>
+  </main>
+  <script src="/js/api.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const reference = params.get("reference") || params.get("trxref") || "";
+
+    async function poll() {
+      if (!reference) {
+        document.getElementById("title").textContent = "Missing reference";
+        document.getElementById("detail").textContent = "Return to the dashboard and try again.";
+        return;
+      }
+      let attempts = 0;
+      while (attempts < 20) {
+        attempts += 1;
+        try {
+          const data = await api("/api/pay/status?reference=" + encodeURIComponent(reference));
+          const payment = data.payment;
+          if (payment && payment.status === "success") {
+            document.getElementById("title").textContent = payment.period_title
+              ? `Paid — ${payment.period_title}`
+              : "Payment received";
+            document.getElementById("detail").textContent = payment.period_label
+              ? `Coverage: ${payment.period_label}`
+              : "Download the license file, invoice, and receipt.";
+            let html = "<p>" + statusPill("success") + " " + escapeHtml(payment.amount_label) + "</p>";
+            html += '<div class="actions">';
+            html += `<a class="btn gold" href="${payment.license_url || "/api/license/signed.json"}">License JSON</a>`;
+            if (payment.invoice) html += `<a class="btn ghost" href="${payment.invoice.url}">Invoice</a>`;
+            if (payment.receipt) html += `<a class="btn ghost" href="${payment.receipt.url}">Receipt</a>`;
+            html += "</div>";
+            document.getElementById("files").innerHTML = html;
+            document.getElementById("howto").style.display = "block";
+            if (payment.period_label) {
+              document.getElementById("when-import").innerHTML =
+                `HMS will apply this month on or after coverage start (${escapeHtml(payment.period_label)}). Until then, leave the current HMS license in place. Or click <strong>Renew from portal</strong> in HMS after it starts.`;
+            }
+            return;
+          }
+          if (payment && payment.status === "failed") {
+            document.getElementById("title").textContent = "Payment failed";
+            document.getElementById("detail").textContent = "No license was issued. Try again from the dashboard.";
+            return;
+          }
+        } catch (e) {
+          document.getElementById("msg").textContent = e.message;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      document.getElementById("title").textContent = "Still confirming";
+      document.getElementById("detail").textContent =
+        "Paystack has not confirmed yet. Open the dashboard shortly — the receipt appears after the webhook arrives.";
+    }
+    poll();
+  </script>
+</body>
+</html>

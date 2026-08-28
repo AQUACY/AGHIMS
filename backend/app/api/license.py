@@ -57,6 +57,24 @@ def activate_license(
     return {"ok": True, "detail": msg}
 
 
+@router.post("/pull-from-portal")
+def pull_license_from_portal(db: Session = Depends(get_db)):
+    """
+    HMS fetches the paid month that covers today from the license portal.
+    No setup token or JSON paste. Future paid months are not applied early.
+    """
+    if not license_runtime.enforcement_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="License enforcement is disabled on this server.",
+        )
+    ok, msg, extra = license_runtime.pull_and_activate_from_portal(db, force=True)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+    period = (extra or {}).get("period")
+    return {"ok": True, "detail": msg, "unchanged": bool((extra or {}).get("unchanged")), "period": period}
+
+
 @router.get("/status")
 def get_license_status_for_staff(
     db: Session = Depends(get_db),
