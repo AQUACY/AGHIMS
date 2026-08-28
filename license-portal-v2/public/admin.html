@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin — License Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/admin">
+      <div class="mark" data-brand-mark>L</div>
+      <div>
+        <div class="brand-name" data-brand-name>License Portal</div>
+        <div class="brand-sub">Issuer admin</div>
+      </div>
+    </a>
+    <div class="topbar-actions">
+      <a class="btn ghost" href="/profile">Profile</a>
+      <span class="muted" id="who"></span>
+      <button type="button" class="ghost" id="btn-logout">Sign out</button>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="tabs">
+      <button type="button" class="ghost active" data-tab="hospitals">Hospitals</button>
+      <button type="button" class="ghost" data-tab="payments">Payments</button>
+      <button type="button" class="ghost" data-tab="branding">Logo</button>
+    </div>
+
+    <div id="tab-hospitals">
+      <div class="grid grid-2">
+        <section class="card">
+          <h2>Hospitals</h2>
+          <div id="list">Loading…</div>
+        </section>
+        <section class="card">
+          <h2 id="form-title">New hospital</h2>
+          <p class="muted">Set the amount and the date/time the current license ends. Payment buys the next month from that moment — same idea as Starlink or Netflix.</p>
+          <input type="hidden" id="edit-id" />
+          <label>Hospital name</label>
+          <input id="hospital_name" />
+          <label>Facility code (must match HMS if bound)</label>
+          <input id="facility_code" />
+          <label>Monthly amount (GH₵)</label>
+          <input id="amount_ghs" type="number" min="1" step="0.01" />
+          <label>Months per payment</label>
+          <input id="duration_months" type="number" min="1" step="1" value="1" />
+          <label>Current license ends (renewal deadline)</label>
+          <input id="billing_deadline" type="datetime-local" />
+          <p class="muted">If this is 31 Aug 2026, 11:59 PM, the next paid month is 1 Sep 12:00 AM through 30 Sep 11:59 PM. After they pay, the deadline moves forward automatically.</p>
+          <label>IT manager login email</label>
+          <input id="email" autocomplete="off" />
+          <label>Password (leave blank to generate)</label>
+          <input id="password" type="text" autocomplete="off" />
+          <label>Notes</label>
+          <textarea id="notes"></textarea>
+          <label>Status</label>
+          <select id="status">
+            <option value="active">active</option>
+            <option value="suspended">suspended</option>
+          </select>
+          <div class="actions">
+            <button type="button" class="primary" id="btn-save">Save hospital</button>
+            <button type="button" class="ghost" id="btn-new">Clear</button>
+          </div>
+          <p class="err" id="form-msg"></p>
+          <div id="secret-box"></div>
+          <div id="detail-actions" style="display:none">
+            <div class="actions">
+              <button type="button" class="gold" id="btn-reset">Reset password</button>
+              <button type="button" class="ghost" id="btn-manual">Issue license (bank / manual)</button>
+              <a class="btn ghost" id="btn-signed" href="#" style="display:none">Download latest signed.json</a>
+            </div>
+            <div id="detail-payments"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="tab-payments" style="display:none">
+      <section class="card">
+        <h2>All payments</h2>
+        <div id="pay-list">Loading…</div>
+      </section>
+    </div>
+
+    <div id="tab-branding" style="display:none">
+      <section class="card" style="max-width:640px">
+        <h2>Portal logo</h2>
+        <p class="muted">Shown on the sign-in page, dashboards, invoices, and receipts. Use a PNG or JPEG, 1.5 MB or smaller.</p>
+        <img id="logo-preview" class="logo-preview" alt="Current logo" style="display:none" />
+        <p class="muted" id="logo-empty">No logo uploaded yet. The letter L mark is used until you add one.</p>
+        <label>Upload logo</label>
+        <input id="logo-file" class="file-input" type="file" accept="image/png,image/jpeg" />
+        <div class="actions">
+          <button type="button" class="gold" id="btn-logo-save">Save logo</button>
+          <button type="button" class="ghost" id="btn-logo-remove">Remove logo</button>
+        </div>
+        <p class="err" id="logo-msg"></p>
+      </section>
+    </div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script>
+    const el = (id) => document.getElementById(id);
+    let customers = [];
+    let selectedId = null;
+
+    function showTab(name) {
+      document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+      el("tab-hospitals").style.display = name === "hospitals" ? "block" : "none";
+      el("tab-payments").style.display = name === "payments" ? "block" : "none";
+      el("tab-branding").style.display = name === "branding" ? "block" : "none";
+      if (name === "payments") loadPayments();
+      if (name === "branding") refreshLogoPreview();
+    }
+
+    function clearForm() {
+      selectedId = null;
+      el("edit-id").value = "";
+      el("form-title").textContent = "New hospital";
+      ["hospital_name","facility_code","amount_ghs","email","password","notes","billing_deadline"].forEach((id) => el(id).value = "");
+      el("duration_months").value = "1";
+      el("status").value = "active";
+      el("email").disabled = false;
+      el("form-msg").textContent = "";
+      el("secret-box").innerHTML = "";
+      el("detail-actions").style.display = "none";
+      el("btn-signed").style.display = "none";
+    }
+
+    function fillForm(c) {
+      selectedId = c.id;
+      el("edit-id").value = c.id;
+      el("form-title").textContent = c.hospital_name;
+      el("hospital_name").value = c.hospital_name || "";
+      el("facility_code").value = c.facility_code || "";
+      el("amount_ghs").value = c.amount_ghs ?? "";
+      el("duration_months").value = c.duration_months ?? 1;
+      el("billing_deadline").value = c.billing_deadline_local || "";
+      el("email").value = c.email || "";
+      el("email").disabled = true;
+      el("password").value = "";
+      el("notes").value = c.notes || "";
+      el("status").value = c.status || "active";
+      el("detail-actions").style.display = "block";
+      el("secret-box").innerHTML = "";
+      if (c.license && c.license.license_id) {
+        el("btn-signed").style.display = "inline-flex";
+        el("btn-signed").href = "/api/admin/licenses/" + encodeURIComponent(c.license.license_id) + "/signed.json";
+      } else {
+        el("btn-signed").style.display = "none";
+      }
+      loadDetail(c.id);
+    }
+
+    function renderList() {
+      if (!customers.length) {
+        el("list").innerHTML = "<p class='muted'>No hospitals yet.</p>";
+        return;
+      }
+      let html = "<table><thead><tr><th>Hospital</th><th>Amount</th><th>Until</th></tr></thead><tbody>";
+      for (const c of customers) {
+        const until = c.billing_deadline ? fmtDt(c.billing_deadline) : (c.license ? fmtDt(c.license.valid_until) : "—");
+        html += `<tr class="clickable" data-id="${c.id}">
+          <td>${escapeHtml(c.hospital_name)}<br><span class="muted">${escapeHtml(c.email || "")}</span></td>
+          <td>${escapeHtml(c.amount_label)} / ${escapeHtml(c.duration_months)} mo</td>
+          <td>${escapeHtml(until)}</td>
+        </tr>`;
+      }
+      html += "</tbody></table>";
+      el("list").innerHTML = html;
+      el("list").querySelectorAll("tr.clickable").forEach((tr) => {
+        tr.addEventListener("click", () => {
+          const c = customers.find((x) => String(x.id) === tr.getAttribute("data-id"));
+          if (c) fillForm(c);
+        });
+      });
+    }
+
+    async function loadCustomers() {
+      customers = await api("/api/admin/customers");
+      renderList();
+    }
+
+    async function loadDetail(id) {
+      const data = await api("/api/admin/customers/" + id);
+      const pays = data.payments || [];
+      if (!pays.length) {
+        el("detail-payments").innerHTML = "<p class='muted'>No payments yet.</p>";
+        return;
+      }
+      let html = "<table><thead><tr><th>Coverage</th><th>Status</th><th>Amount</th><th>Files</th></tr></thead><tbody>";
+      for (const p of pays) {
+        const files = [
+          p.license_url ? `<a href="${p.license_url}">License</a>` : "",
+          p.invoice ? `<a href="${p.invoice.url}">Invoice</a>` : "",
+          p.receipt ? `<a href="${p.receipt.url}">Receipt</a>` : "",
+        ].filter(Boolean).join(" · ");
+        html += `<tr><td>${escapeHtml(p.period_title || p.period_label || "—")}</td><td>${statusPill(p.status)}</td><td>${escapeHtml(p.amount_label)}</td><td>${files || "—"}</td></tr>`;
+      }
+      html += "</tbody></table>";
+      el("detail-payments").innerHTML = html;
+    }
+
+    async function loadPayments() {
+      const rows = await api("/api/admin/payments");
+      if (!rows.length) {
+        el("pay-list").innerHTML = "<p class='muted'>No payments yet.</p>";
+        return;
+      }
+      let html = "<table><thead><tr><th>Hospital</th><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th></tr></thead><tbody>";
+      for (const p of rows) {
+        const files = [
+          p.license_url ? `<a href="${p.license_url}">License</a>` : "",
+          p.invoice ? `<a href="${p.invoice.url}">Invoice</a>` : "",
+          p.receipt ? `<a href="${p.receipt.url}">Receipt</a>` : "",
+        ].filter(Boolean).join(" · ");
+        html += `<tr>
+          <td>${escapeHtml(p.hospital_name)}</td>
+          <td>${escapeHtml(p.period_title || p.period_label || "—")}</td>
+          <td>${escapeHtml(p.amount_label)}</td>
+          <td>${statusPill(p.status)}</td>
+          <td><code>${escapeHtml(p.reference)}</code></td>
+          <td>${files || "—"}</td>
+        </tr>`;
+      }
+      html += "</tbody></table>";
+      el("pay-list").innerHTML = html;
+    }
+
+    function showSecret(title, email, password) {
+      el("secret-box").innerHTML = `<div class="banner secret">
+        <strong>${escapeHtml(title)}</strong><br>
+        Login: <code>${escapeHtml(email)}</code><br>
+        Password: <code>${escapeHtml(password)}</code><br>
+        <span class="muted">Copy this now. It is not stored in plain text.</span>
+      </div>`;
+    }
+
+    async function refreshLogoPreview() {
+      const c = await api("/api/public-config");
+      applyBranding(c);
+      const img = el("logo-preview");
+      if (c.logo_url) {
+        img.src = c.logo_url;
+        img.style.display = "block";
+        el("logo-empty").style.display = "none";
+      } else {
+        img.removeAttribute("src");
+        img.style.display = "none";
+        el("logo-empty").style.display = "block";
+      }
+    }
+
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Could not read that file"));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    el("btn-logo-save").addEventListener("click", async () => {
+      el("logo-msg").className = "err";
+      el("logo-msg").textContent = "";
+      const file = el("logo-file").files[0];
+      if (!file) {
+        el("logo-msg").textContent = "Choose a PNG or JPEG first.";
+        return;
+      }
+      try {
+        const data = await fileToDataUrl(file);
+        await api("/api/admin/branding/logo", {
+          method: "POST",
+          body: { data, mime: file.type, filename: file.name },
+        });
+        el("logo-file").value = "";
+        el("logo-msg").className = "ok-msg";
+        el("logo-msg").textContent = "Logo saved. It will appear on new invoice and receipt downloads.";
+        await refreshLogoPreview();
+      } catch (e) {
+        el("logo-msg").textContent = e.message;
+      }
+    });
+
+    el("btn-logo-remove").addEventListener("click", async () => {
+      if (!confirm("Remove the portal logo from the site, invoices, and receipts?")) return;
+      el("logo-msg").className = "err";
+      el("logo-msg").textContent = "";
+      try {
+        await api("/api/admin/branding/logo", { method: "DELETE" });
+        el("logo-msg").className = "ok-msg";
+        el("logo-msg").textContent = "Logo removed.";
+        window.location.reload();
+      } catch (e) {
+        el("logo-msg").textContent = e.message;
+      }
+    });
+
+    el("btn-new").addEventListener("click", clearForm);
+    el("btn-logout").addEventListener("click", logout);
+    document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+    el("btn-save").addEventListener("click", async () => {
+      el("form-msg").textContent = "";
+      const id = el("edit-id").value;
+      try {
+        if (id) {
+          await api("/api/admin/customers/" + id, {
+            method: "PATCH",
+            body: {
+              hospital_name: el("hospital_name").value.trim(),
+              facility_code: el("facility_code").value.trim(),
+              amount_ghs: el("amount_ghs").value,
+              duration_months: el("duration_months").value,
+              billing_deadline: el("billing_deadline").value,
+              notes: el("notes").value.trim(),
+              status: el("status").value,
+            },
+          });
+          el("form-msg").textContent = "";
+          el("form-msg").className = "ok-msg";
+          el("form-msg").textContent = "Updated.";
+        } else {
+          const data = await api("/api/admin/customers", {
+            method: "POST",
+            body: {
+              hospital_name: el("hospital_name").value.trim(),
+              facility_code: el("facility_code").value.trim(),
+              amount_ghs: el("amount_ghs").value,
+              duration_months: el("duration_months").value,
+              billing_deadline: el("billing_deadline").value,
+              notes: el("notes").value.trim(),
+              email: el("email").value.trim(),
+              password: el("password").value.trim(),
+            },
+          });
+          showSecret("Send this login to the IT manager", data.login.email, data.login.password);
+        }
+        await loadCustomers();
+      } catch (e) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = e.message;
+      }
+    });
+
+    el("btn-reset").addEventListener("click", async () => {
+      if (!selectedId) return;
+      try {
+        const data = await api("/api/admin/customers/" + selectedId + "/reset-password", { method: "POST", body: {} });
+        showSecret("New password", data.email, data.password);
+      } catch (e) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = e.message;
+      }
+    });
+
+    el("btn-manual").addEventListener("click", async () => {
+      if (!selectedId) return;
+      if (!confirm("Issue a signed license and receipt without Paystack? Use this only if they paid by bank or MoMo outside this portal.")) return;
+      try {
+        await api("/api/admin/customers/" + selectedId + "/issue-manual", { method: "POST", body: { notes: "Manual issue from admin" } });
+        el("form-msg").className = "ok-msg";
+        el("form-msg").textContent = "License issued.";
+        await loadCustomers();
+        const c = customers.find((x) => String(x.id) === String(selectedId));
+        if (c) fillForm(c);
+      } catch (e) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = e.message;
+      }
+    });
+
+    (async () => {
+      const me = await requireSession();
+      if (me.user.role !== "admin") {
+        window.location.href = "/dashboard";
+        return;
+      }
+      el("who").textContent = me.user.email;
+      await loadCustomers();
+    })();
+  </script>
+</body>
+</html>

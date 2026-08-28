@@ -129,8 +129,8 @@
               </tbody>
             </q-markup-table>
             <q-card-section class="text-caption text-grey-7">
-              Replacing a license: paste the new signed JSON below and activate. The previous file is overwritten; history
-              above keeps a record of each activation.
+              Replacing a license: use <strong>Renew from portal</strong> after payment. Manual paste still works as a backup.
+              History above keeps a record of each activation.
             </q-card-section>
           </q-card>
 
@@ -170,12 +170,37 @@
             </q-card-section>
           </q-card>
 
-          <q-card flat bordered>
-            <q-card-section class="text-h6">Import or replace license</q-card-section>
+          <q-card flat bordered class="q-mb-md">
+            <q-card-section class="text-h6">Renew from the portal</q-card-section>
             <q-separator />
             <q-card-section>
               <p class="text-body2 q-mb-md">
-                When you receive a longer renewal, activate it here; it replaces the stored file. You need the
+                After the hospital pays on the license portal, HMS can collect the file itself. No JSON paste and no
+                setup token. This applies the month that is paid <strong>and already started</strong> — not a future month.
+              </p>
+              <div class="row q-gutter-sm">
+                <q-btn
+                  color="primary"
+                  unelevated
+                  label="Renew from portal"
+                  icon="cloud_download"
+                  :loading="pullLoading"
+                  :disable="authStore.isAuthenticated && !canImport"
+                  @click="pullFromPortal"
+                />
+              </div>
+              <p v-if="pullHint" class="text-caption q-mt-sm" :class="pullHintOk ? 'text-positive' : 'text-grey-7'">
+                {{ pullHint }}
+              </p>
+            </q-card-section>
+          </q-card>
+
+          <q-card flat bordered class="q-mb-md q-mt-md">
+            <q-card-section class="text-h6">Manual import (backup)</q-card-section>
+            <q-separator />
+            <q-card-section>
+              <p class="text-body2 q-mb-md">
+                Use this only if HMS cannot reach the portal. Paste the downloaded JSON and
                 <strong>LICENSE_SETUP_TOKEN</strong> from the HMS server environment.
               </p>
               <q-input
@@ -229,6 +254,9 @@ const authStore = useAuthStore();
 const setupToken = ref('');
 const jsonText = ref('');
 const loading = ref(false);
+const pullLoading = ref(false);
+const pullHint = ref('');
+const pullHintOk = ref(false);
 const statusLoading = ref(true);
 const publicStatus = ref(null);
 const summary = ref(null);
@@ -323,6 +351,33 @@ const runAnalyze = async () => {
     }
   } finally {
     analyzeLoading.value = false;
+  }
+};
+
+const pullFromPortal = async () => {
+  if (authStore.isAuthenticated && !canImport.value) {
+    Notify.create({ type: 'warning', message: 'Only Admin or Management can renew the license.', position: 'top' });
+    return;
+  }
+  pullLoading.value = true;
+  pullHint.value = '';
+  try {
+    const { data } = await licenseAPI.pullFromPortal();
+    clearLicensePublicCache();
+    pullHintOk.value = true;
+    pullHint.value = data.detail || 'License updated from the portal.';
+    Notify.create({ type: 'positive', message: pullHint.value, position: 'top' });
+    await loadData();
+    if (!authStore.isAuthenticated) {
+      router.push('/login');
+    }
+  } catch (e) {
+    pullHintOk.value = false;
+    const msg = e.response?.data?.detail || e.message || 'Could not renew from the portal';
+    pullHint.value = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    Notify.create({ type: 'negative', message: pullHint.value, position: 'top' });
+  } finally {
+    pullLoading.value = false;
   }
 };
 

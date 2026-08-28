@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Profile — License Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/dashboard">
+      <div class="mark" data-brand-mark>L</div>
+      <div>
+        <div class="brand-name" data-brand-name>License Portal</div>
+        <div class="brand-sub">Account</div>
+      </div>
+    </a>
+    <div class="topbar-actions">
+      <a class="btn ghost" id="home-link" href="/dashboard">Back</a>
+      <span class="muted" id="who"></span>
+      <button type="button" class="ghost" id="btn-logout">Sign out</button>
+    </div>
+  </header>
+  <main class="wrap" style="max-width:640px">
+    <p class="kicker">Your account</p>
+    <h1 class="hero-line">Profile</h1>
+    <section class="card" style="margin-top:1.2rem">
+      <h2>Login</h2>
+      <p class="muted" id="hospital-line">Hospital</p>
+      <label>Email</label>
+      <input id="email" disabled />
+      <label>Current password</label>
+      <input id="current_password" type="password" autocomplete="current-password" />
+      <label>New password</label>
+      <input id="new_password" type="password" autocomplete="new-password" />
+      <label>Confirm new password</label>
+      <input id="confirm_password" type="password" autocomplete="new-password" />
+      <div class="actions">
+        <button type="button" class="gold" id="btn-save">Update password</button>
+      </div>
+      <p class="err" id="msg"></p>
+    </section>
+  </main>
+  <script src="/js/api.js"></script>
+  <script>
+    const el = (id) => document.getElementById(id);
+
+    (async () => {
+      const me = await requireSession();
+      el("who").textContent = me.user.email;
+      el("email").value = me.user.email || "";
+      el("home-link").href = me.user.role === "admin" ? "/admin" : "/dashboard";
+      document.querySelector(".brand").href = el("home-link").href;
+      if (me.customer && me.customer.hospital_name) {
+        el("hospital-line").textContent = me.customer.hospital_name + (me.customer.facility_code ? ` · ${me.customer.facility_code}` : "");
+      } else {
+        el("hospital-line").textContent = me.user.role === "admin" ? "Issuer admin" : "Hospital account";
+      }
+    })();
+
+    el("btn-logout").addEventListener("click", logout);
+    el("btn-save").addEventListener("click", async () => {
+      el("msg").className = "err";
+      el("msg").textContent = "";
+      const next = el("new_password").value;
+      if (next !== el("confirm_password").value) {
+        el("msg").textContent = "New password and confirmation do not match.";
+        return;
+      }
+      try {
+        await api("/api/me/password", {
+          method: "POST",
+          body: {
+            current_password: el("current_password").value,
+            new_password: next,
+          },
+        });
+        el("current_password").value = "";
+        el("new_password").value = "";
+        el("confirm_password").value = "";
+        el("msg").className = "ok-msg";
+        el("msg").textContent = "Password updated.";
+      } catch (e) {
+        el("msg").textContent = e.message;
+      }
+    });
+  </script>
+</body>
+</html>

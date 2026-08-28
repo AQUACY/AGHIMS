@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in — License Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="login-shell">
+    <section class="login-editorial">
+      <div>
+        <a class="brand" href="/">
+          <div class="mark" data-brand-mark>L</div>
+          <div>
+            <div class="brand-name" data-brand-name id="company">License Portal</div>
+            <div class="brand-sub">Self-service renewal</div>
+          </div>
+        </a>
+        <p class="kicker" style="margin-top:3.2rem">For hospital IT</p>
+        <h1 class="hero-line">Pay once a month.<br>Renew without waiting on anyone.</h1>
+        <p class="muted" style="max-width:34rem">You pay for the next month from when the current license ends — the same way Starlink or Netflix renews. HMS then picks up the paid month itself.</p>
+        <div class="steps" style="margin-top:2rem; max-width:36rem">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div>
+              <h3>Pay here</h3>
+              <p class="muted">Card or mobile money via Paystack. Invoice is created immediately; receipt after payment succeeds.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div>
+              <h3>HMS applies it</h3>
+              <p class="muted">When the paid month starts, HMS pulls the license automatically. Or open License in HMS and click Renew from portal. Download JSON remains a backup.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div>
+              <h3>Give finance the PDFs</h3>
+              <p class="muted">Invoice and receipt are for management. They are not needed to activate HMS.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="footnote">If you paid early, HMS keeps the current month until the new one starts. Do not replace a live file with a future month.</p>
+    </section>
+    <section class="login-panel">
+      <div class="login-wrap">
+        <div class="card">
+          <p class="kicker">Account</p>
+          <h1 class="hero-line" style="font-size:1.85rem">Sign in</h1>
+          <p class="muted">Use the login your vendor sent to the IT manager.</p>
+          <label for="email">Email or username</label>
+          <input id="email" type="text" autocomplete="username" />
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" />
+          <div class="actions">
+            <button type="button" class="gold" id="btn-login">Continue</button>
+          </div>
+          <p class="err" id="msg"></p>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script src="/js/api.js"></script>
+  <script>
+    api("/api/me").then((me) => {
+      window.location.href = me.user.role === "admin" ? "/admin" : "/dashboard";
+    }).catch(() => {});
+
+    async function login() {
+      const msg = document.getElementById("msg");
+      msg.textContent = "";
+      try {
+        const data = await api("/api/auth/login", {
+          method: "POST",
+          body: {
+            email: document.getElementById("email").value.trim(),
+            password: document.getElementById("password").value,
+          },
+        });
+        window.location.href = data.user.role === "admin" ? "/admin" : "/dashboard";
+      } catch (e) {
+        msg.textContent = e.message || "Login failed";
+      }
+    }
+    document.getElementById("btn-login").addEventListener("click", login);
+    document.getElementById("password").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") login();
+    });
+  </script>
+</body>
+</html>
