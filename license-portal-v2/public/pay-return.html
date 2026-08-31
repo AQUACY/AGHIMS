@@ -42,11 +42,49 @@
   <script>
     const params = new URLSearchParams(location.search);
     const reference = params.get("reference") || params.get("trxref") || "";
+    const cancelled = ["1", "true", "yes"].includes(String(params.get("cancelled") || params.get("cancel") || "").toLowerCase());
+
+    function showRetryButton(payment) {
+      if (!payment || !paymentRetryable(payment)) return;
+      const actions = document.querySelector(".actions");
+      if (!actions || actions.querySelector("[data-retry-pay]")) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "gold";
+      btn.textContent = "Retry payment";
+      btn.setAttribute("data-retry-pay", String(payment.id));
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          const retry = await api("/api/payments/" + payment.id + "/retry", { method: "POST", body: {} });
+          if (retry.authorization_url) {
+            window.location.href = retry.authorization_url;
+            return;
+          }
+          window.location.href = "/dashboard";
+        } catch (e) {
+          document.getElementById("msg").textContent = e.message;
+          btn.disabled = false;
+        }
+      });
+      actions.insertBefore(btn, actions.firstChild);
+    }
 
     async function poll() {
       if (!reference) {
         document.getElementById("title").textContent = "Missing reference";
         document.getElementById("detail").textContent = "Return to the dashboard and try again.";
+        return;
+      }
+      if (cancelled) {
+        document.getElementById("title").textContent = "Payment cancelled";
+        document.getElementById("detail").textContent = "Retry payment to open Paystack again for the same month.";
+        try {
+          const data = await api("/api/pay/status?reference=" + encodeURIComponent(reference));
+          showRetryButton(data.payment);
+        } catch (e) {
+          document.getElementById("msg").textContent = e.message;
+        }
         return;
       }
       let attempts = 0;
@@ -77,8 +115,15 @@
             return;
           }
           if (payment && payment.status === "failed") {
-            document.getElementById("title").textContent = "Payment failed";
-            document.getElementById("detail").textContent = "No license was issued. Try again from the dashboard.";
+            document.getElementById("title").textContent = "Payment not completed";
+            document.getElementById("detail").textContent = "No license was issued. Retry to open Paystack again for the same month.";
+            showRetryButton(payment);
+            return;
+          }
+          if (payment && paymentRetryable(payment) && (data.paystack_status === "abandoned" || data.paystack_status === "failed")) {
+            document.getElementById("title").textContent = "Payment cancelled";
+            document.getElementById("detail").textContent = "Retry payment to start a new MoMo or card checkout for the same month.";
+            showRetryButton(payment);
             return;
           }
         } catch (e) {
@@ -86,9 +131,15 @@
         }
         await new Promise((r) => setTimeout(r, 2000));
       }
-      document.getElementById("title").textContent = "Still confirming";
+      document.getElementById("title").textContent = "Payment not completed";
       document.getElementById("detail").textContent =
-        "Paystack has not confirmed yet. Open the dashboard shortly — the receipt appears after the webhook arrives.";
+        "Paystack did not confirm this checkout. Retry payment for the same month, or return to the dashboard.";
+      try {
+        const data = await api("/api/pay/status?reference=" + encodeURIComponent(reference));
+        showRetryButton(data.payment);
+      } catch (_) {
+        /* dashboard retry still works */
+      }
     }
     poll();
   </script>

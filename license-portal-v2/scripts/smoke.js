@@ -27,6 +27,10 @@ process.env.VERIFY_SHARED_SECRET = "smoke-verify-secret";
 process.env.RSA_PRIVATE_KEY_FILE = keyPath;
 process.env.PUBLIC_BASE_URL = "http://127.0.0.1";
 process.env.COMPANY_NAME = "Smoke Test Ltd";
+process.env.COMPANY_INITIALS = "STL";
+process.env.COMPANY_EMAIL = "billing@smoke.test";
+process.env.SMTP_HOST = "test";
+process.env.CRON_SECRET = "smoke-cron";
 process.env.PAYSTACK_SECRET_KEY = "sk_test_smoke";
 process.env.DOTENV_CONFIG_PATH = path.join(tmp, "no.env");
 
@@ -91,8 +95,46 @@ async function main() {
     if (created.json.login.password !== "it-pass-1234") throw new Error("password not returned");
 
     const { getDb, nowSql } = require("../src/db");
-    const pendingRef = "LPV2-smoke-ref-1";
     const ts = nowSql();
+    await getDb().query(
+      `INSERT INTO payments
+        (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,
+         duration_months, status, channel, paid_at, period_from, period_until, raw_payload, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        customerId,
+        null,
+        "LPV2-smoke-open",
+        null,
+        250000,
+        "GHS",
+        1,
+        "pending",
+        "paystack",
+        null,
+        "2026-09-01 00:00:00",
+        "2026-09-30 23:59:59",
+        null,
+        null,
+        ts,
+        ts,
+      ]
+    );
+    const itLoginOpen = await req(server, "/api/auth/login", {
+      method: "POST",
+      body: { email: "it@ridge.test", password: "it-pass-1234" },
+    });
+    if (itLoginOpen.status !== 200) throw new Error(`it login: ${itLoginOpen.text}`);
+    const meOpen = await req(server, "/api/me", { token: itLoginOpen.json.access_token });
+    const nextFrom = meOpen.json && meOpen.json.next_period && meOpen.json.next_period.valid_from;
+    if (!String(nextFrom || "").startsWith("2026-09-01")) {
+      throw new Error(`open pending must not skip next month, got ${JSON.stringify(meOpen.json && meOpen.json.next_period)}`);
+    }
+    const openRow = (meOpen.json.payments || [])[0];
+    if (!openRow || !openRow.can_retry) throw new Error("pending Paystack row should be retryable");
+    await getDb().query("DELETE FROM payments WHERE customer_id = ?", [customerId]);
+
+    const pendingRef = "LPV2-smoke-ref-1";
     await getDb().query(
       `INSERT INTO payments
         (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,
@@ -129,22 +171,26 @@ async function main() {
     const issued = await req(server, `/api/admin/customers/${customerId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "smoke" },
+      body: { notes: "smoke", period_from: "2026-09-01T00:00:00Z", period_until: "2026-09-30T23:59:59Z" },
     });
     if (issued.status !== 200) throw new Error(`issue-manual: ${issued.text}`);
     const licenseId = issued.json.license.license_id;
-    if (!issued.json.payment.invoice || !issued.json.payment.receipt) {
-      throw new Error("missing invoice/receipt");
-    }
+    if (!issued.json.payment.is_patch) throw new Error("manual issue should be a patch license");
     if (!issued.json.payment.license_url) throw new Error("missing payment license_url");
+    if (issued.json.payment.download_label !== "Patch license JSON") throw new Error("patch download label");
+    if (issued.json.payment.invoice || issued.json.payment.receipt) {
+      throw new Error("patch license should not create invoice or receipt");
+    }
     const firstPayId = issued.json.payment.id;
     const firstLicense = await req(server, issued.json.payment.license_url, { token: adminToken });
     if (firstLicense.status !== 200) throw new Error(`payment license: ${firstLicense.text}`);
+    const disp = String(firstLicense.headers.get("content-disposition") || "");
+    if (!disp.includes("patch-license")) throw new Error(`expected patch-license filename, got ${disp}`);
 
     const issuedAgain = await req(server, `/api/admin/customers/${customerId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "smoke second month" },
+      body: { notes: "smoke second month", period_from: "2026-10-01T00:00:00Z", period_until: "2026-10-31T23:59:59Z" },
     });
     if (issuedAgain.status !== 200) throw new Error(`issue-manual 2: ${issuedAgain.text}`);
     const secondLicense = await req(server, issuedAgain.json.payment.license_url, { token: adminToken });
@@ -219,6 +265,21 @@ async function main() {
     if (historic.json.claims.valid_from !== firstLicense.json.claims.valid_from) {
       throw new Error("IT manager should download the original month from history");
     }
+    if (!String(me.json.next_period && me.json.next_period.valid_from || "").startsWith("2026-10-01")) {
+      throw new Error(`patch must not skip the next paid month, got ${JSON.stringify(me.json.next_period)}`);
+    }
+    const receiptPay = (me.json.payments || []).find((p) => p.receipt && !p.is_patch);
+    if (!receiptPay) throw new Error("Paystack payment should still have a receipt PDF");
+    const refuseSub = await req(server, `/api/admin/payments/${receiptPay.id}`, { method: "DELETE", token: adminToken });
+    if (refuseSub.status !== 400) {
+      throw new Error(`expected 400 deleting subscription payment, got ${refuseSub.status} ${refuseSub.text}`);
+    }
+    const deleted = await req(server, `/api/admin/payments/${firstPayId}`, { method: "DELETE", token: adminToken });
+    if (deleted.status !== 200) throw new Error(`delete patch: ${deleted.text}`);
+    const gone = await req(server, `/api/payments/${firstPayId}/license.json`, { token: adminToken });
+    if (gone.status === 200) throw new Error("deleted patch license should not download");
+    const stillSecond = await req(server, issuedAgain.json.payment.license_url, { token: adminToken });
+    if (stillSecond.status !== 200) throw new Error("remaining patch should still download");
     const claims = signed.json.claims;
     if (!String(claims.valid_from).endsWith("T00:00:00Z")) {
       throw new Error(`license should start at 00:00:00, got ${claims.valid_from}`);
@@ -230,9 +291,34 @@ async function main() {
       throw new Error(`next_period missing: ${me.text}`);
     }
 
-    const pdf = await req(server, issued.json.payment.receipt.url, { token: itToken });
+    const pdf = await req(server, receiptPay.receipt.url, { token: itToken });
     if (pdf.status !== 200 || !pdf.text.startsWith("%PDF")) {
       throw new Error(`receipt pdf missing, status ${pdf.status}`);
+    }
+    if (!/^STL-RCP-\d{4}-\d{6}$/.test(receiptPay.receipt.doc_number)) {
+      throw new Error(`receipt number format: ${receiptPay.receipt.doc_number}`);
+    }
+    if (!receiptPay.invoice || !/^STL-HMS-\d{4}-\d{6}$/.test(receiptPay.invoice.doc_number)) {
+      throw new Error(`invoice number format: ${JSON.stringify(receiptPay.invoice)}`);
+    }
+    const invoicePdf = await req(server, receiptPay.invoice.url, { token: itToken });
+    if (invoicePdf.status !== 200 || !invoicePdf.text.startsWith("%PDF")) {
+      throw new Error(`invoice pdf missing, status ${invoicePdf.status}`);
+    }
+    const verified = await req(server, `/api/verify/receipt/${receiptPay.receipt.doc_number}`);
+    if (verified.status !== 200 || !verified.json.genuine || verified.json.payment_status !== "PAID") {
+      throw new Error(`receipt verify api: ${verified.text}`);
+    }
+    if (verified.json.invoice_no !== receiptPay.invoice.doc_number) {
+      throw new Error("verified receipt should cite the invoice number");
+    }
+    const verifyPage = await req(server, `/verify/${receiptPay.receipt.doc_number}`);
+    if (verifyPage.status !== 200 || !verifyPage.text.includes("PAYMENT RECEIPT")) {
+      throw new Error("verify page should load for a genuine receipt");
+    }
+    const fakeVerify = await req(server, "/api/verify/receipt/STL-RCP-1999-999999");
+    if (fakeVerify.status !== 404 || fakeVerify.json.genuine !== false) {
+      throw new Error(`expected 404 for unknown receipt, got ${fakeVerify.status} ${fakeVerify.text}`);
     }
 
     const badPw = await req(server, "/api/me/password", {
@@ -287,7 +373,11 @@ async function main() {
     const coverIssue = await req(server, `/api/admin/customers/${coverId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "covering now" },
+      body: {
+        notes: "covering now",
+        period_from: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        period_until: new Date(Date.now() + 10 * 24 * 3600 * 1000).toISOString(),
+      },
     });
     if (coverIssue.status !== 200) throw new Error(`cover issue: ${coverIssue.text}`);
     const denied = await req(server, "/api/license/current", {
@@ -304,17 +394,40 @@ async function main() {
     if (current.status !== 200 || !current.json.ok || !current.json.document) {
       throw new Error(`current license pull: ${current.text}`);
     }
+    const coverIssue2 = await req(server, `/api/admin/customers/${coverId}/issue-manual`, {
+      method: "POST",
+      token: adminToken,
+      body: {
+        notes: "newer covering patch",
+        period_from: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+        period_until: new Date(Date.now() + 11 * 24 * 3600 * 1000).toISOString(),
+      },
+    });
+    if (coverIssue2.status !== 200) throw new Error(`cover issue 2: ${coverIssue2.text}`);
+    const replaced = await req(server, "/api/license/current", {
+      method: "POST",
+      headers: { "X-License-Server-Key": "smoke-verify-secret" },
+      body: { facility_code: "COVER01" },
+    });
+    if (replaced.status !== 200 || !replaced.json.ok) throw new Error(`replaced pull: ${replaced.text}`);
+    if (replaced.json.document.claims.valid_from === current.json.document.claims.valid_from) {
+      throw new Error("newer covering patch should replace the HMS current file");
+    }
     await req(server, `/api/admin/customers/${coverId}/issue-manual`, {
       method: "POST",
       token: adminToken,
-      body: { notes: "future month" },
+      body: {
+        notes: "future month",
+        period_from: new Date(Date.now() + 40 * 24 * 3600 * 1000).toISOString(),
+        period_until: new Date(Date.now() + 70 * 24 * 3600 * 1000).toISOString(),
+      },
     });
     const stillCurrent = await req(server, "/api/license/current", {
       method: "POST",
       headers: { "X-License-Server-Key": "smoke-verify-secret" },
       body: { facility_code: "COVER01" },
     });
-    if (stillCurrent.json.document.claims.valid_from !== current.json.document.claims.valid_from) {
+    if (stillCurrent.json.document.claims.valid_from !== replaced.json.document.claims.valid_from) {
       throw new Error("HMS pull must keep the in-force month, not a future prepaid month");
     }
 
@@ -326,6 +439,62 @@ async function main() {
     if (patched.json.customer.amount_ghs !== 4500 || patched.json.customer.duration_months !== 6) {
       throw new Error(`patch failed: ${patched.text}`);
     }
+
+    const { capturedMails } = require("../src/mailer");
+    const { runScheduledReminders } = require("../src/reminders");
+    capturedMails.length = 0;
+    const dayCust = await req(server, "/api/admin/customers", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        hospital_name: "Day Notice Clinic",
+        facility_code: "DAY01",
+        amount_ghs: 500,
+        duration_months: 1,
+        billing_deadline: new Date(Date.now() + 20 * 3600 * 1000).toISOString(),
+        email: "it@day.test",
+        password: "day-pass-1234",
+      },
+    });
+    if (dayCust.status !== 201) throw new Error(`day customer: ${dayCust.text}`);
+    const hourCust = await req(server, "/api/admin/customers", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        hospital_name: "Hour Notice Clinic",
+        facility_code: "HOUR01",
+        amount_ghs: 500,
+        duration_months: 1,
+        billing_deadline: new Date(Date.now() + 40 * 60 * 1000).toISOString(),
+        email: "it@hour.test",
+        password: "hour-pass-1234",
+      },
+    });
+    if (hourCust.status !== 201) throw new Error(`hour customer: ${hourCust.text}`);
+    const batch = await runScheduledReminders();
+    if (!capturedMails.some((m) => m.to === "it@day.test" && m.kind === "day")) {
+      throw new Error(`expected 24-hour notice, sent=${batch.sent} ${JSON.stringify(capturedMails.map((m) => m.kind + ":" + m.to))}`);
+    }
+    if (!capturedMails.some((m) => m.to === "it@hour.test" && m.kind === "hour")) {
+      throw new Error(`expected 1-hour notice, sent=${batch.sent}`);
+    }
+    const afterFirst = capturedMails.length;
+    await runScheduledReminders();
+    if (capturedMails.length !== afterFirst) throw new Error("scheduled reminders must not duplicate");
+    const manual = await req(server, `/api/admin/customers/${dayCust.json.customer.id}/remind`, {
+      method: "POST",
+      token: adminToken,
+    });
+    if (manual.status !== 200 || manual.json.kind !== "manual") {
+      throw new Error(`manual reminder: ${manual.status} ${manual.text}`);
+    }
+    const deniedCron = await req(server, "/api/cron/reminders", { method: "POST" });
+    if (deniedCron.status !== 403) throw new Error(`cron without key: ${deniedCron.status}`);
+    const cronOk = await req(server, "/api/cron/reminders", {
+      method: "GET",
+      headers: { "X-Cron-Key": "smoke-cron" },
+    });
+    if (cronOk.status !== 200) throw new Error(`cron with key: ${cronOk.text}`);
 
     console.log("smoke ok");
   } finally {

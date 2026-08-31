@@ -246,21 +246,32 @@ def _verify_stored_document(db: Session, row: AppLicenseState) -> Tuple[bool, Op
     return True, None, claims
 
 
+def _normalize_portal_base(url: str) -> str:
+    """HMS posts to {base}/license/current and {base}/verify/online (portal v2 lives under /api)."""
+    base = (url or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if not base.lower().endswith("/api"):
+        base = f"{base}/api"
+    return base
+
+
 def _portal_credentials() -> Tuple[Optional[str], Optional[str]]:
-    base = (getattr(settings, "LICENSE_VERIFY_URL", "") or "").strip().rstrip("/")
+    base = _normalize_portal_base(getattr(settings, "LICENSE_VERIFY_URL", "") or "")
     api_key = (getattr(settings, "LICENSE_VERIFY_API_KEY", "") or "").strip()
     if not base or not api_key:
         return None, None
     return base, api_key
 
 
-def _portal_post(path: str, payload: Dict[str, Any], timeout: int = 12) -> Optional[Dict[str, Any]]:
+def _portal_post(path: str, payload: Dict[str, Any], timeout: int = 12) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     base, api_key = _portal_credentials()
     if not base:
-        return None
+        return None, "LICENSE_VERIFY_URL is not set."
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    url = f"{base}{path}"
     req = urllib.request.Request(
-        f"{base}{path}",
+        url,
         data=body,
         method="POST",
         headers={
@@ -271,9 +282,28 @@ def _portal_post(path: str, payload: Dict[str, Any], timeout: int = 12) -> Optio
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             parsed = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        parsed = None
+        try:
+            parsed = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed, None
+        if exc.code == 403:
+            return None, "Portal rejected LICENSE_VERIFY_API_KEY. It must match VERIFY_SHARED_SECRET on the license portal."
+        if exc.code == 404:
+            return None, f"License portal has no {path}. Set LICENSE_VERIFY_URL to the /api base, e.g. https://hms.kdgsolution.com/api"
+        return None, f"License portal returned HTTP {exc.code}."
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        return None, f"Could not reach the license portal ({reason}). Check LICENSE_VERIFY_URL and the network."
+    except (TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        return None, f"License portal response was not usable ({exc})."
+    if not isinstance(parsed, dict):
+        return None, "License portal returned a non-JSON object."
+    return parsed, None
 
 
 def pull_and_activate_from_portal(db: Session, force: bool = False) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
@@ -294,12 +324,12 @@ def pull_and_activate_from_portal(db: Session, force: bool = False) -> Tuple[boo
             "Set this hospital's facility code (must match the portal), or import a license once.",
             None,
         )
-    payload = _portal_post(
+    payload, transport_err = _portal_post(
         "/license/current",
         {"license_id": license_id, "facility_code": facility_code},
     )
     if not payload:
-        return False, "Could not reach the license portal. Check LICENSE_VERIFY_URL and the network.", None
+        return False, transport_err or "Could not reach the license portal. Check LICENSE_VERIFY_URL and the network.", None
     if not payload.get("ok"):
         reason = payload.get("reason") or ""
         if reason == "not_yet":
@@ -365,7 +395,7 @@ def _try_online_refresh(
     claims = _claims_from_stored(row) or claims or {}
     license_id = (claims.get("license_id") or row.license_public_id or "").strip()
     facility_code = _facility_code(db)
-    payload = _portal_post(
+    payload, _transport_err = _portal_post(
         "/verify/online",
         {"license_id": license_id, "facility_code": facility_code},
     )

@@ -152,10 +152,15 @@ button, .btn {
 button.primary, .btn.primary { background: var(--ivory); color: #111; }
 button.gold, .btn.gold { background: var(--accent); color: #1b1408; }
 button.ghost, .btn.ghost { background: transparent; color: var(--ivory); border: 1px solid var(--line); }
-button:disabled { opacity: 0.55; cursor: not-allowed; }
+button.compact, .btn.compact {
+  padding: 0.32rem 0.75rem;
+  font-size: 0.78rem;
+}
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
 
 table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.table-wrap { overflow-x: auto; }
+td.action-cell { white-space: nowrap; }
 th, td { text-align: left; padding: 0.7rem 0.45rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 500; }
 tr.clickable { cursor: pointer; }
@@ -259,6 +264,21 @@ code { font-size: 0.85em; color: var(--ok); }
 }
 
 .footnote { font-size: 0.8rem; color: var(--muted); margin-top: 1.2rem; }
+
+.verify-wrap { max-width: 640px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+.verify-sheet .hero-line { font-size: 2.1rem; margin: 0.2rem 0 0.4rem; }
+.verify-rows { margin-top: 1.2rem; }
+.verify-row {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr;
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.95rem;
+}
+.verify-row .k { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.verify-lookup { margin-top: 1.2rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.verify-lookup input { flex: 1; min-width: 220px; }
 
 @media print {
   .topbar, button, .tabs, .actions, .login-editorial { display: none !important; }

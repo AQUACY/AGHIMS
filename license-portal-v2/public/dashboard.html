@@ -50,6 +50,7 @@
         </div>
         <div class="actions">
           <button type="button" class="gold" id="btn-pay">Pay with Paystack</button>
+          <button type="button" class="gold" id="btn-retry-open" style="display:none">Retry payment</button>
           <a class="btn ghost" id="dl-license" href="/api/license/signed.json" style="display:none">Download license JSON</a>
         </div>
         <p class="err" id="pay-msg"></p>
@@ -58,7 +59,7 @@
       <section class="card">
         <p class="kicker">For management</p>
         <h2>Latest files</h2>
-        <p class="muted">Invoice and receipt for management. License JSON is also listed under each paid month in history.</p>
+        <p class="muted">Download the invoice for accounts so they can arrange payment on this site. The receipt is issued only after Paystack confirms — it is the proof of payment. A QR code on the receipt opens a public verify page.</p>
         <div id="docs"><p class="muted">Documents appear after you start or complete payment.</p></div>
       </section>
     </div>
@@ -72,7 +73,7 @@
           <div class="step-num">1</div>
           <div>
             <h3>Pay for the next month</h3>
-            <p class="muted">Use Pay with Paystack above when it is time to renew. Invoice and receipt are for management.</p>
+            <p class="muted">Use Pay with Paystack above when it is time to renew. Download the invoice first if finance needs a reference. The receipt appears after payment succeeds.</p>
           </div>
         </div>
         <div class="step">
@@ -99,8 +100,8 @@
 
     <section class="card" style="margin-top:1.1rem">
       <h2>Payment history</h2>
-      <p class="muted">Each successful payment keeps its own license JSON, invoice, and receipt. Download an earlier month if you need to restore that file on HMS.</p>
-      <div id="history"></div>
+      <p class="muted">If you closed or cancelled Paystack, use <strong>Retry payment</strong> on that row. It opens a new checkout for the same month. A <strong>patch</strong> row is a manually issued file, not a Paystack payment — pay here when you want the usual subscription month to replace it.</p>
+      <div id="history" class="table-wrap"></div>
     </section>
   </main>
   <script src="/js/api.js"></script>
@@ -109,23 +110,24 @@
 
     function fileLinks(p) {
       return [
-        p.license_url ? `<a href="${p.license_url}">License JSON</a>` : "",
+        p.license_url ? `<a href="${p.license_url}">${escapeHtml(p.download_label || "License JSON")}</a>` : "",
         p.invoice ? `<a href="${p.invoice.url}">Invoice</a>` : "",
         p.receipt ? `<a href="${p.receipt.url}">Receipt</a>` : "",
       ].filter(Boolean).join(" · ");
     }
 
     function renderDocs(payments) {
-      const paid = (payments || []).find((p) => p.status === "success") || (payments || []).find((p) => p.receipt) || (payments || [])[0];
-      if (!paid) {
-        el("docs").innerHTML = "<p class='muted'>Pay to generate an invoice. The receipt and license file appear after Paystack confirms.</p>";
+      const latest = (payments || []).find((p) => p.invoice || p.receipt);
+      if (!latest) {
+        el("docs").innerHTML = "<p class='muted'>Start checkout to download an invoice for accounts. The receipt appears after Paystack confirms.</p>";
         return;
       }
       let html = "";
-      if (paid.period_label) html += `<p class="muted">${escapeHtml(paid.period_label)}</p>`;
-      if (paid.license_url) html += `<p><a href="${paid.license_url}">License JSON</a></p>`;
-      if (paid.invoice) html += `<p><a href="${paid.invoice.url}">Invoice ${escapeHtml(paid.invoice.doc_number)}</a></p>`;
-      if (paid.receipt) html += `<p><a href="${paid.receipt.url}">Receipt ${escapeHtml(paid.receipt.doc_number)}</a></p>`;
+      if (latest.period_label) html += `<p class="muted">${escapeHtml(latest.period_label)}</p>`;
+      if (latest.invoice) html += `<p><a href="${latest.invoice.url}">Invoice ${escapeHtml(latest.invoice.doc_number)}</a></p>`;
+      if (latest.receipt) html += `<p><a href="${latest.receipt.url}">Receipt ${escapeHtml(latest.receipt.doc_number)}</a></p>`;
+      else html += `<p class="muted">Receipt is issued after a successful Paystack payment.</p>`;
+      if (latest.license_url) html += `<p><a href="${latest.license_url}">${escapeHtml(latest.download_label || "License JSON")}</a></p>`;
       el("docs").innerHTML = html || "<p class='muted'>Documents will appear after checkout.</p>";
     }
 
@@ -134,18 +136,37 @@
         el("history").innerHTML = "<p class='muted'>No payments yet.</p>";
         return;
       }
-      let html = "<table><thead><tr><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th></tr></thead><tbody>";
+      let html = "<table><thead><tr><th>Coverage</th><th>Amount</th><th>Status</th><th>Reference</th><th>Files</th><th>Action</th></tr></thead><tbody>";
       for (const p of payments) {
+        const retry = paymentRetryable(p)
+          ? `<button type="button" class="gold compact" data-retry="${p.id}">Retry payment</button>`
+          : "—";
         html += `<tr>
           <td>${escapeHtml(p.period_label || p.period_title || fmtDt(p.paid_at || p.created_at))}</td>
           <td>${escapeHtml(p.amount_label)}</td>
-          <td>${statusPill(p.status)}</td>
+          <td>${p.is_patch ? statusPill("patch") : statusPill(p.status)}</td>
           <td><code>${escapeHtml(p.reference)}</code></td>
           <td>${fileLinks(p) || "—"}</td>
+          <td class="action-cell">${retry}</td>
         </tr>`;
       }
       html += "</tbody></table>";
       el("history").innerHTML = html;
+    }
+
+    async function startCheckout(path) {
+      el("pay-msg").textContent = "";
+      const data = await api(path, { method: "POST", body: {} });
+      if (data.fulfilled && data.payment && data.payment.status === "success") {
+        el("pay-msg").textContent = "Paystack already confirmed this payment. Reloading…";
+        await load();
+        return;
+      }
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+        return;
+      }
+      throw new Error("Paystack did not return a checkout URL");
     }
 
     async function load() {
@@ -171,13 +192,21 @@
       if (latestPaid && latestPaid.license_url) {
         el("dl-license").href = latestPaid.license_url;
         el("dl-license").style.display = "inline-flex";
-        el("dl-license").textContent = latestPaid.period_title
-          ? `Download ${latestPaid.period_title} license`
-          : "Download latest license JSON";
-        el("current-line").textContent = latestPaid.period_label
-          ? `Latest paid file: ${latestPaid.period_label}. Earlier months are in Payment history.`
-          : "Latest paid license is ready. Earlier months are in Payment history.";
-        el("status-pill").innerHTML = statusPill("active");
+        el("dl-license").textContent = latestPaid.is_patch
+          ? (latestPaid.download_label || "Patch license JSON")
+          : latestPaid.period_title
+            ? `Download ${latestPaid.period_title} license`
+            : "Download latest license JSON";
+        if (latestPaid.is_patch) {
+          el("current-line").textContent = latestPaid.period_label
+            ? `Patch license (not a subscription payment): ${latestPaid.period_label}. HMS Renew from portal will replace the current file if this window covers today.`
+            : "A patch license is ready. HMS Renew from portal will apply it if the window covers today.";
+        } else {
+          el("current-line").textContent = latestPaid.period_label
+            ? `Latest paid file: ${latestPaid.period_label}. Earlier months are in Payment history.`
+            : "Latest paid license is ready. Earlier months are in Payment history.";
+        }
+        el("status-pill").innerHTML = latestPaid.is_patch ? statusPill("patch") : statusPill("active");
       } else if (me.license) {
         el("current-line").textContent = `Current file on this portal: ${fmtPeriod(me.license.valid_from, me.license.valid_until)}`;
         el("dl-license").style.display = "inline-flex";
@@ -188,24 +217,49 @@
       }
       renderDocs(me.payments || []);
       renderHistory(me.payments || []);
+      const openPay = (me.payments || []).find((p) => paymentRetryable(p));
+      const retryOpen = el("btn-retry-open");
+      if (openPay) {
+        el("btn-pay").style.display = "none";
+        retryOpen.style.display = "inline-flex";
+        retryOpen.textContent = "Retry payment";
+        retryOpen.setAttribute("data-retry", String(openPay.id));
+        el("status-pill").innerHTML = statusPill(openPay.status === "pending" ? "pending" : "failed");
+        el("import-hint").textContent =
+          "Your last Paystack checkout did not finish. Retry payment to open a new MoMo or card prompt for the same month.";
+      } else {
+        el("btn-pay").style.display = "inline-flex";
+        el("btn-pay").textContent = "Pay with Paystack";
+        retryOpen.style.display = "none";
+        retryOpen.removeAttribute("data-retry");
+      }
     }
 
     el("btn-logout").addEventListener("click", logout);
     el("btn-pay").addEventListener("click", async () => {
-      el("pay-msg").textContent = "";
       el("btn-pay").disabled = true;
       try {
-        const data = await api("/api/pay/initialize", { method: "POST", body: {} });
-        if (data.authorization_url) {
-          window.location.href = data.authorization_url;
-          return;
-        }
-        throw new Error("Paystack did not return a checkout URL");
+        await startCheckout("/api/pay/initialize");
       } catch (e) {
         el("pay-msg").textContent = e.message;
         el("btn-pay").disabled = false;
       }
     });
+    async function runRetry(btn) {
+      if (!btn) return;
+      const id = btn.getAttribute("data-retry");
+      if (!id) return;
+      btn.disabled = true;
+      el("pay-msg").textContent = "";
+      try {
+        await startCheckout("/api/payments/" + id + "/retry");
+      } catch (e) {
+        el("pay-msg").textContent = e.message;
+        btn.disabled = false;
+      }
+    }
+    el("btn-retry-open").addEventListener("click", (ev) => runRetry(ev.currentTarget));
+    el("history").addEventListener("click", (ev) => runRetry(ev.target.closest("[data-retry]")));
 
     load().catch((e) => { el("pay-msg").textContent = e.message; });
   </script>

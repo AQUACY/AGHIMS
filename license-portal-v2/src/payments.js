@@ -1,10 +1,10 @@
 const path = require("path");
 const { config } = require("./config");
 const { getDb, nowSql, lockClause } = require("./db");
-const { getLicenseByCustomer, extendLicenseForCustomer, nextDocNumber, computePurchasedPeriod, pendingPeriodsForCustomer, serializePeriod, latestPaidPayment, signedDocumentFor } = require("./license");
-const { writeInvoicePdf, writeReceiptPdf, relativeDocumentPath, documentAbsPath } = require("./pdfs");
+const { getLicenseByCustomer, extendLicenseForCustomer, nextDocNumber, computePurchasedPeriod, serializePeriod, latestPaidPayment, signedDocumentFor } = require("./license");
+const { writeInvoicePdf, writeReceiptPdf, relativeDocumentPath, documentAbsPath, licenceServiceTitle, taxNote } = require("./pdfs");
 const { initializeTransaction, verifyTransaction } = require("./paystack");
-const { formatGhs, pesewasToGhsNumber, randomUuid, utcNow, toSqlDatetime, parseDatetime, formatPeriodLabel, periodMonthTitle, toDatetimeLocalValue } = require("./dates");
+const { formatGhs, pesewasToGhsNumber, randomUuid, utcNow, toSqlDatetime, parseDatetime, parseAdminDatetime, formatPeriodLabel, formatLicencePeriod, formatAccraDate, periodMonthTitle, toDatetimeLocalValue } = require("./dates");
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -33,6 +33,12 @@ async function documentsForPayment(paymentId, runner = null) {
   return rows;
 }
 
+async function invoiceNumberForPayment(paymentId, runner = null) {
+  const docs = await documentsForPayment(paymentId, runner);
+  const inv = docs.find((d) => d.doc_type === "invoice");
+  return inv ? inv.doc_number : "";
+}
+
 function serializeDoc(d) {
   if (!d) return null;
   return {
@@ -42,6 +48,11 @@ function serializeDoc(d) {
     created_at: d.created_at,
     url: `/api/documents/${d.id}.pdf`,
   };
+}
+
+function isPatchPayment(p) {
+  const ch = String((p && p.channel) || "").toLowerCase();
+  return ch === "patch" || ch === "manual";
 }
 
 function paymentLicenseUrl(p) {
@@ -55,7 +66,64 @@ function paymentLicenseFilename(payment) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  return `license-${slug || payment.id}.json`;
+  const prefix = isPatchPayment(payment) ? "patch-license" : "license";
+  return `${prefix}-${slug || payment.id}.json`;
+}
+
+function paymentCanRetry(p) {
+  if (!p) return false;
+  if (isPatchPayment(p)) return false;
+  const status = String(p.status || "").toLowerCase();
+  return status === "pending" || status === "failed" || status === "abandoned";
+}
+
+function parsePriorRefs(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch (_) {
+    return String(value)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+}
+
+function samePeriod(payment, period) {
+  const from = parseDatetime(payment && payment.period_from);
+  const until = parseDatetime(payment && payment.period_until);
+  if (!from || !until || !period || !period.validFrom || !period.validUntil) return false;
+  return from.getTime() === period.validFrom.getTime() && until.getTime() === period.validUntil.getTime();
+}
+
+async function findPaymentByReference(reference, runner = null) {
+  const db = runner || getDb();
+  const ref = String(reference || "").trim();
+  if (!ref) return null;
+  const { rows } = await db.query("SELECT * FROM payments WHERE paystack_reference = ?", [ref]);
+  if (rows[0]) return rows[0];
+  const { rows: listed } = await db.query(
+    "SELECT * FROM payments WHERE paystack_prior_refs IS NOT NULL AND paystack_prior_refs != ''"
+  );
+  return listed.find((p) => parsePriorRefs(p.paystack_prior_refs).includes(ref)) || null;
+}
+
+async function failOtherPending(customerId, exceptPaymentId) {
+  const ts = nowSql();
+  if (exceptPaymentId) {
+    await getDb().query(
+      `UPDATE payments SET status = ?, notes = ?, updated_at = ?
+       WHERE customer_id = ? AND status = ? AND id != ?`,
+      ["failed", "Superseded by a new checkout", ts, customerId, "pending", exceptPaymentId]
+    );
+    return;
+  }
+  await getDb().query(
+    `UPDATE payments SET status = ?, notes = ?, updated_at = ?
+     WHERE customer_id = ? AND status = ?`,
+    ["failed", "Superseded by a new checkout", ts, customerId, "pending"]
+  );
 }
 
 function serializePayment(p, docs = []) {
@@ -80,6 +148,10 @@ function serializePayment(p, docs = []) {
     period_title: p.period_from ? periodMonthTitle(p.period_from) : null,
     license_id: p.license_id,
     license_url: licenseUrl,
+    is_patch: isPatchPayment(p),
+    download_label: isPatchPayment(p) ? "Patch license JSON" : "License JSON",
+    can_retry: paymentCanRetry(p),
+    can_delete: isPatchPayment(p) && String(p.status || "").toLowerCase() === "success",
     notes: p.notes,
     created_at: p.created_at,
     invoice: serializeDoc(use.find((d) => d.doc_type === "invoice")),
@@ -123,13 +195,12 @@ function serializeLicense(row) {
 
 async function previewNextPeriod(customer) {
   const license = await getLicenseByCustomer(customer.id);
-  const pending = await pendingPeriodsForCustomer(customer.id);
   try {
     const period = computePurchasedPeriod(
       license,
       customer.duration_months,
       utcNow(),
-      pending,
+      [],
       customer.billing_deadline
     );
     return serializePeriod(period);
@@ -180,8 +251,152 @@ async function writeMissingPdf(doc, payment, customer, email) {
       payment,
       paidAt: payment.paid_at,
       reference: payment.paystack_reference,
+      invoiceNumber: await invoiceNumberForPayment(payment.id),
     });
   }
+}
+
+async function startPaystackCheckout(payment, customer, user, { rotateReference = false } = {}) {
+  const email = user.email || (await customerLoginEmail(customer.id));
+  let reference = payment.paystack_reference;
+  let priorRefs = parsePriorRefs(payment.paystack_prior_refs);
+  if (rotateReference && reference) {
+    priorRefs = [...new Set([...priorRefs, reference])];
+    reference = `LPV2-${randomUuid()}`;
+    await getDb().query(
+      `UPDATE payments
+       SET paystack_reference = ?, paystack_prior_refs = ?, status = ?, notes = ?, updated_at = ?
+       WHERE id = ?`,
+      [reference, JSON.stringify(priorRefs), "pending", "Retry checkout", nowSql(), payment.id]
+    );
+  } else if (payment.status !== "pending") {
+    await getDb().query("UPDATE payments SET status = ?, notes = ?, updated_at = ? WHERE id = ?", [
+      "pending",
+      "Retry checkout",
+      nowSql(),
+      payment.id,
+    ]);
+  }
+
+  const callbackUrl = `${config.publicBaseUrl}/pay/return?reference=${encodeURIComponent(reference)}`;
+  let paystackData;
+  try {
+    paystackData = await initializeTransaction({
+      email,
+      amountPesewas: payment.amount_pesewas || customer.amount_pesewas,
+      reference,
+      callbackUrl,
+      metadata: {
+        customer_id: customer.id,
+        payment_id: payment.id,
+        license_id: payment.license_id || null,
+        retry: rotateReference || undefined,
+      },
+    });
+  } catch (err) {
+    await getDb().query("UPDATE payments SET status = ?, notes = ?, updated_at = ? WHERE id = ?", [
+      "failed",
+      err.message || "Paystack initialize failed",
+      nowSql(),
+      payment.id,
+    ]);
+    throw err;
+  }
+
+  await getDb().query("UPDATE payments SET paystack_access_code = ?, updated_at = ? WHERE id = ?", [
+    paystackData.access_code || null,
+    nowSql(),
+    payment.id,
+  ]);
+
+  const docs = await documentsForPayment(payment.id);
+  const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [payment.id]);
+  return {
+    authorization_url: paystackData.authorization_url,
+    access_code: paystackData.access_code,
+    reference,
+    payment: serializePayment(rows[0], docs),
+  };
+}
+
+async function retryPayment(payment, user) {
+  if (!payment) throw httpError(404, "Payment not found");
+  if (payment.status === "success") {
+    throw httpError(400, "This payment already succeeded");
+  }
+  if (isPatchPayment(payment)) {
+    throw httpError(400, "Patch licenses cannot be retried through Paystack");
+  }
+  const customer = await getCustomer(payment.customer_id);
+  if (!customer) throw httpError(404, "Hospital account not found");
+  if (customer.status !== "active") {
+    throw httpError(400, "This hospital account is not active");
+  }
+
+  const paidSame = await periodAlreadyPaid(customer.id, payment);
+  if (paidSame) {
+    throw httpError(400, "This month is already paid. Start the next payment from Pay with Paystack.");
+  }
+
+  const license = await getLicenseByCustomer(customer.id);
+  const due = computePurchasedPeriod(
+    license,
+    customer.duration_months,
+    utcNow(),
+    [],
+    customer.billing_deadline
+  );
+
+  try {
+    const data = await verifyTransaction(payment.paystack_reference);
+    if (data && data.status === "success") {
+      const fulfilled = await fulfillPayment(payment, data);
+      return { fulfilled: true, authorization_url: null, ...fulfilled };
+    }
+  } catch (_) {
+    /* abandoned / unknown reference — open a new Paystack checkout */
+  }
+
+  if (!payment.period_from || !payment.period_until) {
+    await getDb().query("UPDATE payments SET period_from = ?, period_until = ?, updated_at = ? WHERE id = ?", [
+      toSqlDatetime(due.validFrom),
+      toSqlDatetime(due.validUntil),
+      nowSql(),
+      payment.id,
+    ]);
+    const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [payment.id]);
+    payment = rows[0];
+  }
+
+  await failOtherPending(customer.id, payment.id);
+  return startPaystackCheckout(payment, customer, user, { rotateReference: true });
+}
+
+async function periodAlreadyPaid(customerId, payment) {
+  if (!payment.period_from || !payment.period_until) return false;
+  const from = parseDatetime(payment.period_from);
+  const until = parseDatetime(payment.period_until);
+  if (!from || !until) return false;
+  const { rows } = await getDb().query(
+    `SELECT period_from, period_until FROM payments
+     WHERE customer_id = ? AND status = 'success' AND id != ? AND period_from IS NOT NULL`,
+    [customerId, payment.id]
+  );
+  return rows.some((row) => {
+    const a = parseDatetime(row.period_from);
+    const b = parseDatetime(row.period_until);
+    return a && b && a.getTime() === from.getTime() && b.getTime() === until.getTime();
+  });
+}
+
+async function findRetryableForPeriod(customerId, period) {
+  const { rows } = await getDb().query(
+    `SELECT * FROM payments
+     WHERE customer_id = ? AND channel NOT IN ('manual', 'patch') AND status IN ('pending', 'failed')
+     ORDER BY id DESC`,
+    [customerId]
+  );
+  return rows.find((p) => samePeriod(p, period)) || rows.find((p) => paymentCanRetry(p) && !p.period_from) || null;
 }
 
 async function createCheckout(customer, user) {
@@ -192,20 +407,20 @@ async function createCheckout(customer, user) {
     throw httpError(400, "Amount is not set. Ask the issuer to set the GH₵ amount.");
   }
   const license = await getLicenseByCustomer(customer.id);
-  const ts = nowSql();
-  await getDb().query(
-    `UPDATE payments SET status = ?, notes = ?, updated_at = ?
-     WHERE customer_id = ? AND status = ?`,
-    ["failed", "Superseded by a new checkout", ts, customer.id, "pending"]
-  );
-  const pending = await pendingPeriodsForCustomer(customer.id);
   const period = computePurchasedPeriod(
     license,
     customer.duration_months,
     utcNow(),
-    pending,
+    [],
     customer.billing_deadline
   );
+  const existing = await findRetryableForPeriod(customer.id, period);
+  if (existing) {
+    return retryPayment(existing, user);
+  }
+
+  await failOtherPending(customer.id);
+  const ts = nowSql();
   const reference = `LPV2-${randomUuid()}`;
 
   const created = await getDb().withTransaction(async (tx) => {
@@ -247,59 +462,28 @@ async function createCheckout(customer, user) {
     return { payment: rows[0], invoiceNumber, filePath };
   });
 
-  const email = user.email || (await customerLoginEmail(customer.id));
   await writeInvoicePdf({
     filePath: created.filePath,
     number: created.invoiceNumber,
     customer,
-    email,
+    email: user.email || (await customerLoginEmail(customer.id)),
     payment: created.payment,
     issuedAt: utcNow(),
   });
 
-  const callbackUrl = `${config.publicBaseUrl}/pay/return?reference=${encodeURIComponent(reference)}`;
-  let paystackData;
-  try {
-    paystackData = await initializeTransaction({
-      email,
-      amountPesewas: customer.amount_pesewas,
-      reference,
-      callbackUrl,
-      metadata: {
-        customer_id: customer.id,
-        payment_id: created.payment.id,
-        license_id: license ? license.license_id : null,
-      },
-    });
-  } catch (err) {
-    await getDb().query("UPDATE payments SET status = ?, notes = ?, updated_at = ? WHERE id = ?", [
-      "failed",
-      err.message || "Paystack initialize failed",
-      nowSql(),
-      created.payment.id,
-    ]);
-    throw err;
-  }
+  return startPaystackCheckout(created.payment, customer, user, { rotateReference: false });
+}
 
-  await getDb().query("UPDATE payments SET paystack_access_code = ?, updated_at = ? WHERE id = ?", [
-    paystackData.access_code || null,
-    nowSql(),
-    created.payment.id,
-  ]);
-
-  const docs = await documentsForPayment(created.payment.id);
-  return {
-    authorization_url: paystackData.authorization_url,
-    access_code: paystackData.access_code,
-    reference,
-    payment: serializePayment({ ...created.payment, paystack_access_code: paystackData.access_code }, docs),
-  };
+async function retryPaymentById(paymentId, user) {
+  const payment = await getPaymentForUser(paymentId, user);
+  if (!payment) throw httpError(404, "Payment not found");
+  return retryPayment(payment, user);
 }
 
 async function fulfillByReference(reference, rawPayload) {
-  const { rows } = await getDb().query("SELECT * FROM payments WHERE paystack_reference = ?", [String(reference || "").trim()]);
-  if (!rows.length) throw httpError(404, "Unknown payment reference");
-  return fulfillPayment(rows[0], rawPayload);
+  const payment = await findPaymentByReference(reference);
+  if (!payment) throw httpError(404, "Unknown payment reference");
+  return fulfillPayment(payment, rawPayload);
 }
 
 async function fulfillPayment(payment, rawPayload) {
@@ -325,19 +509,6 @@ async function fulfillPayment(payment, rawPayload) {
         validFrom: parseDatetime(row.period_from),
         validUntil: parseDatetime(row.period_until),
       };
-      const existingLic = await getLicenseByCustomer(row.customer_id, tx);
-      if (existingLic) {
-        const until = parseDatetime(existingLic.valid_until);
-        if (until && purchased.validUntil && until >= purchased.validUntil) {
-          purchased = computePurchasedPeriod(
-            existingLic,
-            row.duration_months,
-            utcNow(),
-            [],
-            customer.billing_deadline
-          );
-        }
-      }
     }
     const license = await extendLicenseForCustomer(tx, customer, row.duration_months, utcNow(), purchased);
     const ts = nowSql();
@@ -350,6 +521,19 @@ async function fulfillPayment(payment, rawPayload) {
        WHERE id = ?`,
       ["success", ts, license.license_id, payload, periodFrom, periodUntil, ts, row.id]
     );
+
+    const { rows: existingDocs } = await tx.query("SELECT doc_type FROM documents WHERE payment_id = ?", [row.id]);
+    if (!existingDocs.some((d) => d.doc_type === "invoice")) {
+      const invoiceNumber = await nextDocNumber(tx, "invoice");
+      const invoicePath = path.join(config.documentsDir, `${invoiceNumber}.pdf`);
+      await insertDocument(tx, {
+        paymentId: row.id,
+        customerId: customer.id,
+        docType: "invoice",
+        docNumber: invoiceNumber,
+        filePath: invoicePath,
+      });
+    }
 
     const receiptNumber = await nextDocNumber(tx, "receipt");
     const filePath = path.join(config.documentsDir, `${receiptNumber}.pdf`);
@@ -390,32 +574,45 @@ async function fulfillPayment(payment, rawPayload) {
   };
 }
 
+async function markCheckoutUnpaid(payment, reason) {
+  if (!payment || payment.status === "success") return payment;
+  await getDb().query(
+    `UPDATE payments SET status = ?, notes = ?, updated_at = ? WHERE id = ? AND status != ?`,
+    ["failed", reason || "Checkout cancelled or abandoned", nowSql(), payment.id, "success"]
+  );
+  const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [payment.id]);
+  return rows[0] || payment;
+}
+
 async function verifyAndFulfill(reference) {
   const data = await verifyTransaction(reference);
   if (!data || data.status !== "success") {
-    const { rows } = await getDb().query("SELECT * FROM payments WHERE paystack_reference = ?", [reference]);
-    if (rows[0] && rows[0].status === "success") {
+    let payment = await findPaymentByReference(reference);
+    if (payment && payment.status === "success") {
       return fulfillByReference(reference, null);
     }
+    const ps = String((data && data.status) || "").toLowerCase();
+    if (payment && (ps === "abandoned" || ps === "failed" || ps === "reversed")) {
+      payment = await markCheckoutUnpaid(payment, `Paystack: ${ps}`);
+    }
     return {
-      payment: rows[0] ? serializePayment(rows[0], await documentsForPayment(rows[0].id)) : null,
-      pending: true,
+      payment: payment ? serializePayment(payment, await documentsForPayment(payment.id)) : null,
+      pending: ps !== "failed" && ps !== "abandoned" && ps !== "reversed",
       paystack_status: data && data.status,
     };
   }
   const paidAmount = Number(data.amount);
-  const { rows } = await getDb().query("SELECT * FROM payments WHERE paystack_reference = ?", [reference]);
-  if (!rows.length) throw httpError(404, "Unknown payment reference");
-  if (paidAmount && paidAmount !== Number(rows[0].amount_pesewas)) {
+  const payment = await findPaymentByReference(reference);
+  if (!payment) throw httpError(404, "Unknown payment reference");
+  if (paidAmount && paidAmount !== Number(payment.amount_pesewas)) {
     throw httpError(400, "Paid amount does not match invoice");
   }
-  return fulfillPayment(rows[0], data);
+  return fulfillPayment(payment, data);
 }
 
 async function getPaymentStatus(reference) {
-  const { rows } = await getDb().query("SELECT * FROM payments WHERE paystack_reference = ?", [String(reference || "").trim()]);
-  if (!rows.length) throw httpError(404, "Unknown payment reference");
-  const payment = rows[0];
+  const payment = await findPaymentByReference(reference);
+  if (!payment) throw httpError(404, "Unknown payment reference");
   if (payment.status === "success") {
     const docs = await documentsForPayment(payment.id);
     const license = await getLicenseByCustomer(payment.customer_id);
@@ -430,24 +627,15 @@ async function getPaymentStatus(reference) {
   }
 }
 
-async function issueManual(customer, { notes, email } = {}) {
-  if (!customer.amount_pesewas || customer.amount_pesewas < 100) {
-    throw httpError(400, "Set a GH₵ amount before issuing a license");
-  }
-  const reference = `MANUAL-${randomUuid()}`;
+async function issueManual(customer, { notes, email, periodFrom, periodUntil } = {}) {
+  const period = resolvePatchPeriod(periodFrom, periodUntil);
+  const reference = `PATCH-${randomUuid()}`;
   const ts = nowSql();
 
   const created = await getDb().withTransaction(async (tx) => {
-    const current = await getLicenseByCustomer(customer.id, tx);
-    const pending = await pendingPeriodsForCustomer(customer.id, tx);
-    const period = computePurchasedPeriod(
-      current,
-      customer.duration_months,
-      utcNow(),
-      pending,
-      customer.billing_deadline
-    );
-    const license = await extendLicenseForCustomer(tx, customer, customer.duration_months, utcNow(), period);
+    const license = await extendLicenseForCustomer(tx, customer, customer.duration_months || 1, utcNow(), period, {
+      updateBillingDeadline: false,
+    });
     const inserted = await tx.query(
       `INSERT INTO payments
         (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,
@@ -458,67 +646,104 @@ async function issueManual(customer, { notes, email } = {}) {
         license.license_id,
         reference,
         null,
-        customer.amount_pesewas,
+        0,
         customer.currency || "GHS",
-        customer.duration_months,
+        customer.duration_months || 1,
         "success",
-        "manual",
+        "patch",
         ts,
         toSqlDatetime(period.validFrom),
         toSqlDatetime(period.validUntil),
         null,
-        notes || "Issued without Paystack",
+        notes || "Patch license (not a subscription payment)",
         ts,
         ts,
       ]
     );
-    const paymentId = inserted.insertId;
-    const invoiceNumber = await nextDocNumber(tx, "invoice");
-    const receiptNumber = await nextDocNumber(tx, "receipt");
-    const invoicePath = path.join(config.documentsDir, `${invoiceNumber}.pdf`);
-    const receiptPath = path.join(config.documentsDir, `${receiptNumber}.pdf`);
-    await insertDocument(tx, {
-      paymentId,
-      customerId: customer.id,
-      docType: "invoice",
-      docNumber: invoiceNumber,
-      filePath: invoicePath,
-    });
-    await insertDocument(tx, {
-      paymentId,
-      customerId: customer.id,
-      docType: "receipt",
-      docNumber: receiptNumber,
-      filePath: receiptPath,
-    });
-    const { rows } = await tx.query("SELECT * FROM payments WHERE id = ?", [paymentId]);
-    return { payment: rows[0], license, invoicePath, receiptPath, invoiceNumber, receiptNumber };
+    const { rows } = await tx.query("SELECT * FROM payments WHERE id = ?", [inserted.insertId]);
+    return { payment: rows[0], license };
   });
 
-  const loginEmail = email || (await customerLoginEmail(customer.id));
-  await writeInvoicePdf({
-    filePath: created.invoicePath,
-    number: created.invoiceNumber,
-    customer,
-    email: loginEmail,
-    payment: created.payment,
-    issuedAt: utcNow(),
-  });
-  await writeReceiptPdf({
-    filePath: created.receiptPath,
-    number: created.receiptNumber,
-    customer,
-    email: loginEmail,
-    payment: created.payment,
-    paidAt: created.payment.paid_at,
-    reference,
-  });
-
-  const docs = await documentsForPayment(created.payment.id);
   return {
-    payment: serializePayment(created.payment, docs),
+    payment: serializePayment(created.payment, []),
     license: serializeLicense(created.license),
   };
+}
+
+function resolvePatchPeriod(periodFrom, periodUntil) {
+  const fromRaw = periodFrom;
+  const untilRaw = periodUntil;
+  if (!fromRaw || !untilRaw) {
+    throw httpError(400, "Set the patch license start and end.");
+  }
+  const validFrom = parsePatchBound(fromRaw, false);
+  const validUntil = parsePatchBound(untilRaw, true);
+  if (!validFrom || !validUntil) {
+    throw httpError(400, "Patch license dates are not valid.");
+  }
+  if (validUntil <= validFrom) {
+    throw httpError(400, "Patch license end must be after the start.");
+  }
+  return { validFrom, validUntil };
+}
+
+function parsePatchBound(value, asEnd) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) {
+    return new Date(`${s}:${asEnd ? "59" : "00"}+00:00`);
+  }
+  return parseAdminDatetime(s) || parseDatetime(s);
+}
+
+async function rebuildLicenseWindow(tx, customerId) {
+  const license = await getLicenseByCustomer(customerId, tx);
+  if (!license) return;
+  const { rows } = await tx.query(
+    `SELECT period_from, period_until FROM payments
+     WHERE customer_id = ? AND status = 'success' AND period_from IS NOT NULL AND period_until IS NOT NULL`,
+    [customerId]
+  );
+  let from = null;
+  let until = null;
+  for (const row of rows) {
+    const a = parseDatetime(row.period_from);
+    const b = parseDatetime(row.period_until);
+    if (a && (!from || a < from)) from = a;
+    if (b && (!until || b > until)) until = b;
+  }
+  if (!from || !until) return;
+  await tx.query("UPDATE licenses SET valid_from = ?, valid_until = ?, updated_at = ? WHERE id = ?", [
+    toSqlDatetime(from),
+    toSqlDatetime(until),
+    nowSql(),
+    license.id,
+  ]);
+}
+
+async function deletePatchPayment(paymentId) {
+  const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [paymentId]);
+  const payment = rows[0];
+  if (!payment) throw httpError(404, "Payment not found");
+  if (!isPatchPayment(payment)) {
+    throw httpError(400, "Only patch / manual licenses can be deleted. Subscription payments stay in history.");
+  }
+  const fs = require("fs");
+  const docs = await documentsForPayment(payment.id);
+  await getDb().withTransaction(async (tx) => {
+    for (const doc of docs) {
+      try {
+        const abs = documentAbsPath(doc.file_path);
+        if (fs.existsSync(abs)) fs.unlinkSync(abs);
+      } catch (_) {
+        /* keep deleting the row */
+      }
+      await tx.query("DELETE FROM documents WHERE id = ?", [doc.id]);
+    }
+    await tx.query("DELETE FROM payments WHERE id = ?", [payment.id]);
+    await rebuildLicenseWindow(tx, payment.customer_id);
+  });
+  return { ok: true, id: payment.id };
 }
 
 async function getPaymentForUser(paymentId, user) {
@@ -586,8 +811,45 @@ async function refreshDocumentPdf(doc) {
       payment,
       paidAt: payment.paid_at,
       reference: payment.paystack_reference,
+      invoiceNumber: await invoiceNumberForPayment(payment.id),
     });
   }
+}
+
+async function findPublicReceipt(docNumber) {
+  const n = String(docNumber || "").trim();
+  if (!n) return null;
+  const { rows } = await getDb().query("SELECT * FROM documents WHERE UPPER(doc_number) = ?", [n.toUpperCase()]);
+  const doc = rows.find((d) => String(d.doc_type || "").toLowerCase() === "receipt") || null;
+  if (!doc) return null;
+  const { rows: pays } = await getDb().query("SELECT * FROM payments WHERE id = ?", [doc.payment_id]);
+  const payment = pays[0];
+  if (!payment || String(payment.status || "").toLowerCase() !== "success") return null;
+  const customer = await getCustomer(payment.customer_id);
+  const invoiceNo = await invoiceNumberForPayment(payment.id);
+  const ch = String(payment.channel || "").toLowerCase();
+  return {
+    ok: true,
+    genuine: true,
+    doc_type: "receipt",
+    receipt_no: doc.doc_number,
+    invoice_no: invoiceNo || null,
+    customer: customer ? customer.hospital_name : "",
+    facility_code: customer && customer.facility_code ? customer.facility_code : "",
+    service: licenceServiceTitle(payment.duration_months),
+    licence_period:
+      payment.period_from && payment.period_until
+        ? formatLicencePeriod(payment.period_from, payment.period_until)
+        : null,
+    amount_label: formatGhs(payment.amount_pesewas),
+    payment_method: ch === "patch" || ch === "manual" ? "Issued by provider" : "Paystack",
+    payment_date: formatAccraDate(payment.paid_at || doc.created_at, { padDay: false }),
+    payment_status: "PAID",
+    reference: payment.paystack_reference || null,
+    tax_note: taxNote({
+      name: (config.company && config.company.name) || "This company",
+    }),
+  };
 }
 
 module.exports = {
@@ -600,16 +862,20 @@ module.exports = {
   serializeCustomer,
   serializeLicense,
   createCheckout,
+  retryPaymentById,
   fulfillByReference,
   fulfillPayment,
   verifyAndFulfill,
   getPaymentStatus,
   issueManual,
+  deletePatchPayment,
   getPaymentForUser,
   signedLicenseForPayment,
   getDocumentForUser,
   refreshDocumentPdf,
+  findPublicReceipt,
   previewNextPeriod,
+  findPaymentByReference,
   latestPaidPayment,
   signedDocumentFor,
 };

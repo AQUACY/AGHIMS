@@ -65,12 +65,12 @@ You can instead skip the workflow and use Hostinger’s GitHub button: connect r
 
 ### Manual Hostinger setup
 
-1. Create a MySQL database in hPanel. Put the credentials in environment variables with `DATABASE_MODE=mysql`.
+1. Create a MySQL database in hPanel. Put the credentials in environment variables with `DATABASE_MODE=mysql`. Set `MYSQL_HOST=127.0.0.1` (not `localhost` — Node would connect as IPv6 `::1` and Hostinger denies that user). In **Databases → Remote MySQL** add Access Host `127.0.0.1` (Hostinger users are `user@localhost`, which is not the same as `user@127.0.0.1`). Do not wrap the password in quotes. The MySQL user must be **assigned** to the database with ALL PRIVILEGES. If TCP still fails, set `MYSQL_SOCKET=/tmp/mysql.sock`.
 2. Create a Node.js application (Node 18+). Application root = this folder. Startup file:
    - `src/server.js`, or
    - `app.js` (loads the same server — some hPanel layouts expect `app.js` in the app root)
 3. Set `PORT` from Hostinger (do not hard-code). The app already listens on `process.env.PORT`.
-4. Store `license_private.pem` **outside** `public_html` / the public folder, e.g. `/home/USER/license_private.pem`, and set `RSA_PRIVATE_KEY_FILE` to that path.
+4. Store `license_private.pem` in the **stable** Node folder, not a Hostinger `hbuilds/versions/...` path (those folders change every deploy). Example: `/home/USER/domains/your-domain/nodejs/license_private.pem`. Set `RSA_PRIVATE_KEY_FILE` to that **absolute** path. Relative `./license_private.pem` is also resolved there after this build.
 5. `PUBLIC_BASE_URL=https://your-domain.tld` (no trailing slash).
 6. Paystack dashboard:
    - Callback is `${PUBLIC_BASE_URL}/pay/return`
@@ -90,7 +90,8 @@ See `env.example`. Required on Hostinger:
 - `PORTAL_JWT_SECRET`
 - `PUBLIC_BASE_URL`
 - `PAYSTACK_SECRET_KEY` / `PAYSTACK_PUBLIC_KEY`
-- Company letterhead: `COMPANY_NAME`, `COMPANY_ADDRESS`, `COMPANY_PHONE`, `COMPANY_EMAIL`, `COMPANY_TIN`
+- Company letterhead: `COMPANY_NAME`, `COMPANY_INITIALS` (e.g. KDG for KDG-HMS-2026-000001 / KDG-RCP-2026-000001), `COMPANY_TAGLINE`, `COMPANY_ADDRESS`, `COMPANY_PHONE`, `COMPANY_EMAIL`, `COMPANY_TIN`
+- Renewal emails: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, optional `SMTP_FROM` and `CRON_SECRET`
 
 ### HMS cutover
 

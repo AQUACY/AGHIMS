@@ -144,28 +144,128 @@ class SqliteDb {
 
 let db;
 
+function isLocalMysqlHost(host) {
+  const h = String(host || "").toLowerCase();
+  return !h || h === "localhost" || h === "127.0.0.1" || h === "::1";
+}
+
+function detectMysqlSocket() {
+  if (config.mysql.socketPath) return config.mysql.socketPath;
+  const candidates = [
+    process.env.MYSQL_UNIX_PORT,
+    "/tmp/mysql.sock",
+    "/var/run/mysqld/mysqld.sock",
+    "/run/mysqld/mysqld.sock",
+    "/var/lib/mysql/mysql.sock",
+  ].filter(Boolean);
+  return candidates.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch (_) {
+      return false;
+    }
+  }) || "";
+}
+
+function mysqlPoolBase() {
+  return {
+    user: config.mysql.user,
+    password: config.mysql.password,
+    database: config.mysql.database,
+    waitForConnections: true,
+    connectionLimit: 10,
+    namedPlaceholders: false,
+    charset: "utf8mb4",
+    dateStrings: true,
+  };
+}
+
+async function tryMysqlPool(extra) {
+  const pool = mysql.createPool({ ...mysqlPoolBase(), ...extra });
+  try {
+    await pool.execute("SELECT 1");
+    return pool;
+  } catch (err) {
+    try {
+      await pool.end();
+    } catch (_) {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
+function mysqlAccessDeniedHelp(err) {
+  const seen = String((err && err.message) || "");
+  const pwdLen = String(config.mysql.password || "").length;
+  return (
+    `${seen} Remote MySQL is not the usual cause on the same Hostinger account. ` +
+    `Set MYSQL_HOST=127.0.0.1 (Hostinger Node docs) — do not use the server public IP. ` +
+    `The Node env password (length ${pwdLen}) does not match user ${config.mysql.user}. ` +
+    `Reset that user's password in Databases, paste it into Node env with no quotes and no # comments, Restart.`
+  );
+}
+
+async function connectMysql() {
+  const attempts = [];
+  const seen = new Set();
+  const addAttempt = (label, extra) => {
+    const key = extra.socketPath ? `sock:${extra.socketPath}` : `tcp:${extra.host}:${extra.port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    attempts.push({ label, extra });
+  };
+
+  const socket = detectMysqlSocket();
+  if (socket) addAttempt(`socket ${socket}`, { socketPath: socket });
+  addAttempt(`tcp 127.0.0.1:${config.mysql.port}`, { host: "127.0.0.1", port: config.mysql.port });
+  if (!isLocalMysqlHost(config.mysql.host)) {
+    addAttempt(`tcp ${config.mysql.host}:${config.mysql.port}`, {
+      host: config.mysql.host,
+      port: config.mysql.port,
+    });
+  }
+
+  console.log(
+    `MySQL connecting as ${config.mysql.user} / ${config.mysql.database} ` +
+      `(password length ${String(config.mysql.password || "").length}, ${attempts.length} attempts)`
+  );
+
+  let lastErr;
+  for (const attempt of attempts) {
+    try {
+      const pool = await tryMysqlPool(attempt.extra);
+      console.log(`MySQL connected via ${attempt.label} as ${config.mysql.user} / ${config.mysql.database}`);
+      return pool;
+    } catch (err) {
+      lastErr = err;
+      console.error(`MySQL ${attempt.label} failed: ${err.message}`);
+    }
+  }
+  if (lastErr && lastErr.code === "ER_ACCESS_DENIED_ERROR") {
+    throw new Error(mysqlAccessDeniedHelp(lastErr));
+  }
+  throw lastErr;
+}
+
 async function initDb() {
   fs.mkdirSync(config.dataDir, { recursive: true });
   fs.mkdirSync(config.documentsDir, { recursive: true });
   fs.mkdirSync(config.brandingDir, { recursive: true });
 
   if (config.databaseMode === "mysql") {
-    const pool = await mysql.createPool({
-      host: config.mysql.host,
-      port: config.mysql.port,
-      user: config.mysql.user,
-      password: config.mysql.password,
-      database: config.mysql.database,
-      waitForConnections: true,
-      connectionLimit: 10,
-      namedPlaceholders: false,
-      charset: "utf8mb4",
-      dateStrings: true,
-    });
+    const pool = await connectMysql();
     db = new MysqlDb(pool);
     const schema = fs.readFileSync(path.join(config.ROOT, "sql", "schema.mysql.sql"), "utf8");
-    for (const stmt of splitSql(schema)) {
-      await db.query(stmt);
+    try {
+      for (const stmt of splitSql(schema)) {
+        await db.query(stmt);
+      }
+    } catch (err) {
+      if (err && err.code === "ER_ACCESS_DENIED_ERROR") {
+        throw new Error(mysqlAccessDeniedHelp(err));
+      }
+      throw err;
     }
   } else {
     const SQL = await initSqlJs({
@@ -190,6 +290,7 @@ async function initDb() {
 
   await ensurePaymentPeriodColumns(db);
   await ensureCustomerDeadlineColumn(db);
+  await ensureDocumentsNumberWidth(db);
 
   return db;
 }
@@ -223,6 +324,9 @@ async function ensurePaymentPeriodColumns(db) {
     if (!names.includes("period_until")) {
       await db.query("ALTER TABLE payments ADD COLUMN period_until TEXT NULL");
     }
+    if (!names.includes("paystack_prior_refs")) {
+      await db.query("ALTER TABLE payments ADD COLUMN paystack_prior_refs TEXT NULL");
+    }
     return;
   }
   const cols = await db.query(
@@ -235,6 +339,18 @@ async function ensurePaymentPeriodColumns(db) {
   }
   if (!names.includes("period_until")) {
     await db.query("ALTER TABLE payments ADD COLUMN period_until DATETIME NULL");
+  }
+  if (!names.includes("paystack_prior_refs")) {
+    await db.query("ALTER TABLE payments ADD COLUMN paystack_prior_refs TEXT NULL");
+  }
+}
+
+async function ensureDocumentsNumberWidth(db) {
+  if (db.dialect === "sqlite") return;
+  try {
+    await db.query("ALTER TABLE documents MODIFY doc_number VARCHAR(64) NOT NULL");
+  } catch (_) {
+    /* already wide enough, or no permission — new numbers still fit in 32 for short initials */
   }
 }
 

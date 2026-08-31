@@ -14,7 +14,7 @@ const {
   changeOwnPassword,
 } = require("./auth");
 const { config } = require("./config");
-const { getLicenseByCustomer, getLicenseByPublicId, latestPaidPayment, currentSignedDocumentForHms } = require("./license");
+const { getLicenseByCustomer, getLicenseByPublicId, latestPaidPayment, coveringPaidPayment, currentSignedDocumentForHms } = require("./license");
 const {
   httpError,
   getCustomer,
@@ -24,16 +24,22 @@ const {
   serializeCustomer,
   serializeLicense,
   createCheckout,
+  retryPaymentById,
   fulfillByReference,
   getPaymentStatus,
   issueManual,
+  deletePatchPayment,
   getDocumentForUser,
   getPaymentForUser,
   signedLicenseForPayment,
+  findPublicReceipt,
   refreshDocumentPdf,
   previewNextPeriod,
+  findPaymentByReference,
 } = require("./payments");
-const { ghsToPesewas, parseDatetime, utcNow, toIsoZ, parseAdminDatetime, toSqlDatetime } = require("./dates");
+const { sendManualReminder, runScheduledReminders, listReminders } = require("./reminders");
+const { smtpConfigured } = require("./mailer");
+const { ghsToPesewas, utcNow, toIsoZ, parseAdminDatetime, toSqlDatetime } = require("./dates");
 const { verifyWebhookSignature } = require("./paystack");
 const { documentAbsPath } = require("./pdfs");
 const { getLogo, publicLogoUrl, saveLogo, deleteLogo } = require("./branding");
@@ -63,13 +69,41 @@ function mountRoutes(app) {
     res.json({ service: "license-portal-v2", ok: true });
   });
 
+  async function cronReminders(req, res) {
+    const secret = config.cronSecret;
+    const given = String(req.headers["x-cron-key"] || req.query.key || "").trim();
+    if (!secret || given !== secret) {
+      return res.status(403).json({ error: "Invalid cron key" });
+    }
+    const result = await runScheduledReminders();
+    res.json(result);
+  }
+  app.post("/api/cron/reminders", asyncHandler(cronReminders));
+  app.get("/api/cron/reminders", asyncHandler(cronReminders));
+
   app.get("/api/public-config", (req, res) => {
     res.json({
       company_name: config.company.name,
+      company_tagline: config.company.tagline,
       version: "2.0.0",
       logo_url: publicLogoUrl(),
     });
   });
+
+  app.get(
+    "/api/verify/receipt/:docNumber",
+    asyncHandler(async (req, res) => {
+      const found = await findPublicReceipt(req.params.docNumber);
+      if (!found) {
+        return res.status(404).json({
+          ok: false,
+          genuine: false,
+          error: "No genuine receipt was found for that number.",
+        });
+      }
+      res.json(found);
+    })
+  );
 
   app.get("/api/branding/logo", (req, res) => {
     const logo = getLogo();
@@ -145,15 +179,25 @@ function mountRoutes(app) {
     })
   );
 
+  app.post(
+    "/api/payments/:id/retry",
+    authRequired,
+    customerRequired,
+    asyncHandler(async (req, res) => {
+      const result = await retryPaymentById(req.params.id, req.user);
+      res.json(result);
+    })
+  );
+
   app.get(
     "/api/pay/status",
     authRequired,
     asyncHandler(async (req, res) => {
       const reference = String(req.query.reference || "").trim();
       if (!reference) return res.status(400).json({ error: "reference is required" });
-      const { rows } = await getDb().query("SELECT * FROM payments WHERE paystack_reference = ?", [reference]);
-      if (!rows.length) return res.status(404).json({ error: "Unknown payment reference" });
-      if (req.user.role !== "admin" && Number(req.user.customer_id) !== Number(rows[0].customer_id)) {
+      const payment = await findPaymentByReference(reference);
+      if (!payment) return res.status(404).json({ error: "Unknown payment reference" });
+      if (req.user.role !== "admin" && Number(req.user.customer_id) !== Number(payment.customer_id)) {
         return res.status(403).json({ error: "Not allowed" });
       }
       const result = await getPaymentStatus(reference);
@@ -329,6 +373,8 @@ function mountRoutes(app) {
         customer: serializeCustomer(customer, { email }),
         license: serializeLicense(license),
         payments,
+        reminders: await listReminders(customer.id),
+        mail_configured: smtpConfigured(),
       });
     })
   );
@@ -403,7 +449,42 @@ function mountRoutes(app) {
       const customer = await getCustomer(req.params.id);
       if (!customer) return res.status(404).json({ error: "Not found" });
       const notes = (req.body && req.body.notes) || "";
-      const result = await issueManual(customer, { notes, email: await customerLoginEmail(customer.id) });
+      const result = await issueManual(customer, {
+        notes,
+        email: await customerLoginEmail(customer.id),
+        periodFrom: req.body && (req.body.period_from || req.body.patch_from),
+        periodUntil: req.body && (req.body.period_until || req.body.patch_until),
+      });
+      res.json(result);
+    })
+  );
+
+  app.post(
+    "/api/admin/customers/:id/remind",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const result = await sendManualReminder(req.params.id);
+      res.json(result);
+    })
+  );
+
+  app.post(
+    "/api/admin/reminders/run",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const result = await runScheduledReminders();
+      res.json(result);
+    })
+  );
+
+  app.delete(
+    "/api/admin/payments/:id",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const result = await deletePatchPayment(req.params.id);
       res.json(result);
     })
   );
@@ -500,9 +581,8 @@ function mountRoutes(app) {
       const row = await getLicenseByPublicId(licenseId);
       if (!row) return res.json({ ok: false, reason: "unknown_license" });
       const now = utcNow();
-      const from = parseDatetime(row.valid_from);
-      const until = parseDatetime(row.valid_until);
-      if (!from || !until || now < from || now > until) {
+      const covering = await coveringPaidPayment(row.customer_id, now);
+      if (!covering) {
         return res.json({ ok: false, reason: "out_of_window" });
       }
       const fc = (row.facility_code || "").trim();
@@ -510,7 +590,7 @@ function mountRoutes(app) {
         const reqFc = String((req.body && req.body.facility_code) || "").trim();
         if (reqFc !== fc) return res.json({ ok: false, reason: "facility_mismatch" });
       }
-      return res.json({ ok: true, valid_until: toIsoZ(row.valid_until) });
+      return res.json({ ok: true, valid_until: toIsoZ(covering.period_until) });
     })
   );
 }

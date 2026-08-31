@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Verify receipt — License Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">
+      <div class="mark" data-brand-mark>L</div>
+      <div>
+        <div class="brand-name" data-brand-name>License Portal</div>
+        <div class="brand-sub">Receipt verification</div>
+      </div>
+    </a>
+  </header>
+  <main class="verify-wrap">
+    <section class="card verify-sheet">
+      <p class="kicker" id="status-kicker">Receipt check</p>
+      <h1 class="hero-line" id="title">Verify a payment receipt</h1>
+      <p class="muted" id="lead">Scan the QR code on the receipt, or enter the receipt number below. This page only confirms documents issued by this portal.</p>
+      <div id="result"></div>
+      <form class="verify-lookup" id="lookup">
+        <input id="doc-number" placeholder="e.g. KDG-RCP-2026-000001" autocomplete="off" />
+        <button type="submit" class="gold">Verify</button>
+      </form>
+      <p class="err" id="msg"></p>
+    </section>
+  </main>
+  <script src="/js/api.js"></script>
+  <script>
+    const el = (id) => document.getElementById(id);
+
+    function row(label, value) {
+      if (!value) return "";
+      return `<div class="verify-row"><div class="k">${escapeHtml(label)}</div><div>${escapeHtml(value)}</div></div>`;
+    }
+
+    function numberFromLocation() {
+      const path = window.location.pathname.replace(/\/+$/, "");
+      const parts = path.split("/");
+      const last = decodeURIComponent(parts[parts.length - 1] || "");
+      if (last && last.toLowerCase() !== "verify") return last;
+      const q = new URLSearchParams(window.location.search).get("n");
+      return (q || "").trim();
+    }
+
+    function render(data) {
+      el("status-kicker").textContent = "Genuine receipt";
+      el("title").textContent = "PAYMENT RECEIPT";
+      el("lead").textContent = "This receipt was issued by this license portal after a successful payment.";
+      el("result").innerHTML =
+        `<p>${statusPill("paid")}</p>` +
+        `<div class="verify-rows">` +
+        row("Receipt No.", data.receipt_no) +
+        row("Invoice No.", data.invoice_no) +
+        row("Payment Date", data.payment_date) +
+        row("Customer", data.customer) +
+        row("Service", data.service) +
+        row("Licence Period", data.licence_period) +
+        row("Amount Paid", data.amount_label) +
+        row("Payment Method", data.payment_method) +
+        row("Transaction Ref.", data.reference) +
+        row("Tax", data.tax_note) +
+        `</div>`;
+    }
+
+    async function lookup(number) {
+      el("msg").textContent = "";
+      const n = String(number || "").trim();
+      if (!n) {
+        el("msg").textContent = "Enter a receipt number.";
+        return;
+      }
+      try {
+        const data = await api("/api/verify/receipt/" + encodeURIComponent(n));
+        render(data);
+        if (window.location.pathname.toLowerCase() === "/verify" || window.location.pathname.toLowerCase() === "/verify/") {
+          window.history.replaceState({}, "", "/verify/" + encodeURIComponent(data.receipt_no));
+        }
+      } catch (e) {
+        el("status-kicker").textContent = "Not found";
+        el("title").textContent = "This receipt is not genuine";
+        el("lead").textContent = "No paid receipt with that number exists on this portal.";
+        el("result").innerHTML = "";
+        el("msg").textContent = e.message || "No genuine receipt was found for that number.";
+      }
+    }
+
+    el("lookup").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      lookup(el("doc-number").value);
+    });
+
+    const initial = numberFromLocation();
+    if (initial) {
+      el("doc-number").value = initial;
+      lookup(initial);
+    }
+  </script>
+</body>
+</html>

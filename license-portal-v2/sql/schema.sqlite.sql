@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS payments (
   paid_at TEXT NULL,
   period_from TEXT NULL,
   period_until TEXT NULL,
+  paystack_prior_refs TEXT NULL,
   raw_payload TEXT NULL,
   notes TEXT NULL,
   created_at TEXT NOT NULL,
@@ -71,4 +72,17 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE TABLE IF NOT EXISTS sequences (
   name TEXT PRIMARY KEY,
   next_value INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reminder_sends (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  cycle_key TEXT NOT NULL,
+  to_email TEXT NOT NULL,
+  subject TEXT NULL,
+  status TEXT NOT NULL,
+  error TEXT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
