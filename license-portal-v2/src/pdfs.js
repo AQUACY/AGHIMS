@@ -142,22 +142,28 @@ function drawTaxBreakdown(doc, fonts, y, amountPesewas) {
   const company = letterhead();
   const zero = formatGhs(0);
   const total = formatGhs(amountPesewas);
-  const colLabel = 300;
-  const colAmt = 430;
+  const colLabel = 280;
+  const colAmt = 400;
+  const amtWidth = RIGHT - colAmt;
   const rows = [
-    ["VAT", `${zero}  /  Not VAT Registered`, false],
-    ["NHIL", zero, false],
-    ["GETFund Levy", zero, false],
-    ["Amount Payable", total, true],
+    ["VAT", zero, false, company.vatRegistered ? "" : "Not VAT registered"],
+    ["NHIL", zero, false, ""],
+    ["GETFund Levy", zero, false, ""],
+    ["Amount Payable", total, true, ""],
   ];
   doc.moveTo(LEFT, y).lineTo(RIGHT, y).strokeColor("#e6e6e6").lineWidth(0.5).stroke();
   y += 12;
-  for (const [label, amount, emphasize] of rows) {
+  for (const [label, amount, emphasize, note] of rows) {
+    const rowTop = y;
     doc.font(emphasize ? fonts.bold : fonts.body).fontSize(emphasize ? 11 : 9).fillColor(emphasize ? NAVY : MUTED);
-    doc.text(label, colLabel, y, { width: 120 });
+    doc.text(label, colLabel, rowTop, { width: 110, lineBreak: false });
     doc.font(emphasize ? fonts.bold : fonts.body).fillColor(emphasize ? NAVY : INK);
-    doc.text(amount, colAmt, y, { width: 109, align: "right" });
-    y += emphasize ? 20 : 16;
+    doc.text(amount, colAmt, rowTop, { width: amtWidth, align: "right", lineBreak: false });
+    y = rowTop + (emphasize ? 18 : 14);
+    if (note) {
+      doc.font(fonts.body).fontSize(8).fillColor(MUTED).text(note, colLabel, y, { width: amtWidth + 110 });
+      y = doc.y + 4;
+    }
   }
   if (!company.vatRegistered) {
     y += 6;
