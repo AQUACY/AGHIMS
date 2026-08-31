@@ -1,4 +1,4 @@
-const { config, resolvedPrivateKeyPem } = require("./config");
+const { config, resolvedPrivateKeyPem, companyInitials } = require("./config");
 const { getDb, nowSql, lockClause } = require("./db");
 const { buildSignedDocument } = require("./cryptoSign");
 const {
@@ -319,8 +319,8 @@ async function nextDocNumber(tx, kind) {
   }
   const n = Number(rows[0].next_value) || 1;
   await tx.query("UPDATE sequences SET next_value = ? WHERE name = ?", [n + 1, kind]);
-  const prefix = kind === "invoice" ? "INV" : "RCP";
-  return `${prefix}-${year}-${String(n).padStart(4, "0")}`;
+  const mid = kind === "invoice" ? "HMS" : "RCP";
+  return `${companyInitials()}-${mid}-${year}-${String(n).padStart(6, "0")}`;
 }
 
 function selftestCalendar() {

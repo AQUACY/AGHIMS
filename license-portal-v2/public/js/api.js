@@ -43,7 +43,7 @@ function fmtDt(value) {
 
 function statusPill(status) {
   const s = String(status || "").toLowerCase();
-  const cls = s === "success" || s === "active" ? "ok" : s === "pending" || s === "abandoned" || s === "patch" ? "warn" : s === "failed" ? "bad" : "idle";
+  const cls = s === "success" || s === "active" || s === "paid" || s === "sent" ? "ok" : s === "pending" || s === "abandoned" || s === "patch" ? "warn" : s === "failed" ? "bad" : "idle";
   return `<span class="pill ${cls}">${escapeHtml(s || "unknown")}</span>`;
 }
 

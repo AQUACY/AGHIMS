@@ -35,6 +35,10 @@
       <div class="grid grid-2">
         <section class="card">
           <h2>Hospitals</h2>
+          <p class="muted">24-hour and 1-hour renewal emails go out automatically. Use <strong>Send due notices now</strong> if you want to run that check immediately.</p>
+          <div class="actions" style="margin-top:0.4rem">
+            <button type="button" class="ghost compact" id="btn-remind-run">Send due notices now</button>
+          </div>
           <div id="list">Loading…</div>
         </section>
         <section class="card">
@@ -70,6 +74,12 @@
           <p class="err" id="form-msg"></p>
           <div id="secret-box"></div>
           <div id="detail-actions" style="display:none">
+            <p class="kicker" style="margin-top:1.2rem">Renewal emails</p>
+            <p class="muted">The portal emails the IT manager 24 hours before the licence ends, then again 1 hour before. You can also send a reminder now.</p>
+            <div class="actions">
+              <button type="button" class="gold" id="btn-remind">Send reminder email</button>
+            </div>
+            <div id="detail-reminders"></div>
             <p class="kicker" style="margin-top:1.2rem">Patch license</p>
             <p class="muted">A patch is not a subscription payment and does not move the renewal deadline above. Set the coverage window, issue it, then download <strong>Patch license JSON</strong>. HMS <strong>Renew from portal</strong> will replace the current file if that window covers today. Paying later on the hospital dashboard also replaces it.</p>
             <label>Patch starts</label>
@@ -207,6 +217,24 @@
 
     async function loadDetail(id) {
       const data = await api("/api/admin/customers/" + id);
+      const reminders = data.reminders || [];
+      if (!reminders.length) {
+        el("detail-reminders").innerHTML = data.mail_configured
+          ? "<p class='muted'>No reminder emails sent yet.</p>"
+          : "<p class='muted'>SMTP is not configured yet, so emails cannot go out.</p>";
+      } else {
+        let rh = "<table><thead><tr><th>When</th><th>Kind</th><th>To</th><th>Status</th></tr></thead><tbody>";
+        for (const r of reminders) {
+          rh += `<tr>
+            <td>${escapeHtml(fmtDt(r.created_at))}</td>
+            <td>${escapeHtml(r.kind_label || r.kind)}</td>
+            <td>${escapeHtml(r.to_email || "")}</td>
+            <td>${statusPill(r.status)}</td>
+          </tr>`;
+        }
+        rh += "</tbody></table>";
+        el("detail-reminders").innerHTML = rh;
+      }
       const pays = data.payments || [];
       if (!pays.length) {
         el("detail-payments").innerHTML = "<p class='muted'>No payments yet.</p>";
@@ -392,6 +420,34 @@
       try {
         const data = await api("/api/admin/customers/" + selectedId + "/reset-password", { method: "POST", body: {} });
         showSecret("New password", data.email, data.password);
+      } catch (e) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = e.message;
+      }
+    });
+
+    el("btn-remind").addEventListener("click", async () => {
+      if (!selectedId) return;
+      if (!confirm("Send a renewal reminder to this hospital's IT manager now?")) return;
+      try {
+        const data = await api("/api/admin/customers/" + selectedId + "/remind", { method: "POST", body: {} });
+        el("form-msg").className = "ok-msg";
+        el("form-msg").textContent = "Reminder sent to " + (data.to || "the IT manager") + ".";
+        await loadDetail(selectedId);
+      } catch (e) {
+        el("form-msg").className = "err";
+        el("form-msg").textContent = e.message;
+      }
+    });
+
+    el("btn-remind-run").addEventListener("click", async () => {
+      if (!confirm("Send 24-hour and 1-hour notices to every hospital that is due now?")) return;
+      try {
+        const data = await api("/api/admin/reminders/run", { method: "POST", body: {} });
+        el("form-msg").className = "ok-msg";
+        el("form-msg").textContent =
+          "Due notices: sent " + (data.sent || 0) + ", already sent " + (data.skipped || 0) + ", errors " + (data.errors || 0) + ".";
+        if (selectedId) await loadDetail(selectedId);
       } catch (e) {
         el("form-msg").className = "err";
         el("form-msg").textContent = e.message;

@@ -2,9 +2,9 @@ const path = require("path");
 const { config } = require("./config");
 const { getDb, nowSql, lockClause } = require("./db");
 const { getLicenseByCustomer, extendLicenseForCustomer, nextDocNumber, computePurchasedPeriod, serializePeriod, latestPaidPayment, signedDocumentFor } = require("./license");
-const { writeInvoicePdf, writeReceiptPdf, relativeDocumentPath, documentAbsPath } = require("./pdfs");
+const { writeInvoicePdf, writeReceiptPdf, relativeDocumentPath, documentAbsPath, licenceServiceTitle, taxNote } = require("./pdfs");
 const { initializeTransaction, verifyTransaction } = require("./paystack");
-const { formatGhs, pesewasToGhsNumber, randomUuid, utcNow, toSqlDatetime, parseDatetime, parseAdminDatetime, formatPeriodLabel, periodMonthTitle, toDatetimeLocalValue } = require("./dates");
+const { formatGhs, pesewasToGhsNumber, randomUuid, utcNow, toSqlDatetime, parseDatetime, parseAdminDatetime, formatPeriodLabel, formatLicencePeriod, formatAccraDate, periodMonthTitle, toDatetimeLocalValue } = require("./dates");
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -31,6 +31,12 @@ async function documentsForPayment(paymentId, runner = null) {
   const db = runner || getDb();
   const { rows } = await db.query("SELECT * FROM documents WHERE payment_id = ? ORDER BY id ASC", [paymentId]);
   return rows;
+}
+
+async function invoiceNumberForPayment(paymentId, runner = null) {
+  const docs = await documentsForPayment(paymentId, runner);
+  const inv = docs.find((d) => d.doc_type === "invoice");
+  return inv ? inv.doc_number : "";
 }
 
 function serializeDoc(d) {
@@ -245,6 +251,7 @@ async function writeMissingPdf(doc, payment, customer, email) {
       payment,
       paidAt: payment.paid_at,
       reference: payment.paystack_reference,
+      invoiceNumber: await invoiceNumberForPayment(payment.id),
     });
   }
 }
@@ -514,6 +521,19 @@ async function fulfillPayment(payment, rawPayload) {
        WHERE id = ?`,
       ["success", ts, license.license_id, payload, periodFrom, periodUntil, ts, row.id]
     );
+
+    const { rows: existingDocs } = await tx.query("SELECT doc_type FROM documents WHERE payment_id = ?", [row.id]);
+    if (!existingDocs.some((d) => d.doc_type === "invoice")) {
+      const invoiceNumber = await nextDocNumber(tx, "invoice");
+      const invoicePath = path.join(config.documentsDir, `${invoiceNumber}.pdf`);
+      await insertDocument(tx, {
+        paymentId: row.id,
+        customerId: customer.id,
+        docType: "invoice",
+        docNumber: invoiceNumber,
+        filePath: invoicePath,
+      });
+    }
 
     const receiptNumber = await nextDocNumber(tx, "receipt");
     const filePath = path.join(config.documentsDir, `${receiptNumber}.pdf`);
@@ -791,8 +811,45 @@ async function refreshDocumentPdf(doc) {
       payment,
       paidAt: payment.paid_at,
       reference: payment.paystack_reference,
+      invoiceNumber: await invoiceNumberForPayment(payment.id),
     });
   }
+}
+
+async function findPublicReceipt(docNumber) {
+  const n = String(docNumber || "").trim();
+  if (!n) return null;
+  const { rows } = await getDb().query("SELECT * FROM documents WHERE UPPER(doc_number) = ?", [n.toUpperCase()]);
+  const doc = rows.find((d) => String(d.doc_type || "").toLowerCase() === "receipt") || null;
+  if (!doc) return null;
+  const { rows: pays } = await getDb().query("SELECT * FROM payments WHERE id = ?", [doc.payment_id]);
+  const payment = pays[0];
+  if (!payment || String(payment.status || "").toLowerCase() !== "success") return null;
+  const customer = await getCustomer(payment.customer_id);
+  const invoiceNo = await invoiceNumberForPayment(payment.id);
+  const ch = String(payment.channel || "").toLowerCase();
+  return {
+    ok: true,
+    genuine: true,
+    doc_type: "receipt",
+    receipt_no: doc.doc_number,
+    invoice_no: invoiceNo || null,
+    customer: customer ? customer.hospital_name : "",
+    facility_code: customer && customer.facility_code ? customer.facility_code : "",
+    service: licenceServiceTitle(payment.duration_months),
+    licence_period:
+      payment.period_from && payment.period_until
+        ? formatLicencePeriod(payment.period_from, payment.period_until)
+        : null,
+    amount_label: formatGhs(payment.amount_pesewas),
+    payment_method: ch === "patch" || ch === "manual" ? "Issued by provider" : "Paystack",
+    payment_date: formatAccraDate(payment.paid_at || doc.created_at, { padDay: false }),
+    payment_status: "PAID",
+    reference: payment.paystack_reference || null,
+    tax_note: taxNote({
+      name: (config.company && config.company.name) || "This company",
+    }),
+  };
 }
 
 module.exports = {
@@ -816,6 +873,7 @@ module.exports = {
   signedLicenseForPayment,
   getDocumentForUser,
   refreshDocumentPdf,
+  findPublicReceipt,
   previewNextPeriod,
   findPaymentByReference,
   latestPaidPayment,

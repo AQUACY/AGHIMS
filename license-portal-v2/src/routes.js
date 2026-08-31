@@ -32,10 +32,13 @@ const {
   getDocumentForUser,
   getPaymentForUser,
   signedLicenseForPayment,
+  findPublicReceipt,
   refreshDocumentPdf,
   previewNextPeriod,
   findPaymentByReference,
 } = require("./payments");
+const { sendManualReminder, runScheduledReminders, listReminders } = require("./reminders");
+const { smtpConfigured } = require("./mailer");
 const { ghsToPesewas, utcNow, toIsoZ, parseAdminDatetime, toSqlDatetime } = require("./dates");
 const { verifyWebhookSignature } = require("./paystack");
 const { documentAbsPath } = require("./pdfs");
@@ -66,13 +69,41 @@ function mountRoutes(app) {
     res.json({ service: "license-portal-v2", ok: true });
   });
 
+  async function cronReminders(req, res) {
+    const secret = config.cronSecret;
+    const given = String(req.headers["x-cron-key"] || req.query.key || "").trim();
+    if (!secret || given !== secret) {
+      return res.status(403).json({ error: "Invalid cron key" });
+    }
+    const result = await runScheduledReminders();
+    res.json(result);
+  }
+  app.post("/api/cron/reminders", asyncHandler(cronReminders));
+  app.get("/api/cron/reminders", asyncHandler(cronReminders));
+
   app.get("/api/public-config", (req, res) => {
     res.json({
       company_name: config.company.name,
+      company_tagline: config.company.tagline,
       version: "2.0.0",
       logo_url: publicLogoUrl(),
     });
   });
+
+  app.get(
+    "/api/verify/receipt/:docNumber",
+    asyncHandler(async (req, res) => {
+      const found = await findPublicReceipt(req.params.docNumber);
+      if (!found) {
+        return res.status(404).json({
+          ok: false,
+          genuine: false,
+          error: "No genuine receipt was found for that number.",
+        });
+      }
+      res.json(found);
+    })
+  );
 
   app.get("/api/branding/logo", (req, res) => {
     const logo = getLogo();
@@ -342,6 +373,8 @@ function mountRoutes(app) {
         customer: serializeCustomer(customer, { email }),
         license: serializeLicense(license),
         payments,
+        reminders: await listReminders(customer.id),
+        mail_configured: smtpConfigured(),
       });
     })
   );
@@ -422,6 +455,26 @@ function mountRoutes(app) {
         periodFrom: req.body && (req.body.period_from || req.body.patch_from),
         periodUntil: req.body && (req.body.period_until || req.body.patch_until),
       });
+      res.json(result);
+    })
+  );
+
+  app.post(
+    "/api/admin/customers/:id/remind",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const result = await sendManualReminder(req.params.id);
+      res.json(result);
+    })
+  );
+
+  app.post(
+    "/api/admin/reminders/run",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const result = await runScheduledReminders();
       res.json(result);
     })
   );

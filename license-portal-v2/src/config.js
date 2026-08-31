@@ -73,12 +73,27 @@ const config = {
   publicBaseUrl: PUBLIC_BASE_URL,
   paystackSecretKey: env("PAYSTACK_SECRET_KEY", "").trim(),
   paystackPublicKey: env("PAYSTACK_PUBLIC_KEY", "").trim(),
+  smtp: {
+    host: env("SMTP_HOST", "").trim(),
+    port: envInt("SMTP_PORT", 465),
+    secure: env("SMTP_SECURE", "")
+      ? envBool("SMTP_SECURE", true)
+      : envInt("SMTP_PORT", 465) === 465,
+    user: unquote(env("SMTP_USER", "")),
+    pass: unquote(env("SMTP_PASS", "")),
+    from: env("SMTP_FROM", "").trim(),
+    testMode: env("SMTP_HOST", "").trim().toLowerCase() === "test",
+  },
+  cronSecret: unquote(env("CRON_SECRET", "")),
+  reminderIntervalMs: envInt("REMINDER_INTERVAL_MS", 10 * 60 * 1000),
   company: {
     name: env("COMPANY_NAME", "License Portal"),
     address: env("COMPANY_ADDRESS", ""),
     phone: env("COMPANY_PHONE", ""),
     email: env("COMPANY_EMAIL", ""),
     tin: env("COMPANY_TIN", ""),
+    tagline: env("COMPANY_TAGLINE", "Software • IT Infrastructure • Digital Solutions"),
+    vatRegistered: envBool("COMPANY_VAT_REGISTERED", false),
   },
   cookieSecure: env("COOKIE_SECURE", "")
     ? envBool("COOKIE_SECURE", false)
@@ -139,4 +154,24 @@ function resolvedPrivateKeyPem() {
   );
 }
 
-module.exports = { config, resolvedPrivateKeyPem };
+function companyInitials() {
+  const explicit = unquote(env("COMPANY_INITIALS", "")).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (explicit) return explicit.slice(0, 8);
+  const slug = unquote(env("ISSUER_SLUG", "")).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (slug.length >= 2 && slug.length <= 8) return slug;
+  const skip = new Set(["LTD", "LIMITED", "INC", "LLC", "PLC", "CO", "COMPANY", "GHANA"]);
+  const words = String(config.company.name || "HMS")
+    .split(/[^A-Za-z0-9]+/)
+    .filter((w) => w && !skip.has(w.toUpperCase()));
+  if (words.length >= 2) {
+    return words
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 8);
+  }
+  const compact = String(words[0] || "HMS").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  return compact.slice(0, 3) || "HMS";
+}
+
+module.exports = { config, resolvedPrivateKeyPem, companyInitials };

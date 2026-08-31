@@ -27,6 +27,10 @@ process.env.VERIFY_SHARED_SECRET = "smoke-verify-secret";
 process.env.RSA_PRIVATE_KEY_FILE = keyPath;
 process.env.PUBLIC_BASE_URL = "http://127.0.0.1";
 process.env.COMPANY_NAME = "Smoke Test Ltd";
+process.env.COMPANY_INITIALS = "STL";
+process.env.COMPANY_EMAIL = "billing@smoke.test";
+process.env.SMTP_HOST = "test";
+process.env.CRON_SECRET = "smoke-cron";
 process.env.PAYSTACK_SECRET_KEY = "sk_test_smoke";
 process.env.DOTENV_CONFIG_PATH = path.join(tmp, "no.env");
 
@@ -291,6 +295,31 @@ async function main() {
     if (pdf.status !== 200 || !pdf.text.startsWith("%PDF")) {
       throw new Error(`receipt pdf missing, status ${pdf.status}`);
     }
+    if (!/^STL-RCP-\d{4}-\d{6}$/.test(receiptPay.receipt.doc_number)) {
+      throw new Error(`receipt number format: ${receiptPay.receipt.doc_number}`);
+    }
+    if (!receiptPay.invoice || !/^STL-HMS-\d{4}-\d{6}$/.test(receiptPay.invoice.doc_number)) {
+      throw new Error(`invoice number format: ${JSON.stringify(receiptPay.invoice)}`);
+    }
+    const invoicePdf = await req(server, receiptPay.invoice.url, { token: itToken });
+    if (invoicePdf.status !== 200 || !invoicePdf.text.startsWith("%PDF")) {
+      throw new Error(`invoice pdf missing, status ${invoicePdf.status}`);
+    }
+    const verified = await req(server, `/api/verify/receipt/${receiptPay.receipt.doc_number}`);
+    if (verified.status !== 200 || !verified.json.genuine || verified.json.payment_status !== "PAID") {
+      throw new Error(`receipt verify api: ${verified.text}`);
+    }
+    if (verified.json.invoice_no !== receiptPay.invoice.doc_number) {
+      throw new Error("verified receipt should cite the invoice number");
+    }
+    const verifyPage = await req(server, `/verify/${receiptPay.receipt.doc_number}`);
+    if (verifyPage.status !== 200 || !verifyPage.text.includes("PAYMENT RECEIPT")) {
+      throw new Error("verify page should load for a genuine receipt");
+    }
+    const fakeVerify = await req(server, "/api/verify/receipt/STL-RCP-1999-999999");
+    if (fakeVerify.status !== 404 || fakeVerify.json.genuine !== false) {
+      throw new Error(`expected 404 for unknown receipt, got ${fakeVerify.status} ${fakeVerify.text}`);
+    }
 
     const badPw = await req(server, "/api/me/password", {
       method: "POST",
@@ -410,6 +439,62 @@ async function main() {
     if (patched.json.customer.amount_ghs !== 4500 || patched.json.customer.duration_months !== 6) {
       throw new Error(`patch failed: ${patched.text}`);
     }
+
+    const { capturedMails } = require("../src/mailer");
+    const { runScheduledReminders } = require("../src/reminders");
+    capturedMails.length = 0;
+    const dayCust = await req(server, "/api/admin/customers", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        hospital_name: "Day Notice Clinic",
+        facility_code: "DAY01",
+        amount_ghs: 500,
+        duration_months: 1,
+        billing_deadline: new Date(Date.now() + 20 * 3600 * 1000).toISOString(),
+        email: "it@day.test",
+        password: "day-pass-1234",
+      },
+    });
+    if (dayCust.status !== 201) throw new Error(`day customer: ${dayCust.text}`);
+    const hourCust = await req(server, "/api/admin/customers", {
+      method: "POST",
+      token: adminToken,
+      body: {
+        hospital_name: "Hour Notice Clinic",
+        facility_code: "HOUR01",
+        amount_ghs: 500,
+        duration_months: 1,
+        billing_deadline: new Date(Date.now() + 40 * 60 * 1000).toISOString(),
+        email: "it@hour.test",
+        password: "hour-pass-1234",
+      },
+    });
+    if (hourCust.status !== 201) throw new Error(`hour customer: ${hourCust.text}`);
+    const batch = await runScheduledReminders();
+    if (!capturedMails.some((m) => m.to === "it@day.test" && m.kind === "day")) {
+      throw new Error(`expected 24-hour notice, sent=${batch.sent} ${JSON.stringify(capturedMails.map((m) => m.kind + ":" + m.to))}`);
+    }
+    if (!capturedMails.some((m) => m.to === "it@hour.test" && m.kind === "hour")) {
+      throw new Error(`expected 1-hour notice, sent=${batch.sent}`);
+    }
+    const afterFirst = capturedMails.length;
+    await runScheduledReminders();
+    if (capturedMails.length !== afterFirst) throw new Error("scheduled reminders must not duplicate");
+    const manual = await req(server, `/api/admin/customers/${dayCust.json.customer.id}/remind`, {
+      method: "POST",
+      token: adminToken,
+    });
+    if (manual.status !== 200 || manual.json.kind !== "manual") {
+      throw new Error(`manual reminder: ${manual.status} ${manual.text}`);
+    }
+    const deniedCron = await req(server, "/api/cron/reminders", { method: "POST" });
+    if (deniedCron.status !== 403) throw new Error(`cron without key: ${deniedCron.status}`);
+    const cronOk = await req(server, "/api/cron/reminders", {
+      method: "GET",
+      headers: { "X-Cron-Key": "smoke-cron" },
+    });
+    if (cronOk.status !== 200) throw new Error(`cron with key: ${cronOk.text}`);
 
     console.log("smoke ok");
   } finally {

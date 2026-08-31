@@ -59,7 +59,7 @@
       <section class="card">
         <p class="kicker">For management</p>
         <h2>Latest files</h2>
-        <p class="muted">Invoice and receipt for management. License JSON is also listed under each paid month in history.</p>
+        <p class="muted">Download the invoice for accounts so they can arrange payment on this site. The receipt is issued only after Paystack confirms — it is the proof of payment. A QR code on the receipt opens a public verify page.</p>
         <div id="docs"><p class="muted">Documents appear after you start or complete payment.</p></div>
       </section>
     </div>
@@ -73,7 +73,7 @@
           <div class="step-num">1</div>
           <div>
             <h3>Pay for the next month</h3>
-            <p class="muted">Use Pay with Paystack above when it is time to renew. Invoice and receipt are for management.</p>
+            <p class="muted">Use Pay with Paystack above when it is time to renew. Download the invoice first if finance needs a reference. The receipt appears after payment succeeds.</p>
           </div>
         </div>
         <div class="step">
@@ -117,16 +117,17 @@
     }
 
     function renderDocs(payments) {
-      const paid = (payments || []).find((p) => p.status === "success") || (payments || []).find((p) => p.receipt) || (payments || [])[0];
-      if (!paid) {
-        el("docs").innerHTML = "<p class='muted'>Pay to generate an invoice. The receipt and license file appear after Paystack confirms.</p>";
+      const latest = (payments || []).find((p) => p.invoice || p.receipt);
+      if (!latest) {
+        el("docs").innerHTML = "<p class='muted'>Start checkout to download an invoice for accounts. The receipt appears after Paystack confirms.</p>";
         return;
       }
       let html = "";
-      if (paid.period_label) html += `<p class="muted">${escapeHtml(paid.period_label)}</p>`;
-      if (paid.license_url) html += `<p><a href="${paid.license_url}">${escapeHtml(paid.download_label || "License JSON")}</a></p>`;
-      if (paid.invoice) html += `<p><a href="${paid.invoice.url}">Invoice ${escapeHtml(paid.invoice.doc_number)}</a></p>`;
-      if (paid.receipt) html += `<p><a href="${paid.receipt.url}">Receipt ${escapeHtml(paid.receipt.doc_number)}</a></p>`;
+      if (latest.period_label) html += `<p class="muted">${escapeHtml(latest.period_label)}</p>`;
+      if (latest.invoice) html += `<p><a href="${latest.invoice.url}">Invoice ${escapeHtml(latest.invoice.doc_number)}</a></p>`;
+      if (latest.receipt) html += `<p><a href="${latest.receipt.url}">Receipt ${escapeHtml(latest.receipt.doc_number)}</a></p>`;
+      else html += `<p class="muted">Receipt is issued after a successful Paystack payment.</p>`;
+      if (latest.license_url) html += `<p><a href="${latest.license_url}">${escapeHtml(latest.download_label || "License JSON")}</a></p>`;
       el("docs").innerHTML = html || "<p class='muted'>Documents will appear after checkout.</p>";
     }
 

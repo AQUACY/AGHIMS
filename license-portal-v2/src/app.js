@@ -28,6 +28,8 @@ async function createApp() {
   app.get("/dashboard", (req, res) => res.sendFile(path.join(publicDir, "dashboard.html")));
   app.get("/profile", (req, res) => res.sendFile(path.join(publicDir, "profile.html")));
   app.get("/pay/return", (req, res) => res.sendFile(path.join(publicDir, "pay-return.html")));
+  app.get("/verify", (req, res) => res.sendFile(path.join(publicDir, "verify.html")));
+  app.get("/verify/:docNumber", (req, res) => res.sendFile(path.join(publicDir, "verify.html")));
 
   app.use(errorHandler);
   return app;

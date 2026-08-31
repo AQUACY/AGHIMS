@@ -290,6 +290,7 @@ async function initDb() {
 
   await ensurePaymentPeriodColumns(db);
   await ensureCustomerDeadlineColumn(db);
+  await ensureDocumentsNumberWidth(db);
 
   return db;
 }
@@ -341,6 +342,15 @@ async function ensurePaymentPeriodColumns(db) {
   }
   if (!names.includes("paystack_prior_refs")) {
     await db.query("ALTER TABLE payments ADD COLUMN paystack_prior_refs TEXT NULL");
+  }
+}
+
+async function ensureDocumentsNumberWidth(db) {
+  if (db.dialect === "sqlite") return;
+  try {
+    await db.query("ALTER TABLE documents MODIFY doc_number VARCHAR(64) NOT NULL");
+  } catch (_) {
+    /* already wide enough, or no permission — new numbers still fit in 32 for short initials */
   }
 }
 

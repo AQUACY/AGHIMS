@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS documents (
   payment_id INT NOT NULL,
   customer_id INT NOT NULL,
   doc_type VARCHAR(16) NOT NULL,
-  doc_number VARCHAR(32) NOT NULL,
+  doc_number VARCHAR(64) NOT NULL,
   file_path VARCHAR(512) NOT NULL,
   created_at DATETIME NOT NULL,
   UNIQUE KEY uq_documents_number (doc_number),
@@ -82,4 +82,19 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE TABLE IF NOT EXISTS sequences (
   name VARCHAR(32) PRIMARY KEY,
   next_value INT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS reminder_sends (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  customer_id INT NOT NULL,
+  kind VARCHAR(16) NOT NULL,
+  cycle_key VARCHAR(64) NOT NULL,
+  to_email VARCHAR(255) NOT NULL,
+  subject VARCHAR(255) NULL,
+  status VARCHAR(16) NOT NULL,
+  error TEXT NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_reminders_customer (customer_id),
+  KEY idx_reminders_lookup (customer_id, kind, cycle_key),
+  CONSTRAINT fk_reminders_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

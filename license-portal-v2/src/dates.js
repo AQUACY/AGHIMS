@@ -76,6 +76,51 @@ function startOfMonthAfter(date) {
   return startOfMonthUtc(d.getUTCFullYear(), d.getUTCMonth() + 1);
 }
 
+function formatAccraTime(date) {
+  const d = date instanceof Date ? date : parseDatetime(date);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Accra",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(d)
+    .toLowerCase();
+}
+
+function formatAccraDate(date, { padDay = true } = {}) {
+  const d = date instanceof Date ? date : parseDatetime(date);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Accra",
+    day: padDay ? "2-digit" : "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(d);
+}
+
+function formatCoverageBound(date) {
+  const day = formatAccraDate(date, { padDay: false });
+  const time = formatAccraTime(date);
+  if (!day || !time) return "";
+  return `${day} at ${time}`;
+}
+
+function formatCoverageRange(from, until) {
+  const a = formatCoverageBound(from);
+  const b = formatCoverageBound(until);
+  if (!a || !b) return "";
+  return `${a} – ${b}`;
+}
+
+function formatLicencePeriod(from, until) {
+  const a = formatAccraDate(from, { padDay: true });
+  const b = formatAccraDate(until, { padDay: true });
+  if (!a || !b) return "";
+  return `${a} – ${b}`;
+}
+
 function formatAccraStamp(date) {
   const d = date instanceof Date ? date : parseDatetime(date);
   if (!d) return "";
@@ -149,6 +194,9 @@ module.exports = {
   startOfNextCalendarMonth,
   startOfMonthAfter,
   formatAccraStamp,
+  formatAccraDate,
+  formatCoverageRange,
+  formatLicencePeriod,
   formatPeriodLabel,
   periodMonthTitle,
   parseAdminDatetime,
