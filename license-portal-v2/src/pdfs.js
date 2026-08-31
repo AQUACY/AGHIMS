@@ -60,8 +60,12 @@ function paymentStatusLabel(payment) {
 }
 
 function taxNote(company) {
-  return `${company.name} is not currently registered for VAT. VAT, NHIL and GETFund Levy have therefore not been charged.`;
+  return `.`;
 }
+
+// function taxNote(company) {
+//   return `${company.name} is not currently registered for VAT. VAT, NHIL and GETFund Levy have therefore not been charged.`;
+// }
 
 function receiptVerifyUrl(receiptNumber) {
   return `${config.publicBaseUrl}/verify/${encodeURIComponent(receiptNumber)}`;
@@ -146,7 +150,8 @@ function drawTaxBreakdown(doc, fonts, y, amountPesewas) {
   const colAmt = 400;
   const amtWidth = RIGHT - colAmt;
   const rows = [
-    ["VAT", zero, false, company.vatRegistered ? "" : "Not VAT registered"],
+    ["VAT", zero, false, ""],
+    // ["VAT", zero, false, company.vatRegistered ? "" : "Not VAT registered"],
     ["NHIL", zero, false, ""],
     ["GETFund Levy", zero, false, ""],
     ["Amount Payable", total, true, ""],

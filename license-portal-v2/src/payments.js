@@ -392,11 +392,108 @@ async function periodAlreadyPaid(customerId, payment) {
 async function findRetryableForPeriod(customerId, period) {
   const { rows } = await getDb().query(
     `SELECT * FROM payments
-     WHERE customer_id = ? AND channel NOT IN ('manual', 'patch') AND status IN ('pending', 'failed')
+     WHERE customer_id = ? AND channel NOT IN ('manual', 'patch') AND status IN ('pending', 'failed', 'invoiced')
      ORDER BY id DESC`,
     [customerId]
   );
   return rows.find((p) => samePeriod(p, period)) || rows.find((p) => paymentCanRetry(p) && !p.period_from) || null;
+}
+
+async function findPaymentForPeriod(customerId, period) {
+  const { rows } = await getDb().query(
+    `SELECT * FROM payments
+     WHERE customer_id = ? AND period_from IS NOT NULL AND period_until IS NOT NULL
+     ORDER BY id DESC`,
+    [customerId]
+  );
+  return rows.find((p) => samePeriod(p, period)) || null;
+}
+
+async function ensureInvoiceDocument(payment, customer, user) {
+  const docs = await documentsForPayment(payment.id);
+  let invoice = docs.find((d) => d.doc_type === "invoice");
+  const email = await customerLoginEmail(customer.id);
+  if (!invoice) {
+    const invoiceNumber = await nextDocNumber(getDb(), "invoice");
+    const filePath = path.join(config.documentsDir, `${invoiceNumber}.pdf`);
+    invoice = await insertDocument(getDb(), {
+      paymentId: payment.id,
+      customerId: customer.id,
+      docType: "invoice",
+      docNumber: invoiceNumber,
+      filePath,
+    });
+    await writeInvoicePdf({
+      filePath,
+      number: invoiceNumber,
+      customer,
+      email,
+      payment,
+      issuedAt: utcNow(),
+    });
+    return invoice;
+  }
+  await writeInvoicePdf({
+    filePath: documentAbsPath(invoice.file_path),
+    number: invoice.doc_number,
+    customer,
+    email,
+    payment,
+    issuedAt: invoice.created_at,
+  });
+  return invoice;
+}
+
+async function ensureCurrentBillInvoice(customer, user) {
+  if (!customer) throw httpError(404, "Hospital account not found");
+  if (customer.status !== "active") {
+    throw httpError(400, "This hospital account is not active");
+  }
+  if (!customer.amount_pesewas || customer.amount_pesewas < 100) {
+    throw httpError(400, "Amount is not set. Ask the issuer to set the GH₵ amount.");
+  }
+  const license = await getLicenseByCustomer(customer.id);
+  const period = computePurchasedPeriod(
+    license,
+    customer.duration_months,
+    utcNow(),
+    [],
+    customer.billing_deadline
+  );
+  let payment = await findPaymentForPeriod(customer.id, period);
+  if (!payment || isPatchPayment(payment)) {
+    const ts = nowSql();
+    const reference = `LPV2-${randomUuid()}`;
+    const inserted = await getDb().query(
+      `INSERT INTO payments
+        (customer_id, license_id, paystack_reference, paystack_access_code, amount_pesewas, currency,
+         duration_months, status, channel, paid_at, period_from, period_until, raw_payload, notes, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        customer.id,
+        license ? license.license_id : null,
+        reference,
+        null,
+        customer.amount_pesewas,
+        customer.currency || "GHS",
+        customer.duration_months,
+        "invoiced",
+        "paystack",
+        null,
+        toSqlDatetime(period.validFrom),
+        toSqlDatetime(period.validUntil),
+        null,
+        "Invoice issued for management / accounts",
+        ts,
+        ts,
+      ]
+    );
+    const { rows } = await getDb().query("SELECT * FROM payments WHERE id = ?", [inserted.insertId]);
+    payment = rows[0];
+  }
+  await ensureInvoiceDocument(payment, customer, user);
+  const docs = await documentsForPayment(payment.id);
+  return serializePayment(payment, docs);
 }
 
 async function createCheckout(customer, user) {
@@ -862,6 +959,7 @@ module.exports = {
   serializeCustomer,
   serializeLicense,
   createCheckout,
+  ensureCurrentBillInvoice,
   retryPaymentById,
   fulfillByReference,
   fulfillPayment,
