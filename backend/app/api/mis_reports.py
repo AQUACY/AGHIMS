@@ -19,6 +19,8 @@ from app.models.lab_result import LabResult
 from app.models.scan_result import ScanResult
 from app.models.xray_result import XrayResult
 from app.models.facility_settings import FacilitySettings
+from app.models.prescription import Prescription
+from app.models.inpatient_prescription import InpatientPrescription
 import pandas as pd
 from io import BytesIO
 from fastapi.responses import StreamingResponse
@@ -1291,5 +1293,261 @@ def export_inhouse_lab_parameters(
         headers={
             "Content-Disposition": f"attachment; filename=inhouse_lab_parameters_{start_date}_{end_date}.xlsx"
         }
+    )
+
+
+def _parse_mis_date_range(start_date: str, end_date: str):
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    if end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="End date must be on or after start date")
+    return start_dt, end_dt
+
+
+def _dispensed_quantity_query(
+    db: Session,
+    model,
+    start_dt: date,
+    end_dt: date,
+    medicine_code: Optional[str] = None,
+    medicine_name: Optional[str] = None,
+):
+    """Aggregate dispensed (internal) prescriptions by medicine for a date range."""
+    start_datetime = datetime.combine(start_dt, datetime.min.time())
+    end_datetime = datetime.combine(end_dt, datetime.max.time())
+
+    filters = [
+        model.dispensed_by.isnot(None),
+        model.is_external == 0,
+        model.service_date >= start_datetime,
+        model.service_date <= end_datetime,
+    ]
+
+    code = (medicine_code or "").strip()
+    name = (medicine_name or "").strip()
+    if code:
+        filters.append(func.upper(model.medicine_code) == code.upper())
+    elif name:
+        filters.append(model.medicine_name.ilike(f"%{name}%"))
+
+    return (
+        db.query(
+            model.medicine_code.label("medicine_code"),
+            func.max(model.medicine_name).label("medicine_name"),
+            func.coalesce(func.sum(model.quantity), 0).label("total_quantity"),
+            func.count(model.id).label("dispense_count"),
+        )
+        .filter(and_(*filters))
+        .group_by(model.medicine_code)
+        .all()
+    )
+
+
+def _build_drugs_dispensed_report(
+    db: Session,
+    start_date: str,
+    end_date: str,
+    medicine_code: Optional[str] = None,
+    medicine_name: Optional[str] = None,
+    source: str = "all",
+):
+    start_dt, end_dt = _parse_mis_date_range(start_date, end_date)
+    source_key = (source or "all").strip().lower()
+    if source_key not in ("all", "opd", "ipd"):
+        raise HTTPException(status_code=400, detail="source must be one of: all, opd, ipd")
+
+    by_code = {}
+
+    def merge_rows(rows, bucket: str):
+        for row in rows:
+            code = (row.medicine_code or "").strip()
+            key = code.upper() if code else f"NAME:{(row.medicine_name or '').strip().upper()}"
+            if key not in by_code:
+                by_code[key] = {
+                    "medicine_code": code or "N/A",
+                    "medicine_name": row.medicine_name or "N/A",
+                    "total_quantity": 0,
+                    "dispense_count": 0,
+                    "opd_quantity": 0,
+                    "ipd_quantity": 0,
+                    "opd_dispense_count": 0,
+                    "ipd_dispense_count": 0,
+                }
+            entry = by_code[key]
+            qty = int(row.total_quantity or 0)
+            cnt = int(row.dispense_count or 0)
+            entry["total_quantity"] += qty
+            entry["dispense_count"] += cnt
+            if bucket == "opd":
+                entry["opd_quantity"] += qty
+                entry["opd_dispense_count"] += cnt
+            else:
+                entry["ipd_quantity"] += qty
+                entry["ipd_dispense_count"] += cnt
+            # Prefer a non-empty display name if later rows have one
+            if row.medicine_name and (not entry["medicine_name"] or entry["medicine_name"] == "N/A"):
+                entry["medicine_name"] = row.medicine_name
+
+    if source_key in ("all", "opd"):
+        merge_rows(
+            _dispensed_quantity_query(
+                db, Prescription, start_dt, end_dt, medicine_code, medicine_name
+            ),
+            "opd",
+        )
+    if source_key in ("all", "ipd"):
+        merge_rows(
+            _dispensed_quantity_query(
+                db, InpatientPrescription, start_dt, end_dt, medicine_code, medicine_name
+            ),
+            "ipd",
+        )
+
+    data = sorted(
+        by_code.values(),
+        key=lambda r: (r["medicine_name"] or "").lower(),
+    )
+    for idx, row in enumerate(data, start=1):
+        row["sr_no"] = idx
+
+    total_quantity = sum(r["total_quantity"] for r in data)
+    total_dispense_count = sum(r["dispense_count"] for r in data)
+
+    filter_label = "All drugs"
+    code = (medicine_code or "").strip()
+    name = (medicine_name or "").strip()
+    if code:
+        filter_label = f"Medicine code: {code}"
+    elif name:
+        filter_label = f"Medicine name contains: {name}"
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "source": source_key,
+        "medicine_code": code or None,
+        "medicine_name": name or None,
+        "filter_label": filter_label,
+        "summary": {
+            "distinct_drugs": len(data),
+            "total_quantity": total_quantity,
+            "total_dispense_count": total_dispense_count,
+        },
+        "data": data,
+        "total_records": len(data),
+    }
+
+
+@router.get("/drugs-dispensed")
+def get_drugs_dispensed(
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    medicine_code: Optional[str] = Query(None, description="Optional exact medicine/item code"),
+    medicine_name: Optional[str] = Query(None, description="Optional medicine name contains filter"),
+    source: str = Query("all", description="all | opd | ipd"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Admin", "Records", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read")),
+):
+    """
+    Drugs dispensed quantities for a date range.
+    - With medicine_code (or medicine_name): totals for matching drug(s).
+    - Without drug filter: all dispensed drugs and quantities in the period.
+    Includes OPD (prescriptions) and IPD (inpatient_prescriptions) that were dispensed in-house.
+    """
+    return _build_drugs_dispensed_report(
+        db, start_date, end_date, medicine_code, medicine_name, source
+    )
+
+
+@router.get("/drugs-dispensed/export")
+def export_drugs_dispensed(
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    medicine_code: Optional[str] = Query(None, description="Optional exact medicine/item code"),
+    medicine_name: Optional[str] = Query(None, description="Optional medicine name contains filter"),
+    source: str = Query("all", description="all | opd | ipd"),
+    clinic_name: Optional[str] = Query(None, description="Clinic display name for export header"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Admin", "Records", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
+    _module_check: User = Depends(require_module_permission("mis_reports", "read")),
+):
+    """Export drugs dispensed report to Excel."""
+    report = _build_drugs_dispensed_report(
+        db, start_date, end_date, medicine_code, medicine_name, source
+    )
+    summary = report.get("summary", {})
+    rows = report.get("data", [])
+
+    start_formatted = datetime.strptime(start_date, "%Y-%m-%d").strftime("%B %d, %Y")
+    end_formatted = datetime.strptime(end_date, "%Y-%m-%d").strftime("%B %d, %Y")
+    resolved_clinic = _resolve_clinic_name_for_export(db, clinic_name)
+    report_gen_date = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+
+    header_rows = [
+        [f"Drugs Dispensed From {start_formatted} To {end_formatted}", None, None, None, None, None, None, None],
+        [f"Clinic : {resolved_clinic}", None, None, None, None, None, None, None],
+        [f"Report Generation Date: {report_gen_date}", None, None, None, None, None, None, None],
+        [f"Filter : {report.get('filter_label', 'All drugs')}", None, None, None, None, None, None, None],
+        [f"Source : {(report.get('source') or 'all').upper()}", None, None, None, None, None, None, None],
+        [None, None, None, None, None, None, None, None],
+        ["SUMMARY", None, None, None, None, None, None, None],
+        ["Distinct Drugs", summary.get("distinct_drugs", 0), None, None, None, None, None, None],
+        ["Total Quantity Dispensed", summary.get("total_quantity", 0), None, None, None, None, None, None],
+        ["Total Dispense Lines", summary.get("total_dispense_count", 0), None, None, None, None, None, None],
+        [None, None, None, None, None, None, None, None],
+        ["DETAILED REPORT", None, None, None, None, None, None, None],
+        [
+            "Sr.No.",
+            "Medicine Code",
+            "Medicine Name",
+            "Total Qty",
+            "Dispense Lines",
+            "OPD Qty",
+            "IPD Qty",
+            None,
+        ],
+    ]
+
+    data_rows = [
+        [
+            record.get("sr_no", ""),
+            record.get("medicine_code", ""),
+            record.get("medicine_name", ""),
+            record.get("total_quantity", 0),
+            record.get("dispense_count", 0),
+            record.get("opd_quantity", 0),
+            record.get("ipd_quantity", 0),
+            None,
+        ]
+        for record in rows
+    ]
+
+    footer_rows = [
+        [None, None, None, None, None, None, None, None],
+        ["Signature", None, None, None, None, None, None, None],
+        ["Rank", None, None, None, None, None, None, None],
+        ["Date", datetime.now().strftime("%b %d %Y"), None, None, None, None, None, None],
+    ]
+
+    df = pd.DataFrame(header_rows + data_rows + footer_rows)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, header=False, sheet_name="Drugs Dispensed")
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=drugs_dispensed_{start_date}_{end_date}.xlsx"
+        },
     )
 

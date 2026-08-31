@@ -246,30 +246,30 @@ def _verify_stored_document(db: Session, row: AppLicenseState) -> Tuple[bool, Op
     return True, None, claims
 
 
-def _try_online_refresh(db: Session, row: AppLicenseState, claims: Dict[str, Any]) -> None:
-    base = (getattr(settings, "LICENSE_VERIFY_URL", "") or "").strip().rstrip("/")
+def _normalize_portal_base(url: str) -> str:
+    """HMS posts to {base}/license/current and {base}/verify/online (portal v2 lives under /api)."""
+    base = (url or "").strip().rstrip("/")
     if not base:
-        return
+        return ""
+    if not base.lower().endswith("/api"):
+        base = f"{base}/api"
+    return base
+
+
+def _portal_credentials() -> Tuple[Optional[str], Optional[str]]:
+    base = _normalize_portal_base(getattr(settings, "LICENSE_VERIFY_URL", "") or "")
     api_key = (getattr(settings, "LICENSE_VERIFY_API_KEY", "") or "").strip()
-    if not api_key:
-        return
-    interval_h = int(getattr(settings, "LICENSE_ONLINE_CHECK_INTERVAL_HOURS", 24) or 24)
-    now = utcnow()
-    if now.tzinfo:
-        now = now.replace(tzinfo=None)
-    if row.last_online_check_at:
-        loc = row.last_online_check_at
-        if loc.tzinfo:
-            loc = loc.replace(tzinfo=None)
-        if now - loc < timedelta(hours=max(1, interval_h)):
-            return
-    url = f"{base}/verify/online"
-    license_id = (claims.get("license_id") or "").strip()
-    facility_code = _facility_code(db)
-    body = json.dumps(
-        {"license_id": license_id, "facility_code": facility_code},
-        separators=(",", ":"),
-    ).encode("utf-8")
+    if not base or not api_key:
+        return None, None
+    return base, api_key
+
+
+def _portal_post(path: str, payload: Dict[str, Any], timeout: int = 12) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    base, api_key = _portal_credentials()
+    if not base:
+        return None, "LICENSE_VERIFY_URL is not set."
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    url = f"{base}{path}"
     req = urllib.request.Request(
         url,
         data=body,
@@ -279,15 +279,127 @@ def _try_online_refresh(db: Session, row: AppLicenseState, claims: Dict[str, Any
             "X-License-Server-Key": api_key,
         },
     )
-    row.last_online_check_at = now
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
-        db.commit()
-        return
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            parsed = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        parsed = None
+        try:
+            parsed = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed, None
+        if exc.code == 403:
+            return None, "Portal rejected LICENSE_VERIFY_API_KEY. It must match VERIFY_SHARED_SECRET on the license portal."
+        if exc.code == 404:
+            return None, f"License portal has no {path}. Set LICENSE_VERIFY_URL to the /api base, e.g. https://hms.kdgsolution.com/api"
+        return None, f"License portal returned HTTP {exc.code}."
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        return None, f"Could not reach the license portal ({reason}). Check LICENSE_VERIFY_URL and the network."
+    except (TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        return None, f"License portal response was not usable ({exc})."
+    if not isinstance(parsed, dict):
+        return None, "License portal returned a non-JSON object."
+    return parsed, None
+
+
+def pull_and_activate_from_portal(db: Session, force: bool = False) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    """
+    Fetch the paid period that covers now from the license portal and store it.
+    Does not apply a future month (HMS would be unlicensed until that month starts).
+    """
+    base, api_key = _portal_credentials()
+    if not base or not api_key:
+        return False, "Set LICENSE_VERIFY_URL and LICENSE_VERIFY_API_KEY on this HMS server.", None
+    row = _singleton(db)
+    claims = _claims_from_stored(row) or {}
+    license_id = (claims.get("license_id") or row.license_public_id or "").strip()
+    facility_code = _facility_code(db) or ""
+    if not license_id and not facility_code:
+        return (
+            False,
+            "Set this hospital's facility code (must match the portal), or import a license once.",
+            None,
+        )
+    payload, transport_err = _portal_post(
+        "/license/current",
+        {"license_id": license_id, "facility_code": facility_code},
+    )
+    if not payload:
+        return False, transport_err or "Could not reach the license portal. Check LICENSE_VERIFY_URL and the network.", None
     if not payload.get("ok"):
-        db.commit()
+        reason = payload.get("reason") or ""
+        if reason == "not_yet":
+            when = payload.get("valid_from") or "the next paid month"
+            return (
+                False,
+                f"The next paid month has not started yet ({when}). Keep the current file until then.",
+                payload,
+            )
+        if reason == "unpaid":
+            return False, "No paid license covers today. Pay on the license portal first.", payload
+        if reason == "unknown_license":
+            return False, "This hospital is not on the license portal yet (unknown license or facility code).", payload
+        if reason == "facility_mismatch":
+            return False, "Facility code on HMS does not match the license portal.", payload
+        return False, payload.get("error") or "Portal did not return a license for this hospital.", payload
+    document = payload.get("document")
+    if not isinstance(document, dict):
+        return False, "Portal returned an empty license file.", payload
+    stored = _claims_from_stored(row) or {}
+    new_claims = document.get("claims") if isinstance(document.get("claims"), dict) else {}
+    if stored.get("valid_from") == new_claims.get("valid_from") and stored.get("valid_until") == new_claims.get(
+        "valid_until"
+    ):
+        return True, "HMS already has this paid month.", {"unchanged": True, "period": payload.get("period")}
+    ok, msg = activate_from_document(db, document)
+    extra = {"period": payload.get("period"), "unchanged": False}
+    return ok, msg, extra
+
+
+def _try_online_refresh(
+    db: Session,
+    row: AppLicenseState,
+    claims: Optional[Dict[str, Any]],
+    force: bool = False,
+) -> None:
+    base, api_key = _portal_credentials()
+    if not base or not api_key:
+        return
+    interval_h = int(getattr(settings, "LICENSE_ONLINE_CHECK_INTERVAL_HOURS", 24) or 24)
+    now = utcnow()
+    if now.tzinfo:
+        now = now.replace(tzinfo=None)
+    if not force and row.last_online_check_at:
+        loc = row.last_online_check_at
+        if loc.tzinfo:
+            loc = loc.replace(tzinfo=None)
+        if now - loc < timedelta(hours=max(1, interval_h)):
+            return
+    if force and row.last_online_check_at:
+        loc = row.last_online_check_at
+        if loc.tzinfo:
+            loc = loc.replace(tzinfo=None)
+        if now - loc < timedelta(minutes=10):
+            return
+    row.last_online_check_at = now
+    db.commit()
+    try:
+        pull_and_activate_from_portal(db, force=force)
+        db.refresh(row)
+    except Exception:
+        pass
+    claims = _claims_from_stored(row) or claims or {}
+    license_id = (claims.get("license_id") or row.license_public_id or "").strip()
+    facility_code = _facility_code(db)
+    payload, _transport_err = _portal_post(
+        "/verify/online",
+        {"license_id": license_id, "facility_code": facility_code},
+    )
+    if not payload or not payload.get("ok"):
         return
     vu = parse_iso_datetime(payload.get("valid_until"))
     row.last_online_ok_at = now
@@ -319,9 +431,11 @@ def evaluate(db: Session, refresh_online: bool = True) -> Dict[str, Any]:
 
     row = _singleton(db)
     ok_file, err_file, claims = _verify_stored_document(db, row)
-    if refresh_online and ok_file and claims:
-        _try_online_refresh(db, row, claims)
+    if refresh_online:
+        force = not ok_file
+        _try_online_refresh(db, row, claims or _claims_from_stored(row), force=force)
         db.refresh(row)
+        ok_file, err_file, claims = _verify_stored_document(db, row)
 
     now = utcnow()
     if now.tzinfo:

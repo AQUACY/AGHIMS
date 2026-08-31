@@ -1,0 +1,339 @@
+# Deploy license-portal-v2 to Hostinger Business (Node.js web app).
+#
+# First time in hPanel:
+#   1. Websites → Add Website → Node.js web app
+#   2. Create the site for your domain (Git import or a one-time zip is fine)
+#   3. Framework: Express (or Other). Entry file: app.js. Node 22. No build step.
+#   4. Put production env vars in the Node.js app Environment variables
+#      (never commit .env or license_private.pem)
+#   5. hPanel → API → generate a token
+#
+# GitHub → Settings → Secrets and variables → Actions, add:
+#   HOSTINGER_API_TOKEN   — API token from hPanel
+#   HOSTINGER_DOMAIN      — exact site domain from hPanel (no https://, no trailing slash)
+#   HOSTINGER_USERNAME    — optional. FTP user such as u123456789
+#                           (not u123456789.domain.com, not an email, not the FTP host)
+#
+# After that, every push to main that touches the portal (or a manual Run workflow)
+# uploads a zip and starts a Hostinger Node.js build, which installs npm and restarts the app.
+#
+# Alternative with no YAML: in the Node.js app, Connect with GitHub, repo AGHIMS,
+# root directory license-portal-v2, entry file app.js. Hostinger then deploys on every push.
+
+name: Deploy license portal to Hostinger
+
+on:
+  push:
+    branches: [main, license-portal-hosting]
+    paths:
+      - "license-portal-v2/**"
+      - ".github/workflows/deploy-hostinger.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: hostinger-license-portal
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: license-portal-v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: license-portal-v2/package-lock.json
+      - run: npm ci
+      - run: npm run test:sign
+      - run: npm run test:smoke
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      API: https://developers.hostinger.com
+      TOKEN: ${{ secrets.HOSTINGER_API_TOKEN }}
+      USERNAME: ${{ secrets.HOSTINGER_USERNAME }}
+      DOMAIN: ${{ secrets.HOSTINGER_DOMAIN }}
+      ARCHIVE: license-portal-deploy.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Hostinger secrets
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$DOMAIN" ]; then
+            echo "Add GitHub Actions secrets HOSTINGER_API_TOKEN and HOSTINGER_DOMAIN."
+            echo "HOSTINGER_DOMAIN must be the exact domain from hPanel, with no https://."
+            exit 1
+          fi
+
+      - name: Pack license-portal-v2
+        run: |
+          set -euo pipefail
+          cd license-portal-v2
+          zip -r "../$ARCHIVE" . \
+            -x "node_modules/*" \
+            -x "node_modules/**" \
+            -x "data/*" \
+            -x "data/**" \
+            -x ".env" \
+            -x ".env.*" \
+            -x "*.pem" \
+            -x "*.db" \
+            -x ".git/*" \
+            -x ".git/**"
+          ls -lh "../$ARCHIVE"
+
+      - name: Upload archive and start Hostinger build
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, re, subprocess, sys, urllib.parse
+
+          api = os.environ["API"]
+          token = os.environ["TOKEN"]
+          username_hint = (os.environ.get("USERNAME") or "").strip()
+          domain_hint = (os.environ.get("DOMAIN") or "").strip()
+          archive = os.environ["ARCHIVE"]
+
+          def curl(args):
+              return subprocess.check_output(["curl", "-sS", *args], stderr=subprocess.STDOUT)
+
+          def api_json(method, path, data=None):
+              args = [
+                  "-X", method,
+                  f"{api}{path}",
+                  "-H", f"Authorization: Bearer {token}",
+                  "-H", "Content-Type: application/json",
+              ]
+              if data is not None:
+                  args.extend(["-d", json.dumps(data)])
+              raw = curl(args)
+              try:
+                  return json.loads(raw.decode())
+              except json.JSONDecodeError:
+                  sys.stderr.write(raw.decode(errors="replace") + "\n")
+                  raise SystemExit("Hostinger API did not return JSON")
+
+          def pick(d, *keys):
+              if not isinstance(d, dict):
+                  return None
+              for k in keys:
+                  if d.get(k) not in (None, ""):
+                      return d[k]
+              inner = d.get("data") if isinstance(d.get("data"), dict) else {}
+              for k in keys:
+                  if inner.get(k) not in (None, ""):
+                      return inner[k]
+              return None
+
+          def rows(payload):
+              if isinstance(payload, list):
+                  return payload
+              if not isinstance(payload, dict):
+                  return []
+              for key in ("data", "items", "websites"):
+                  val = payload.get(key)
+                  if isinstance(val, list):
+                      return val
+              return []
+
+          def normalize_domain(value):
+              s = (value or "").strip().lower()
+              s = re.sub(r"^https?://", "", s)
+              s = s.split("/")[0]
+              s = s.split(":")[0]
+              if s.startswith("www."):
+                  s = s[4:]
+              return s
+
+          def site_domain(site):
+              return pick(site, "domain") or ""
+
+          def site_user(site):
+              return pick(site, "username") or ""
+
+          def site_type(site):
+              return pick(site, "website_type", "websiteType") or "unknown"
+
+          wanted = normalize_domain(domain_hint)
+          listing = api_json("GET", "/api/hosting/v1/websites?per_page=100")
+          sites = [s for s in rows(listing) if isinstance(s, dict)]
+          if not sites:
+              print(json.dumps(listing, indent=2)[:4000])
+              raise SystemExit(
+                  "This API token cannot see any websites. Create a Node.js web app in hPanel first, "
+                  "and use a token from that same Hostinger account."
+              )
+
+          print("Websites on this Hostinger token:")
+          for site in sites:
+              print(f"  - {site_domain(site) or '(no domain)'}  user={site_user(site) or '-'}  type={site_type(site)}")
+
+          matches = []
+          for site in sites:
+              d = normalize_domain(site_domain(site))
+              if d == wanted or d.endswith("." + wanted) or wanted.endswith("." + d):
+                  matches.append(site)
+          if not matches:
+              for site in sites:
+                  d = normalize_domain(site_domain(site))
+                  if wanted and wanted in d:
+                      matches.append(site)
+
+          node_matches = [s for s in matches if str(site_type(s)).lower() in ("nodejs", "node.js", "express", "other")]
+          if node_matches:
+              matches = node_matches
+
+          if username_hint:
+              user_matches = [s for s in matches if site_user(s) == username_hint]
+              if user_matches:
+                  matches = user_matches
+
+          if not matches:
+              raise SystemExit(
+                  f"No Hostinger website matched HOSTINGER_DOMAIN={domain_hint!r}. "
+                  "Set that secret to one of the domains listed above, with no https://."
+              )
+
+          site = matches[0]
+          username = site_user(site) or username_hint
+          domain = site_domain(site)
+          if not username or not domain:
+              raise SystemExit("Matched a website but it has no username/domain. Is the Node.js app created in hPanel?")
+
+          print(f"Using website {domain} (username {username}, type {site_type(site)})")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"HOSTINGER_RESOLVED_USER={username}\n")
+              fh.write(f"HOSTINGER_RESOLVED_DOMAIN={domain}\n")
+
+          upload = api_json("POST", "/api/hosting/v1/files/upload-urls", {
+              "username": username,
+              "domain": domain,
+          })
+          url = pick(upload, "url")
+          auth = pick(upload, "auth_key", "authKey")
+          rest = pick(upload, "rest_auth_key", "restAuthKey")
+          if not url or not auth:
+              print(json.dumps(upload, indent=2))
+              raise SystemExit(
+                  "Could not get an upload URL for the matched website. "
+                  "Confirm the site is a Node.js web app under Websites in hPanel."
+              )
+
+          size = os.path.getsize(archive)
+          dest = f"{url.rstrip('/')}/{archive}?override=true"
+          print(f"Uploading {archive} ({size} bytes)")
+          curl([
+              "-f", "-X", "POST", dest,
+              "-H", f"X-Auth: {auth}",
+              "-H", f"X-Auth-Rest: {rest}",
+              "-H", "Tus-Resumable: 1.0.0",
+              "-H", f"Upload-Length: {size}",
+              "-H", "Upload-Offset: 0",
+              "-o", "/dev/null",
+          ])
+          curl([
+              "-f", "-X", "PATCH", dest,
+              "-H", f"X-Auth: {auth}",
+              "-H", f"X-Auth-Rest: {rest}",
+              "-H", "Tus-Resumable: 1.0.0",
+              "-H", "Content-Type: application/offset+octet-stream",
+              "-H", "Upload-Offset: 0",
+              "--data-binary", f"@{archive}",
+              "-o", "/dev/null",
+          ])
+
+          enc_user = urllib.parse.quote(username, safe="")
+          enc_domain = urllib.parse.quote(domain, safe="")
+          build = api_json(
+              "POST",
+              f"/api/hosting/v1/accounts/{enc_user}/websites/{enc_domain}/nodejs/builds",
+              {
+                  "node_version": 22,
+                  "app_type": "express",
+                  "root_directory": "/",
+                  "output_directory": "",
+                  "build_script": "",
+                  "entry_file": "app.js",
+                  "package_manager": "npm",
+                  "source_type": "archive",
+                  "source_options": {"archive_path": archive},
+              },
+          )
+          print(json.dumps(build, indent=2))
+          uuid = pick(build, "uuid")
+          if not uuid:
+              raise SystemExit("Hostinger did not return a build uuid.")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"BUILD_UUID={uuid}\n")
+          print(f"Started build {uuid}")
+          PY
+
+      - name: Wait for Hostinger build
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, subprocess, sys, time, urllib.parse
+
+          api = os.environ["API"]
+          token = os.environ["TOKEN"]
+          username = os.environ.get("HOSTINGER_RESOLVED_USER") or os.environ["USERNAME"]
+          domain = os.environ.get("HOSTINGER_RESOLVED_DOMAIN") or os.environ["DOMAIN"]
+          uuid = os.environ["BUILD_UUID"]
+          enc_user = urllib.parse.quote(username, safe="")
+          enc_domain = urllib.parse.quote(domain, safe="")
+
+          def get(path):
+              raw = subprocess.check_output([
+                  "curl", "-sS", f"{api}{path}",
+                  "-H", f"Authorization: Bearer {token}",
+              ])
+              try:
+                  return json.loads(raw.decode())
+              except json.JSONDecodeError:
+                  return {"_raw": raw.decode(errors="replace")}
+
+          def rows(payload):
+              if isinstance(payload, list):
+                  return payload
+              if not isinstance(payload, dict):
+                  return []
+              for key in ("data", "items", "builds"):
+                  val = payload.get(key)
+                  if isinstance(val, list):
+                      return val
+              return []
+
+          from_line = 0
+          for _ in range(90):
+              logs = get(
+                  f"/api/hosting/v1/accounts/{enc_user}/websites/{enc_domain}/nodejs/builds/{uuid}/logs?from_line={from_line}"
+              )
+              text = ""
+              if isinstance(logs, dict):
+                  text = logs.get("content") or logs.get("logs") or logs.get("output") or ""
+                  if isinstance(text, list):
+                      text = "\n".join(str(x) for x in text)
+                  if isinstance(logs.get("lines"), int):
+                      from_line = logs["lines"]
+              if text:
+                  print(text, flush=True)
+
+              listing = get(
+                  f"/api/hosting/v1/accounts/{enc_user}/websites/{enc_domain}/nodejs/builds?per_page=25"
+              )
+              hit = next((b for b in rows(listing) if isinstance(b, dict) and b.get("uuid") == uuid), None)
+              state = (hit or {}).get("state") or ""
+              print(f"Build state: {state or 'unknown'}", flush=True)
+              if state in ("completed", "success", "succeeded"):
+                  sys.exit(0)
+              if state in ("failed", "error", "cancelled"):
+                  sys.exit("Hostinger build failed.")
+              time.sleep(10)
+          sys.exit("Timed out waiting for Hostinger build.")
+          PY

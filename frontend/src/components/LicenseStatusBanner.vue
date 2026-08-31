@@ -19,6 +19,17 @@
         <div v-if="licenseBanner.detail" class="license-detail">
           {{ licenseBanner.detail }}
         </div>
+        <div class="q-mt-sm">
+          <q-btn
+            dense
+            unelevated
+            color="primary"
+            label="Renew from portal"
+            icon="cloud_download"
+            :loading="pullLoading"
+            @click="pullFromPortal"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -26,11 +37,13 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue';
+import { Notify } from 'quasar';
 import { useAuthStore } from '../stores/auth';
 import { licenseAPI } from '../services/api';
 
 const authStore = useAuthStore();
 const loading = ref(true);
+const pullLoading = ref(false);
 const licenseBanner = ref(null);
 
 /** Admin, Management, or Super Admin — same as toolbar License link audience */
@@ -121,6 +134,24 @@ async function loadBanner() {
     }
   } finally {
     loading.value = false;
+  }
+}
+
+async function pullFromPortal() {
+  pullLoading.value = true;
+  try {
+    const { data } = await licenseAPI.pullFromPortal();
+    await loadBanner();
+    Notify.create({
+      type: data.unchanged ? 'info' : 'positive',
+      message: data.detail || 'License updated from the portal.',
+      position: 'top',
+    });
+  } catch (e) {
+    const msg = e.response?.data?.detail || e.message || 'Could not renew from the portal';
+    Notify.create({ type: 'negative', message: typeof msg === 'string' ? msg : JSON.stringify(msg), position: 'top' });
+  } finally {
+    pullLoading.value = false;
   }
 }
 

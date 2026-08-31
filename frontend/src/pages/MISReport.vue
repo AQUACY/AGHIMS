@@ -60,6 +60,7 @@
           </q-input>
 
           <q-select
+            v-if="selectedReport !== 'drugs_dispensed'"
             v-model="selectedDepartments"
             :options="filteredDepartmentOptions"
             filled
@@ -83,6 +84,60 @@
                   No departments found
                 </q-item-section>
               </q-item>
+            </template>
+          </q-select>
+
+          <q-select
+            v-if="selectedReport === 'drugs_dispensed'"
+            v-model="selectedMedicine"
+            :options="filteredMedicineOptions"
+            filled
+            label="Drug (Optional)"
+            class="col-12 col-md-3"
+            clearable
+            use-input
+            input-debounce="300"
+            option-value="item_code"
+            option-label="item_name"
+            @filter="filterMedicines"
+          >
+            <template v-slot:prepend>
+              <q-icon name="medication" />
+            </template>
+            <template v-slot:option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.item_name || scope.opt.product_name || scope.opt.service_name }}</q-item-label>
+                  <q-item-label caption class="text-grey-6">
+                    Code: {{ scope.opt.item_code || scope.opt.medication_code || 'N/A' }}
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+            <template v-slot:selected-item="scope">
+              <span>{{ scope.opt.item_name || scope.opt }}</span>
+            </template>
+            <template v-slot:no-option>
+              <q-item>
+                <q-item-section class="text-grey">
+                  Type to search drugs, or leave blank for all
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+
+          <q-select
+            v-if="selectedReport === 'drugs_dispensed'"
+            v-model="dispenseSource"
+            :options="dispenseSourceOptions"
+            filled
+            label="Source"
+            class="col-12 col-md-2"
+            emit-value
+            map-options
+          >
+            <template v-slot:prepend>
+              <q-icon name="filter_alt" />
             </template>
           </q-select>
 
@@ -205,6 +260,9 @@ export default {
     const startDate = ref('');
     const endDate = ref('');
     const selectedDepartments = ref([]);
+    const selectedMedicine = ref(null);
+    const dispenseSource = ref('all');
+    const filteredMedicineOptions = ref([]);
     const departmentFilter = ref('');
     const filteredDepartmentOptions = ref([]);
     const reportData = ref([]);
@@ -214,6 +272,12 @@ export default {
     const departmentOptions = ref([]);
     const reportInfo = ref('');
     const reportSummary = ref(null);
+
+    const dispenseSourceOptions = [
+      { label: 'All (OPD + IPD)', value: 'all' },
+      { label: 'OPD only', value: 'opd' },
+      { label: 'IPD only', value: 'ipd' }
+    ];
 
     // Report options
     const reportOptions = [
@@ -236,6 +300,11 @@ export default {
         label: 'Inhouse Lab Parameters',
         value: 'inhouse_lab_parameters',
         description: 'Malaria RDT tests and results - Summary and detailed report'
+      },
+      {
+        label: 'Drugs Dispensed',
+        value: 'drugs_dispensed',
+        description: 'Dispensed drug quantities by date range (optional drug filter)'
       }
     ];
 
@@ -533,6 +602,58 @@ export default {
             sortable: true
           }
         ];
+      } else if (selectedReport.value === 'drugs_dispensed') {
+        return [
+          {
+            name: 'sr_no',
+            label: 'Sr.No.',
+            field: 'sr_no',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'medicine_code',
+            label: 'Medicine Code',
+            field: 'medicine_code',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'medicine_name',
+            label: 'Medicine Name',
+            field: 'medicine_name',
+            align: 'left',
+            sortable: true
+          },
+          {
+            name: 'total_quantity',
+            label: 'Total Qty',
+            field: 'total_quantity',
+            align: 'center',
+            sortable: true
+          },
+          {
+            name: 'dispense_count',
+            label: 'Dispense Lines',
+            field: 'dispense_count',
+            align: 'center',
+            sortable: true
+          },
+          {
+            name: 'opd_quantity',
+            label: 'OPD Qty',
+            field: 'opd_quantity',
+            align: 'center',
+            sortable: true
+          },
+          {
+            name: 'ipd_quantity',
+            label: 'IPD Qty',
+            field: 'ipd_quantity',
+            align: 'center',
+            sortable: true
+          }
+        ];
       }
       return [];
     });
@@ -576,6 +697,31 @@ export default {
           dept => dept.label.toLowerCase().indexOf(needle) > -1
         );
       });
+    };
+
+    const filterMedicines = async (val, update) => {
+      if (!val || !String(val).trim()) {
+        update(() => {
+          filteredMedicineOptions.value = [];
+        });
+        return;
+      }
+      try {
+        const response = await priceListAPI.search(String(val).trim(), null, 'product');
+        const items = response.data || [];
+        update(() => {
+          filteredMedicineOptions.value = items.map(item => ({
+            ...item,
+            item_code: item.item_code || item.medication_code,
+            item_name: item.item_name || item.product_name || item.service_name || item.medication_name
+          }));
+        });
+      } catch (error) {
+        console.error('Failed to search medicines:', error);
+        update(() => {
+          filteredMedicineOptions.value = [];
+        });
+      }
     };
 
     const loadReportData = async () => {
@@ -644,6 +790,24 @@ export default {
           reportSummary.value = summary;
           const deptInfo = departmentsStr ? ` (${selectedDepartments.value.length} department(s))` : ' (All departments)';
           reportInfo.value = `Total: ${summary.total_tests || 0} tests (${summary.positive || 0} Positive, ${summary.negative || 0} Negative) for ${data.start_date} to ${data.end_date}${deptInfo}`;
+        } else if (selectedReport.value === 'drugs_dispensed') {
+          const medicineCode = selectedMedicine.value?.item_code
+            || selectedMedicine.value?.medication_code
+            || null;
+          response = await misReportsAPI.getDrugsDispensed(
+            startDate.value,
+            endDate.value,
+            medicineCode,
+            null,
+            dispenseSource.value || 'all'
+          );
+          const data = response.data || {};
+          reportData.value = data.data || [];
+          const summary = data.summary || {};
+          reportSummary.value = summary;
+          const drugInfo = data.filter_label ? ` (${data.filter_label})` : '';
+          const sourceInfo = data.source ? ` [${String(data.source).toUpperCase()}]` : '';
+          reportInfo.value = `${summary.distinct_drugs || 0} drug(s), total qty ${summary.total_quantity || 0} for ${data.start_date} to ${data.end_date}${drugInfo}${sourceInfo}`;
         } else {
           reportSummary.value = null;
         }
@@ -732,6 +896,21 @@ export default {
           const startFormatted = startDate.value.replace(/-/g, '_');
           const endFormatted = endDate.value.replace(/-/g, '_');
           filename = `INHOUSE_LAB_PARAMETERS_${startFormatted}_TO_${endFormatted}.xlsx`;
+        } else if (selectedReport.value === 'drugs_dispensed') {
+          const medicineCode = selectedMedicine.value?.item_code
+            || selectedMedicine.value?.medication_code
+            || null;
+          response = await misReportsAPI.exportDrugsDispensed(
+            startDate.value,
+            endDate.value,
+            medicineCode,
+            null,
+            dispenseSource.value || 'all',
+            clinicExportName
+          );
+          const startFormatted = startDate.value.replace(/-/g, '_');
+          const endFormatted = endDate.value.replace(/-/g, '_');
+          filename = `DRUGS_DISPENSED_${startFormatted}_TO_${endFormatted}.xlsx`;
         }
 
         // Create blob and download
@@ -785,6 +964,10 @@ export default {
       startDate,
       endDate,
       selectedDepartments,
+      selectedMedicine,
+      dispenseSource,
+      dispenseSourceOptions,
+      filteredMedicineOptions,
       reportData,
       loading,
       exporting,
@@ -797,6 +980,7 @@ export default {
       canLoadReport,
       canExport,
       filterDepartments,
+      filterMedicines,
       loadReportData,
       exportReport
     };
