@@ -1285,6 +1285,9 @@
         </q-card-section>
         <q-card-section v-else>
           <div class="text-subtitle2 q-mb-sm">{{ selectedApplyTemplate.name }} — tick items to apply</div>
+          <div class="text-caption text-grey-7 q-mb-sm">
+            Ticked medicines are added as new rows, even if that drug is already on the claim. Unticked items are not added.
+          </div>
           <div v-if="(applyInvChoices || []).length" class="q-mb-md">
             <div class="text-weight-medium q-mb-xs">Investigations</div>
             <q-input
@@ -1331,7 +1334,13 @@
         <q-card-actions align="right">
           <q-btn flat label="Cancel" @click="closeApplyTemplate" />
           <q-btn v-if="selectedApplyTemplate" flat label="Back" @click="selectedApplyTemplate = null" />
-          <q-btn v-if="selectedApplyTemplate" color="primary" label="Apply selected" @click="confirmApplyTemplate" />
+          <q-btn
+            v-if="selectedApplyTemplate"
+            color="primary"
+            label="Apply selected"
+            :loading="applyingTemplate"
+            @click="confirmApplyTemplate"
+          />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -1386,6 +1395,7 @@ import {
   serializeInvestigationForTemplate,
   serializeMedicineForTemplate,
   mergeMatchedAndAllTemplates,
+  findExistingClaimItemIndex,
 } from '../utils/claimDiagnosisTemplates';
 import {
   isMedicineNotCovered,
@@ -1502,6 +1512,7 @@ async function vetByDoctor() {
 const fetchingClaimCcc = ref(false);
 const convertingGhanaCard = ref(false);
 const loadingTemplates = ref(false);
+const applyingTemplate = ref(false);
 const savingTemplate = ref(false);
 const showApplyTemplateDialog = ref(false);
 const showSaveTemplateDialog = ref(false);
@@ -2146,16 +2157,32 @@ const principalDiagnosisLabel = computed(() => {
   return [row.description, row.icd10, row.gdrg].filter(Boolean).join(' · ');
 });
 const applyInvChoices = computed(() =>
-  (selectedApplyTemplate.value?.investigations || []).map((item, i) => ({
-    label: `${item.serviceName || 'Investigation'} (${item.gdrgCode || '—'})`,
-    value: i,
-  }))
+  (selectedApplyTemplate.value?.investigations || []).map((item, i) => {
+    const row = investigationFromTemplateItem(item);
+    const exists = findExistingClaimItemIndex(
+      investigationsList.value,
+      { code: row.gdrgCode, name: row._serviceName },
+      { getCode: (x) => x.gdrg, getName: (x) => x.description }
+    ) >= 0;
+    return {
+      label: `${item.serviceName || 'Investigation'} (${item.gdrgCode || '—'})${exists ? ' · already on claim (adds another line)' : ''}`,
+      value: i,
+    };
+  })
 );
 const applyMedChoices = computed(() =>
-  (selectedApplyTemplate.value?.medicines || []).map((item, i) => ({
-    label: `${item.serviceName || 'Medicine'} (${item.medicineCode || '—'})`,
-    value: i,
-  }))
+  (selectedApplyTemplate.value?.medicines || []).map((item, i) => {
+    const row = medicineFromTemplateItem(item);
+    const exists = findExistingClaimItemIndex(
+      prescriptionsList.value,
+      { code: row.medicineCode, name: row._serviceName },
+      { getCode: (x) => x.code, getName: (x) => x.description }
+    ) >= 0;
+    return {
+      label: `${item.serviceName || 'Medicine'} (${item.medicineCode || '—'})${exists ? ' · already on claim (adds another line)' : ''}`,
+      value: i,
+    };
+  })
 );
 const saveInvChoices = computed(() =>
   (investigationsList.value || [])
@@ -2257,9 +2284,94 @@ function closeApplyTemplate() {
   templatesHaveExactMatch.value = false;
 }
 
-function confirmApplyTemplate() {
+function emptyInvestigationRow(serviceDate = '') {
+  return {
+    index: investigationsList.value.length,
+    id: null,
+    description: '',
+    date: serviceDate,
+    gdrg: '',
+  };
+}
+
+function emptyPrescriptionRow(serviceDate = '') {
+  return {
+    index: prescriptionsList.value.length,
+    id: null,
+    description: '',
+    code: '',
+    price: 0,
+    quantity: 0,
+    total_cost: 0,
+    date: serviceDate,
+    dose: '',
+    frequency: '',
+    duration: '',
+    unparsed: '',
+  };
+}
+
+function applyTemplateInvestigationToRow(target, row, serviceDate) {
+  target.description = row._serviceName || '';
+  target.gdrg = row.gdrgCode || '';
+  target.date = serviceDate || '';
+}
+
+function applyTemplateMedicineToRow(target, row, serviceDate) {
+  target.description = row._serviceName || '';
+  target.code = row.medicineCode || '';
+  target.date = serviceDate || '';
+  target.dose = row.prescription?.dose || '';
+  target.frequency = row.prescription?.frequency || '';
+  target.duration = row.prescription?.duration || '';
+  const templateQty = Number(row.dispensedQty);
+  target.quantity = templateQty > 0 ? templateQty : 1;
+  const parts = [target.dose, target.frequency, target.duration].filter(Boolean);
+  target.unparsed = parts.join(' ');
+}
+
+async function hydrateClaimRowFromPriceList(row, { type, code, nameField, codeField }) {
+  const lookup = String(code || '').trim();
+  if (!lookup) return;
+  try {
+    const res = await priceListAPI.search(lookup, undefined, type);
+    const items = res.data || [];
+    const needle = lookup.toUpperCase();
+    const match = items.find((p) => {
+      const itemCode = type === 'product'
+        ? String(p.medication_code || p.item_code || '').trim()
+        : String(p.g_drg_code || p.item_code || '').trim();
+      return itemCode.toUpperCase() === needle;
+    }) || items[0];
+    if (!match) return;
+    if (!row._selectedOption) row._selectedOption = match;
+    if (type === 'product') {
+      row.insurance_covered = match.insurance_covered || row.insurance_covered || 'yes';
+      if (!String(row[nameField] || '').trim()) {
+        row[nameField] = match.product_name || match.item_name || row[nameField];
+      }
+      if (!String(row[codeField] || '').trim()) {
+        row[codeField] = match.medication_code || match.item_code || row[codeField];
+      }
+      if (!(Number(row.price) > 0)) {
+        row.price = getClaimPrice(match);
+      }
+    } else {
+      if (!String(row[nameField] || '').trim()) {
+        row[nameField] = match.service_name || match.item_name || row[nameField];
+      }
+      if (!String(row[codeField] || '').trim()) {
+        row[codeField] = match.g_drg_code || match.item_code || row[codeField];
+      }
+    }
+  } catch (_) {
+    /* keep template values */
+  }
+}
+
+async function confirmApplyTemplate() {
   const t = selectedApplyTemplate.value;
-  if (!t) return;
+  if (!t || applyingTemplate.value) return;
   const pickInv = new Set(selectedApplyInvIndexes.value || []);
   const pickMed = new Set(selectedApplyMedIndexes.value || []);
   const invServiceDate = String(applyTemplateServiceDate.value || firstClaimServiceDate() || '').trim();
@@ -2276,58 +2388,72 @@ function confirmApplyTemplate() {
     }
   }
 
-  for (const i of pickInv) {
-    const item = (t.investigations || [])[i];
-    if (!item) continue;
-    const row = investigationFromTemplateItem(item, invServiceDate);
-    const empty = (investigationsList.value || []).find((x) => !String(x.description || '').trim() && !String(x.gdrg || '').trim());
-    const target = empty || {
-      index: investigationsList.value.length,
-      id: null,
-      description: '',
-      date: invServiceDate,
-      gdrg: '',
-    };
-    target.description = row._serviceName || target.description;
-    target.gdrg = row.gdrgCode || target.gdrg;
-    target.date = invServiceDate;
-    if (!empty) investigationsList.value.push(target);
+  applyingTemplate.value = true;
+  let added = 0;
+  const hydrateJobs = [];
+
+  try {
+    for (const i of pickInv) {
+      const item = (t.investigations || [])[i];
+      if (!item) continue;
+      const row = investigationFromTemplateItem(item, invServiceDate);
+      if (!row.gdrgCode && !row._serviceName) continue;
+      const emptyIdx = (investigationsList.value || []).findIndex(
+        (x) => !String(x.description || '').trim() && !String(x.gdrg || '').trim()
+      );
+      const target = emptyIdx >= 0
+        ? investigationsList.value[emptyIdx]
+        : emptyInvestigationRow(invServiceDate);
+      if (emptyIdx < 0) investigationsList.value.push(target);
+      applyTemplateInvestigationToRow(target, row, invServiceDate);
+      added += 1;
+      hydrateJobs.push(hydrateClaimRowFromPriceList(target, {
+        type: 'procedure',
+        code: target.gdrg,
+        nameField: 'description',
+        codeField: 'gdrg',
+      }));
+    }
+
+    for (const i of pickMed) {
+      const item = (t.medicines || [])[i];
+      if (!item) continue;
+      const medDate = String(applyMedServiceDates.value?.[i] || '').trim();
+      const row = medicineFromTemplateItem(item, medDate);
+      if (!row.medicineCode && !row._serviceName) continue;
+      const emptyIdx = (prescriptionsList.value || []).findIndex(
+        (x) => !String(x.description || '').trim() && !String(x.code || '').trim()
+      );
+      const target = emptyIdx >= 0
+        ? prescriptionsList.value[emptyIdx]
+        : emptyPrescriptionRow(medDate);
+      if (emptyIdx < 0) prescriptionsList.value.push(target);
+      applyTemplateMedicineToRow(target, row, medDate);
+      added += 1;
+      hydrateJobs.push(hydrateClaimRowFromPriceList(target, {
+        type: 'product',
+        code: target.code,
+        nameField: 'description',
+        codeField: 'code',
+      }).then(() => {
+        const idx = prescriptionsList.value.indexOf(target);
+        if (idx >= 0) updatePrescriptionTotal(idx);
+      }));
+    }
+
+    if (hydrateJobs.length) await Promise.all(hydrateJobs);
+    if (pickMed.size) services.includes_pharmacy = true;
+    calculateClaimSummary();
+    closeApplyTemplate();
+    $q.notify({
+      type: 'positive',
+      message: added
+        ? `Added ${added} template item(s) — review and edit as needed`
+        : 'No template items to apply',
+    });
+  } finally {
+    applyingTemplate.value = false;
   }
-  for (const i of pickMed) {
-    const item = (t.medicines || [])[i];
-    if (!item) continue;
-    const medDate = String(applyMedServiceDates.value?.[i] || '').trim();
-    const row = medicineFromTemplateItem(item, medDate);
-    const empty = (prescriptionsList.value || []).find((x) => !String(x.description || '').trim() && !String(x.code || '').trim());
-    const target = empty || {
-      index: prescriptionsList.value.length,
-      id: null,
-      description: '',
-      code: '',
-      price: 0,
-      quantity: 0,
-      total_cost: 0,
-      date: medDate,
-      dose: '',
-      frequency: '',
-      duration: '',
-      unparsed: '',
-    };
-    target.description = row._serviceName || target.description;
-    target.code = row.medicineCode || target.code;
-    target.date = medDate;
-    target.dose = row.prescription?.dose || target.dose;
-    target.frequency = row.prescription?.frequency || target.frequency;
-    target.duration = row.prescription?.duration || target.duration;
-    target.quantity = Number(row.dispensedQty) || target.quantity || 1;
-    const parts = [target.dose, target.frequency, target.duration].filter(Boolean);
-    target.unparsed = parts.join(' ');
-    if (!empty) prescriptionsList.value.push(target);
-  }
-  services.includes_pharmacy = true;
-  calculateClaimSummary();
-  closeApplyTemplate();
-  $q.notify({ type: 'positive', message: 'Template items applied — review and edit as needed' });
 }
 
 function openSaveTemplate() {
