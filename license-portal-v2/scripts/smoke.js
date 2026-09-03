@@ -496,6 +496,26 @@ async function main() {
     });
     if (cronOk.status !== 200) throw new Error(`cron with key: ${cronOk.text}`);
 
+    const dayLogin = await req(server, "/api/auth/login", {
+      method: "POST",
+      body: { email: "it@day.test", password: "day-pass-1234" },
+    });
+    if (dayLogin.status !== 200) throw new Error(`day login: ${dayLogin.text}`);
+    const invPdf = await req(server, "/api/invoice/current.pdf", { token: dayLogin.json.access_token });
+    if (invPdf.status !== 200 || !invPdf.text.startsWith("%PDF")) {
+      throw new Error(`current invoice pdf: ${invPdf.status} ${invPdf.text.slice(0, 180)}`);
+    }
+    const dayMe = await req(server, "/api/me", { token: dayLogin.json.access_token });
+    if (!dayMe.json.current_invoice_url) throw new Error("current_invoice_url missing on dashboard payload");
+    const openInvoice = (dayMe.json.payments || []).find((p) => p.invoice && p.status !== "success");
+    if (!openInvoice) throw new Error("current bill should expose a downloadable invoice before Paystack");
+    const adminInv = await req(server, `/api/admin/customers/${dayCust.json.customer.id}/invoice.pdf`, {
+      token: adminToken,
+    });
+    if (adminInv.status !== 200 || !adminInv.text.startsWith("%PDF")) {
+      throw new Error(`admin current invoice: ${adminInv.status}`);
+    }
+
     console.log("smoke ok");
   } finally {
     server.close();

@@ -48,6 +48,44 @@ export function medicineFromTemplateItem(item, serviceDate = '') {
   };
 }
 
+export function normalizeClaimCode(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isBlankClaimValue(value) {
+  if (value == null) return true;
+  if (typeof value === 'number') return !Number.isFinite(value) || value === 0;
+  return String(value).trim() === '';
+}
+
+/** Keep an existing claim value; fill from the template when the claim field is empty. */
+export function fillBlankClaimValue(current, incoming) {
+  return isBlankClaimValue(current) && !isBlankClaimValue(incoming) ? incoming : current;
+}
+
+/**
+ * Find a claim line that already represents this template item.
+ * Match medicine/G-DRG code first; fall back to name when codes are missing or equal.
+ */
+export function findExistingClaimItemIndex(list, { code, name } = {}, { getCode, getName } = {}) {
+  const items = Array.isArray(list) ? list : [];
+  const needleCode = normalizeClaimCode(code);
+  if (needleCode && typeof getCode === 'function') {
+    const idx = items.findIndex((x) => normalizeClaimCode(getCode(x)) === needleCode);
+    if (idx >= 0) return idx;
+  }
+  const needleName = String(name || '').trim().toLowerCase();
+  if (needleName && typeof getName === 'function') {
+    const idx = items.findIndex((x) => {
+      const existingCode = typeof getCode === 'function' ? normalizeClaimCode(getCode(x)) : '';
+      if (needleCode && existingCode && needleCode !== existingCode) return false;
+      return String(getName(x) || '').trim().toLowerCase() === needleName;
+    });
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
 export function serializeInvestigationForTemplate(inv) {
   return {
     gdrgCode: String(inv?.gdrgCode || inv?.gdrg || '').trim(),
