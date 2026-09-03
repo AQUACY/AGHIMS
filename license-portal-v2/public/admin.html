@@ -88,6 +88,7 @@
             <input id="patch_until" type="datetime-local" />
             <div class="actions">
               <button type="button" class="gold" id="btn-reset">Reset password</button>
+              <a class="btn ghost" id="btn-invoice" href="#">Download current invoice</a>
               <button type="button" class="ghost" id="btn-manual">Issue patch license</button>
               <a class="btn ghost" id="btn-signed" href="#" style="display:none">Download latest signed.json</a>
             </div>
@@ -175,6 +176,7 @@
       el("notes").value = c.notes || "";
       el("status").value = c.status || "active";
       el("detail-actions").style.display = "block";
+      el("btn-invoice").href = "/api/admin/customers/" + c.id + "/invoice.pdf";
       el("secret-box").innerHTML = "";
       if (c.license && c.license.license_id) {
         el("btn-signed").style.display = "inline-flex";

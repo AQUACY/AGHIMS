@@ -776,7 +776,9 @@
         </q-card-section>
         <q-card-section v-else>
           <div class="text-subtitle2 q-mb-sm">{{ selectedApplyTemplate.name }} — tick items to apply</div>
-          <div class="text-caption text-grey-7 q-mb-sm">Unticked items will not be added to the claim.</div>
+          <div class="text-caption text-grey-7 q-mb-sm">
+            Ticked medicines are added as new rows, even if that drug is already on the claim. Unticked items are not added.
+          </div>
           <div v-if="(applyInvChoices || []).length" class="q-mb-md">
             <div class="text-weight-medium q-mb-xs">Investigations</div>
             <q-input
@@ -832,6 +834,7 @@
             v-if="selectedApplyTemplate"
             color="primary"
             label="Apply selected"
+            :loading="applyingTemplate"
             @click="confirmApplyTemplate"
           />
         </q-card-actions>
@@ -891,6 +894,7 @@ import {
   serializeInvestigationForTemplate,
   serializeMedicineForTemplate,
   mergeMatchedAndAllTemplates,
+  findExistingClaimItemIndex,
 } from '../utils/claimDiagnosisTemplates';
 import {
   asMedicineList,
@@ -1051,6 +1055,7 @@ async function vetByDoctor() {
 const fetchingClaimCcc = ref(false);
 const convertingGhanaCard = ref(false);
 const loadingTemplates = ref(false);
+const applyingTemplate = ref(false);
 const savingTemplate = ref(false);
 const showApplyTemplateDialog = ref(false);
 const showSaveTemplateDialog = ref(false);
@@ -1569,16 +1574,35 @@ const principalDiagnosisLabel = computed(() => {
 });
 
 const applyInvChoices = computed(() =>
-  (selectedApplyTemplate.value?.investigations || []).map((item, i) => ({
-    label: `${item.serviceName || item._serviceName || 'Investigation'} (${item.gdrgCode || item.gdrg || '—'})`,
-    value: i,
-  }))
+  (selectedApplyTemplate.value?.investigations || []).map((item, i) => {
+    const row = investigationFromTemplateItem(item);
+    const exists = findExistingClaimItemIndex(
+      payload.investigations,
+      { code: row.gdrgCode, name: row._serviceName },
+      { getCode: (x) => x.gdrgCode || x.gdrg, getName: (x) => x._serviceName || x.serviceName }
+    ) >= 0;
+    return {
+      label: `${item.serviceName || item._serviceName || 'Investigation'} (${item.gdrgCode || item.gdrg || '—'})${exists ? ' · already on claim (adds another line)' : ''}`,
+      value: i,
+    };
+  })
 );
 const applyMedChoices = computed(() =>
-  (selectedApplyTemplate.value?.medicines || []).map((item, i) => ({
-    label: `${item.serviceName || item._serviceName || 'Medicine'} (${item.medicineCode || item.code || '—'})`,
-    value: i,
-  }))
+  (selectedApplyTemplate.value?.medicines || []).map((item, i) => {
+    const row = medicineFromTemplateItem(item);
+    const exists = findExistingClaimItemIndex(
+      payload.medicines,
+      { code: row.medicineCode, name: row._serviceName },
+      {
+        getCode: (x) => x.medicineCode || x.code,
+        getName: (x) => x._serviceName || x._selectedOption?.product_name,
+      }
+    ) >= 0;
+    return {
+      label: `${item.serviceName || item._serviceName || 'Medicine'} (${item.medicineCode || item.code || '—'})${exists ? ' · already on claim (adds another line)' : ''}`,
+      value: i,
+    };
+  })
 );
 
 const saveInvChoices = computed(() =>
@@ -1687,9 +1711,9 @@ function closeApplyTemplate() {
   templatesHaveExactMatch.value = false;
 }
 
-function confirmApplyTemplate() {
+async function confirmApplyTemplate() {
   const t = selectedApplyTemplate.value;
-  if (!t) return;
+  if (!t || applyingTemplate.value) return;
   const invs = t.investigations || [];
   const meds = t.medicines || [];
   const pickInv = new Set(selectedApplyInvIndexes.value || []);
@@ -1708,35 +1732,41 @@ function confirmApplyTemplate() {
     }
   }
 
-  for (const i of pickInv) {
-    const item = invs[i];
-    if (!item) continue;
-    const row = investigationFromTemplateItem(item, invServiceDate);
-    if (!row.gdrgCode && !row._serviceName) continue;
-    // Skip exact duplicate gdrg already present
-    const exists = (payload.investigations || []).some(
-      (x) => String(x.gdrgCode || '').trim() === row.gdrgCode && row.gdrgCode
-    );
-    if (!exists) payload.investigations.push(row);
-  }
-  for (const i of pickMed) {
-    const item = meds[i];
-    if (!item) continue;
-    const medDate = String(applyMedServiceDates.value?.[i] || '').trim();
-    const row = medicineFromTemplateItem(item, medDate);
-    if (!row.medicineCode && !row._serviceName) continue;
-    const exists = (payload.medicines || []).some(
-      (x) => String(x.medicineCode || '').trim() === row.medicineCode && row.medicineCode
-    );
-    if (!exists) {
+  applyingTemplate.value = true;
+  let added = 0;
+
+  try {
+    for (const i of pickInv) {
+      const item = invs[i];
+      if (!item) continue;
+      const row = investigationFromTemplateItem(item, invServiceDate);
+      if (!row.gdrgCode && !row._serviceName) continue;
+      payload.investigations.push(row);
+      added += 1;
+    }
+    for (const i of pickMed) {
+      const item = meds[i];
+      if (!item) continue;
+      const medDate = String(applyMedServiceDates.value?.[i] || '').trim();
+      const row = medicineFromTemplateItem(item, medDate);
+      if (!row.medicineCode && !row._serviceName) continue;
       payload.medicines.push(row);
       syncPrescriptionUnparsed(row);
+      added += 1;
     }
+    syncIncludesPharmacy();
+    await resolveServiceNames();
+    recalculateClaimSummary();
+    closeApplyTemplate();
+    $q.notify({
+      type: 'positive',
+      message: added
+        ? `Added ${added} template item(s) — review and edit as needed`
+        : 'No template items to apply',
+    });
+  } finally {
+    applyingTemplate.value = false;
   }
-  syncIncludesPharmacy();
-  recalculateClaimSummary();
-  closeApplyTemplate();
-  $q.notify({ type: 'positive', message: 'Template items applied — review and edit as needed' });
 }
 
 function openSaveTemplate() {

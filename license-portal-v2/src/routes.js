@@ -24,6 +24,7 @@ const {
   serializeCustomer,
   serializeLicense,
   createCheckout,
+  ensureCurrentBillInvoice,
   retryPaymentById,
   fulfillByReference,
   getPaymentStatus,
@@ -151,6 +152,7 @@ function mountRoutes(app) {
         payload.next_period = await previewNextPeriod(customer);
         const latestPaid = payments.find((p) => p.status === "success");
         payload.latest_paid = latestPaid || null;
+        payload.current_invoice_url = payload.next_period ? "/api/invoice/current.pdf" : null;
       }
       res.json(payload);
     })
@@ -176,6 +178,32 @@ function mountRoutes(app) {
       if (!customer) return res.status(404).json({ error: "Hospital account not found" });
       const result = await createCheckout(customer, req.user);
       res.json(result);
+    })
+  );
+
+  async function sendCurrentInvoicePdf(res, customer, user) {
+    const payment = await ensureCurrentBillInvoice(customer, user);
+    if (!payment || !payment.invoice) {
+      return res.status(404).json({ error: "Invoice could not be created" });
+    }
+    const doc = await getDocumentForUser(payment.invoice.id, user);
+    if (!doc) return res.status(404).json({ error: "Invoice not found" });
+    await refreshDocumentPdf(doc);
+    const abs = documentAbsPath(doc.file_path);
+    if (!fs.existsSync(abs)) return res.status(404).json({ error: "File missing on server" });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${doc.doc_number}.pdf"`);
+    fs.createReadStream(abs).pipe(res);
+  }
+
+  app.get(
+    "/api/invoice/current.pdf",
+    authRequired,
+    customerRequired,
+    asyncHandler(async (req, res) => {
+      const customer = await getCustomer(req.user.customer_id);
+      if (!customer) return res.status(404).json({ error: "Hospital account not found" });
+      await sendCurrentInvoicePdf(res, customer, req.user);
     })
   );
 
@@ -438,6 +466,17 @@ function mountRoutes(app) {
       const password = String((req.body && req.body.password) || "").trim() || generatePassword();
       await getDb().query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(password), rows[0].id]);
       res.json({ email: rows[0].email, password });
+    })
+  );
+
+  app.get(
+    "/api/admin/customers/:id/invoice.pdf",
+    authRequired,
+    adminRequired,
+    asyncHandler(async (req, res) => {
+      const customer = await getCustomer(req.params.id);
+      if (!customer) return res.status(404).json({ error: "Not found" });
+      await sendCurrentInvoicePdf(res, customer, req.user);
     })
   );
 

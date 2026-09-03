@@ -51,6 +51,7 @@
         <div class="actions">
           <button type="button" class="gold" id="btn-pay">Pay with Paystack</button>
           <button type="button" class="gold" id="btn-retry-open" style="display:none">Retry payment</button>
+          <a class="btn ghost" id="dl-invoice" href="/api/invoice/current.pdf">Download invoice</a>
           <a class="btn ghost" id="dl-license" href="/api/license/signed.json" style="display:none">Download license JSON</a>
         </div>
         <p class="err" id="pay-msg"></p>
@@ -59,8 +60,8 @@
       <section class="card">
         <p class="kicker">For management</p>
         <h2>Latest files</h2>
-        <p class="muted">Download the invoice for accounts so they can arrange payment on this site. The receipt is issued only after Paystack confirms — it is the proof of payment. A QR code on the receipt opens a public verify page.</p>
-        <div id="docs"><p class="muted">Documents appear after you start or complete payment.</p></div>
+        <p class="muted">Download the current invoice for accounts so they can arrange payment. The receipt is issued only after Paystack confirms.</p>
+        <div id="docs"><p class="muted">The current invoice is ready to download. A receipt appears after payment succeeds.</p></div>
       </section>
     </div>
 
@@ -116,19 +117,16 @@
       ].filter(Boolean).join(" · ");
     }
 
-    function renderDocs(payments) {
-      const latest = (payments || []).find((p) => p.invoice || p.receipt);
-      if (!latest) {
-        el("docs").innerHTML = "<p class='muted'>Start checkout to download an invoice for accounts. The receipt appears after Paystack confirms.</p>";
-        return;
+    function renderDocs(payments, currentInvoiceUrl) {
+      const invoiceHref = currentInvoiceUrl || "/api/invoice/current.pdf";
+      let html = `<p><a href="${invoiceHref}">Download current invoice (for management)</a></p>`;
+      const withReceipt = (payments || []).find((p) => p.receipt);
+      if (withReceipt && withReceipt.receipt) {
+        html += `<p><a href="${withReceipt.receipt.url}">Receipt ${escapeHtml(withReceipt.receipt.doc_number)}</a></p>`;
+      } else {
+        html += `<p class="muted">Receipt is issued after a successful Paystack payment.</p>`;
       }
-      let html = "";
-      if (latest.period_label) html += `<p class="muted">${escapeHtml(latest.period_label)}</p>`;
-      if (latest.invoice) html += `<p><a href="${latest.invoice.url}">Invoice ${escapeHtml(latest.invoice.doc_number)}</a></p>`;
-      if (latest.receipt) html += `<p><a href="${latest.receipt.url}">Receipt ${escapeHtml(latest.receipt.doc_number)}</a></p>`;
-      else html += `<p class="muted">Receipt is issued after a successful Paystack payment.</p>`;
-      if (latest.license_url) html += `<p><a href="${latest.license_url}">${escapeHtml(latest.download_label || "License JSON")}</a></p>`;
-      el("docs").innerHTML = html || "<p class='muted'>Documents will appear after checkout.</p>";
+      el("docs").innerHTML = html;
     }
 
     function renderHistory(payments) {
@@ -187,6 +185,10 @@
         el("period-range").textContent = np.label || fmtPeriod(np.valid_from, np.valid_until);
         el("step5").textContent =
           `HMS will apply ${np.title} on or after coverage start (${np.label}). Until then, leave the current HMS license in place.`;
+        el("dl-invoice").style.display = "inline-flex";
+        el("dl-invoice").href = me.current_invoice_url || "/api/invoice/current.pdf";
+      } else {
+        el("dl-invoice").style.display = "none";
       }
       const latestPaid = me.latest_paid || (me.payments || []).find((p) => p.status === "success");
       if (latestPaid && latestPaid.license_url) {
@@ -215,7 +217,7 @@
         el("current-line").textContent = "No license issued yet. Pay below to receive the file for next month.";
         el("status-pill").innerHTML = statusPill("pending");
       }
-      renderDocs(me.payments || []);
+      renderDocs(me.payments || [], me.current_invoice_url);
       renderHistory(me.payments || []);
       const openPay = (me.payments || []).find((p) => paymentRetryable(p));
       const retryOpen = el("btn-retry-open");
