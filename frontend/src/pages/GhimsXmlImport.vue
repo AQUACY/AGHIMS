@@ -83,13 +83,29 @@
     </section>
 
     <template v-if="viewingBatchId && currentBatch">
-      <div v-if="viewingBatchId && currentBatch" class="text-subtitle1 text-primary q-mb-md">
+      <div v-if="viewingBatchId && currentBatch" class="claim-kpi-grid revenue-kpi-grid q-mb-md">
         <template v-if="totalsLoading">
-          <q-spinner-dots size="20px" class="q-mr-sm" />
-          Calculating claim revenue…
+          <div class="claim-kpi revenue-kpi revenue-kpi--loading">
+            <q-spinner-dots size="20px" color="primary" class="q-mr-sm" />
+            <span class="claim-kpi__label">Calculating claim revenue…</span>
+          </div>
         </template>
         <template v-else-if="filteredRevenue != null">
-          Total claim revenue ({{ filteredClaims.length }} filtered): {{ formatCurrency(filteredRevenue) }}
+          <div class="claim-kpi revenue-kpi">
+            <div class="claim-kpi__label">
+              Total claim revenue
+              <span class="revenue-kpi__hint">({{ filteredClaims.length }} filtered)</span>
+            </div>
+            <div class="claim-kpi__value">{{ formatCurrency(filteredRevenue) }}</div>
+          </div>
+          <div class="claim-kpi revenue-kpi">
+            <div class="claim-kpi__label">Drugs</div>
+            <div class="claim-kpi__value">{{ formatCurrency(filteredDrugsRevenue) }}</div>
+          </div>
+          <div class="claim-kpi revenue-kpi">
+            <div class="claim-kpi__label">Services</div>
+            <div class="claim-kpi__value">{{ formatCurrency(filteredServicesRevenue) }}</div>
+          </div>
         </template>
       </div>
       <section class="diag-panel batch-toolbar">
@@ -197,6 +213,34 @@
             label="Show only Ghana Card Member No (need To HIN)"
             class="col-12 col-md-5"
           />
+          <q-toggle
+            v-model="likelyDuplicatesOnly"
+            color="deep-orange"
+            label="Likely duplicates (same member, same month)"
+            class="col-12 col-md-5"
+          >
+            <q-tooltip>
+              Shows claims where the same member number appears more than once in the same calendar month — grouped for easier merge review.
+            </q-tooltip>
+          </q-toggle>
+          <q-banner
+            v-if="likelyDuplicateCount > 0 && !likelyDuplicatesOnly"
+            dense
+            rounded
+            class="bg-deep-orange-1 text-deep-orange-10 col-12"
+          >
+            <template #avatar><q-icon name="content_copy" color="deep-orange" /></template>
+            {{ likelyDuplicateCount }} claim(s) look like same-member / same-month duplicates.
+            <template #action>
+              <q-btn
+                flat
+                dense
+                color="deep-orange-10"
+                label="Filter them"
+                @click="likelyDuplicatesOnly = true"
+              />
+            </template>
+          </q-banner>
           <q-banner
             v-if="ghanaCardMemberCount > 0"
             dense
@@ -676,6 +720,7 @@ const ownerFilter = ref('all');
 const ageGroupFilter = ref('all');
 const missingSectionsOnly = ref(false);
 const ghanaCardMemberOnly = ref(false);
+const likelyDuplicatesOnly = ref(false);
 const currentPage = ref(1);
 const rowsPerPage = ref(20);
 const rowsPerPageOptions = [
@@ -694,6 +739,7 @@ const statusFilterOptions = [
   { label: 'Doctor vetted', value: 'doctor_vetted' },
   { label: 'Pharmacy + doctor vetted', value: 'vetted' },
   { label: 'Finalized', value: 'finalized' },
+  { label: 'Merged', value: 'merged' },
 ];
 const ageGroupFilterOptions = [
   { label: 'All', value: 'all' },
@@ -1039,9 +1085,33 @@ const filteredClaims = computed(() => {
   const rows = currentBatch.value?.claims || [];
   const q = String(searchText.value || '').trim().toLowerCase();
   const myId = authStore.user?.id;
+
+  const duplicateMemberMonths = new Set();
+  if (likelyDuplicatesOnly.value) {
+    const counts = new Map();
+    for (const r of rows) {
+      if ((r.status || '').toLowerCase() === 'merged') continue;
+      const member = String(r.member_no || '').trim();
+      if (!member) continue;
+      const month = String(r.visit_start_date || '').trim().slice(0, 7);
+      if (!month || month.length < 7) continue;
+      const key = `${member}|${month}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    for (const [key, cnt] of counts.entries()) {
+      if (cnt > 1) duplicateMemberMonths.add(key);
+    }
+  }
+
   const out = rows.filter((r) => {
     if (missingSectionsOnly.value && !r.no_clinical_sections) return false;
     if (ghanaCardMemberOnly.value && !r.needs_hin_conversion) return false;
+    if (likelyDuplicatesOnly.value) {
+      if ((r.status || '').toLowerCase() === 'merged') return false;
+      const member = String(r.member_no || '').trim();
+      const month = String(r.visit_start_date || '').trim().slice(0, 7);
+      if (!member || !month || !duplicateMemberMonths.has(`${member}|${month}`)) return false;
+    }
     if (statusFilter.value !== 'all') {
       const sf = statusFilter.value;
       if (sf === 'pharmacy_vetted') {
@@ -1085,7 +1155,37 @@ const filteredClaims = computed(() => {
       .join(' ');
     return hay.includes(q);
   });
+
+  if (likelyDuplicatesOnly.value) {
+    out.sort((a, b) => {
+      const am = String(a.member_no || '').localeCompare(String(b.member_no || ''));
+      if (am !== 0) return am;
+      return String(a.visit_start_date || '').localeCompare(String(b.visit_start_date || ''));
+    });
+  }
   return out;
+});
+
+const likelyDuplicateCount = computed(() => {
+  const rows = currentBatch.value?.claims || [];
+  const counts = new Map();
+  for (const r of rows) {
+    if ((r.status || '').toLowerCase() === 'merged') continue;
+    const member = String(r.member_no || '').trim();
+    if (!member) continue;
+    const month = String(r.visit_start_date || '').trim().slice(0, 7);
+    if (!month || month.length < 7) continue;
+    const key = `${member}|${month}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let n = 0;
+  for (const r of rows) {
+    if ((r.status || '').toLowerCase() === 'merged') continue;
+    const member = String(r.member_no || '').trim();
+    const month = String(r.visit_start_date || '').trim().slice(0, 7);
+    if (member && month && (counts.get(`${member}|${month}`) || 0) > 1) n += 1;
+  }
+  return n;
 });
 
 const ghanaCardMemberCount = computed(() =>
@@ -1094,6 +1194,14 @@ const ghanaCardMemberCount = computed(() =>
 
 const filteredRevenue = computed(() => {
   return filteredClaims.value.reduce((sum, row) => sum + (Number(row.total_claim_amount) || 0), 0);
+});
+
+const filteredDrugsRevenue = computed(() => {
+  return filteredClaims.value.reduce((sum, row) => sum + (Number(row.drugs_amount) || 0), 0);
+});
+
+const filteredServicesRevenue = computed(() => {
+  return filteredClaims.value.reduce((sum, row) => sum + (Number(row.services_amount) || 0), 0);
 });
 
 const formatCurrency = (amount) => {
@@ -1511,18 +1619,32 @@ async function loadBatchClaimTotals(id) {
   try {
     const res = await claimsAPI.getGhimsImportBatchClaimTotals(id);
     const totalsMap = new Map(
-      (res.data?.totals || []).map((row) => [Number(row.id), Number(row.total_claim_amount) || 0])
+      (res.data?.totals || []).map((row) => [
+        Number(row.id),
+        {
+          total_claim_amount: Number(row.total_claim_amount) || 0,
+          drugs_amount: Number(row.drugs_amount) || 0,
+          services_amount: Number(row.services_amount) || 0,
+        },
+      ])
     );
     if (currentBatch.value?.claims?.length) {
       currentBatch.value = {
         ...currentBatch.value,
         total_revenue: res.data?.total_revenue ?? null,
-        claims: currentBatch.value.claims.map((claim) => ({
-          ...claim,
-          total_claim_amount: totalsMap.has(claim.id)
-            ? totalsMap.get(claim.id)
-            : claim.total_claim_amount,
-        })),
+        drugs_revenue: res.data?.drugs_revenue ?? null,
+        services_revenue: res.data?.services_revenue ?? null,
+        claims: currentBatch.value.claims.map((claim) => {
+          const amounts = totalsMap.get(claim.id);
+          return {
+            ...claim,
+            total_claim_amount: amounts
+              ? amounts.total_claim_amount
+              : claim.total_claim_amount,
+            drugs_amount: amounts ? amounts.drugs_amount : claim.drugs_amount,
+            services_amount: amounts ? amounts.services_amount : claim.services_amount,
+          };
+        }),
       };
     }
   } catch (e) {
@@ -1758,6 +1880,7 @@ function persistFilterState() {
         ownerFilter: ownerFilter.value,
         missingSectionsOnly: missingSectionsOnly.value,
         ghanaCardMemberOnly: ghanaCardMemberOnly.value,
+        likelyDuplicatesOnly: likelyDuplicatesOnly.value,
         rowsPerPage: rowsPerPage.value,
       })
     );
@@ -1780,11 +1903,12 @@ function restoreFilterState() {
     ownerFilter.value = s.ownerFilter || 'all';
     missingSectionsOnly.value = Boolean(s.missingSectionsOnly);
     ghanaCardMemberOnly.value = Boolean(s.ghanaCardMemberOnly);
+    likelyDuplicatesOnly.value = Boolean(s.likelyDuplicatesOnly);
     rowsPerPage.value = Number(s.rowsPerPage) > 0 ? Number(s.rowsPerPage) : 20;
   } catch (_) {}
 }
 
-watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, ownerFilter, missingSectionsOnly, ghanaCardMemberOnly, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, ownerFilter, missingSectionsOnly, ghanaCardMemberOnly, likelyDuplicatesOnly, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });
@@ -1834,6 +1958,25 @@ onMounted(async () => {
 .panel-title { font-size: var(--hms-text-base); font-weight: 750; color: var(--hms-text-primary); }
 .panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
 .panel-body { padding: 1rem; }
+.revenue-kpi-grid {
+  margin-bottom: 0;
+}
+.revenue-kpi .claim-kpi__label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.revenue-kpi__hint {
+  font-weight: 500;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-xs);
+}
+.revenue-kpi--loading {
+  display: flex;
+  align-items: center;
+  grid-column: 1 / -1;
+}
 .upload-row {
   display: flex;
   flex-wrap: wrap;

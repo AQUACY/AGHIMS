@@ -18,6 +18,7 @@ class ClaimStatus(str, enum.Enum):
     VETTED = "vetted"  # both pharmacy and doctor have vetted
     FINALIZED = "finalized"
     REOPENED = "reopened"
+    MERGED = "merged"
 
 
 class Claim(Base):
@@ -51,7 +52,8 @@ class Claim(Base):
     pharmacy_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     doctor_vetted_at = Column(DateTime, nullable=True)
     doctor_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    
+    merged_into_id = Column(Integer, ForeignKey("claims.id"), nullable=True, index=True)
+
     # Relationships
     encounter = relationship("Encounter", back_populates="claims")
     claim_diagnoses = relationship("ClaimDiagnosis", back_populates="claim", cascade="all, delete-orphan")
