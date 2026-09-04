@@ -54,8 +54,22 @@
       </div>
       <div class="panel-body">
 
-        <div v-if="totalRevenue != null" class="text-subtitle1 text-primary q-mb-md">
-          Total claim revenue ({{ pagination.rowsNumber }} matching, this page): {{ formatCurrency(totalRevenue) }}
+        <div v-if="totalRevenue != null" class="claim-kpi-grid revenue-kpi-grid q-mb-md">
+          <div class="claim-kpi revenue-kpi">
+            <div class="claim-kpi__label">
+              Total claim revenue
+              <span class="revenue-kpi__hint">({{ pagination.rowsNumber }} matching, this page)</span>
+            </div>
+            <div class="claim-kpi__value">{{ formatCurrency(totalRevenue) }}</div>
+          </div>
+          <div class="claim-kpi revenue-kpi">
+            <div class="claim-kpi__label">Drugs</div>
+            <div class="claim-kpi__value">{{ formatCurrency(drugsRevenue) }}</div>
+          </div>
+          <div class="claim-kpi revenue-kpi">
+            <div class="claim-kpi__label">Services</div>
+            <div class="claim-kpi__value">{{ formatCurrency(servicesRevenue) }}</div>
+          </div>
         </div>
 
         <div class="row q-gutter-md q-mb-sm">
@@ -135,6 +149,16 @@
             emit-value
             map-options
           />
+          <q-toggle
+            v-model="filterLikelyDuplicates"
+            color="deep-orange"
+            label="Likely duplicates"
+            class="col-12 col-md-2"
+          >
+            <q-tooltip>
+              Same member number with 2+ claims in the same calendar month — sorted so duplicates appear together for merge review.
+            </q-tooltip>
+          </q-toggle>
           <HmsButton variant="primary" size="sm" @click="searchEncounter">Search</HmsButton>
           <HmsButton variant="secondary" size="sm" @click="clearFilters">Clear</HmsButton>
         </div>
@@ -328,6 +352,7 @@ const filterCardNumber = ref('');
 const filterClaimId = ref('');
 const filterClaimCheckCode = ref('');
 const filterSpecialty = ref(null);
+const filterLikelyDuplicates = ref(false);
 const specialtyOptions = ref([]);
 const filtersLocked = ref(false);
 
@@ -342,6 +367,8 @@ const pagination = ref({
 const selectedRows = ref([]);
 const exportingSelected = ref(false);
 const totalRevenue = ref(null);
+const drugsRevenue = ref(null);
+const servicesRevenue = ref(null);
 
 const formatCurrency = (amount) => {
   if (amount == null) return 'N/A';
@@ -361,6 +388,7 @@ const claimStatusOptions = [
   { label: 'Pharmacy + doctor vetted', value: 'vetted' },
   { label: 'Finalized', value: 'finalized' },
   { label: 'Reopened', value: 'reopened' },
+  { label: 'Merged', value: 'merged' },
 ];
 
 const specialtyHint = computed(() => {
@@ -441,7 +469,8 @@ const prepareClaimsNavIds = async () => {
     filterClaimCheckCode.value || null,
     filterSpecialty.value || null,
     0,
-    limit
+    limit,
+    filterLikelyDuplicates.value
   );
   const data = response.data;
   const items = data?.items && Array.isArray(data.items)
@@ -455,6 +484,7 @@ const columns = [
   { name: 'id', label: 'Encounter ID', field: 'id', align: 'left' },
   { name: 'patient_name', label: 'Patient', field: 'patient_name', align: 'left' },
   { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left' },
+  { name: 'member_no', label: 'Member No', field: 'member_no', align: 'left' },
   { name: 'ccc_number', label: 'CCC Number', field: 'ccc_number', align: 'left' },
   { name: 'department', label: 'Department', field: 'department', align: 'left' },
   {
@@ -572,6 +602,7 @@ const clearFilters = () => {
   filterCardNumber.value = '';
   filterClaimId.value = '';
   filterSpecialty.value = null;
+  filterLikelyDuplicates.value = false;
   searchEncounterId.value = '';
   pagination.value.page = 1; // Reset to first page
   
@@ -617,6 +648,7 @@ const saveFiltersToStorage = () => {
     filterEndDate: filterEndDate.value,
     filterClaimStatus: filterClaimStatus.value,
     filterSpecialty: filterSpecialty.value,
+    filterLikelyDuplicates: filterLikelyDuplicates.value,
     searchEncounterId: searchEncounterId.value,
   };
   localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
@@ -632,6 +664,7 @@ const loadFiltersFromStorage = () => {
       filterClaimId.value = filters.filterClaimId || '';
       filterClaimCheckCode.value = filters.filterClaimCheckCode || '';
       filterSpecialty.value = filters.filterSpecialty ?? null;
+      filterLikelyDuplicates.value = Boolean(filters.filterLikelyDuplicates);
       // Only load saved dates if they exist, otherwise default to today
       filterStartDate.value = filters.filterStartDate || getTodayDate();
       filterEndDate.value = filters.filterEndDate || getTodayDate();
@@ -818,7 +851,8 @@ const loadFinalizedEncounters = async (page = 1) => {
       filterClaimCheckCode.value || null,
       filterSpecialty.value || null,
       skip,
-      pagination.value.rowsPerPage
+      pagination.value.rowsPerPage,
+      filterLikelyDuplicates.value
     );
     
     // Handle response - check if it's the new paginated format or old format
@@ -831,6 +865,8 @@ const loadFinalizedEncounters = async (page = 1) => {
       items = responseData.items;
       total = responseData.total || 0;
       totalRevenue.value = responseData.total_revenue ?? null;
+      drugsRevenue.value = responseData.drugs_revenue ?? null;
+      servicesRevenue.value = responseData.services_revenue ?? null;
     } else if (Array.isArray(responseData)) {
       // Old format (array directly) - fallback for compatibility
       items = responseData;
@@ -864,7 +900,9 @@ const loadFinalizedEncounters = async (page = 1) => {
       visit_start_date: encounter.created_at || null,
       finalized_at: encounter.finalized_at,
       claim_id: encounter.claim_id,
+      claim_number: encounter.claim_number || null,
       claim_status: encounter.claim_status,
+      member_no: encounter.member_no || null,
       department: encounter.department,
       total_claim_amount: encounter.total_claim_amount ?? null,
     }));
@@ -878,6 +916,9 @@ const loadFinalizedEncounters = async (page = 1) => {
     });
     finalizedEncounters.value = [];
     pagination.value.rowsNumber = 0;
+    totalRevenue.value = null;
+    drugsRevenue.value = null;
+    servicesRevenue.value = null;
   } finally {
     loading.value = false;
   }
@@ -898,7 +939,7 @@ watch(claimType, () => {
   loadSpecialties(); // Refresh specialty options (OPD = departments, IPD = wards)
 });
 
-watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterClaimCheckCode, filterSpecialty, claimType], () => {
+watch([filterStartDate, filterEndDate, filterClaimStatus, filterCardNumber, filterClaimId, filterClaimCheckCode, filterSpecialty, filterLikelyDuplicates, claimType], () => {
   // Auto-reload when filters change (debounce could be added if needed)
   if (!searchEncounterId.value) {
     pagination.value.page = 1; // Reset to first page when filters change
@@ -946,6 +987,20 @@ onMounted(async () => {
 .panel-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
 .panel-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
 .panel-body { padding: 0.95rem 1rem; }
+.revenue-kpi-grid {
+  margin-top: 0.15rem;
+}
+.revenue-kpi .claim-kpi__label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.revenue-kpi__hint {
+  font-weight: 500;
+  color: var(--hms-text-muted);
+  font-size: var(--hms-text-xs);
+}
 .module-seg {
   display: inline-flex; padding: 0.22rem; border-radius: 999px;
   border: 1px solid var(--hms-border); background: var(--hms-surface); gap: 0.15rem;

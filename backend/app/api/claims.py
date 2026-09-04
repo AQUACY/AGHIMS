@@ -41,7 +41,21 @@ from app.services.claim_amount_service import (
     compute_claim_summary_from_ghims_payload,
     compute_encounter_claim_summary,
     compute_ghims_batch_claim_totals,
+    drugs_services_from_summary,
     PriceAmountCache,
+)
+from app.services.claim_merge import (
+    member_no_from_ghims_payload,
+    ghims_payload_month_key,
+    merge_ghims_payloads,
+    serialize_ghims_related_item,
+    serialize_hms_related_claim,
+    merge_hms_claim_details,
+    find_duplicate_member_months,
+    service_month_sql_expr,
+    normalize_member_no,
+    same_month,
+    month_key_from_date,
 )
 
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -243,13 +257,30 @@ def _enrich_encounter_row_with_claim_amount(
     claim: Optional[Claim] = None,
     ward_admission=None,
 ) -> dict:
-    """Attach total_claim_amount to an eligible-encounters list row."""
+    """Attach total / drugs / services amounts to an eligible-encounters list row."""
     try:
         summary = compute_encounter_claim_summary(db, encounter, claim, ward_admission)
-        row["total_claim_amount"] = round(float(summary.get("total_amount") or 0.0), 2)
+        split = drugs_services_from_summary(summary)
+        row["total_claim_amount"] = split["total_amount"]
+        row["drugs_amount"] = split["drugs_amount"]
+        row["services_amount"] = split["services_amount"]
     except Exception:
         row["total_claim_amount"] = 0.0
+        row["drugs_amount"] = 0.0
+        row["services_amount"] = 0.0
     return row
+
+
+def _page_revenue_payload(rows: list) -> dict:
+    """Aggregate total / drugs / services revenue for a claims list page."""
+    total = sum(float(r.get("total_claim_amount") or 0.0) for r in rows)
+    drugs = sum(float(r.get("drugs_amount") or 0.0) for r in rows)
+    services = sum(float(r.get("services_amount") or 0.0) for r in rows)
+    return {
+        "total_revenue": round(total, 2),
+        "drugs_revenue": round(drugs, 2),
+        "services_revenue": round(services, 2),
+    }
 
 
 def _should_include_opd_prescription(presc, include_prescription_ids: Optional[List[int]] = None) -> bool:
@@ -441,9 +472,13 @@ class EncounterWithClaimInfo(BaseModel):
     finalized_by_username: Optional[str] = None  # Username of user who finalized
     created_at: datetime
     claim_id: Optional[int] = None
+    claim_number: Optional[str] = None  # CLA-XXXXX
     claim_status: Optional[str] = None
+    member_no: Optional[str] = None
     ward_admission_id: Optional[int] = None  # For IPD claims
     total_claim_amount: Optional[float] = None
+    drugs_amount: Optional[float] = None
+    services_amount: Optional[float] = None
     pharmacy_vetted: bool = False
     doctor_vetted: bool = False
     pharmacy_vetted_by_name: Optional[str] = None
@@ -1027,6 +1062,9 @@ def finalize_claim(
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
+
+    if (claim.status or "").strip().lower() == ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Cannot finalize a merged claim. Revert merge first.")
     
     # For IPD admissions, require discharge before finalization
     if claim.type_of_service == "IPD":
@@ -1075,6 +1113,8 @@ def vet_claim(
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
+    if (claim.status or "").strip().lower() == ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Cannot change vetting on a merged claim. Revert merge first.")
     if claim.status == ClaimStatus.FINALIZED.value:
         raise HTTPException(
             status_code=400,
@@ -1114,6 +1154,9 @@ def reopen_claim(
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
+
+    if (claim.status or "").strip().lower() == ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Cannot reopen a merged claim. Revert merge first.")
     
     claim.status = ClaimStatus.REOPENED.value
     # Keep pharmacy/doctor vet history; restore vet workflow status if either side had vetted
@@ -1696,6 +1739,8 @@ class EligibleEncountersResponse(BaseModel):
     skip: int
     limit: int
     total_revenue: float = 0.0
+    drugs_revenue: float = 0.0
+    services_revenue: float = 0.0
 
 
 class SpecialtiesResponse(BaseModel):
@@ -2301,6 +2346,56 @@ def get_claims_specialties(
     return SpecialtiesResponse(specialties=specialties)
 
 
+def _parse_list_date_bounds(start_date: Optional[str], end_date: Optional[str]):
+    """Return (start_dt, end_dt_exclusive) from YYYY-MM-DD strings."""
+    from datetime import datetime, timedelta
+
+    start_dt = None
+    end_dt = None
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            start_dt = None
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        except ValueError:
+            end_dt = None
+    return start_dt, end_dt
+
+
+def _apply_likely_duplicates_claim_filter(query, db, start_dt=None, end_dt=None):
+    """Restrict a Claim-joined encounter query to same-member/same-month duplicates."""
+    from sqlalchemy import case, or_, and_
+
+    dup_keys = find_duplicate_member_months(db, start_dt=start_dt, end_dt=end_dt)
+    if not dup_keys:
+        return query.filter(False)
+
+    dialect = ""
+    try:
+        dialect = db.get_bind().dialect.name
+    except Exception:
+        pass
+    visit_dt = case(
+        (Encounter.finalized_at.isnot(None), Encounter.finalized_at),
+        else_=Encounter.created_at,
+    )
+    month_col = service_month_sql_expr(visit_dt, dialect)
+    query = query.filter(
+        Claim.id.isnot(None),
+        Claim.status != ClaimStatus.MERGED.value,
+        Claim.member_no.isnot(None),
+        Claim.member_no != "",
+    )
+    conditions = [
+        and_(Claim.member_no == member_no, month_col == ym)
+        for member_no, ym in dup_keys
+    ]
+    return query.filter(or_(*conditions))
+
+
 @router.get("/eligible-encounters", response_model=EligibleEncountersResponse)
 def get_eligible_encounters_for_claims(
     claim_type: Optional[str] = None,  # 'opd' or 'ipd'
@@ -2311,6 +2406,7 @@ def get_eligible_encounters_for_claims(
     claim_id: Optional[str] = None,  # Filter by claim ID (e.g., "CLA-XXXXX")
     ccc: Optional[str] = None,  # Filter by claim check code / CCC (partial match)
     specialty: Optional[str] = None,  # Filter by specialty: OPD = encounter.department, IPD = ward (all wards if not set)
+    likely_duplicates: bool = False,  # Same member_no with 2+ claims in the same calendar month
     skip: int = 0,  # Pagination offset
     limit: int = 50,  # Pagination limit
     db: Session = Depends(get_db),
@@ -2331,6 +2427,7 @@ def get_eligible_encounters_for_claims(
     - card_number: Filter by patient card number (partial match supported)
     - claim_id: Filter by claim ID (e.g., "CLA-XXXXX")
     - specialty: Filter by specialty (OPD = department/clinic, IPD = ward name)
+    - likely_duplicates: Only claims whose member appears more than once in the same month
     """
     from sqlalchemy.orm import joinedload
     from datetime import datetime
@@ -2345,6 +2442,7 @@ def get_eligible_encounters_for_claims(
             claim_id=claim_id,
             ccc=ccc,
             specialty=specialty,
+            likely_duplicates=likely_duplicates,
             skip=skip,
             limit=limit,
             db=db,
@@ -2452,6 +2550,13 @@ def get_eligible_encounters_for_claims(
         ccc_clean = str(ccc).strip()
         if ccc_clean:
             query = query.filter(func.lower(Claim.claim_check_code).like(f"%{ccc_clean.lower()}%"))
+
+    dup_start_dt, dup_end_dt = _parse_list_date_bounds(start_date, end_date)
+    if likely_duplicates:
+        if claim_status == "no_claim":
+            query = query.filter(False)
+        else:
+            query = _apply_likely_duplicates_claim_filter(query, db, dup_start_dt, dup_end_dt)
     
     # Get total count efficiently using COUNT query
     total_count = query.count()
@@ -2507,6 +2612,13 @@ def get_eligible_encounters_for_claims(
                 ipd_count_query = ipd_count_query.filter(Claim.claim_id == claim_id_clean)
         if specialty and specialty.strip():
             ipd_count_query = ipd_count_query.filter(WardAdmission.ward == specialty.strip())
+        if likely_duplicates:
+            if claim_status == "no_claim":
+                ipd_count_query = ipd_count_query.filter(False)
+            else:
+                ipd_count_query = _apply_likely_duplicates_claim_filter(
+                    ipd_count_query, db, dup_start_dt, dup_end_dt
+                )
         
         ipd_total = ipd_count_query.count()
         
@@ -2519,7 +2631,10 @@ def get_eligible_encounters_for_claims(
         ipd_load_limit = min(skip + limit + buffer_size, ipd_total)
         
         # Load OPD records (without pagination, but limited to what we need)
-        opd_encounters = query.order_by(Encounter.finalized_at.desc()).limit(opd_load_limit).all()
+        if likely_duplicates:
+            opd_encounters = query.order_by(Claim.member_no.asc(), Encounter.finalized_at.desc()).limit(opd_load_limit).all()
+        else:
+            opd_encounters = query.order_by(Encounter.finalized_at.desc()).limit(opd_load_limit).all()
         
         # Process OPD results
         result = []
@@ -2546,7 +2661,9 @@ def get_eligible_encounters_for_claims(
                 "finalized_by_username": finalized_by_username,
                 "created_at": encounter.created_at,
                 "claim_id": claim.id if claim else None,
+                "claim_number": claim.claim_id if claim else None,
                 "claim_status": claim.status if claim else None,
+                "member_no": claim.member_no if claim else None,
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
                 **_list_vet_fields(claim, db),
             }
@@ -2560,6 +2677,8 @@ def get_eligible_encounters_for_claims(
             card_number=card_number,
             claim_id=claim_id,
             specialty=specialty,
+            ccc=ccc,
+            likely_duplicates=likely_duplicates,
             skip=0,
             limit=ipd_load_limit,
             db=db,
@@ -2567,9 +2686,17 @@ def get_eligible_encounters_for_claims(
         )
         ipd_results = ipd_response["items"]
         
-        # Combine and sort by finalized_at (most recent first)
+        # Combine and sort
         result.extend(ipd_results)
-        result.sort(key=lambda x: x.get("finalized_at") or datetime.min, reverse=True)
+        if likely_duplicates:
+            result.sort(
+                key=lambda x: (
+                    str(x.get("member_no") or ""),
+                    x.get("finalized_at") or datetime.min,
+                ),
+            )
+        else:
+            result.sort(key=lambda x: x.get("finalized_at") or datetime.min, reverse=True)
         
         # Update total count to include IPD (use actual counts, not loaded items)
         total_count = total_count + ipd_total
@@ -2578,7 +2705,10 @@ def get_eligible_encounters_for_claims(
         result = result[skip:skip + limit]
     else:
         # For specific claim types (OPD, Other), paginate at database level
-        encounters = query.order_by(Encounter.finalized_at.desc()).offset(skip).limit(limit).all()
+        if likely_duplicates:
+            encounters = query.order_by(Claim.member_no.asc(), Encounter.finalized_at.desc()).offset(skip).limit(limit).all()
+        else:
+            encounters = query.order_by(Encounter.finalized_at.desc()).offset(skip).limit(limit).all()
         
         # Process results
         result = []
@@ -2605,20 +2735,22 @@ def get_eligible_encounters_for_claims(
                 "finalized_by_username": finalized_by_username,
                 "created_at": encounter.created_at,
                 "claim_id": claim.id if claim else None,
+                "claim_number": claim.claim_id if claim else None,
                 "claim_status": claim.status if claim else None,
+                "member_no": claim.member_no if claim else None,
                 "ward_admission_id": None,  # OPD encounters don't have ward_admission_id
                 **_list_vet_fields(claim, db),
             }
             result.append(_enrich_encounter_row_with_claim_amount(db, encounter_data, encounter, claim))
     
-    page_revenue = sum(float(r.get("total_claim_amount") or 0.0) for r in result)
+    page_revenue = _page_revenue_payload(result)
     
     return {
         "items": result,
         "total": total_count,
         "skip": skip,
         "limit": limit,
-        "total_revenue": round(page_revenue, 2),
+        **page_revenue,
     }
 
 
@@ -2630,6 +2762,7 @@ def get_eligible_ipd_ward_admissions_for_claims(
     claim_id: Optional[str] = None,
     ccc: Optional[str] = None,  # Filter by claim check code / CCC (partial match)
     specialty: Optional[str] = None,  # Filter by ward (IPD covers all wards; this narrows by ward/specialty)
+    likely_duplicates: bool = False,
     skip: int = 0,
     limit: int = 50,
     db: Session = None,
@@ -2726,12 +2859,22 @@ def get_eligible_ipd_ward_admissions_for_claims(
     # Apply specialty filter (IPD: by ward name; when not set, all wards are included)
     if specialty and specialty.strip():
         query = query.filter(WardAdmission.ward == specialty.strip())
+
+    dup_start_dt, dup_end_dt = _parse_list_date_bounds(start_date, end_date)
+    if likely_duplicates:
+        if claim_status == "no_claim":
+            query = query.filter(False)
+        else:
+            query = _apply_likely_duplicates_claim_filter(query, db, dup_start_dt, dup_end_dt)
     
     # Get total count efficiently using COUNT query
     total_count = query.count()
     
     # Apply pagination at database level using LIMIT and OFFSET
-    ward_admissions = query.order_by(WardAdmission.discharged_at.desc()).offset(skip).limit(limit).all()
+    if likely_duplicates:
+        ward_admissions = query.order_by(Claim.member_no.asc(), WardAdmission.discharged_at.desc()).offset(skip).limit(limit).all()
+    else:
+        ward_admissions = query.order_by(WardAdmission.discharged_at.desc()).offset(skip).limit(limit).all()
     
     result = []
     for ward_admission in ward_admissions:
@@ -2765,7 +2908,9 @@ def get_eligible_ipd_ward_admissions_for_claims(
             "finalized_by_username": discharged_by_username,
             "created_at": ward_admission.admitted_at,
             "claim_id": claim.id if claim else None,
+            "claim_number": claim.claim_id if claim else None,
             "claim_status": claim.status if claim else None,
+            "member_no": claim.member_no if claim else None,
             **_list_vet_fields(claim, db),
         }
         result.append(
@@ -2774,14 +2919,14 @@ def get_eligible_ipd_ward_admissions_for_claims(
             )
         )
     
-    page_revenue = sum(float(r.get("total_claim_amount") or 0.0) for r in result)
+    page_revenue = _page_revenue_payload(result)
     
     return {
         "items": result,
         "total": total_count,
         "skip": skip,
         "limit": limit,
-        "total_revenue": round(page_revenue, 2),
+        **page_revenue,
     }
 
 
@@ -3495,6 +3640,12 @@ def get_claim_edit_details(
             "is_unbundled": claim.is_unbundled,
             "principal_gdrg": claim.principal_gdrg or "",
             "status": claim.status,
+            "merged_into_id": getattr(claim, "merged_into_id", None),
+            "merged_into_claim_id": (
+                db.query(Claim.claim_id).filter(Claim.id == claim.merged_into_id).scalar()
+                if getattr(claim, "merged_into_id", None)
+                else None
+            ),
             **_vetting_snapshot(claim, db),
         },
         "encounter": {
@@ -3764,6 +3915,8 @@ def update_claim(
             status_code=400,
             detail="Cannot edit finalized claims. Please reopen the claim first."
         )
+    if (claim.status or "").strip().lower() == ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Cannot edit a merged claim. Revert merge first.")
     
     # Update claim fields
     claim.physician_id = claim_data.physician_id
@@ -3792,6 +3945,9 @@ def update_claim_detailed(
     claim = db.query(Claim).filter(Claim.id == claim_id).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
+
+    if (claim.status or "").strip().lower() == ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Cannot edit a merged claim. Revert merge first.")
     
     # If claim is finalized, automatically reopen it to allow editing
     if claim.status == "finalized":
@@ -4377,12 +4533,15 @@ async def upload_ghims_claims_xml(
     db.flush()
 
     for row in claims:
+        ghims_payload = row.get("payload") or {}
+        member_no = str(ghims_payload.get("memberNo") or ghims_payload.get("hin") or "").strip() or None
         db.add(ClaimXmlImportItem(
             batch_id=batch.id,
             claim_claim_id=row["claim_id"],
             row_index=row.get("row_index"),
             status="draft",
-            payload=row.get("payload") or {},
+            member_no=member_no,
+            payload=ghims_payload,
         ))
 
     db.commit()
@@ -4445,12 +4604,16 @@ def get_ghims_import_batch(
         .all()
     )
 
-    totals_by_id: Dict[int, float] = {}
+    totals_by_id: Dict[int, Dict[str, float]] = {}
     batch_revenue = None
+    batch_drugs = None
+    batch_services = None
     if include_totals:
         totals_payload = compute_ghims_batch_claim_totals(db, items)
         totals_by_id = totals_payload["totals"]
         batch_revenue = totals_payload["total_revenue"]
+        batch_drugs = totals_payload["drugs_revenue"]
+        batch_services = totals_payload["services_revenue"]
 
     # Resolve user display names once for vetting + ownership (avoid N+1)
     name_ids = set()
@@ -4522,7 +4685,10 @@ def get_ghims_import_batch(
             "assignment_note": getattr(i, "assignment_note", None),
         }
         if include_totals:
-            row["total_claim_amount"] = totals_by_id.get(i.id, 0.0)
+            item_totals = totals_by_id.get(i.id) or {}
+            row["total_claim_amount"] = item_totals.get("total_claim_amount", 0.0)
+            row["drugs_amount"] = item_totals.get("drugs_amount", 0.0)
+            row["services_amount"] = item_totals.get("services_amount", 0.0)
         rows.append(row)
 
     response = {
@@ -4535,6 +4701,8 @@ def get_ghims_import_batch(
     }
     if include_totals:
         response["total_revenue"] = batch_revenue
+        response["drugs_revenue"] = batch_drugs
+        response["services_revenue"] = batch_services
     return response
 
 
@@ -4560,9 +4728,16 @@ def get_ghims_import_batch_claim_totals(
     return {
         "batch_id": batch_id,
         "total_revenue": totals_payload["total_revenue"],
+        "drugs_revenue": totals_payload["drugs_revenue"],
+        "services_revenue": totals_payload["services_revenue"],
         "totals": [
-            {"id": item_id, "total_claim_amount": amount}
-            for item_id, amount in totals_payload["totals"].items()
+            {
+                "id": item_id,
+                "total_claim_amount": amounts.get("total_claim_amount", 0.0),
+                "drugs_amount": amounts.get("drugs_amount", 0.0),
+                "services_amount": amounts.get("services_amount", 0.0),
+            }
+            for item_id, amounts in totals_payload["totals"].items()
         ],
     }
 
@@ -4723,7 +4898,15 @@ def _reorder_ghims_diagnoses_principal_first(payload: dict) -> None:
         diagnoses.insert(0, diagnoses.pop(idx))
 
 
-def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
+def _validate_and_normalize_ghims_payload(
+    db: Session,
+    payload: dict,
+    *,
+    require_complete_medicines: bool = True,
+) -> dict:
+    """Normalize GHIMS payload. When require_complete_medicines is False (merge),
+    skip completeness / coverage gates so existing draft rows can be combined as-is.
+    """
     normalized_payload = dict(payload or {})
     normalized_payload["specialtyAttended"] = resolve_specialty_attended(
         normalized_payload.get("specialtyAttended"),
@@ -4738,7 +4921,7 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
             icd10 = str(diag.get("icd10") or "").strip()
             diagnosis_text = str(diag.get("diagnosis") or "").strip()
             has_any_diagnosis_data = bool(gdrg_code or icd10 or diagnosis_text)
-            if has_any_diagnosis_data and not gdrg_code:
+            if require_complete_medicines and has_any_diagnosis_data and not gdrg_code:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Diagnosis section {idx + 1}: missing GDRG. Please enter GDRG before saving.",
@@ -4752,7 +4935,7 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
                 raise HTTPException(status_code=400, detail=f"Invalid investigation entry at section {idx + 1}.")
             gdrg_code = str(inv.get("gdrgCode") or "").strip()
             service_date = str(inv.get("serviceDate") or "").strip()
-            if gdrg_code and not service_date:
+            if require_complete_medicines and gdrg_code and not service_date:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Investigation section {idx + 1}: missing service date. Please enter date before saving.",
@@ -4770,7 +4953,7 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
                 or str(proc.get("icd10") or "").strip()
                 or str(proc.get("diagnosis") or "").strip()
             )
-            if has_any_procedure_data and not service_date:
+            if require_complete_medicines and has_any_procedure_data and not service_date:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Procedure section {idx + 1}: missing service date. Please enter date before saving.",
@@ -4785,7 +4968,7 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
             raise HTTPException(status_code=400, detail=f"Invalid medicine entry at section {idx + 1}.")
 
         medicine_code = str(med.get("medicineCode") or "").strip()
-        if medicine_code:
+        if medicine_code and require_complete_medicines:
             product = (
                 db.query(ProductPrice)
                 .filter(ProductPrice.medication_code == medicine_code)
@@ -4816,15 +4999,16 @@ def _validate_and_normalize_ghims_payload(db: Session, payload: dict) -> dict:
         prescription["duration"] = _normalize_medicine_duration(prescription.get("duration", ""))
         prescription["frequency"] = str(prescription.get("frequency") or "").strip()
 
-        missing = _ghims_medicine_missing_fields(med, prescription)
-        if missing:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Medicine section {idx + 1}: missing {', '.join(missing)}. "
-                    "Please enter medicine code, quantity, date, dose, frequency, and duration before saving."
-                ),
-            )
+        if require_complete_medicines:
+            missing = _ghims_medicine_missing_fields(med, prescription)
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Medicine section {idx + 1}: missing {', '.join(missing)}. "
+                        "Please enter medicine code, quantity, date, dose, frequency, and duration before saving."
+                    ),
+                )
 
     return normalized_payload
 
@@ -4854,6 +5038,11 @@ def get_ghims_import_item(
     claim_summary = compute_claim_summary_from_ghims_payload(
         db, payload, price_cache=PriceAmountCache.build(db)
     )
+    merged_into_id = getattr(item, "merged_into_id", None)
+    merged_into_claim_claim_id = None
+    if merged_into_id:
+        merged_item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == merged_into_id).first()
+        merged_into_claim_claim_id = merged_item.claim_claim_id if merged_item else None
     return {
         "id": item.id,
         "batch_id": item.batch_id,
@@ -4861,12 +5050,338 @@ def get_ghims_import_item(
         "row_index": item.row_index,
         "status": item.status,
         "flag_comment": item.flag_comment,
+        "merged_into_id": merged_into_id,
+        "merged_into_claim_claim_id": merged_into_claim_claim_id,
         "payload": payload,
         "claim_summary": claim_summary,
         "claimit_errors": _get_claimit_errors_for_import_item(db, item),
         **_vetting_snapshot(item, db),
         **_ownership_snapshot(item, db),
     }
+
+
+@router.get("/ghims-import/items/{item_id}/related")
+def get_ghims_import_related_items(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Return other imported GHIMS claim items for the same member number and same service month."""
+    target = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+
+    target_member_no = (target.member_no or member_no_from_ghims_payload(target.payload or {})) or None
+    if not target_member_no:
+        return []
+
+    target_month = ghims_payload_month_key(target.payload or {})
+
+    candidates = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.member_no == target_member_no)
+        .filter(ClaimXmlImportItem.id != item_id)
+        .filter(ClaimXmlImportItem.status != "merged")
+        .order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id)
+        .all()
+    )
+
+    out = []
+    for c in candidates:
+        if target_month and ghims_payload_month_key(c.payload or {}) != target_month:
+            continue
+        out.append(
+            serialize_ghims_related_item(
+                c,
+                batch=c.batch if hasattr(c, "batch") else None,
+                target_payload=target.payload or {},
+            )
+        )
+
+    # Sort: first dateOfService then claim_claim_id
+    def sort_key(x: dict):
+        dates = x.get("dateOfService") or []
+        return (str(dates[0] or ""), str(x.get("claim_claim_id") or ""), int(x.get("id") or 0))
+
+    out.sort(key=sort_key)
+    return out
+
+
+class GhimsMergeBody(BaseModel):
+    source_item_id: int
+    keep_dates_from: str = "target"  # "target" or "source"
+    preview_only: bool = False
+
+
+@router.post("/ghims-import/items/{target_id}/merge")
+def merge_ghims_import_items(
+    target_id: int,
+    body: GhimsMergeBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Merge one imported GHIMS claim item into another.
+
+    - Source becomes read-only with status == "merged"
+    - Line-item service dates are preserved
+    - Claim-level dateOfService[] follows keep_dates_from
+    """
+    source_id = body.source_item_id
+    keep_dates_from = str(body.keep_dates_from or "").strip().lower()
+    preview_only = bool(body.preview_only)
+
+    if keep_dates_from not in ("target", "source"):
+        raise HTTPException(status_code=400, detail="keep_dates_from must be 'target' or 'source'")
+
+    target = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == target_id).first()
+    source = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == source_id).first()
+    if not target or not source:
+        raise HTTPException(status_code=404, detail="Imported claim(s) not found.")
+
+    target_status = (target.status or "").strip().lower()
+    source_status = (source.status or "").strip().lower()
+
+    if target_status == "merged" or source_status == "merged":
+        raise HTTPException(status_code=400, detail="Cannot merge a claim that is already merged.")
+    if target_status == "finalized" or source_status == "finalized":
+        raise HTTPException(status_code=400, detail="Reopen both claims before merging.")
+
+    target_member_no = (target.member_no or member_no_from_ghims_payload(target.payload or {})) or None
+    source_member_no = (source.member_no or member_no_from_ghims_payload(source.payload or {})) or None
+    if not target_member_no or not source_member_no or target_member_no != source_member_no:
+        raise HTTPException(status_code=400, detail="Claims must belong to the same member number.")
+
+    merged_payload, items_added, warnings = merge_ghims_payloads(
+        target.payload or {},
+        source.payload or {},
+        keep_dates_from=keep_dates_from,
+    )
+
+    if preview_only:
+        return {
+            "merged": False,
+            "target_id": target.id,
+            "source_id": source.id,
+            "items_added": items_added,
+            "warnings": warnings,
+        }
+
+    merged_payload = _validate_and_normalize_ghims_payload(
+        db,
+        merged_payload,
+        require_complete_medicines=False,
+    )
+    claim_id = str(merged_payload.get("claimID") or "").strip()
+    if not claim_id:
+        raise HTTPException(status_code=400, detail="Merged payload is missing claimID.")
+
+    target.claim_claim_id = claim_id
+    target.payload = merged_payload
+    target.member_no = member_no_from_ghims_payload(merged_payload) or None
+
+    source.status = "merged"
+    source.merged_into_id = target.id
+
+    db.commit()
+    return {
+        "merged": True,
+        "target_id": target.id,
+        "source_id": source.id,
+        "items_added": items_added,
+        "warnings": warnings,
+    }
+
+
+@router.post("/ghims-import/items/{source_id}/revert-merge")
+def revert_ghims_import_merge(
+    source_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Revert a previously merged imported claim back to edit mode."""
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == source_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+
+    if (item.status or "").strip().lower() != "merged":
+        raise HTTPException(status_code=400, detail="Only merged claims can be reverted.")
+
+    item.status = "draft"
+    item.merged_into_id = None
+    item.finalized_at = None
+    _refresh_vet_workflow_status(item)
+    db.commit()
+
+    return {"reverted": True, "source_id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
+
+
+class HmsMergeBody(BaseModel):
+    source_claim_id: int
+    keep_dates_from: str = "target"  # "target" or "source" (line item dates always preserved)
+    preview_only: bool = False
+
+
+@router.get("/{claim_id}/related")
+def get_hms_related_claims(
+    claim_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Other HMS claims for the same member in the same calendar month."""
+    from sqlalchemy.orm import joinedload
+
+    target = (
+        db.query(Claim)
+        .options(joinedload(Claim.encounter), joinedload(Claim.claim_investigations), joinedload(Claim.claim_prescriptions), joinedload(Claim.claim_procedures), joinedload(Claim.claim_diagnoses))
+        .filter(Claim.id == claim_id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    member = normalize_member_no(target.member_no)
+    if not member:
+        return []
+
+    enc = target.encounter
+    target_date = None
+    if enc:
+        target_date = enc.finalized_at or enc.created_at
+
+    rows = (
+        db.query(Claim)
+        .options(joinedload(Claim.encounter), joinedload(Claim.claim_investigations), joinedload(Claim.claim_prescriptions), joinedload(Claim.claim_procedures), joinedload(Claim.claim_diagnoses))
+        .filter(
+            Claim.member_no == member,
+            Claim.id != target.id,
+            Claim.status != ClaimStatus.MERGED.value,
+        )
+        .all()
+    )
+    out = []
+    for c in rows:
+        other_enc = c.encounter
+        other_date = None
+        if other_enc:
+            other_date = other_enc.finalized_at or other_enc.created_at
+        if target_date and other_date and not same_month(target_date, other_date):
+            continue
+        out.append(
+            serialize_hms_related_claim(
+                c,
+                encounter=other_enc,
+                target_specialty=str(target.specialty_attended or ""),
+            )
+        )
+    out.sort(key=lambda r: (r.get("first_visit") or "", r.get("claim_id") or ""))
+    return out
+
+
+@router.post("/{target_id}/merge")
+def merge_hms_claims(
+    target_id: int,
+    body: HmsMergeBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Merge one HMS claim into another. Source becomes read-only (status=merged)."""
+    from sqlalchemy.orm import joinedload
+
+    source_id = body.source_claim_id
+    keep_dates_from = str(body.keep_dates_from or "").strip().lower()
+    preview_only = bool(body.preview_only)
+    if keep_dates_from not in ("target", "source"):
+        raise HTTPException(status_code=400, detail="keep_dates_from must be 'target' or 'source'")
+
+    target = (
+        db.query(Claim)
+        .options(
+            joinedload(Claim.claim_diagnoses),
+            joinedload(Claim.claim_investigations),
+            joinedload(Claim.claim_prescriptions),
+            joinedload(Claim.claim_procedures),
+            joinedload(Claim.encounter),
+        )
+        .filter(Claim.id == target_id)
+        .first()
+    )
+    source = (
+        db.query(Claim)
+        .options(
+            joinedload(Claim.claim_diagnoses),
+            joinedload(Claim.claim_investigations),
+            joinedload(Claim.claim_prescriptions),
+            joinedload(Claim.claim_procedures),
+            joinedload(Claim.encounter),
+        )
+        .filter(Claim.id == source_id)
+        .first()
+    )
+    if not target or not source:
+        raise HTTPException(status_code=404, detail="Claim(s) not found.")
+    if target.id == source.id:
+        raise HTTPException(status_code=400, detail="Cannot merge a claim into itself.")
+
+    if (target.status or "").strip().lower() == ClaimStatus.MERGED.value or (source.status or "").strip().lower() == ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Cannot merge a claim that is already merged.")
+    if (target.status or "").strip().lower() == ClaimStatus.FINALIZED.value or (source.status or "").strip().lower() == ClaimStatus.FINALIZED.value:
+        raise HTTPException(status_code=400, detail="Reopen both claims before merging.")
+
+    target_member = normalize_member_no(target.member_no)
+    source_member = normalize_member_no(source.member_no)
+    if not target_member or not source_member or target_member != source_member:
+        raise HTTPException(status_code=400, detail="Claims must belong to the same member number.")
+
+    items_added, warnings = merge_hms_claim_details(
+        db, target, source, keep_dates_from=keep_dates_from
+    )
+
+    if preview_only:
+        db.rollback()
+        return {
+            "merged": False,
+            "target_id": target.id,
+            "source_id": source.id,
+            "items_added": items_added,
+            "warnings": warnings,
+        }
+
+    source.status = ClaimStatus.MERGED.value
+    source.merged_into_id = target.id
+    db.commit()
+    return {
+        "merged": True,
+        "target_id": target.id,
+        "source_id": source.id,
+        "items_added": items_added,
+        "warnings": warnings,
+    }
+
+
+@router.post("/{source_id}/revert-merge")
+def revert_hms_claim_merge(
+    source_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin"])),
+    _module_check: User = Depends(require_module_permission("claims", "update")),
+):
+    """Revert a previously merged HMS claim back to draft."""
+    claim = db.query(Claim).filter(Claim.id == source_id).first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if (claim.status or "").strip().lower() != ClaimStatus.MERGED.value:
+        raise HTTPException(status_code=400, detail="Only merged claims can be reverted.")
+
+    claim.status = ClaimStatus.DRAFT.value
+    claim.merged_into_id = None
+    claim.finalized_at = None
+    _refresh_vet_workflow_status(claim)
+    db.commit()
+    return {"reverted": True, "source_id": claim.id, "status": claim.status, **_vetting_snapshot(claim, db)}
 
 
 @router.patch("/ghims-import/items/{item_id}/vet")
@@ -4894,6 +5409,8 @@ def vet_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if (item.status or "").strip().lower() == "merged":
+        raise HTTPException(status_code=400, detail="Cannot change vetting on a merged claim. Revert merge first.")
     if item.status == "finalized":
         raise HTTPException(
             status_code=400,
@@ -4934,6 +5451,8 @@ def update_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if (item.status or "").strip().lower() == "merged":
+        raise HTTPException(status_code=400, detail="Cannot edit a merged claim. Revert merge first.")
     payload = body.payload or {}
     payload = _validate_and_normalize_ghims_payload(db, payload)
     claim_id = str(payload.get("claimID") or "").strip()
@@ -4941,6 +5460,7 @@ def update_ghims_import_item(
         raise HTTPException(status_code=400, detail="claimID is required.")
     item.claim_claim_id = claim_id
     item.payload = payload
+    item.member_no = member_no_from_ghims_payload(payload) or None
     db.commit()
     return {"id": item.id, "updated": True}
 
@@ -4955,11 +5475,14 @@ def finalize_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if (item.status or "").strip().lower() == "merged":
+        raise HTTPException(status_code=400, detail="Cannot finalize a merged claim. Revert merge first.")
     payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
     item.payload = payload
     from app.core.datetime_utils import utcnow
     item.status = "finalized"
     item.finalized_at = utcnow()
+    item.member_no = member_no_from_ghims_payload(payload) or None
     db.commit()
     return {"id": item.id, "status": item.status}
 
@@ -4974,6 +5497,8 @@ def reopen_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if (item.status or "").strip().lower() == "merged":
+        raise HTTPException(status_code=400, detail="Cannot reopen a merged claim. Revert merge first.")
     item.status = "draft"
     item.finalized_at = None
     # Keep pharmacy/doctor vet history after revert
@@ -4993,6 +5518,8 @@ def flag_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    if (item.status or "").strip().lower() == "merged":
+        raise HTTPException(status_code=400, detail="Cannot flag a merged claim. Revert merge first.")
     if item.status == "finalized":
         raise HTTPException(status_code=400, detail="Cannot flag a finalized imported claim.")
     comment = ""
@@ -5054,6 +5581,10 @@ def bulk_update_ghims_import_items_status(
     missing = sorted(set(body.item_ids) - set([i.id for i in items]))
     if missing:
         raise HTTPException(status_code=404, detail=f"Some imported claims were not found: {missing}")
+
+    bad_merged = [i.id for i in items if (i.status or "").strip().lower() == "merged"]
+    if bad_merged:
+        raise HTTPException(status_code=400, detail=f"Cannot modify merged imported claim(s): {bad_merged}")
 
     # Validate first to avoid partial updates
     if action == "flag":

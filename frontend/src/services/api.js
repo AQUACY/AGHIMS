@@ -829,7 +829,7 @@ export const priceListAPI = {
 // Claims endpoints
 export const claimsAPI = {
   create: (data) => api.post('/claims/', data),
-  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, ccc = null, specialty = null, skip = 0, limit = 50) => {
+  getEligibleEncounters: (type = null, startDate = null, endDate = null, claimStatus = null, cardNumber = null, claimId = null, ccc = null, specialty = null, skip = 0, limit = 50, likelyDuplicates = false) => {
     const params = { skip, limit };
     if (type) params.claim_type = type;
     if (startDate) params.start_date = startDate;
@@ -839,6 +839,7 @@ export const claimsAPI = {
     if (claimId) params.claim_id = claimId;
     if (ccc) params.ccc = ccc;
     if (specialty) params.specialty = specialty;
+    if (likelyDuplicates) params.likely_duplicates = true;
     return api.get('/claims/eligible-encounters', { params });
   },
   getSpecialties: (claimType = null) => {
@@ -847,6 +848,9 @@ export const claimsAPI = {
     return api.get('/claims/specialties', { params });
   },
   get: (claimId) => api.get(`/claims/${claimId}`),
+  getRelatedClaims: (claimId) => api.get(`/claims/${claimId}/related`),
+  mergeClaims: (targetId, body) => api.post(`/claims/${targetId}/merge`, body),
+  revertClaimMerge: (sourceId) => api.post(`/claims/${sourceId}/revert-merge`),
   getAll: () => api.get('/claims/'),
   update: (claimId, data) => api.put(`/claims/${claimId}`, data),
   updateDetailed: (claimId, data) => api.put(`/claims/${claimId}/detailed`, data),
@@ -924,13 +928,16 @@ export const claimsAPI = {
     api.get(`/claims/ghims-import/batches/${batchId}/claim-totals`),
   deleteGhimsImportBatch: (batchId) => api.delete(`/claims/ghims-import/batches/${batchId}`),
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
+  getGhimsRelatedItems: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/related`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
+  mergeGhimsItems: (targetId, body) => api.post(`/claims/ghims-import/items/${targetId}/merge`, body),
   vetGhimsImportItem: (itemId, by, clear = false) =>
     api.patch(`/claims/ghims-import/items/${itemId}/vet`, { by, clear: !!clear }),
   flagGhimsImportItem: (itemId, comment) =>
     api.patch(`/claims/ghims-import/items/${itemId}/flag`, { comment }),
   reopenGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/reopen`),
+  revertGhimsMerge: (sourceId) => api.post(`/claims/ghims-import/items/${sourceId}/revert-merge`),
   bulkUpdateGhimsImportItemsStatus: (itemIds, action, comment = null) =>
     api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action, comment }),
   getGhimsImportAssignees: () => api.get('/claims/ghims-import/assignees'),

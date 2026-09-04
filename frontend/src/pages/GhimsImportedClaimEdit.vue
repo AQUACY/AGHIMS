@@ -1,6 +1,6 @@
 <template>
-  <q-page class="hms-page claim-edit-page" :class="{ 'revert-bar-visible': !loading && status === 'finalized' }">
-    <HmsPageHeader :title="status === 'finalized' ? 'View imported claim' : 'Edit imported claim'">
+<q-page class="hms-page claim-edit-page" :class="{ 'revert-bar-visible': !loading && (status === 'finalized' || status === 'merged') }">
+    <HmsPageHeader :title="(status === 'finalized' || status === 'merged') ? 'View imported claim' : 'Edit imported claim'">
       <template #actions>
         <div v-if="claimNav.hasNav" class="row items-center no-wrap q-gutter-xs claim-nav-controls">
           <q-btn
@@ -73,7 +73,30 @@
     </q-card>
 
     <q-banner
-      v-if="!loading && status === 'finalized'"
+      v-if="!loading && status === 'merged'"
+      class="bg-amber-2 q-mb-md"
+      rounded
+    >
+      <template #avatar>
+        <q-icon name="lock_open" color="amber-9" />
+      </template>
+      <strong>This claim was merged into {{ mergedIntoClaimClaimId || 'another claim' }}</strong>
+      <div class="text-caption q-mt-xs">
+        It is read-only. Click <strong>Revert merge</strong> to edit again.
+      </div>
+      <template #action>
+        <q-btn
+          flat
+          color="primary"
+          label="Revert merge"
+          :loading="reverting"
+          @click="revertMerge"
+        />
+      </template>
+    </q-banner>
+
+    <q-banner
+      v-else-if="!loading && status === 'finalized'"
       class="bg-amber-2 q-mb-md"
       rounded
     >
@@ -99,7 +122,7 @@
       v-if="!loading"
       @submit.prevent="saveAndFinalize"
       class="q-gutter-md"
-      :inert="status === 'finalized' || undefined"
+      :inert="(status === 'finalized' || status === 'merged') || undefined"
     >
       <q-banner v-if="claimitErrors.by_section?.other?.length" class="bg-orange-1 q-mb-md" rounded dense>
         <template #avatar><q-icon name="warning" color="orange" /></template>
@@ -122,7 +145,7 @@
 
       <AiClaimVettingPanel
         :item-id="itemId"
-        :disabled="status === 'finalized'"
+        :disabled="status === 'finalized' || status === 'merged'"
         :auto-run="false"
         class="q-mb-md"
         @payload-updated="onAiPayloadUpdated"
@@ -147,7 +170,7 @@
                 icon="cloud_download"
                 label="Get CCC"
                 :loading="fetchingClaimCcc"
-                :disable="status === 'finalized' || !canGetGhimsCcc || loading"
+                :disable="status === 'finalized' || status === 'merged' || !canGetGhimsCcc || loading"
                 @click="onGetGhimsClaimCcc"
               >
                 <q-tooltip v-if="!canGetGhimsCcc">
@@ -184,7 +207,7 @@
                     color="primary"
                     label="To HIN"
                     :loading="convertingGhanaCard"
-                    :disable="status === 'finalized'"
+                    :disable="status === 'finalized' || status === 'merged'"
                     @click="onConvertGhanaCardToHin"
                   >
                     <q-tooltip>ClaimIT rejects Ghana Cards — convert to HIN (keeps Ghana Card below)</q-tooltip>
@@ -209,6 +232,56 @@
             <q-input v-model="payload.surname" label="Surname" filled class="col-12 col-md-4" />
             <q-input v-model="payload.otherNames" label="Other Names" filled class="col-12 col-md-4" />
             <q-input v-model="payload.dateOfBirth" label="Date of Birth" type="date" filled class="col-12 col-md-4" />
+          </div>
+        </q-card-section>
+      </q-card>
+
+      <q-card v-if="!loading" flat bordered class="q-mb-md">
+        <q-card-section>
+          <div class="text-h6 q-mb-sm">
+            Other visits this month ({{ relatedGhimsItems.length }})
+          </div>
+          <div v-if="relatedGhimsItemsLoading" class="text-caption text-grey-7">Loading related claims…</div>
+          <q-list
+            v-else-if="relatedGhimsItems.length"
+            bordered
+            separator
+            class="rounded-borders"
+          >
+            <q-item v-for="it in relatedGhimsItems" :key="it.id">
+              <q-item-section>
+                <q-item-label class="mono">{{ it.claim_claim_id }}</q-item-label>
+                <q-item-label caption>
+                  {{ it.attendance_type || '—' }} · {{ it.specialty || '—' }}
+                  · Dates: {{ (it.dateOfService || []).join(', ') || '—' }}
+                  <span v-if="it.principal_gdrg"> · Principal {{ it.principal_gdrg }}</span>
+                  <span v-if="it.specialty_mismatch" class="text-orange-8"> · Specialty differs</span>
+                </q-item-label>
+                <q-item-label caption class="text-grey-7">
+                  {{ it.investigations_count }} inv · {{ it.medicines_count }} meds · {{ it.procedures_count }} procs · {{ it.diagnoses_count }} dx
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side class="row q-gutter-xs">
+                <q-btn
+                  flat
+                  size="sm"
+                  color="primary"
+                  label="View"
+                  @click="goToGhimsItem(it.id)"
+                />
+                <q-btn
+                  flat
+                  size="sm"
+                  color="secondary"
+                  label="Merge into this claim"
+                  :disable="isLocked || it.status === 'finalized'"
+                  @click="openGhimsMergeWizard(it)"
+                />
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-else class="text-caption text-grey-7">
+            No other visits found for this member in the same month.
           </div>
         </q-card-section>
       </q-card>
@@ -262,7 +335,7 @@
           <div v-for="(dt, i) in payload.dateOfService" :key="`date-${i}`" class="row q-col-gutter-sm q-mb-sm">
             <q-input v-model="payload.dateOfService[i]" type="date" filled dense class="col-12 col-md-4" />
             <q-btn
-              v-if="status !== 'finalized'"
+              v-if="status !== 'finalized' && status !== 'merged'"
               flat
               dense
               color="negative"
@@ -271,7 +344,7 @@
             />
           </div>
           <q-btn
-            v-if="status !== 'finalized'"
+            v-if="status !== 'finalized' && status !== 'merged'"
             flat
             color="primary"
             icon="add"
@@ -287,7 +360,7 @@
             <div class="text-h6">Diagnosis(es)</div>
             <q-space />
             <q-btn
-              v-if="status !== 'finalized' && principalDiagnosisIndex >= 0"
+              v-if="status !== 'finalized' && status !== 'merged' && principalDiagnosisIndex >= 0"
               flat
               dense
               color="primary"
@@ -299,7 +372,7 @@
               <q-tooltip>Fill investigations &amp; medicines from a saved diagnosis template</q-tooltip>
             </q-btn>
             <q-btn
-              v-if="status !== 'finalized' && principalDiagnosisIndex >= 0"
+              v-if="status !== 'finalized' && status !== 'merged' && principalDiagnosisIndex >= 0"
               flat
               dense
               color="secondary"
@@ -370,7 +443,7 @@
             <q-input v-model="d.icd10" label="ICD10" filled dense class="col-12 col-md-2" />
             <q-input v-model="d.diagnosis" label="Diagnosis" filled dense class="col-12 col-md-7" />
             <q-btn
-              v-if="status !== 'finalized'"
+              v-if="status !== 'finalized' && status !== 'merged'"
               flat
               dense
               color="negative"
@@ -379,7 +452,7 @@
             />
           </div>
           <q-btn
-            v-if="status !== 'finalized'"
+            v-if="status !== 'finalized' && status !== 'merged'"
             flat
             color="primary"
             icon="add"
@@ -435,7 +508,7 @@
             <q-input v-model="inv._serviceName" label="Service Name" filled dense class="col-12 col-md-7" />
             <q-input v-model="inv.gdrgCode" label="GDRG Code" filled dense class="col-12 col-md-4" />
             <q-btn
-              v-if="status !== 'finalized'"
+              v-if="status !== 'finalized' && status !== 'merged'"
               flat
               dense
               color="negative"
@@ -444,7 +517,7 @@
             />
           </div>
           <q-btn
-            v-if="status !== 'finalized'"
+            v-if="status !== 'finalized' && status !== 'merged'"
             flat
             color="primary"
             icon="add"
@@ -540,7 +613,7 @@
             />
             <q-input v-model="m.prescription.unparsed" label="Unparsed" filled dense class="col-12 col-md-10" />
             <q-btn
-              v-if="status !== 'finalized'"
+              v-if="status !== 'finalized' && status !== 'merged'"
               flat
               dense
               color="negative"
@@ -549,7 +622,7 @@
             />
           </div>
           <q-btn
-            v-if="status !== 'finalized'"
+            v-if="status !== 'finalized' && status !== 'merged'"
             flat
             color="primary"
             icon="add"
@@ -640,7 +713,7 @@
             <q-input v-model="p.description" label="Description" filled dense class="col-12 col-md-5" />
             <q-input v-model="p.diagnosis" label="Diagnosis text" filled dense class="col-12 col-md-10" />
             <q-btn
-              v-if="status !== 'finalized'"
+              v-if="status !== 'finalized' && status !== 'merged'"
               flat
               dense
               color="negative"
@@ -649,7 +722,7 @@
             />
           </div>
           <q-btn
-            v-if="status !== 'finalized'"
+            v-if="status !== 'finalized' && status !== 'merged'"
             flat
             color="primary"
             icon="add"
@@ -684,7 +757,7 @@
 
       <div class="row q-gutter-md">
         <q-btn
-          v-if="status !== 'finalized' && canVetPharmacy"
+          v-if="status !== 'finalized' && status !== 'merged' && canVetPharmacy"
           :color="vetting.pharmacy_vetted ? 'orange-9' : 'teal-7'"
           text-color="white"
           unelevated
@@ -698,7 +771,7 @@
           </q-tooltip>
         </q-btn>
         <q-btn
-          v-if="status !== 'finalized' && canVetDoctor"
+          v-if="status !== 'finalized' && status !== 'merged' && canVetDoctor"
           :color="vetting.doctor_vetted ? 'orange-9' : 'indigo-7'"
           text-color="white"
           unelevated
@@ -711,22 +784,38 @@
             Doctor vetted by {{ vetting.doctor_vetted_by_name }}
           </q-tooltip>
         </q-btn>
-        <q-btn v-if="status !== 'finalized'" type="submit" color="primary" label="Save and Finalize" :loading="saving" />
-        <q-btn v-if="status !== 'finalized'" color="negative" :label="status === 'flagged' ? 'Flagged' : 'Flag claim'" :disable="status === 'flagged'" outline :loading="saving" @click="flagClaim" />
+        <q-btn
+          v-if="status !== 'finalized' && status !== 'merged'"
+          type="submit"
+          color="primary"
+          label="Save and Finalize"
+          :loading="saving"
+        />
+        <q-btn
+          v-if="status !== 'finalized' && status !== 'merged'"
+          color="negative"
+          :label="status === 'flagged' ? 'Flagged' : 'Flag claim'"
+          :disable="status === 'flagged'"
+          outline
+          :loading="saving"
+          @click="flagClaim"
+        />
       </div>
     </q-form>
 
     <div
-      v-if="!loading && status === 'finalized'"
+      v-if="!loading && (status === 'finalized' || status === 'merged')"
       class="revert-claim-fixed-bar row items-center justify-center q-pa-sm shadow-6"
     >
-      <span class="q-mr-md text-weight-medium">Imported claim is finalized.</span>
+      <span class="q-mr-md text-weight-medium">
+        {{ status === 'merged' ? 'Merged claim is read-only.' : 'Imported claim is finalized.' }}
+      </span>
       <q-btn
         color="primary"
-        label="Revert to draft"
+        :label="status === 'merged' ? 'Revert merge' : 'Revert to draft'"
         :loading="reverting"
         icon="undo"
-        @click="revertToDraft"
+        @click="status === 'merged' ? revertMerge() : revertToDraft()"
       />
     </div>
 
@@ -868,6 +957,79 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Merge wizard dialog -->
+    <q-dialog v-model="showGhimsMergeWizard" persistent>
+      <q-card style="min-width: 520px; max-width: 680px">
+        <q-card-section>
+          <div class="text-h6">Merge claim into this one</div>
+          <div v-if="ghimsMergeSource" class="text-caption text-grey-7 q-mt-xs">
+            Source: {{ ghimsMergeSource.claim_claim_id }} · {{ ghimsMergeSource.specialty || '—' }}
+          </div>
+        </q-card-section>
+
+        <q-card-section v-if="ghimsMergeSource?.specialty_mismatch">
+          <q-banner class="bg-orange-1" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <strong>Specialties differ</strong> — merging claims with different specialties may cause NHIA rejection.
+            The target specialty ({{ payload.specialtyAttended }}) will be kept.
+          </q-banner>
+        </q-card-section>
+
+        <q-card-section>
+          <div class="text-subtitle2 q-mb-sm">Which claim-level service dates should be kept?</div>
+          <q-option-group
+            v-model="mergeKeepDatesFrom"
+            :options="[
+              { label: `This claim's dates (${(payload.dateOfService || []).join(', ') || '—'})`, value: 'target' },
+              { label: `Source claim's dates (${(ghimsMergeSource?.dateOfService || []).join(', ') || '—'})`, value: 'source' },
+            ]"
+            type="radio"
+            color="primary"
+          />
+          <div class="text-caption text-grey-7 q-mt-xs">
+            Line-item service dates (on each investigation/medicine/procedure) are always preserved from both claims.
+          </div>
+        </q-card-section>
+
+        <q-card-section v-if="ghimsMergePreview">
+          <div class="text-subtitle2 q-mb-sm">Preview — items to be added</div>
+          <div v-if="ghimsMergePreview.warnings?.length" class="q-mb-sm">
+            <q-banner v-for="(w, i) in ghimsMergePreview.warnings" :key="i" class="bg-orange-1 q-mb-xs" rounded dense>
+              <template #avatar><q-icon name="info" color="orange" /></template>
+              {{ w }}
+            </q-banner>
+          </div>
+          <div class="text-caption">
+            <div v-if="ghimsMergePreview.items_added?.diagnoses">+ {{ ghimsMergePreview.items_added.diagnoses }} diagnosis(es)</div>
+            <div v-if="ghimsMergePreview.items_added?.investigations">+ {{ ghimsMergePreview.items_added.investigations }} investigation(s)</div>
+            <div v-if="ghimsMergePreview.items_added?.medicines">+ {{ ghimsMergePreview.items_added.medicines }} medicine(s)</div>
+            <div v-if="ghimsMergePreview.items_added?.procedures">+ {{ ghimsMergePreview.items_added.procedures }} procedure(s)</div>
+            <div v-if="!ghimsMergePreview.items_added?.diagnoses && !ghimsMergePreview.items_added?.investigations && !ghimsMergePreview.items_added?.medicines && !ghimsMergePreview.items_added?.procedures" class="text-grey-7">
+              No new items to add (all already present).
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn
+            v-if="!ghimsMergePreview"
+            color="primary"
+            label="Preview merge"
+            :loading="ghimsMergeLoading"
+            @click="loadGhimsMergePreview"
+          />
+          <q-btn
+            v-else
+            color="primary"
+            label="Confirm merge"
+            :loading="ghimsMergeLoading"
+            @click="confirmGhimsMerge"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -986,7 +1148,7 @@ async function buildGhimsSavePayload(action = 'saving') {
 }
 
 async function vetByPharmacy() {
-  if (!itemId.value || status.value === 'finalized') return;
+  if (!itemId.value || isLocked.value) return;
   const clearing = !!vetting.pharmacy_vetted;
   if (clearing) {
     const ok = await new Promise((resolve) => {
@@ -1025,7 +1187,7 @@ async function vetByPharmacy() {
 }
 
 async function vetByDoctor() {
-  if (!itemId.value || status.value === 'finalized') return;
+  if (!itemId.value || isLocked.value) return;
   const clearing = !!vetting.doctor_vetted;
   if (clearing) {
     const ok = await new Promise((resolve) => {
@@ -2443,8 +2605,133 @@ async function revertToDraft() {
   }
 }
 
+// ─── Merge feature: related items + wizard ───────────────────────────
+const relatedGhimsItems = ref([]);
+const relatedGhimsItemsLoading = ref(false);
+const mergedIntoClaimClaimId = ref(null);
+
+const isLocked = computed(() => status.value === 'finalized' || status.value === 'merged');
+
+const showGhimsMergeWizard = ref(false);
+const ghimsMergeSource = ref(null);
+const ghimsMergePreview = ref(null);
+const ghimsMergeLoading = ref(false);
+const mergeKeepDatesFrom = ref('target');
+
+function goToGhimsItem(id) {
+  $router.push({ path: `/claims/ghims-import/item/${id}` });
+}
+
+async function loadRelatedGhimsItems() {
+  if (!itemId.value) return;
+  relatedGhimsItemsLoading.value = true;
+  try {
+    const res = await claimsAPI.getGhimsRelatedItems(itemId.value);
+    relatedGhimsItems.value = res.data || [];
+  } catch {
+    relatedGhimsItems.value = [];
+  } finally {
+    relatedGhimsItemsLoading.value = false;
+  }
+}
+
+function openGhimsMergeWizard(sourceItem) {
+  ghimsMergeSource.value = sourceItem;
+  ghimsMergePreview.value = null;
+  mergeKeepDatesFrom.value = 'target';
+  showGhimsMergeWizard.value = true;
+}
+
+async function loadGhimsMergePreview() {
+  if (!ghimsMergeSource.value) return;
+  ghimsMergeLoading.value = true;
+  try {
+    const res = await claimsAPI.mergeGhimsItems(itemId.value, {
+      source_item_id: ghimsMergeSource.value.id,
+      keep_dates_from: mergeKeepDatesFrom.value,
+      preview_only: true,
+    });
+    ghimsMergePreview.value = res.data;
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to preview merge',
+      position: 'top',
+    });
+  } finally {
+    ghimsMergeLoading.value = false;
+  }
+}
+
+async function confirmGhimsMerge() {
+  if (!ghimsMergeSource.value) return;
+  ghimsMergeLoading.value = true;
+  try {
+    const res = await claimsAPI.mergeGhimsItems(itemId.value, {
+      source_item_id: ghimsMergeSource.value.id,
+      keep_dates_from: mergeKeepDatesFrom.value,
+      preview_only: false,
+    });
+    showGhimsMergeWizard.value = false;
+    const added = res.data?.items_added || {};
+    const parts = [];
+    if (added.diagnoses) parts.push(`${added.diagnoses} dx`);
+    if (added.investigations) parts.push(`${added.investigations} inv`);
+    if (added.medicines) parts.push(`${added.medicines} meds`);
+    if (added.procedures) parts.push(`${added.procedures} procs`);
+    $q.notify({
+      type: 'positive',
+      message: `Merge complete${parts.length ? ': +' + parts.join(', ') : ''}`,
+      position: 'top',
+    });
+    await load();
+    loadRelatedGhimsItems();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Merge failed',
+      position: 'top',
+    });
+  } finally {
+    ghimsMergeLoading.value = false;
+  }
+}
+
+async function revertMerge() {
+  if (status.value !== 'merged') return;
+  const ok = await new Promise((resolve) => {
+    $q.dialog({
+      title: 'Revert merge',
+      message: 'This will set this claim back to draft. The target claim will keep its merged data. Continue?',
+      cancel: true,
+      persistent: true,
+    }).onOk(() => resolve(true)).onCancel(() => resolve(false));
+  });
+  if (!ok) return;
+  reverting.value = true;
+  try {
+    await claimsAPI.revertGhimsMerge(itemId.value);
+    $q.notify({
+      type: 'positive',
+      message: 'Merge reverted. Claim is now a draft.',
+      position: 'top',
+    });
+    await load();
+    loadRelatedGhimsItems();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to revert merge',
+      position: 'top',
+    });
+  } finally {
+    reverting.value = false;
+  }
+}
+// ─── End merge feature ───────────────────────────────────────────────
+
 async function onConvertGhanaCardToHin() {
-  if (status.value === 'finalized') return;
+  if (isLocked.value) return;
   const ghanaCard = normalizeGhanaCard(payload.ghanaCard || payload.memberNo);
   if (!isGhanaCard(ghanaCard)) {
     $q.notify({
@@ -2557,6 +2844,7 @@ async function load() {
     } else {
       recalculateClaimSummary();
     }
+    mergedIntoClaimClaimId.value = res.data.merged_into_claim_claim_id || null;
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imported claim' });
   } finally {
@@ -2564,6 +2852,7 @@ async function load() {
     syncGhimsServiceDateSnapshot();
     skipServiceDateRebase = false;
     loading.value = false;
+    loadRelatedGhimsItems();
   }
 }
 

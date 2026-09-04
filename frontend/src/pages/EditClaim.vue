@@ -46,7 +46,7 @@
         <div class="claim-hero__badges">
           <q-badge
             v-if="claimStatus"
-            :color="claimStatus === 'finalized' ? 'positive' : (claimStatus === 'vetted' ? 'deep-purple' : (claimStatus === 'pharmacy_vetted' ? 'teal' : (claimStatus === 'doctor_vetted' ? 'indigo' : 'warning')))"
+            :color="claimStatus === 'merged' ? 'grey-7' : (claimStatus === 'finalized' ? 'positive' : (claimStatus === 'vetted' ? 'deep-purple' : (claimStatus === 'pharmacy_vetted' ? 'teal' : (claimStatus === 'doctor_vetted' ? 'indigo' : 'warning'))))"
             :label="claimStatus === 'vetted' ? 'pharmacy + doctor vetted' : (claimStatus === 'pharmacy_vetted' ? 'pharmacy vetted' : (claimStatus === 'doctor_vetted' ? 'doctor vetted' : claimStatus))"
           />
           <q-badge v-if="vetting.pharmacy_vetted" color="teal" label="Pharmacy" />
@@ -54,6 +54,29 @@
         </div>
       </div>
     </div>
+
+    <q-banner
+      v-if="!loading && claimStatus === 'merged'"
+      class="bg-amber-2 q-mb-md"
+      rounded
+    >
+      <template v-slot:avatar>
+        <q-icon name="lock_open" color="amber-9" />
+      </template>
+      <strong>Merged into {{ mergedIntoClaimId || 'another claim' }}</strong>
+      <div class="text-caption q-mt-xs">
+        This claim is read-only. Click <strong>Revert merge</strong> to edit again.
+      </div>
+      <template v-slot:action>
+        <q-btn
+          flat
+          color="primary"
+          label="Revert merge"
+          :loading="revertingMerge"
+          @click="revertMerge"
+        />
+      </template>
+    </q-banner>
 
     <q-banner
       v-if="isViewMode"
@@ -71,7 +94,7 @@
 
     <!-- Reopen finalized claim to allow editing (view mode or from Correct Errors) -->
     <q-banner
-      v-if="!loading && claimStatus === 'finalized'"
+      v-else-if="!loading && claimStatus === 'finalized'"
       class="bg-amber-2 q-mb-md"
       rounded
     >
@@ -102,7 +125,7 @@
       <q-inner-loading showing color="primary" />
     </q-card>
 
-    <q-form v-else @submit="saveClaim" class="q-gutter-md">
+    <q-form v-else @submit="saveClaim" class="q-gutter-md" :inert="isClaimLocked || undefined">
       <!-- ClaimIT errors not mapped to a section -->
       <q-banner v-if="claimitErrors.by_section?.other?.length" class="bg-orange-1 q-mb-md" rounded dense>
         <template v-slot:avatar><q-icon name="warning" color="orange" /></template>
@@ -223,7 +246,7 @@
                 v-model="patientInfo.member_number"
                 filled
                 label="Member Number"
-                :disable="claimStatus === 'finalized' && !isViewMode"
+                :disable="isClaimLocked && !isViewMode"
               >
                 <template v-if="showConvertToHin" v-slot:append>
                   <q-btn
@@ -232,7 +255,7 @@
                     color="primary"
                     label="To HIN"
                     :loading="convertingGhanaCard"
-                    :disable="claimStatus === 'finalized'"
+                    :disable="isClaimLocked"
                     @click="onConvertGhanaCardToHin"
                   >
                     <q-tooltip>ClaimIT rejects Ghana Cards — convert to HIN (keeps Ghana Card below)</q-tooltip>
@@ -250,7 +273,7 @@
               label="Ghana Card"
               class="col-12 col-md-4"
               hint="Saved when converting Member No to HIN (used for Get CCC)"
-              :disable="claimStatus === 'finalized'"
+              :disable="isClaimLocked"
             />
             <q-input
               v-model="patientInfo.hospital_record_no"
@@ -264,6 +287,57 @@
               label="Card Serial No."
               class="col-12 col-md-3"
             />
+          </div>
+        </q-card-section>
+      </q-card>
+
+      <q-card flat bordered class="q-mb-md">
+        <q-card-section>
+          <div class="text-h6 q-mb-sm">
+            Other visits this month ({{ relatedClaims.length }})
+          </div>
+          <div v-if="relatedClaimsLoading" class="text-caption text-grey-7">Loading related claims…</div>
+          <q-list
+            v-else-if="relatedClaims.length"
+            bordered
+            separator
+            class="rounded-borders"
+          >
+            <q-item v-for="it in relatedClaims" :key="it.id">
+              <q-item-section>
+                <q-item-label class="mono">{{ it.claim_id }}</q-item-label>
+                <q-item-label caption>
+                  {{ it.attendance_type || '—' }} · {{ it.specialty || '—' }}
+                  · Dates: {{ formatRelatedClaimDates(it) }}
+                  <span v-if="it.principal_gdrg"> · Principal {{ it.principal_gdrg }}</span>
+                  <span v-if="it.specialty_mismatch" class="text-orange-8"> · Specialty differs</span>
+                </q-item-label>
+                <q-item-label caption class="text-grey-7">
+                  {{ it.investigations_count }} inv · {{ it.medicines_count }} meds · {{ it.procedures_count }} procs · {{ it.diagnoses_count }} dx
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side class="row q-gutter-xs">
+                <q-btn
+                  flat
+                  size="sm"
+                  color="primary"
+                  label="View"
+                  @click="goToRelatedClaim(it.id)"
+                />
+                <q-btn
+                  v-if="canMergeClaims"
+                  flat
+                  size="sm"
+                  color="secondary"
+                  label="Merge into this claim"
+                  :disable="isClaimLocked || it.status === 'finalized' || it.status === 'merged'"
+                  @click="openMergeWizard(it)"
+                />
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-else class="text-caption text-grey-7">
+            No other visits found for this member in the same month.
           </div>
         </q-card-section>
       </q-card>
@@ -384,7 +458,7 @@
               filled
               label="Principal G-DRG Code"
               class="col-12 col-md-6"
-              :disable="claimStatus === 'finalized'"
+              :disable="isClaimLocked"
               hint="Main diagnosis code for this claim"
             />
           </div>
@@ -417,7 +491,7 @@
             </q-icon>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' && !isViewMode"
+              v-if="!isClaimLocked && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -464,7 +538,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @filter="filterSurgerySearch"
                   @update:model-value="(val) => onProcedureSelect(props.row.index, val)"
                 >
@@ -489,7 +563,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @filter="filterDiagnosisSearch"
                   @update:model-value="(val) => onProcedureDiagnosisSelect(props.row.index, val)"
                 >
@@ -506,7 +580,7 @@
                 <q-checkbox
                   v-if="showProcedurePrincipalPicker"
                   :model-value="!!proceduresList[props.row.index].is_principal"
-                  :disable="claimStatus === 'finalized' || isViewMode || !(proceduresList[props.row.index].description || '').trim()"
+                  :disable="isClaimLocked || isViewMode || !(proceduresList[props.row.index].description || '').trim()"
                   dense
                   @update:model-value="(checked) => setPrincipalProcedure(props.row.index, checked)"
                 >
@@ -523,7 +597,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
@@ -533,7 +607,7 @@
                   v-model="proceduresList[props.row.index].icd10"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
@@ -543,7 +617,7 @@
                   v-model="proceduresList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @blur="onProcedureGdrgChange(props.row.index)"
                 />
               </q-td>
@@ -551,7 +625,7 @@
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
                 <q-btn
-                  v-if="proceduresList[props.row.index].description && proceduresList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                  v-if="proceduresList[props.row.index].description && proceduresList[props.row.index].description.trim() !== '' && showClaimRowActions"
                   size="sm"
                   color="negative"
                   icon="delete"
@@ -582,7 +656,7 @@
             <div class="text-h6">Diagnosis(es)</div>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' && !isViewMode && hasChiefDiagnosis"
+              v-if="!isClaimLocked && !isViewMode && hasChiefDiagnosis"
               size="sm"
               flat
               color="primary"
@@ -593,7 +667,7 @@
               class="q-mr-xs"
             />
             <q-btn
-              v-if="claimStatus !== 'finalized' && !isViewMode && hasChiefDiagnosis"
+              v-if="!isClaimLocked && !isViewMode && hasChiefDiagnosis"
               size="sm"
               flat
               color="secondary"
@@ -603,7 +677,7 @@
               class="q-mr-sm"
             />
             <q-btn
-              v-if="claimStatus !== 'finalized' && !isViewMode"
+              v-if="!isClaimLocked && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -635,7 +709,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @filter="filterDiagnosisSearch"
                   @update:model-value="(val) => onDiagnosisSelect(props.row.index, val)"
                 >
@@ -653,7 +727,7 @@
                   v-model="diagnosesList[props.row.index].icd10"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
@@ -670,7 +744,7 @@
                     filled
                     clearable
                     label="Mapped DRG options"
-                    :disable="claimStatus === 'finalized' || isViewMode"
+                    :disable="isClaimLocked || isViewMode"
                     @update:model-value="(val) => onDiagnosisMappedDrgSelect(props.row.index, val)"
                   />
                   <q-input
@@ -679,7 +753,7 @@
                     filled
                     label="G-DRG"
                     hint="Editable — type your own code if needed"
-                    :disable="claimStatus === 'finalized' || isViewMode"
+                    :disable="isClaimLocked || isViewMode"
                     @update:model-value="() => onDiagnosisGdrgEdited(props.row.index)"
                   />
                 </div>
@@ -689,7 +763,7 @@
               <q-td :props="props">
                 <q-checkbox
                   :model-value="diagnosesList[props.row.index].is_chief"
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @update:model-value="(checked) => setChiefDiagnosis(props.row.index, checked)"
                 />
               </q-td>
@@ -697,7 +771,7 @@
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
                 <q-btn
-                  v-if="diagnosesList[props.row.index].description && diagnosesList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                  v-if="diagnosesList[props.row.index].description && diagnosesList[props.row.index].description.trim() !== '' && showClaimRowActions"
                   size="sm"
                   color="negative"
                   icon="delete"
@@ -728,7 +802,7 @@
             <div class="text-h6">Investigations</div>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' && !isViewMode"
+              v-if="!isClaimLocked && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -757,7 +831,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @filter="filterInvestigationProcedures"
                   @update:model-value="(val) => onInvestigationSelect(props.row.index, val)"
                 >
@@ -776,7 +850,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
@@ -786,14 +860,14 @@
                   v-model="investigationsList[props.row.index].gdrg"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
                 <q-btn
-                  v-if="investigationsList[props.row.index].description && investigationsList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                  v-if="investigationsList[props.row.index].description && investigationsList[props.row.index].description.trim() !== '' && showClaimRowActions"
                   size="sm"
                   color="negative"
                   icon="delete"
@@ -824,7 +898,7 @@
             <div class="text-h6">Medicines</div>
             <q-space />
             <q-btn
-              v-if="claimStatus !== 'finalized' && !isViewMode"
+              v-if="!isClaimLocked && !isViewMode"
               size="sm"
               color="primary"
               icon="add"
@@ -853,7 +927,7 @@
                   clearable
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @filter="filterProductSearch"
                   @update:model-value="(val) => onPrescriptionProductSelect(props.row.index, val)"
                 >
@@ -873,7 +947,7 @@
                   filled
                   type="number"
                   step="0.01"
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @update:model-value="updatePrescriptionTotal(props.row.index)"
                 />
               </q-td>
@@ -885,7 +959,7 @@
                   dense
                   filled
                   type="number"
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                   @update:model-value="updatePrescriptionTotal(props.row.index)"
                 />
               </q-td>
@@ -909,7 +983,7 @@
                   dense
                   filled
                   type="date"
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
@@ -919,7 +993,7 @@
                   v-model="prescriptionsList[props.row.index].code"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || isViewMode"
+                  :disable="isClaimLocked || isViewMode"
                 />
               </q-td>
             </template>
@@ -935,12 +1009,12 @@
                     round
                     dense
                     @click="openPrescriptionDialog(props.row.index)"
-                    :disable="claimStatus === 'finalized' || isViewMode"
+                    :disable="isClaimLocked || isViewMode"
                   >
                     <q-tooltip>Edit Dose, Frequency & Duration</q-tooltip>
                   </q-btn>
                   <q-btn
-                    v-if="prescriptionsList[props.row.index].description && prescriptionsList[props.row.index].description.trim() !== '' && (claimStatus !== 'finalized' || isViewMode)"
+                    v-if="prescriptionsList[props.row.index].description && prescriptionsList[props.row.index].description.trim() !== '' && showClaimRowActions"
                     size="sm"
                     color="negative"
                     icon="delete"
@@ -975,7 +1049,7 @@
                   v-model="claimSummary[props.row.index].gdrg_code"
                   dense
                   filled
-                  :disable="claimStatus === 'finalized' || props.row.type === 'TOTAL'"
+                  :disable="isClaimLocked || props.row.type === 'TOTAL'"
                 />
               </q-td>
             </template>
@@ -987,7 +1061,7 @@
                   filled
                   type="number"
                   step="0.01"
-                  :disable="claimStatus === 'finalized' || props.row.type === 'TOTAL'"
+                  :disable="isClaimLocked || props.row.type === 'TOTAL'"
                   readonly
                 />
               </q-td>
@@ -1002,7 +1076,7 @@
       <!-- Action Buttons -->
       <div class="row q-gutter-md q-mt-md">
         <q-btn
-          v-if="claimStatus !== 'finalized' && canVetPharmacy"
+          v-if="!isClaimLocked && canVetPharmacy"
           :color="vetting.pharmacy_vetted ? 'orange-9' : 'teal-7'"
           text-color="white"
           unelevated
@@ -1013,7 +1087,7 @@
           @click="vetByPharmacy"
         />
         <q-btn
-          v-if="claimStatus !== 'finalized' && canVetDoctor"
+          v-if="!isClaimLocked && canVetDoctor"
           :color="vetting.doctor_vetted ? 'orange-9' : 'indigo-7'"
           text-color="white"
           unelevated
@@ -1030,7 +1104,7 @@
             color="secondary"
             label="Save Draft"
             :loading="saving"
-            :disable="claimStatus === 'finalized'"
+            :disable="isClaimLocked"
             class="col-12 col-md-3"
           />
           <q-btn
@@ -1038,7 +1112,7 @@
             label="Save & Finalize"
             :loading="saving"
             @click="saveAndFinalize"
-            :disable="claimStatus === 'finalized'"
+            :disable="isClaimLocked"
             class="col-12 col-md-3"
           />
         </template>
@@ -1049,7 +1123,7 @@
             label="Save & Finalize"
             :loading="saving"
             @click="saveAndFinalize"
-            :disable="claimStatus === 'finalized'"
+            :disable="isClaimLocked"
             class="col-12 col-md-3"
           />
           <q-btn
@@ -1057,7 +1131,7 @@
             label="Save Changes"
             :loading="saving"
             @click.prevent="onSaveChangesInViewMode"
-            :disable="claimStatus === 'finalized'"
+            :disable="isClaimLocked"
             class="col-12 col-md-3"
           />
         </template>
@@ -1174,21 +1248,21 @@
               filled
               label="Dose"
               placeholder="e.g., 500 MG"
-              :disable="claimStatus === 'finalized'"
+              :disable="isClaimLocked"
             />
             <q-input
               v-model="prescriptionForm.frequency"
               filled
               label="Frequency"
               placeholder="e.g., 2 DAILY"
-              :disable="claimStatus === 'finalized'"
+              :disable="isClaimLocked"
             />
             <q-input
               v-model="prescriptionForm.duration"
               filled
               label="Duration"
               placeholder="e.g., 7 DAYS"
-              :disable="claimStatus === 'finalized'"
+              :disable="isClaimLocked"
             />
             
             <q-card-actions align="right">
@@ -1202,7 +1276,7 @@
                 type="submit"
                 label="Save"
                 color="primary"
-                :disable="claimStatus === 'finalized'"
+                :disable="isClaimLocked"
               />
             </q-card-actions>
           </q-form>
@@ -1370,6 +1444,79 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Merge wizard dialog -->
+    <q-dialog v-model="showMergeWizard" persistent>
+      <q-card style="min-width: 520px; max-width: 680px">
+        <q-card-section>
+          <div class="text-h6">Merge claim into this one</div>
+          <div v-if="mergeSource" class="text-caption text-grey-7 q-mt-xs">
+            Source: {{ mergeSource.claim_id }} · {{ mergeSource.specialty || '—' }}
+          </div>
+        </q-card-section>
+
+        <q-card-section v-if="mergeSource?.specialty_mismatch">
+          <q-banner class="bg-orange-1" rounded dense>
+            <template #avatar><q-icon name="warning" color="orange" /></template>
+            <strong>Specialties differ</strong> — merging claims with different specialties may cause NHIA rejection.
+            The target specialty ({{ services.specialty_code || '—' }}) will be kept.
+          </q-banner>
+        </q-card-section>
+
+        <q-card-section>
+          <div class="text-subtitle2 q-mb-sm">Which claim-level service dates should be kept?</div>
+          <q-option-group
+            v-model="mergeKeepDatesFrom"
+            :options="[
+              { label: `This claim's dates (${formatTargetVisitDates()})`, value: 'target' },
+              { label: `Source claim's dates (${formatRelatedClaimDates(mergeSource)})`, value: 'source' },
+            ]"
+            type="radio"
+            color="primary"
+          />
+          <div class="text-caption text-grey-7 q-mt-xs">
+            Line-item service dates (on each investigation/medicine/procedure) are always preserved from both claims.
+          </div>
+        </q-card-section>
+
+        <q-card-section v-if="mergePreview">
+          <div class="text-subtitle2 q-mb-sm">Preview — items to be added</div>
+          <div v-if="mergePreview.warnings?.length" class="q-mb-sm">
+            <q-banner v-for="(w, i) in mergePreview.warnings" :key="i" class="bg-orange-1 q-mb-xs" rounded dense>
+              <template #avatar><q-icon name="info" color="orange" /></template>
+              {{ w }}
+            </q-banner>
+          </div>
+          <div class="text-caption">
+            <div v-if="mergePreview.items_added?.diagnoses">+ {{ mergePreview.items_added.diagnoses }} diagnosis(es)</div>
+            <div v-if="mergePreview.items_added?.investigations">+ {{ mergePreview.items_added.investigations }} investigation(s)</div>
+            <div v-if="mergePreview.items_added?.medicines">+ {{ mergePreview.items_added.medicines }} medicine(s)</div>
+            <div v-if="mergePreview.items_added?.procedures">+ {{ mergePreview.items_added.procedures }} procedure(s)</div>
+            <div v-if="!mergePreview.items_added?.diagnoses && !mergePreview.items_added?.investigations && !mergePreview.items_added?.medicines && !mergePreview.items_added?.procedures" class="text-grey-7">
+              No new items to add (all already present).
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Cancel" v-close-popup />
+          <q-btn
+            v-if="!mergePreview"
+            color="primary"
+            label="Preview merge"
+            :loading="mergeLoading"
+            @click="loadMergePreview"
+          />
+          <q-btn
+            v-else
+            color="primary"
+            label="Confirm merge"
+            :loading="mergeLoading"
+            @click="confirmMerge"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -1414,6 +1561,7 @@ const $q = useQuasar();
 const loading = ref(true);
 const saving = ref(false);
 const reopening = ref(false);
+const revertingMerge = ref(false);
 const vettingPharmacy = ref(false);
 const vettingDoctor = ref(false);
 const vetting = reactive({
@@ -1430,6 +1578,11 @@ const canVetPharmacy = computed(() =>
 const canVetDoctor = computed(() =>
   authStore.canAccess(['Doctor', 'PA', 'Claims', 'Admin'])
 );
+const canMergeClaims = computed(() => authStore.canAccess(['Claims', 'Admin']));
+const isClaimLocked = computed(() => claimStatus.value === 'finalized' || claimStatus.value === 'merged');
+const showClaimRowActions = computed(
+  () => claimStatus.value !== 'merged' && (!isClaimLocked.value || isViewMode.value)
+);
 
 function applyVettingFromClaim(claim = {}) {
   if (claim.status) claimStatus.value = claim.status;
@@ -1442,7 +1595,7 @@ function applyVettingFromClaim(claim = {}) {
 }
 
 async function vetByPharmacy() {
-  if (!claimId.value || claimStatus.value === 'finalized') return;
+  if (!claimId.value || isClaimLocked.value) return;
   const clearing = !!vetting.pharmacy_vetted;
   if (clearing) {
     const ok = await new Promise((resolve) => {
@@ -1482,7 +1635,7 @@ async function vetByPharmacy() {
 }
 
 async function vetByDoctor() {
-  if (!claimId.value || claimStatus.value === 'finalized') return;
+  if (!claimId.value || isClaimLocked.value) return;
   const clearing = !!vetting.doctor_vetted;
   if (clearing) {
     const ok = await new Promise((resolve) => {
@@ -1531,6 +1684,14 @@ const patientNhiaMeta = ref({ insured: false, nhis_active: false });
 const claimId = ref(null);
 const claimStatus = ref('draft');
 const isViewMode = ref(false);
+const mergedIntoClaimId = ref(null);
+const relatedClaims = ref([]);
+const relatedClaimsLoading = ref(false);
+const showMergeWizard = ref(false);
+const mergeSource = ref(null);
+const mergePreview = ref(null);
+const mergeLoading = ref(false);
+const mergeKeepDatesFrom = ref('target');
 /** Snapshot of last saved claim payload (JSON) for change detection in view mode */
 const lastSavedClaimPayload = ref(null);
 
@@ -3294,6 +3455,7 @@ const loadClaimData = async () => {
     
     // Set claim status
     claimStatus.value = data.claim.status;
+    mergedIntoClaimId.value = data.claim.merged_into_claim_id || null;
     applyVettingFromClaim(data.claim || {});
     claimMeta.claim_check_code = data.claim.claim_check_code || '';
     patientNhiaMeta.value = {
@@ -3485,11 +3647,12 @@ const loadClaimData = async () => {
     syncServiceDateSnapshot();
     skipServiceDateRebase = false;
     loading.value = false;
+    loadRelatedClaims();
   }
 };
 
 async function onConvertGhanaCardToHin() {
-  if (!claimId.value || claimStatus.value === 'finalized') return;
+  if (!claimId.value || isClaimLocked.value) return;
   const ghanaCard = normalizeGhanaCard(patientInfo.ghana_card || patientInfo.member_number);
   if (!isGhanaCard(ghanaCard)) {
     $q.notify({
@@ -3755,6 +3918,128 @@ function goToAdjacentClaim(targetId) {
   if (!targetId || loading.value) return;
   const query = { ...$route.query };
   $router.push({ path: `/claims/edit/${targetId}`, query });
+}
+
+function formatRelatedClaimDates(claim) {
+  if (!claim) return '—';
+  const parts = [claim.first_visit, claim.second_visit].filter(Boolean);
+  return parts.join(', ') || '—';
+}
+
+function formatTargetVisitDates() {
+  const parts = [services.first_visit, services.second_visit].filter(Boolean);
+  return parts.join(', ') || '—';
+}
+
+function goToRelatedClaim(id) {
+  $router.push({ path: `/claims/edit/${id}` });
+}
+
+async function loadRelatedClaims() {
+  if (!claimId.value) return;
+  relatedClaimsLoading.value = true;
+  try {
+    const res = await claimsAPI.getRelatedClaims(claimId.value);
+    relatedClaims.value = res.data || [];
+  } catch {
+    relatedClaims.value = [];
+  } finally {
+    relatedClaimsLoading.value = false;
+  }
+}
+
+function openMergeWizard(sourceClaim) {
+  mergeSource.value = sourceClaim;
+  mergePreview.value = null;
+  mergeKeepDatesFrom.value = 'target';
+  showMergeWizard.value = true;
+}
+
+async function loadMergePreview() {
+  if (!mergeSource.value) return;
+  mergeLoading.value = true;
+  try {
+    const res = await claimsAPI.mergeClaims(claimId.value, {
+      source_claim_id: mergeSource.value.id,
+      keep_dates_from: mergeKeepDatesFrom.value,
+      preview_only: true,
+    });
+    mergePreview.value = res.data;
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to preview merge',
+      position: 'top',
+    });
+  } finally {
+    mergeLoading.value = false;
+  }
+}
+
+async function confirmMerge() {
+  if (!mergeSource.value) return;
+  mergeLoading.value = true;
+  try {
+    const res = await claimsAPI.mergeClaims(claimId.value, {
+      source_claim_id: mergeSource.value.id,
+      keep_dates_from: mergeKeepDatesFrom.value,
+      preview_only: false,
+    });
+    showMergeWizard.value = false;
+    const added = res.data?.items_added || {};
+    const parts = [];
+    if (added.diagnoses) parts.push(`${added.diagnoses} dx`);
+    if (added.investigations) parts.push(`${added.investigations} inv`);
+    if (added.medicines) parts.push(`${added.medicines} meds`);
+    if (added.procedures) parts.push(`${added.procedures} procs`);
+    $q.notify({
+      type: 'positive',
+      message: `Merge complete${parts.length ? ': +' + parts.join(', ') : ''}`,
+      position: 'top',
+    });
+    await loadClaimData();
+    loadRelatedClaims();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Merge failed',
+      position: 'top',
+    });
+  } finally {
+    mergeLoading.value = false;
+  }
+}
+
+async function revertMerge() {
+  if (claimStatus.value !== 'merged') return;
+  const ok = await new Promise((resolve) => {
+    $q.dialog({
+      title: 'Revert merge',
+      message: 'This will set this claim back to draft. The target claim will keep its merged data. Continue?',
+      cancel: true,
+      persistent: true,
+    }).onOk(() => resolve(true)).onCancel(() => resolve(false));
+  });
+  if (!ok) return;
+  revertingMerge.value = true;
+  try {
+    await claimsAPI.revertClaimMerge(claimId.value);
+    $q.notify({
+      type: 'positive',
+      message: 'Merge reverted. Claim is now a draft.',
+      position: 'top',
+    });
+    await loadClaimData();
+    loadRelatedClaims();
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || e.message || 'Failed to revert merge',
+      position: 'top',
+    });
+  } finally {
+    revertingMerge.value = false;
+  }
 }
 
 watch(
