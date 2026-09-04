@@ -265,6 +265,18 @@ def compute_claim_summary_from_ghims_payload(
     )
 
 
+def drugs_services_from_summary(summary: Dict[str, float]) -> Dict[str, float]:
+    """Split claim summary into drugs (pharmacy) vs services (everything else)."""
+    drugs = round(float(summary.get("pharmacy_amount") or 0.0), 2)
+    total = round(float(summary.get("total_amount") or 0.0), 2)
+    services = round(total - drugs, 2)
+    return {
+        "drugs_amount": drugs,
+        "services_amount": services,
+        "total_amount": total,
+    }
+
+
 def compute_ghims_batch_claim_totals(
     db: Session,
     items: List[Any],
@@ -272,18 +284,28 @@ def compute_ghims_batch_claim_totals(
 ) -> Dict[str, Any]:
     """Compute per-item and batch revenue totals using one shared price cache."""
     cache = price_cache or PriceAmountCache.build(db)
-    totals: Dict[int, float] = {}
+    totals: Dict[int, Dict[str, float]] = {}
     batch_revenue = 0.0
+    batch_drugs = 0.0
+    batch_services = 0.0
     for item in items:
         payload = getattr(item, "payload", None) or {}
         summary = compute_claim_summary_from_ghims_payload(db, payload, price_cache=cache)
-        amount = round(float(summary.get("total_amount") or 0.0), 2)
+        split = drugs_services_from_summary(summary)
         item_id = int(getattr(item, "id"))
-        totals[item_id] = amount
-        batch_revenue += amount
+        totals[item_id] = {
+            "total_claim_amount": split["total_amount"],
+            "drugs_amount": split["drugs_amount"],
+            "services_amount": split["services_amount"],
+        }
+        batch_revenue += split["total_amount"]
+        batch_drugs += split["drugs_amount"]
+        batch_services += split["services_amount"]
     return {
         "totals": totals,
         "total_revenue": round(batch_revenue, 2),
+        "drugs_revenue": round(batch_drugs, 2),
+        "services_revenue": round(batch_services, 2),
     }
 
 

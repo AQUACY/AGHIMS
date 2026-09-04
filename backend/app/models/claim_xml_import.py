@@ -31,8 +31,10 @@ class ClaimXmlImportItem(Base):
     batch_id = Column(Integer, ForeignKey("claim_xml_import_batches.id"), nullable=False, index=True)
     claim_claim_id = Column(String(50), nullable=False, index=True)  # CLA-XXXXX from XML
     row_index = Column(Integer, nullable=True)
-    status = Column(String(30), nullable=False, default="draft")  # draft | flagged | pharmacy_vetted | doctor_vetted | vetted | ai_vetted | finalized
+    status = Column(String(30), nullable=False, default="draft")  # draft | flagged | pharmacy_vetted | doctor_vetted | vetted | ai_vetted | finalized | merged
     payload = Column(JSON, nullable=False)  # editable claim payload parsed from XML
+    member_no = Column(String(100), nullable=True, index=True)  # denormalized from payload.memberNo
+    merged_into_id = Column(Integer, ForeignKey("claim_xml_import_items.id"), nullable=True, index=True)
     finalized_at = Column(DateTime, nullable=True)
     flag_comment = Column(String(800), nullable=True)
 
