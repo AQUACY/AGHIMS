@@ -26,6 +26,8 @@ SOURCE_GHIMS_LIVE = "ghims_live"
 
 # GHIMS Sponsors-to-vet "NATIONAL HEALTH INSURANCE SCHEME" / I101
 NHIS_SPONSOR_ID = "I101"
+# GHIMS VisitMode: V002 APPROVED, V006 ON ADMISSION, V001 PENDING
+GHIMS_APPROVED_VISIT_MODE = "V002"
 
 
 def month_key_from_bill_id(bill_month_id: str) -> str:
@@ -385,15 +387,22 @@ def _visitation_month_headers(bill_id: str) -> Optional[List[Dict[str, Any]]]:
                 "CAST(NULL AS varchar(32)) AS gender",
             ])
 
+        where = [
+            "v.WorkingMonthID = ?",
+            "(v.SponsorID = ? OR v.InsuranceSchemeID LIKE ?)",
+        ]
+        params = [bill_id, NHIS_SPONSOR_ID, f"%{NHIS_SPONSOR_ID}%"]
+        if "VisitModeID" in cols:
+            where.append("v.VisitModeID = ?")
+            params.append(GHIMS_APPROVED_VISIT_MODE)
         sql = f"""
             SELECT {", ".join(select_bits)}
             FROM dbo.Visitation v
             {join_sql}
-            WHERE v.WorkingMonthID = ?
-              AND (v.SponsorID = ? OR v.InsuranceSchemeID LIKE ?)
+            WHERE {" AND ".join(where)}
             ORDER BY v.VisitationID
         """
-        cur.execute(sql, (bill_id, NHIS_SPONSOR_ID, f"%{NHIS_SPONSOR_ID}%"))
+        cur.execute(sql, tuple(params))
         return _rows_as_dicts(cur)
     except Exception:
         return None
@@ -428,10 +437,11 @@ def list_ghims_bill_months() -> List[Dict[str, Any]]:
                     LEFT JOIN dbo.WorkingMonth wm ON wm.WorkingMonthID = v.WorkingMonthID
                     WHERE v.WorkingMonthID IS NOT NULL AND LTRIM(RTRIM(v.WorkingMonthID)) <> ''
                       AND (v.SponsorID = ? OR v.InsuranceSchemeID LIKE ?)
+                      AND v.VisitModeID = ?
                     GROUP BY v.WorkingMonthID, wm.WorkingMonthName, wm.WorkMonth
                     ORDER BY v.WorkingMonthID DESC
                     """,
-                    (NHIS_SPONSOR_ID, f"%{NHIS_SPONSOR_ID}%"),
+                    (NHIS_SPONSOR_ID, f"%{NHIS_SPONSOR_ID}%", GHIMS_APPROVED_VISIT_MODE),
                 )
                 rows = _rows_as_dicts(cur)
                 used_visitation = True
@@ -559,15 +569,23 @@ def get_or_create_month_batch(db: Session, month_key: str, user_id: Optional[int
     return batch
 
 
-def existing_items_by_claim_id(db: Session, claim_ids: List[str]) -> Dict[str, ClaimXmlImportItem]:
+def existing_items_by_claim_id(
+    db: Session,
+    claim_ids: List[str],
+    batch_id: Optional[int] = None,
+) -> Dict[str, ClaimXmlImportItem]:
+    """Look up imported rows. Pass batch_id so a live month folder is not
+    confused with a prior XML import of the same claim IDs."""
     if not claim_ids:
         return {}
-    items = (
+    q = (
         db.query(ClaimXmlImportItem)
         .filter(ClaimXmlImportItem.claim_claim_id.in_(claim_ids))
         .order_by(ClaimXmlImportItem.id.asc())
-        .all()
     )
+    if batch_id is not None:
+        q = q.filter(ClaimXmlImportItem.batch_id == batch_id)
+    items = q.all()
     out: Dict[str, ClaimXmlImportItem] = {}
     for it in items:
         cid = str(it.claim_claim_id or "").strip()
@@ -585,18 +603,16 @@ def sync_month_from_ghims(
 ) -> Dict[str, Any]:
     headers = fetch_month_claim_headers(month_key)
     grouped = fetch_month_claim_lines(month_key)
-    # Universe = headers (Visitation) ∪ line claim IDs
+    # Universe = GHIMS APPROVED visits only (not ON ADMISSION / PENDING).
     by_id: Dict[str, Dict[str, Any]] = {}
     for h in headers:
         cid = str(h.get("claimID") or "").strip()
         if cid:
             by_id[cid] = h
-    for cid in grouped.keys():
-        by_id.setdefault(cid, {"claimID": cid, "billMonthID": bill_id_from_month_key(month_key)})
 
     claim_ids = list(by_id.keys())
     batch = get_or_create_month_batch(db, month_key, user_id)
-    existing = existing_items_by_claim_id(db, claim_ids)
+    existing = existing_items_by_claim_id(db, claim_ids, batch_id=batch.id)
     created = 0
     linked = 0
     refreshed = 0
@@ -610,6 +626,13 @@ def sync_month_from_ghims(
         item = existing.get(cid)
         if item:
             linked += 1
+            st = (item.status or "").strip().lower()
+            has_pharm = bool(getattr(item, "pharmacy_vetted_at", None))
+            has_doc = bool(getattr(item, "doctor_vetted_at", None))
+            # Live GHIMS rows: claims-vetted unless pharmacy/doctor actually vetted.
+            if st in ("vetted", "draft", "") and not has_pharm and not has_doc and st != "flagged" and st != "finalized" and st != "merged":
+                if st != "claims_vetted":
+                    item.status = "claims_vetted"
             new_payload = _refresh_date_fields(item.payload if isinstance(item.payload, dict) else {}, rebuilt)
             # Detect change without wiping other edits
             old = item.payload if isinstance(item.payload, dict) else {}
@@ -629,13 +652,32 @@ def sync_month_from_ghims(
             batch_id=batch.id,
             claim_claim_id=cid,
             row_index=created + 1,
-            status="vetted",
+            status="claims_vetted",
             member_no=member_no,
             payload=rebuilt,
         )
         db.add(item)
         created += 1
         existing[cid] = item
+    db.flush()
+    dropped = 0
+    extras = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.batch_id == batch.id)
+        .all()
+    )
+    approved = set(by_id.keys())
+    for extra in extras:
+        cid = str(extra.claim_claim_id or "").strip()
+        if cid in approved:
+            continue
+        st = (extra.status or "").strip().lower()
+        if st in ("finalized", "merged"):
+            continue
+        if getattr(extra, "pharmacy_vetted_at", None) or getattr(extra, "doctor_vetted_at", None):
+            continue
+        db.delete(extra)
+        dropped += 1
     db.flush()
     batch.claim_count = (
         db.query(ClaimXmlImportItem)
@@ -657,6 +699,7 @@ def sync_month_from_ghims(
         "created": created,
         "already_in_aghims": linked,
         "dates_refreshed": refreshed,
+        "dropped_not_approved": dropped,
     }
 
 

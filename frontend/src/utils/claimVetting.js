@@ -9,6 +9,7 @@ export const EXPORTABLE_STATUSES = new Set([
   'pharmacy_vetted',
   'doctor_vetted',
   'vetted',
+  'claims_vetted',
 ]);
 
 export function claimStatusOf(row) {
@@ -51,6 +52,7 @@ export function statusLabel(status) {
     pharmacy_vetted: 'pharmacy vetted',
     doctor_vetted: 'doctor vetted',
     vetted: 'pharmacy + doctor vetted',
+    claims_vetted: 'claims vetted',
     finalized: 'finalized',
     reopened: 'reopened',
   };
@@ -65,6 +67,7 @@ export function statusColor(status) {
     pharmacy_vetted: 'teal',
     doctor_vetted: 'indigo',
     vetted: 'deep-purple',
+    claims_vetted: 'deep-purple',
     finalized: 'positive',
     reopened: 'warning',
   };
