@@ -258,6 +258,44 @@ def ghims_mssql_configured() -> bool:
     )
 
 
+PREFERRED_ODBC_DRIVERS = (
+    "ODBC Driver 18 for SQL Server",
+    "ODBC Driver 17 for SQL Server",
+    "ODBC Driver 13 for SQL Server",
+    "SQL Server Native Client 11.0",
+    "SQL Server Native Client 10.0",
+    "SQL Server",
+)
+
+
+def _installed_odbc_drivers():
+    try:
+        return [d for d in (pyodbc.drivers() or []) if d]
+    except Exception:
+        return []
+
+
+def _resolve_odbc_driver(configured: str) -> str:
+    installed = _installed_odbc_drivers()
+    wanted = (configured or "").strip()
+    lower_map = {d.lower(): d for d in installed}
+    if wanted and wanted.lower() in lower_map:
+        return lower_map[wanted.lower()]
+    for name in PREFERRED_ODBC_DRIVERS:
+        if name.lower() in lower_map:
+            return lower_map[name.lower()]
+    for d in installed:
+        if "sql server" in d.lower():
+            return d
+    listed = ", ".join(installed) if installed else "(none)"
+    raise GhimsLiveConfigError(
+        "No Microsoft SQL Server ODBC driver is installed on this server. "
+        "Install ODBC Driver 18 for SQL Server (same 32/64-bit as Python) "
+        "and restart the backend. "
+        f"pyodbc currently sees: {listed}."
+    )
+
+
 def _connect():
     if pyodbc is None:
         raise GhimsLiveConfigError(
@@ -274,7 +312,7 @@ def _connect():
     database = settings.GHIMS_MSSQL_DATABASE.strip()
     user = settings.GHIMS_MSSQL_USER.strip()
     password = settings.GHIMS_MSSQL_PASSWORD
-    driver = (settings.GHIMS_MSSQL_ODBC_DRIVER or "ODBC Driver 18 for SQL Server").strip()
+    driver = _resolve_odbc_driver(settings.GHIMS_MSSQL_ODBC_DRIVER or "")
     server = f"{host},{port}"
     conn_str = (
         f"DRIVER={{{driver}}};"
@@ -286,7 +324,18 @@ def _connect():
         "TrustServerCertificate=yes;"
         "Connection Timeout=20;"
     )
-    return pyodbc.connect(conn_str)
+    try:
+        return pyodbc.connect(conn_str)
+    except Exception as exc:
+        msg = str(exc)
+        if "IM002" in msg or "Data source name not found" in msg:
+            listed = ", ".join(_installed_odbc_drivers()) or "(none)"
+            raise GhimsLiveConfigError(
+                f"ODBC driver {driver!r} was not found. Install Microsoft ODBC Driver 18 "
+                f"for SQL Server (same 32/64-bit as Python) and restart the backend. "
+                f"pyodbc currently sees: {listed}."
+            ) from exc
+        raise
 
 
 def _rows_as_dicts(cursor) -> List[Dict[str, Any]]:

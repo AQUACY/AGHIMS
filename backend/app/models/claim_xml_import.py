@@ -19,6 +19,9 @@ class ClaimXmlImportBatch(Base):
     claim_count = Column(Integer, default=0)
     # Saved demarcation plan (list of rules) so managers can reopen and edit
     demarcation_rules = Column(JSON, nullable=True)
+    source = Column(String(30), nullable=True, default="xml")  # xml | ghims_live
+    working_month = Column(String(7), nullable=True, index=True)  # 2026-09
+    pinned = Column(String(1), nullable=True, default="0")
 
     items = relationship("ClaimXmlImportItem", back_populates="batch", cascade="all, delete-orphan")
 

@@ -223,6 +223,18 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/ghims-months',
+        name: 'GhimsMonthlyClaims',
+        component: () => import('../pages/GhimsMonthlyClaims.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/ghims-months/:monthKey',
+        name: 'GhimsMonthlyClaimsMonth',
+        component: () => import('../pages/GhimsMonthlyClaims.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/ghims-import',
         name: 'GhimsXmlImport',
         component: () => import('../pages/GhimsXmlImport.vue'),
