@@ -231,7 +231,7 @@ const routes = [
       {
         path: '/claims/ghims-months/:monthKey',
         name: 'GhimsMonthlyClaimsMonth',
-        component: () => import('../pages/GhimsMonthlyClaims.vue'),
+        component: () => import('../pages/GhimsMonthClaimList.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {

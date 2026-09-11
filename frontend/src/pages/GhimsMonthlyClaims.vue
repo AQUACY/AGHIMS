@@ -1,90 +1,65 @@
 <template>
   <q-page class="hms-page">
     <HmsPageHeader
-      :title="monthKey ? (redirecting ? 'Opening month…' : monthTitle) : 'GHIMS monthly claims'"
-      :subtitle="monthKey
-        ? 'Syncing from GHIMS, then opening the claims workbench…'
-        : 'Pick a month. GHIMS-approved claims fall into that folder — if it does not exist yet, it is created.'"
+      title="GHIMS monthly claims"
+      subtitle="Pick a month. GHIMS-approved NHIS claims fall into that folder — if it does not exist yet, it is created. This is separate from XML import."
     >
       <template #actions>
-        <HmsButton v-if="monthKey" variant="ghost" size="sm" @click="$router.push('/claims/ghims-months')">All months</HmsButton>
         <HmsButton variant="ghost" size="sm" @click="$router.push('/claims')">Back</HmsButton>
       </template>
     </HmsPageHeader>
 
     <div v-if="error" class="q-mb-md text-negative">{{ error }}</div>
 
-    <template v-if="!monthKey">
-      <div class="cal-year-bar">
-        <q-btn round flat icon="chevron_left" @click="calendarYear -= 1" />
-        <div class="cal-year">{{ calendarYear }}</div>
-        <q-btn round flat icon="chevron_right" @click="calendarYear += 1" />
-        <q-space />
-        <HmsButton variant="primary" size="sm" :loading="loadingMonths" @click="loadMonths">Refresh from GHIMS</HmsButton>
-      </div>
-      <div v-if="loadingMonths" class="text-grey-7 q-pa-md">Loading months from GHIMS…</div>
-      <div v-else class="year-grid">
-        <button
-          v-for="cell in yearCells"
-          :key="cell.month_key"
-          type="button"
-          class="month-cell"
-          :class="{
-            'month-cell--current': cell.is_current,
-            'month-cell--has': cell.ghims_count > 0 || cell.aghims_count > 0,
-          }"
-          @click="openMonth(cell.month_key)"
-        >
-          <div class="month-cell__name">{{ cell.name }}</div>
-          <div class="month-cell__count">
-            <template v-if="cell.ghims_count">{{ cell.ghims_count }} claims</template>
-            <template v-else>No claims yet</template>
-          </div>
-          <div class="month-cell__hint">{{ cell.label }}</div>
-        </button>
-      </div>
-    </template>
-
-    <template v-else>
-      <div class="text-grey-7 q-pa-md" v-if="!error">
-        {{ redirecting ? 'Opening the XML-import-style claims workbench…' : 'Preparing month…' }}
-      </div>
-    </template>
+    <div class="cal-year-bar">
+      <q-btn round flat icon="chevron_left" @click="calendarYear -= 1" />
+      <div class="cal-year">{{ calendarYear }}</div>
+      <q-btn round flat icon="chevron_right" @click="calendarYear += 1" />
+      <q-space />
+      <HmsButton variant="primary" size="sm" :loading="loadingMonths" @click="loadMonths">Refresh from GHIMS</HmsButton>
+    </div>
+    <div v-if="loadingMonths" class="text-grey-7 q-pa-md">Loading months from GHIMS…</div>
+    <div v-else class="year-grid">
+      <button
+        v-for="cell in yearCells"
+        :key="cell.month_key"
+        type="button"
+        class="month-cell"
+        :class="{
+          'month-cell--current': cell.is_current,
+          'month-cell--has': cell.ghims_count > 0 || cell.aghims_count > 0,
+        }"
+        @click="openMonth(cell.month_key)"
+      >
+        <div class="month-cell__name">{{ cell.name }}</div>
+        <div class="month-cell__count">
+          <template v-if="cell.ghims_count">{{ cell.ghims_count }} claims</template>
+          <template v-else>No claims yet</template>
+        </div>
+        <div class="month-cell__hint">{{ cell.label }}</div>
+      </button>
+    </div>
   </q-page>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { useQuasar } from 'quasar';
+import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
 import { claimsAPI } from '../services/api';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-const $route = useRoute();
 const $router = useRouter();
-const $q = useQuasar();
-
-const monthKey = computed(() => String($route.params.monthKey || '').trim());
 const error = ref('');
 const loadingMonths = ref(false);
-const redirecting = ref(false);
 const months = ref([]);
 const calendarYear = ref(new Date().getFullYear());
 
 function pad2(n) {
   return String(n).padStart(2, '0');
 }
-function labelForKey(key) {
-  const [y, m] = String(key || '').split('-');
-  const idx = Number(m) - 1;
-  if (!y || idx < 0 || idx > 11) return `${key} claims`;
-  return `${MONTH_NAMES[idx]} ${y} claims`;
-}
-
-const monthTitle = computed(() => labelForKey(monthKey.value));
 
 const yearCells = computed(() => {
   const now = new Date();
@@ -120,45 +95,7 @@ async function loadMonths() {
   }
 }
 
-async function openMonthWorkbench() {
-  if (!monthKey.value) return;
-  redirecting.value = true;
-  error.value = '';
-  try {
-    const res = await claimsAPI.syncGhimsMonth(monthKey.value);
-    const d = res.data || {};
-    const batchId = d.batch_id;
-    if (!batchId) {
-      throw new Error('Sync did not return a batch_id');
-    }
-    if (d.created) {
-      $q.notify({
-        type: 'positive',
-        message: `Pulled ${d.created} new GHIMS claim(s) into ${d.label || 'this month'}.`,
-        position: 'top',
-      });
-    }
-    await $router.replace(`/claims/ghims-import/batch/${batchId}?fromMonth=${encodeURIComponent(monthKey.value)}`);
-  } catch (e) {
-    error.value = e?.response?.data?.detail || e?.message || 'Could not open this month from GHIMS';
-    redirecting.value = false;
-  }
-}
-
-watch(monthKey, (key) => {
-  if (key) openMonthWorkbench();
-  else loadMonths();
-});
-
-onMounted(() => {
-  if (monthKey.value) {
-    const [y] = monthKey.value.split('-');
-    if (y) calendarYear.value = Number(y);
-    openMonthWorkbench();
-  } else {
-    loadMonths();
-  }
-});
+onMounted(loadMonths);
 </script>
 
 <style scoped>

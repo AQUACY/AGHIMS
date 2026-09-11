@@ -1,15 +1,17 @@
 <template>
   <q-page class="hms-page">
     <HmsPageHeader
-      :title="viewingBatchId ? `Import batch: ${currentBatch?.file_name || ''}` : 'Import GHIMS XML'"
-      :subtitle="viewingBatchId ? 'Review, filter, vet, and export claims from this import.' : 'Upload exported XML, review batches, finalize, and export again.'"
+      :title="monthTitle"
+      :subtitle="'Claims for this GHIMS month. Separate from XML import.'"
     >
       <template #actions>
-        <HmsButton variant="ghost" size="sm" @click="goBack">Back</HmsButton>
+        <HmsButton variant="ghost" size="sm" @click="goBack">All months</HmsButton>
+        <HmsButton variant="secondary" size="sm" :loading="syncing" @click="syncFromGhimsMonth">Sync from GHIMS</HmsButton>
+        <HmsButton v-if="isAdmin" variant="outline" size="sm" :loading="backfilling" @click="backfillFromGhimsMonth">Fetch already-approved</HmsButton>
       </template>
     </HmsPageHeader>
 
-    <section v-if="!viewingBatchId" class="diag-panel">
+    <section v-if="false" class="diag-panel">
       <div class="panel-head">
         <div>
           <div class="panel-title">Upload GHIMS XML export</div>
@@ -38,7 +40,7 @@
       </div>
     </section>
 
-    <section v-if="!viewingBatchId" class="diag-panel">
+    <section v-if="false" class="diag-panel">
       <div class="panel-head">
         <div>
           <div class="panel-title">Recent XML imports</div>
@@ -295,6 +297,8 @@
             @click="assignSelectedClaims"
           />
           
+        <HmsButton v-if="monthKey" variant="secondary" size="sm" @click="syncFromGhimsMonth">Sync from GHIMS</HmsButton>
+        <HmsButton v-if="monthKey" variant="outline" size="sm" @click="backfillFromGhimsMonth">Fetch already-approved</HmsButton>
 <q-btn
             color="secondary"
             icon="refresh"
@@ -682,6 +686,18 @@ import {
 } from '../utils/exportErrorDetail';
 
 const $route = useRoute()
+const monthKey = computed(() => String($route.params.monthKey || '').trim())
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const monthTitle = computed(() => {
+  const key = monthKey.value
+  const [y, m] = String(key || '').split('-')
+  const idx = Number(m) - 1
+  if (!y || idx < 0 || idx > 11) return key ? `${key} claims` : 'GHIMS month claims'
+  return `${MONTH_NAMES[idx]} ${y} claims`
+})
+const syncing = ref(false)
+const backfilling = ref(false)
+
 
 ;
 const $router = useRouter();
@@ -692,6 +708,10 @@ const canDeleteImportBatch = computed(() => {
   return roles.includes('Admin') || authStore.isSuperAdmin;
 });
 const canDemarcate = computed(() => authStore.canAccess(['Claims', 'Admin']));
+const isAdmin = computed(() => {
+  const roles = (authStore.allUserRoles || []).map((r) => String(r || '').trim());
+  return roles.includes('Admin') || !!authStore.isSuperAdmin;
+});
 const uploadFile = ref(null);
 const uploading = ref(false);
 const exporting = ref(false);
@@ -732,10 +752,11 @@ const rowsPerPageOptions = [
   { label: '50', value: 50 },
   { label: '100', value: 100 },
 ];
-const FILTER_LOCK_KEY = 'ghimsImportFiltersLocked';
-const FILTERS_KEY = 'ghimsImportFiltersState';
+const FILTER_LOCK_KEY = 'ghimsMonthFiltersLocked';
+const FILTERS_KEY = 'ghimsMonthFiltersState';
 const statusFilterOptions = [
   { label: 'All', value: 'all' },
+  { label: 'Claims vetted', value: 'claims_vetted' },
   { label: 'Draft', value: 'draft' },
   { label: 'Flagged', value: 'flagged' },
   { label: 'Pharmacy vetted', value: 'pharmacy_vetted' },
@@ -1327,10 +1348,7 @@ function prettySectionName(key) {
 }
 
 function goBack() {
-  if (viewingBatchId.value) {
-    viewingBatchId.value = null; currentBatch.value = null; selectedItemIds.value = []; selectedBulkItemIds.value = [];
-    $router.replace('/claims/ghims-import').catch(() => {});
-  } else $router.push('/claims');
+  $router.push('/claims/ghims-months');
 }
 
 async function loadBatches() { batches.value = (await claimsAPI.getGhimsImportBatches()).data || []; }
@@ -1667,7 +1685,6 @@ async function loadBatchClaimTotals(id) {
 async function openBatch(id) {
   viewingBatchId.value = id;
   currentPage.value = 1;
-  $router.replace({ path: `/claims/ghims-import/batch/${id}` }).catch(() => {});
   await loadBatchClaims(id);
 }
 
@@ -1677,9 +1694,9 @@ async function refreshCurrentBatch() {
   try {
     await loadBatches();
     await loadBatchClaims(viewingBatchId.value);
-    $q.notify({ type: 'positive', message: 'Imported claims refreshed' });
+    $q.notify({ type: 'positive', message: 'Month claims refreshed' });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to refresh imported claims' });
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to refresh month claims' });
   } finally {
     refreshing.value = false;
   }
@@ -1937,15 +1954,49 @@ watch(maxPages, (m) => {
 });
 
 
+async function syncFromGhimsMonth() {
+  if (!monthKey.value) return
+  syncing.value = true
+  try {
+    const res = await claimsAPI.syncGhimsMonth(monthKey.value)
+    const d = res.data || {}
+    $q.notify({ type: 'positive', message: d.created ? `Pulled ${d.created} new claim(s) into this month.` : 'Month synced from GHIMS.', position: 'top' })
+    const bid = d.batch_id || viewingBatchId.value
+    if (bid) await openBatch(bid)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e?.response?.data?.detail || e?.message || 'Sync failed', position: 'top' })
+  } finally {
+    syncing.value = false
+  }
+}
+async function backfillFromGhimsMonth() {
+  if (!monthKey.value) return
+  backfilling.value = true
+  try {
+    const res = await claimsAPI.backfillGhimsMonth(monthKey.value)
+    const d = res.data || {}
+    $q.notify({ type: 'positive', message: `Fetched ${d.created || 0} approved claim(s).`, position: 'top' })
+    const bid = d.batch_id || viewingBatchId.value
+    if (bid) await openBatch(bid)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e?.response?.data?.detail || e?.message || 'Fetch failed', position: 'top' })
+  } finally {
+    backfilling.value = false
+  }
+}
+
 
 onMounted(async () => {
   restoreFilterState();
   try {
-    await Promise.all([loadBatches(), loadAssignees()]);
-    const batchId = Number($route.params.batchId);
-    if (batchId) await openBatch(batchId);
+    await loadAssignees();
+    if (!monthKey.value) {
+      $router.replace('/claims/ghims-months');
+      return;
+    }
+    await syncFromGhimsMonth();
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imports' });
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load month claims' });
   }
 });
 </script>

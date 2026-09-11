@@ -48,7 +48,7 @@
         <div class="claim-hero__badges">
           <q-badge
             :color="status === 'finalized' ? 'positive' : (status === 'flagged' ? 'negative' : (status === 'vetted' ? 'deep-purple' : (status === 'pharmacy_vetted' ? 'teal' : (status === 'doctor_vetted' ? 'indigo' : 'warning'))))"
-            :label="status === 'vetted' ? 'pharmacy + doctor vetted' : (status === 'pharmacy_vetted' ? 'pharmacy vetted' : (status === 'doctor_vetted' ? 'doctor vetted' : status))"
+            :label="status === 'claims_vetted' ? 'claims vetted' : (status === 'vetted' ? 'pharmacy + doctor vetted' : (status === 'pharmacy_vetted' ? 'pharmacy vetted' : (status === 'doctor_vetted' ? 'doctor vetted' : status)))"
           />
           <q-badge v-if="vetting.pharmacy_vetted" color="teal" label="Pharmacy" />
           <q-badge v-if="vetting.doctor_vetted" color="indigo" label="Doctor" />

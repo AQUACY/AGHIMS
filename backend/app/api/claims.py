@@ -99,6 +99,7 @@ EXPORTABLE_CLAIM_STATUSES = frozenset({
     "pharmacy_vetted",
     "doctor_vetted",
     "vetted",
+    "claims_vetted",
     "ai_vetted",
 })
 
@@ -131,9 +132,18 @@ def _refresh_vet_workflow_status(obj) -> None:
         obj.status = ClaimStatus.PHARMACY_VETTED.value if isinstance(obj, Claim) else "pharmacy_vetted"
     elif has_doc:
         obj.status = ClaimStatus.DOCTOR_VETTED.value if isinstance(obj, Claim) else "doctor_vetted"
-    elif status in ("pharmacy_vetted", "doctor_vetted", "vetted"):
-        # All vets cleared — return to draft for further work
-        obj.status = ClaimStatus.DRAFT.value if isinstance(obj, Claim) else "draft"
+    elif status in ("pharmacy_vetted", "doctor_vetted", "vetted", "claims_vetted"):
+        # All clinical vets cleared. XML import returns to draft; GHIMS-direct
+        # month rows stay claims-vetted until pharmacy/doctor vet again.
+        if isinstance(obj, Claim):
+            obj.status = ClaimStatus.DRAFT.value
+        else:
+            fallback = "draft"
+            batch = getattr(obj, "batch", None)
+            src = getattr(batch, "source", None) if batch is not None else None
+            if src == SOURCE_GHIMS_LIVE or status == "claims_vetted":
+                fallback = "claims_vetted"
+            obj.status = fallback
 
 
 def _apply_claim_status_filter(query, claim_status: str):
