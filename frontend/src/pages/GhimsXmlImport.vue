@@ -1,7 +1,7 @@
 <template>
   <q-page class="hms-page">
     <HmsPageHeader
-      :title="viewingBatchId ? `Import batch: ${currentBatch?.file_name || ''}` : 'Import GHIMS XML'"
+      :title="fromMonth ? fromMonthTitle : (viewingBatchId ? `Import batch: ${currentBatch?.file_name || ''}` : 'Import GHIMS XML')"
       :subtitle="viewingBatchId ? 'Review, filter, vet, and export claims from this import.' : 'Upload exported XML, review batches, finalize, and export again.'"
     >
       <template #actions>
@@ -294,7 +294,10 @@
             outline
             @click="assignSelectedClaims"
           />
-          <q-btn
+          
+        <HmsButton v-if="fromMonth" variant="secondary" size="sm" @click="syncFromGhimsMonth">Sync from GHIMS</HmsButton>
+        <HmsButton v-if="fromMonth" variant="outline" size="sm" @click="backfillFromGhimsMonth">Fetch already-approved</HmsButton>
+<q-btn
             color="secondary"
             icon="refresh"
             label="Refresh"
@@ -680,7 +683,22 @@ import {
   isGhanaCardMemberExportError,
 } from '../utils/exportErrorDetail';
 
-const $route = useRoute();
+const $route = useRoute()
+
+const fromMonth = computed(() => {
+  const q = ($route && $route.query) ? $route.query : (route && route.query) ? route.query : {}
+  return String(q.fromMonth || '').trim()
+})
+const fromMonthTitle = computed(() => {
+  const key = fromMonth.value
+  if (!key) return ''
+  const [y, m] = key.split('-')
+  const names = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const idx = Number(m) - 1
+  if (!y || idx < 0 || idx > 11) return `${key} claims`
+  return `${names[idx]} ${y} claims`
+})
+;
 const $router = useRouter();
 const $q = useQuasar();
 const authStore = useAuthStore();
@@ -1324,6 +1342,10 @@ function prettySectionName(key) {
 }
 
 function goBack() {
+  if (fromMonth.value) {
+    $router.push('/claims/ghims-months');
+    return;
+  }
   if (viewingBatchId.value) {
     viewingBatchId.value = null; currentBatch.value = null; selectedItemIds.value = []; selectedBulkItemIds.value = [];
     $router.replace('/claims/ghims-import').catch(() => {});
@@ -1932,6 +1954,34 @@ watch(
 watch(maxPages, (m) => {
   if (currentPage.value > m) currentPage.value = m;
 });
+
+
+async function syncFromGhimsMonth() {
+  if (!fromMonth.value) return
+  try {
+    const res = await claimsAPI.syncGhimsMonth(fromMonth.value)
+    const d = res.data || {}
+    $q.notify({ type: 'positive', message: d.created ? `Pulled ${d.created} new claim(s).` : 'Month synced from GHIMS.', position: 'top' })
+    const bid = viewingBatchId.value || d.batch_id
+    if (bid) await openBatch(bid)
+    else await refreshCurrentBatch()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e?.response?.data?.detail || e?.message || 'Sync failed', position: 'top' })
+  }
+}
+async function backfillFromGhimsMonth() {
+  if (!fromMonth.value) return
+  try {
+    const res = await claimsAPI.backfillGhimsMonth(fromMonth.value)
+    const d = res.data || {}
+    $q.notify({ type: 'positive', message: `Fetched ${d.created || 0} approved claim(s).`, position: 'top' })
+    const bid = viewingBatchId.value || d.batch_id
+    if (bid) await openBatch(bid)
+    else await refreshCurrentBatch()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e?.response?.data?.detail || e?.message || 'Fetch failed', position: 'top' })
+  }
+}
 
 onMounted(async () => {
   restoreFilterState();

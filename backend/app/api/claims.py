@@ -29,6 +29,15 @@ from app.services.ghims_live_compare import (
     GhimsLiveNotFound,
     build_live_compare_for_payload,
 )
+from app.services.ghims_month_workbench import (
+    SOURCE_GHIMS_LIVE,
+    existing_items_by_claim_id,
+    fetch_month_claim_headers,
+    list_ghims_bill_months,
+    month_label,
+    serialize_item_row,
+    sync_month_from_ghims,
+)
 from app.services.cxf_claims import (
     CxfParseError,
     convert_cxf_to_xml,
@@ -236,6 +245,9 @@ def _ensure_claim_vetting_columns(db: Session) -> None:
         ("claim_xml_import_items", "assigned_by_id", "INTEGER NULL"),
         ("claim_xml_import_items", "assignment_note", "VARCHAR(255) NULL"),
         ("claim_xml_import_batches", "demarcation_rules", "JSON NULL"),
+        ("claim_xml_import_batches", "source", "VARCHAR(30) NULL"),
+        ("claim_xml_import_batches", "working_month", "VARCHAR(7) NULL"),
+        ("claim_xml_import_batches", "pinned", "VARCHAR(1) NULL"),
     ]
     for table, col, typ in specs:
         try:
@@ -2946,6 +2958,113 @@ def get_all_claims(
     return claims
 
 
+@router.get("/ghims-months")
+def list_ghims_months(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """List GHIMS billing months (MTHYYYYMM) with claim counts."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        months = list_ghims_bill_months()
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not list GHIMS months: {exc}")
+
+    local = (
+        db.query(ClaimXmlImportBatch)
+        .filter(ClaimXmlImportBatch.source == SOURCE_GHIMS_LIVE)
+        .all()
+    )
+    by_key = {str(b.working_month or ""): b for b in local if b.working_month}
+    now = datetime.utcnow()
+    current_key = f"{now.year:04d}-{now.month:02d}"
+    out = []
+    for m in months:
+        key = m["month_key"]
+        batch = by_key.get(key)
+        aghims_count = 0
+        if batch:
+            aghims_count = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.batch_id == batch.id).count()
+        out.append({
+            **m,
+            "batch_id": batch.id if batch else None,
+            "aghims_count": aghims_count,
+            "pinned": bool(batch and str(getattr(batch, "pinned", "") or "") in ("1", "true", "True")),
+            "is_current": key == current_key,
+        })
+    return out
+
+
+@router.get("/ghims-months/{month_key}")
+def get_ghims_month(
+    month_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Claims in one GHIMS billing month, joined to AGHIMS import rows when present."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        headers = fetch_month_claim_headers(month_key)
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not load GHIMS month: {exc}")
+
+    ids = [str(h.get("claimID") or "").strip() for h in headers if h.get("claimID")]
+    existing = existing_items_by_claim_id(db, ids)
+    claims = [serialize_item_row(existing.get(str(h.get("claimID") or "").strip()), h) for h in headers]
+    vetted = sum(1 for c in claims if c.get("status") == "vetted")
+    in_aghims = sum(1 for c in claims if c.get("in_aghims"))
+    return {
+        "month_key": month_key,
+        "label": month_label(month_key),
+        "ghims_count": len(headers),
+        "aghims_count": in_aghims,
+        "vetted_count": vetted,
+        "claims": claims,
+    }
+
+
+@router.post("/ghims-months/{month_key}/sync")
+def sync_ghims_month(
+    month_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Pull GHIMS-approved claims for the month into AGHIMS as claims-vetted rows."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        return sync_month_from_ghims(db, month_key, get_effective_creator_id(db, current_user), create_missing=True)
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GHIMS month sync failed: {exc}")
+
+
+@router.post("/ghims-months/{month_key}/backfill")
+def backfill_ghims_month(
+    month_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_super_admin),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Admin: fetch already-approved GHIMS claims for this month (pre-module history)."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        result = sync_month_from_ghims(db, month_key, get_effective_creator_id(db, current_user), create_missing=True)
+        result["backfill"] = True
+        return result
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GHIMS month backfill failed: {exc}")
+
+
 @router.get("/{claim_id}", response_model=ClaimResponse)
 def get_claim(
     claim_id: int,
@@ -4501,6 +4620,8 @@ def set_claimit_error_completed(
 
 # ---------- GHIMS XML import batches ----------
 
+
+
 @router.post("/ghims-import/upload")
 async def upload_ghims_claims_xml(
     file: UploadFile = File(...),
@@ -4566,12 +4687,14 @@ def list_ghims_import_batches(
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
     """List GHIMS XML import batches (newest first)."""
-    batches = (
-        db.query(ClaimXmlImportBatch)
-        .order_by(ClaimXmlImportBatch.uploaded_at.desc())
-        .limit(100)
-        .all()
-    )
+    q = db.query(ClaimXmlImportBatch).order_by(ClaimXmlImportBatch.uploaded_at.desc())
+    batches = []
+    for b in q.limit(200).all():
+        if getattr(b, "source", None) == SOURCE_GHIMS_LIVE:
+            continue
+        batches.append(b)
+        if len(batches) >= 100:
+            break
     return [
         {
             "id": b.id,
