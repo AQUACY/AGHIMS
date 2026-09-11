@@ -25,8 +25,10 @@
             @click="goToAdjacentClaim(claimNav.nextId)"
           />
         </div>
+
         <HmsButton variant="ghost" size="sm" @click="$router.back()">Back</HmsButton>
-      </template>
+
+</template>
     </HmsPageHeader>
 
     <div v-if="!loading" class="claim-hero">
@@ -64,6 +66,16 @@
           <span v-if="vetting.pharmacy_vetted_by_name">Pharmacy vetted by {{ vetting.pharmacy_vetted_by_name }}</span>
           <span v-if="vetting.pharmacy_vetted_by_name && vetting.doctor_vetted_by_name"> · </span>
           <span v-if="vetting.doctor_vetted_by_name">Doctor vetted by {{ vetting.doctor_vetted_by_name }}</span>
+        </div>
+
+        <div class="claim-hero__actions q-mt-sm">
+          <HmsButton
+            variant="primary"
+            size="sm"
+            :loading="ghimsCompareLoading"
+            :disable="loading || !payload.claimID"
+            @click="openGhimsLiveCompare"
+          >Compare with GHIMS</HmsButton>
         </div>
       </div>
     </div>
@@ -1030,7 +1042,128 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
-  </q-page>
+  
+      
+    
+    <q-dialog v-model="ghimsCompareOpen" persistent>
+      <q-card class="ghims-compare-shell">
+        <header class="ghims-compare-head">
+          <div>
+            <div class="ghims-compare-kicker">Government GHIMS</div>
+            <div class="ghims-compare-title">Live clinical compare</div>
+            <div class="ghims-compare-meta">
+              <span class="mono">{{ ghimsCompare?.visitation_id || payload.claimID }}</span>
+              <span v-if="ghimsCompare?.hospital_rec_no">Rec {{ ghimsCompare.hospital_rec_no }}</span>
+              <span v-if="ghimsMissingCount" class="ghims-chip ghims-chip--warn">{{ ghimsMissingCount }} missing on claim</span>
+            </div>
+          </div>
+          <q-btn icon="close" flat round dense v-close-popup />
+        </header>
+
+        <q-card-section class="ghims-compare-body">
+          <q-banner v-if="ghimsCompareError" class="bg-negative text-white q-mb-md" rounded>{{ ghimsCompareError }}</q-banner>
+          <div v-else-if="ghimsCompareLoading" class="text-grey-7 q-pa-lg">Loading from GHIMS…</div>
+
+          <div v-else-if="ghimsCompare">
+            <article
+              v-for="rec in ghimsRecords"
+              :key="rec.request_id"
+              class="ghims-record"
+            >
+              <div class="ghims-record__bar">
+                <div>
+                  <div class="ghims-record__title">{{ rec.title || 'Clinical record' }}</div>
+                  <div class="ghims-record__byline">
+                    <span v-if="rec.entered_by">By {{ rec.entered_by }}</span>
+                    <span v-if="rec.date">On {{ formatGhimsDate(rec.date) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <table v-if="(rec.fields || []).some(f => f.value)" class="ghims-table">
+                <tbody>
+                  <tr v-for="(fld, i) in rec.fields.filter(f => f.label || f.value)" :key="'f'+i">
+                    <th>{{ fld.label }}</th>
+                    <td>{{ fld.value || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div v-if="(rec.prescriptions || []).length" class="ghims-table-wrap">
+                <div class="ghims-table-caption">Drug prescription</div>
+                <table class="ghims-table ghims-table--grid">
+                  <thead>
+                    <tr>
+                      <th style="width:48px">No.</th>
+                      <th>Medical items / consumables</th>
+                      <th>Dose</th>
+                      <th>Route</th>
+                      <th>Frequency</th>
+                      <th>Duration</th>
+                      <th style="width:110px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="p in rec.prescriptions" :key="p.drug_id + '-' + p.no" :class="ghimsRowClass(p)">
+                      <td>{{ p.no }}</td>
+                      <td>{{ p.name }}</td>
+                      <td>{{ p.dose }}</td>
+                      <td>{{ p.route }}</td>
+                      <td>{{ p.frequency }}</td>
+                      <td>{{ p.duration }}</td>
+                      <td class="ghims-row-actions">
+                        <span v-if="p.state === 'cancelled' || rec.cancelled" class="ghims-pill ghims-pill--cancel">Cancelled</span>
+                        <span v-else-if="p.state === 'unavailable'" class="ghims-pill">Unavailable</span>
+                        <span v-else-if="claimHasMedicine(p.name)" class="ghims-pill ghims-pill--on">On claim</span>
+                        <q-btn
+                          v-else
+                          dense flat color="primary" label="Add" size="sm"
+                          :loading="ghimsAddingKey === ghimsRxKey(rec, p)"
+                          @click="addGhimsPrescription(rec, p)"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div v-if="(rec.investigations || []).length" class="ghims-table-wrap">
+                <div class="ghims-table-caption">Investigations</div>
+                <table class="ghims-table ghims-table--grid">
+                  <thead>
+                    <tr>
+                      <th style="width:48px">No.</th>
+                      <th>Investigation</th>
+                      <th style="width:110px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="inv in rec.investigations" :key="(inv.lab_test_id || inv.name) + '-' + inv.no" :class="ghimsRowClass(inv)">
+                      <td>{{ inv.no }}</td>
+                      <td>{{ inv.name || inv.label }}</td>
+                      <td class="ghims-row-actions">
+                        <span v-if="inv.state === 'cancelled' || rec.cancelled" class="ghims-pill ghims-pill--cancel">Cancelled</span>
+                        <span v-else-if="claimHasInvestigation(inv.name || inv.label)" class="ghims-pill ghims-pill--on">On claim</span>
+                        <q-btn
+                          v-else
+                          dense flat color="primary" label="Add" size="sm"
+                          :loading="ghimsAddingKey === ghimsInvKey(rec, inv)"
+                          @click="addGhimsInvestigation(rec, inv)"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+            <div v-if="!ghimsRecords.length" class="text-grey-6 q-pa-md">No EMR clinical records found for this visit.</div>
+          </div>
+
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+</q-page>
 </template>
 
 <script setup>
@@ -1262,6 +1395,22 @@ const specialtyAttendedOptions = computed(() => {
 });
 const procedureSearchOptions = ref([]);
 const medicineSearchOptions = ref([]);
+const ghimsCompareOpen = ref(false);
+const ghimsCompareLoading = ref(false);
+const ghimsCompareError = ref('');
+const ghimsCompare = ref(null);
+const ghimsAddingKey = ref('');
+
+const ghimsCompareSections = computed(() => {
+  const gaps = ghimsCompare.value?.gaps || {};
+  return [
+    { key: 'diagnoses', title: 'Diagnoses', data: gaps.diagnoses },
+    { key: 'medicines', title: 'Medicines', data: gaps.medicines },
+    { key: 'investigations', title: 'Investigations / labs', data: gaps.investigations },
+    { key: 'procedures', title: 'Procedures', data: gaps.procedures },
+  ];
+});
+
 const payload = reactive({
   claimID: '', claimCheckCode: '', memberNo: '', ghanaCard: '', hin: '',
   surname: '', otherNames: '', dateOfBirth: '',
@@ -2816,6 +2965,223 @@ async function onGetGhimsClaimCcc() {
   }
 }
 
+
+function formatGhimsDate(val) {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (Number.isNaN(d.getTime())) return String(val);
+    return d.toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return String(val);
+  }
+}
+
+const ghimsRecords = computed(() => ghimsCompare.value?.gaps?.records || ghimsCompare.value?.ghims?.emr_records || []);
+
+const ghimsMissingCount = computed(() => {
+  let n = 0;
+  for (const rec of ghimsRecords.value || []) {
+    if (rec?.cancelled) continue;
+    for (const rx of rec.prescriptions || []) {
+      if ((rx.state || 'active') === 'active' && !claimHasMedicine(rx.name)) n += 1;
+    }
+    for (const inv of rec.investigations || []) {
+      if ((inv.state || 'active') === 'active' && !claimHasInvestigation(inv.name || inv.label)) n += 1;
+    }
+  }
+  return n;
+});
+
+async function openGhimsLiveCompare() {
+  ghimsCompareOpen.value = true;
+  ghimsCompareLoading.value = true;
+  ghimsCompareError.value = '';
+  ghimsCompare.value = null;
+  ghimsAddingKey.value = '';
+  try {
+    const res = await claimsAPI.ghimsLiveCompareItem(itemId.value);
+    ghimsCompare.value = res.data;
+  } catch (e) {
+    const detail = e?.response?.data?.detail;
+    ghimsCompareError.value = typeof detail === 'string'
+      ? detail
+      : (e?.message || 'Failed to compare with GHIMS');
+  } finally {
+    ghimsCompareLoading.value = false;
+  }
+}
+
+function ghimsNameKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(tab|tabs|tablet|tablets|inj|injection|cap|caps|capsule|capsules|syrup|susp|mg|ml|g|iu)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function namesLikelySame(a, b) {
+  const ka = ghimsNameKey(a);
+  const kb = ghimsNameKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  if (ka.includes(kb) || kb.includes(ka)) return true;
+  const ta = ka.split(' ').filter((t) => t.length > 2);
+  const tb = new Set(kb.split(' ').filter((t) => t.length > 2));
+  if (!ta.length || !tb.size) return false;
+  const hit = ta.filter((t) => tb.has(t)).length;
+  return hit >= Math.min(2, ta.length) && hit / ta.length >= 0.6;
+}
+
+function looksLikeGhimsId(s) {
+  const t = String(s || '');
+  return /RXXX/i.test(t) || /^E0\d{2}-/i.test(t) || /NHISW/i.test(t);
+}
+
+function scoreName(query, candidate) {
+  const q = ghimsNameKey(query);
+  const c = ghimsNameKey(candidate);
+  if (!q || !c) return 0;
+  if (q === c) return 100;
+  if (c.startsWith(q) || q.startsWith(c)) return 80;
+  if (c.includes(q) || q.includes(c)) return 60;
+  const qt = q.split(' ').filter((t) => t.length > 2);
+  const ct = new Set(c.split(' ').filter((t) => t.length > 2));
+  if (!qt.length) return 0;
+  const overlap = qt.filter((t) => ct.has(t)).length;
+  return overlap ? (overlap / qt.length) * 50 : 0;
+}
+
+function claimHasMedicine(name) {
+  return (payload.medicines || []).some((m) => namesLikelySame(name, m._serviceName || m.product_name || m.item_name || ''));
+}
+
+function claimHasInvestigation(name) {
+  return (payload.investigations || []).some((inv) => {
+    const named = namesLikelySame(name, inv._serviceName || inv.item_name || '');
+    const codeMatch = !looksLikeGhimsId(inv.gdrgCode) && namesLikelySame(name, inv.gdrgCode);
+    return named || codeMatch;
+  });
+}
+
+function ghimsRowClass(row) {
+  return {
+    'is-cancelled': row?.state === 'cancelled' || row?.state === 'unavailable',
+  };
+}
+
+function ghimsRxKey(rec, p) {
+  return `rx-${rec?.request_id}-${p?.drug_id}-${p?.no}`;
+}
+function ghimsInvKey(rec, inv) {
+  return `inv-${rec?.request_id}-${inv?.lab_test_id || inv?.name}-${inv?.no}`;
+}
+
+async function searchAghimsPriceItem(name, fileType) {
+  const q = String(name || '').trim();
+  if (!q) return null;
+  const queries = [q];
+  const short = q.replace(/[()]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 4).join(' ');
+  if (short && short.toLowerCase() !== q.toLowerCase()) queries.push(short);
+  let best = null;
+  let bestScore = 0;
+  for (const term of queries) {
+    try {
+      const res = await priceListAPI.search(term, undefined, fileType);
+      for (const item of (res.data || [])) {
+        const cand = fileType === 'product'
+          ? (item.product_name || item.item_name || item.service_name || '')
+          : (item.service_name || item.item_name || '');
+        const sc = scoreName(q, cand);
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = item;
+        }
+      }
+    } catch (_) { /* keep looking */ }
+  }
+  return bestScore >= 50 ? best : null;
+}
+
+async function addGhimsPrescription(rec, p) {
+  if (!p?.name) return;
+  if (p.state === 'cancelled' || rec?.cancelled) {
+    $q.notify({ type: 'warning', message: `${p.name} was cancelled in GHIMS.`, position: 'top' });
+    return;
+  }
+  if (claimHasMedicine(p.name)) {
+    $q.notify({ type: 'info', message: `${p.name} is already on the claim.`, position: 'top' });
+    return;
+  }
+  const key = ghimsRxKey(rec, p);
+  ghimsAddingKey.value = key;
+  try {
+    const mapped = await searchAghimsPriceItem(p.name, 'product');
+    const medicineCode = mapped?.medication_code || mapped?.item_code || '';
+    if (looksLikeGhimsId(medicineCode)) {
+      $q.notify({ type: 'warning', message: `Could not map ${p.name} to an NHIA medicine code. Pick it on the claim.`, position: 'top' });
+    }
+    payload.medicines.push({
+      medicineCode: looksLikeGhimsId(medicineCode) ? '' : medicineCode,
+      _serviceName: mapped?.product_name || mapped?.item_name || p.name,
+      dispensedQty: '',
+      serviceDate: String(rec?.date || firstClaimServiceDate() || '').slice(0, 10),
+      insurance_covered: mapped?.insurance_covered || 'yes',
+      _selectedOption: mapped ? withProductOptionLabel(mapped) : null,
+      prescription: {
+        dose: p.dose || '',
+        frequency: p.frequency || '',
+        duration: p.duration || '',
+        unparsed: [p.dose, p.route, p.frequency, p.duration].filter(Boolean).join(' '),
+      },
+    });
+    syncIncludesPharmacy();
+    recalculateClaimSummary();
+    if (mapped && !looksLikeGhimsId(medicineCode)) {
+      $q.notify({ type: 'positive', message: `Added ${p.name} as ${medicineCode} (not saved yet).`, position: 'top' });
+    } else {
+      $q.notify({ type: 'warning', message: `Added ${p.name}. Pick the NHIA medicine code on the claim (not saved yet).`, position: 'top' });
+    }
+  } finally {
+    ghimsAddingKey.value = '';
+  }
+}
+
+async function addGhimsInvestigation(rec, inv) {
+  const name = inv?.name || inv?.label;
+  if (!name) return;
+  if (inv.state === 'cancelled' || rec?.cancelled) {
+    $q.notify({ type: 'warning', message: `${name} was cancelled in GHIMS.`, position: 'top' });
+    return;
+  }
+  if (claimHasInvestigation(name)) {
+    $q.notify({ type: 'info', message: `${name} is already on the claim.`, position: 'top' });
+    return;
+  }
+  const key = ghimsInvKey(rec, inv);
+  ghimsAddingKey.value = key;
+  try {
+    const mapped = await searchAghimsPriceItem(name, 'procedure');
+    let gdrg = mapped?.g_drg_code || mapped?.item_code || '';
+    if (looksLikeGhimsId(gdrg)) gdrg = '';
+    payload.investigations.push({
+      serviceDate: String(rec?.date || firstClaimServiceDate() || '').slice(0, 10),
+      gdrgCode: gdrg,
+      _serviceName: mapped?.service_name || mapped?.item_name || name,
+      _selectedOption: mapped ? withServiceOptionLabel(mapped) : null,
+    });
+    recalculateClaimSummary();
+    if (gdrg) {
+      $q.notify({ type: 'positive', message: `Added ${name} as ${gdrg} (not saved yet).`, position: 'top' });
+    } else {
+      $q.notify({ type: 'warning', message: `Added ${name}. Pick the NHIA GDRG on the claim (not saved yet).`, position: 'top' });
+    }
+  } finally {
+    ghimsAddingKey.value = '';
+  }
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -3022,4 +3388,102 @@ watch(
   min-width: 4.5rem;
   text-align: center;
 }
+
+.ghims-compare-card { min-height: 100%; }
+.ghims-compare-section { border: 1px solid rgba(0,0,0,.08); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.ghims-compare-list { margin: 6px 0 0; padding-left: 18px; }
+.ghims-compare-list li { margin: 2px 0; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.claim-hero {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 12px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.claim-hero__aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.claim-hero__actions {
+  display: flex;
+  gap: 8px;
+}
+.claim-hero__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ghims-compare-shell {
+  width: min(1180px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+.ghims-compare-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 20px 12px;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #f8fafc;
+}
+.ghims-compare-kicker {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #93c5fd;
+  font-weight: 600;
+}
+.ghims-compare-title { font-size: 20px; font-weight: 650; margin-top: 2px; }
+.ghims-compare-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; color: #cbd5e1; font-size: 13px; }
+.ghims-chip { background: #f59e0b; color: #111827; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-size: 12px; }
+.ghims-compare-tabs { border-bottom: 1px solid rgba(15,23,42,.08); }
+.ghims-compare-body { overflow: auto; padding: 16px 20px 20px; background: #f8fafc; min-height: 280px; }
+.ghims-record {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.ghims-record__bar {
+  background: #e8f1fb;
+  padding: 10px 14px;
+  border-bottom: 1px solid #dbe7f5;
+}
+.ghims-record__title { font-weight: 700; color: #0f172a; }
+.ghims-record__byline { color: #334155; font-size: 13px; margin-top: 2px; display: flex; gap: 16px; flex-wrap: wrap; }
+.ghims-table { width: 100%; border-collapse: collapse; }
+.ghims-table th, .ghims-table td { padding: 9px 12px; border-bottom: 1px solid #e5e7eb; vertical-align: top; font-size: 13.5px; }
+.ghims-table tbody th { width: 240px; text-align: left; background: #f8fafc; color: #111827; font-weight: 600; }
+.ghims-table tbody td { white-space: pre-wrap; color: #1e293b; }
+.ghims-table--grid thead th { background: #0f172a; color: #fff; font-weight: 600; text-align: left; }
+.ghims-table--grid td, .ghims-table--grid th { border: 1px solid #e2e8f0; }
+.ghims-table-wrap { padding: 0 0 8px; }
+.ghims-table-caption { font-weight: 700; padding: 10px 12px 6px; }
+.ghims-table tr.is-cancelled td { color: #b91c1c; text-decoration: line-through; }
+.ghims-row-actions { white-space: nowrap; }
+.ghims-pill { font-size: 12px; font-weight: 600; }
+.ghims-pill--cancel { color: #b91c1c; text-decoration: none; }
+.ghims-pill--on { color: #047857; }
 </style>

@@ -928,6 +928,7 @@ export const claimsAPI = {
     api.get(`/claims/ghims-import/batches/${batchId}/claim-totals`),
   deleteGhimsImportBatch: (batchId) => api.delete(`/claims/ghims-import/batches/${batchId}`),
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
+  ghimsLiveCompareItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/ghims-live-compare`, { timeout: 60000 }),
   getGhimsRelatedItems: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/related`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),
