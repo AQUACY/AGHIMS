@@ -24,6 +24,11 @@ from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.services.claimit_report_parser import parse_claimit_report_html
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.services.claim_xml_import_parser import parse_claims_xml, build_claims_xml_from_payloads
+from app.services.ghims_live_compare import (
+    GhimsLiveConfigError,
+    GhimsLiveNotFound,
+    build_live_compare_for_payload,
+)
 from app.services.cxf_claims import (
     CxfParseError,
     convert_cxf_to_xml,
@@ -5059,6 +5064,35 @@ def get_ghims_import_item(
         **_ownership_snapshot(item, db),
     }
 
+
+
+
+@router.get("/ghims-import/items/{item_id}/ghims-live-compare")
+def ghims_live_compare_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Read-only compare of an imported claim against live government GHIMS (MSSQL)."""
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    payload = item.payload or {}
+    claim_id = str(payload.get("claimID") or item.claim_claim_id or "").strip()
+    if not claim_id:
+        raise HTTPException(status_code=400, detail="Imported claim has no claimID / VisitationID to look up.")
+    try:
+        result = build_live_compare_for_payload(payload)
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except GhimsLiveNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GHIMS live compare failed: {exc}")
+    result["item_id"] = item.id
+    result["claim_claim_id"] = claim_id
+    return result
 
 @router.get("/ghims-import/items/{item_id}/related")
 def get_ghims_import_related_items(

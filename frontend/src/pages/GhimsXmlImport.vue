@@ -138,7 +138,7 @@
             outlined
             dense
             clearable
-            label="Search client / hospital rec no / claim IDs / CCC"
+            label="Search client name / hospital rec no / claim IDs / CCC"
             class="col-12 col-md-4"
           />
           <q-select
@@ -1140,7 +1140,10 @@ const filteredClaims = computed(() => {
     if (specialtyFilter.value !== 'all' && String(r.specialty_attended || '').trim() !== specialtyFilter.value) return false;
     if (!q) return true;
     const hay = [
+      claimClientName(r),
       r.client_name,
+      r?.payload?.surname,
+      r?.payload?.otherNames,
       r.hospital_rec_no,
       r.claim_claim_id,
       r.claim_check_code,
@@ -1153,6 +1156,10 @@ const filteredClaims = computed(() => {
     ]
       .map((x) => String(x || '').toLowerCase())
       .join(' ');
+    // Name-friendly: every search token must appear (order-independent),
+    // so "John Doe" still matches stored "Doe John".
+    const tokens = q.split(/\s+/).filter(Boolean);
+    if (tokens.length > 1) return tokens.every((t) => hay.includes(t));
     return hay.includes(q);
   });
 

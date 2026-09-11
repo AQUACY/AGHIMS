@@ -12,7 +12,7 @@ from app.core.datetime_utils import utcnow_callable
 class ClaimStatus(str, enum.Enum):
     """Claim status enumeration"""
     DRAFT = "draft"
-    FLAGGED = "flagged"
+    FLAGGED =  "flagged"
     PHARMACY_VETTED = "pharmacy_vetted"
     DOCTOR_VETTED = "doctor_vetted"
     VETTED = "vetted"  # both pharmacy and doctor have vetted

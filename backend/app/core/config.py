@@ -95,6 +95,15 @@ class Settings(BaseSettings):
     NHIA_SSL_CA_BUNDLE: str = ""  # Optional path to custom CA bundle (.pem)
     NHIA_DEFAULT_CARD_TYPE: str = "NHISCARD"  # NHISCARD or GHANACARD on CCC portal
 
+    # Government GHIMS live DB (read-only MSSQL) - used for claim edit compare
+    GHIMS_MSSQL_HOST: str = ""
+    GHIMS_MSSQL_PORT: int = 1433
+    GHIMS_MSSQL_DATABASE: str = ""
+    GHIMS_MSSQL_USER: str = ""
+    GHIMS_MSSQL_PASSWORD: str = ""
+    GHIMS_MSSQL_ODBC_DRIVER: str = "ODBC Driver 18 for SQL Server"
+
+
     # AI Claim Vetting — local Ollama optional; rules provider is default
     AI_CLAIM_VETTING_PROVIDER: str = "rules"  # rules | ollama
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
