@@ -40,6 +40,13 @@
               <span>{{ visit.status || '—' }}</span>
               <span>{{ formatDate(visit.created_at) }}</span>
             </div>
+            <div v-if="visit.ghims_sync_note" class="text-caption text-warning q-mt-sm">
+              {{ visit.ghims_sync_note }}
+            </div>
+            <div v-if="unmatchedGhimsLines.length" class="text-caption text-warning q-mt-sm">
+              Completed in GHIMS, no co-payment price yet:
+              {{ unmatchedGhimsLines.map((row) => row.description).join(', ') }}
+            </div>
           </div>
         </div>
         <div class="claim-hero__aside">
@@ -242,6 +249,11 @@ import HmsButton from '../../components/ui/HmsButton.vue';
 import HmsCard from '../../components/ui/HmsCard.vue';
 
 const route = useRoute();
+const unmatchedGhimsLines = computed(() => {
+  const rows = visit.value?.ghims_unmatched;
+  return Array.isArray(rows) ? rows : [];
+});
+
 const router = useRouter();
 const $q = useQuasar();
 const authStore = useAuthStore();

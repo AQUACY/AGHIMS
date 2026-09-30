@@ -44,7 +44,34 @@ MODE_MODULE_DEFAULTS = {
         "category": "administrative",
         "display_order": 1005,
     },
+    "companion_ghims_live": {
+        "module_name": "Live GHIMS co-payment sync",
+        "description": "When enabled, Copayment reads insured visits from the GHIMS database. Only completed services and dispensed medicines are billed. Excel upload and manual create stay available. Facilities without a GHIMS database login leave this off.",
+        "category": "core",
+        "display_order": 1006,
+    },
 }
+
+_DEFAULT_OFF_MODULE_KEYS = {"ghims", "ai_claims_vetting", "companion_ghims_live"}
+
+
+def _default_module_active(module_key: str) -> bool:
+    return module_key not in _DEFAULT_OFF_MODULE_KEYS
+
+
+def _reject_live_sync_without_database(module_key: str, will_be_active: bool) -> None:
+    if module_key != "companion_ghims_live" or not will_be_active:
+        return
+    from app.services.ghims_live_compare import ghims_mssql_configured
+
+    if not ghims_mssql_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Live GHIMS co-payment sync needs the GHIMS database connection on this server "
+                "(GHIMS_MSSQL_HOST, GHIMS_MSSQL_DATABASE, GHIMS_MSSQL_USER, and GHIMS_MSSQL_PASSWORD)."
+            ),
+        )
 
 
 def ensure_bootstrap_modules(db: Session) -> None:
@@ -62,7 +89,7 @@ def ensure_bootstrap_modules(db: Session) -> None:
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=False if module_key in ("ghims", "ai_claims_vetting") else True,
+                is_active=_default_module_active(module_key),
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,
@@ -204,7 +231,7 @@ def get_module_status_batch(
             }
         else:
             # Default to active if module not found (backward compatibility)
-            default_active = False if key == "ghims" else True
+            default_active = _default_module_active(key)
             result[key] = {
                 "is_active": default_active,
                 "allow_read": True,
@@ -224,7 +251,7 @@ def get_module_status(
     """Get module status (public endpoint - no auth required for checking status)"""
     module = db.query(ModuleSettings).filter(ModuleSettings.module_key == module_key).first()
     if not module:
-        default_active = False if module_key in ("ghims", "ai_claims_vetting") else True
+        default_active = _default_module_active(module_key)
         return ModuleStatusResponse(
             module_key=module_key,
             is_active=default_active,
@@ -261,7 +288,7 @@ def update_module_setting(
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=False if module_key in ("ghims", "ai_claims_vetting") else True,
+                is_active=_default_module_active(module_key),
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,
@@ -276,6 +303,7 @@ def update_module_setting(
     
     # Update fields if provided
     if update_data.is_active is not None:
+        _reject_live_sync_without_database(module_key, update_data.is_active)
         module.is_active = update_data.is_active
     if update_data.allow_read is not None:
         module.allow_read = update_data.allow_read
@@ -324,7 +352,7 @@ def toggle_module(
                 module_key=module_key,
                 module_name=defaults["module_name"],
                 description=defaults["description"],
-                is_active=False if module_key in ("ghims", "ai_claims_vetting") else True,
+                is_active=_default_module_active(module_key),
                 allow_read=True,
                 allow_create=True,
                 allow_update=True,
@@ -336,7 +364,8 @@ def toggle_module(
             db.flush()
         else:
             raise HTTPException(status_code=404, detail="Module setting not found")
-    
+
+    _reject_live_sync_without_database(module_key, not module.is_active)
     module.is_active = not module.is_active
     db.commit()
     db.refresh(module)

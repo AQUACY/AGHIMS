@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.services.ghims_live_compare import (
@@ -23,6 +24,9 @@ from app.services.ghims_live_compare import (
 
 
 SOURCE_GHIMS_LIVE = "ghims_live"
+
+# Codes officers set on the imported claim. EMC/EME are the raw GHIMS values and must not replace these.
+OFFICER_ATTENDANCE_CODES = {"EAE", "CFU", "ANC", "PNC"}
 
 # GHIMS Sponsors-to-vet "NATIONAL HEALTH INSURANCE SCHEME" / I101
 NHIS_SPONSOR_ID = "I101"
@@ -569,6 +573,87 @@ def get_or_create_month_batch(db: Session, month_key: str, user_id: Optional[int
     return batch
 
 
+def attendance_code(payload: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("typeOfAttendance") or payload.get("type_of_attendance") or "").strip().upper()
+
+
+def choose_canonical_import_item(
+    items: List[Any],
+    batch_source_by_id: Optional[Dict[int, str]] = None,
+):
+    """The claim row officers already set up, not a later GHIMS copy of the same visit."""
+    sources = batch_source_by_id or {}
+    usable = [item for item in items if not getattr(item, "merged_into_id", None)]
+    if not usable:
+        return None
+
+    def rank(item):
+        code = attendance_code(getattr(item, "payload", None))
+        has_officer_code = 0 if code in OFFICER_ATTENDANCE_CODES else 1
+        source = str(sources.get(getattr(item, "batch_id", None)) or "xml").strip().lower()
+        xml_first = 0 if source != SOURCE_GHIMS_LIVE else 1
+        return (has_officer_code, xml_first, getattr(item, "id", 0) or 0)
+
+    chosen = sorted(usable, key=rank)[0]
+    return chosen
+
+
+def apply_main_attendance(payload: Dict[str, Any], main_code: str) -> bool:
+    """Keep type of attendance aligned with the claim that was set up on the XML page."""
+    code = str(main_code or "").strip().upper()
+    if code not in OFFICER_ATTENDANCE_CODES:
+        return False
+    if attendance_code(payload) in OFFICER_ATTENDANCE_CODES:
+        return False
+    payload["typeOfAttendance"] = code
+    return True
+
+
+def align_imported_claim_copies(
+    db: Session,
+    claim_ids: List[str],
+) -> Tuple[Dict[str, ClaimXmlImportItem], bool]:
+    """Point every copy of a visit at the attendance set on the main imported claim."""
+    ids = [str(cid or "").strip() for cid in claim_ids if str(cid or "").strip()]
+    if not ids:
+        return {}, False
+    items = (
+        db.query(ClaimXmlImportItem)
+        .filter(ClaimXmlImportItem.claim_claim_id.in_(ids))
+        .filter(ClaimXmlImportItem.merged_into_id.is_(None))
+        .all()
+    )
+    batch_ids = {item.batch_id for item in items}
+    sources: Dict[int, str] = {}
+    if batch_ids:
+        for batch in db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id.in_(batch_ids)).all():
+            sources[batch.id] = batch.source or "xml"
+    grouped: Dict[str, List[ClaimXmlImportItem]] = defaultdict(list)
+    for item in items:
+        cid = str(item.claim_claim_id or "").strip()
+        if cid:
+            grouped[cid].append(item)
+    chosen: Dict[str, ClaimXmlImportItem] = {}
+    changed = False
+    for cid, rows in grouped.items():
+        main = choose_canonical_import_item(rows, sources)
+        if main is None:
+            continue
+        chosen[cid] = main
+        code = attendance_code(main.payload)
+        for row in rows:
+            if row.id == main.id:
+                continue
+            payload = dict(row.payload or {})
+            if apply_main_attendance(payload, code):
+                row.payload = payload
+                flag_modified(row, "payload")
+                changed = True
+    return chosen, changed
+
+
 def existing_items_by_claim_id(
     db: Session,
     claim_ids: List[str],
@@ -613,6 +698,7 @@ def sync_month_from_ghims(
     claim_ids = list(by_id.keys())
     batch = get_or_create_month_batch(db, month_key, user_id)
     existing = existing_items_by_claim_id(db, claim_ids, batch_id=batch.id)
+    main_items, _attendance_aligned = align_imported_claim_copies(db, claim_ids)
     created = 0
     linked = 0
     refreshed = 0
@@ -622,6 +708,10 @@ def sync_month_from_ghims(
             rebuilt = _payload_from_nhia_lines(lines)
         else:
             rebuilt = _sparse_payload_from_header(header)
+        main_item = main_items.get(cid)
+        main_attendance = attendance_code(main_item.payload if main_item is not None else None)
+        if main_attendance in OFFICER_ATTENDANCE_CODES:
+            rebuilt["typeOfAttendance"] = main_attendance
 
         item = existing.get(cid)
         if item:
@@ -634,6 +724,8 @@ def sync_month_from_ghims(
                 if st != "claims_vetted":
                     item.status = "claims_vetted"
             new_payload = _refresh_date_fields(item.payload if isinstance(item.payload, dict) else {}, rebuilt)
+            if main_item is not None and getattr(main_item, "id", None) != item.id:
+                apply_main_attendance(new_payload, main_attendance)
             # Detect change without wiping other edits
             old = item.payload if isinstance(item.payload, dict) else {}
             if (
@@ -641,6 +733,7 @@ def sync_month_from_ghims(
                 or old.get("_admissionDate") != new_payload.get("_admissionDate")
                 or old.get("_dischargeDate") != new_payload.get("_dischargeDate")
                 or old.get("typeOfService") != new_payload.get("typeOfService")
+                or old.get("typeOfAttendance") != new_payload.get("typeOfAttendance")
             ):
                 item.payload = new_payload
                 refreshed += 1

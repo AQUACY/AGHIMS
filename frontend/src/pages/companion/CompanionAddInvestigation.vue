@@ -52,6 +52,9 @@
                   {{ item.item_name }}
                 </q-item-label>
                 <q-item-label caption>{{ item.item_code }} · GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
+                <q-item-label v-if="item.needs_copay_price && !item.cancelled" caption class="text-warning">
+                  Co-payment price not set. Enter it on the billing page so it is saved to the price list.
+                </q-item-label>
                 <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
                 <q-item-label v-if="item.cancelled" caption class="text-negative q-mt-xs">
                   Cancelled {{ formatDateTime(item.cancelled_at) }} — {{ item.cancel_reason || '—' }}
@@ -63,8 +66,8 @@
                 </div>
                 <div v-else class="unpaid-badge q-mt-sm">
                   <q-icon name="pending" size="18px" class="q-mr-xs" />
-                  <span>Not paid</span>
-                  <span class="text-caption q-ml-sm">— will be marked at central billing</span>
+                  <span>{{ item.needs_copay_price ? 'Price needed' : 'Not paid' }}</span>
+                  <span class="text-caption q-ml-sm">— {{ item.needs_copay_price ? 'set the co-payment on the billing page' : 'will be marked at central billing' }}</span>
                 </div>
               </q-item-section>
               <q-item-section side>
