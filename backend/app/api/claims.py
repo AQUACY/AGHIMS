@@ -31,6 +31,7 @@ from app.services.ghims_live_compare import (
 )
 from app.services.ghims_month_workbench import (
     SOURCE_GHIMS_LIVE,
+    align_imported_claim_copies,
     existing_items_by_claim_id,
     fetch_month_claim_headers,
     list_ghims_bill_months,
@@ -4397,26 +4398,18 @@ async def upload_claimit_report(
     )
     db.add(batch)
     db.flush()
+    canonical_items, _aligned = align_imported_claim_copies(
+        db, [e.get("claim_id") for e in errors_list]
+    )
     for err in errors_list:
-        item_id = None
-        if ghims_batch_id is not None:
-            item = (
-                db.query(ClaimXmlImportItem)
-                .filter(
-                    ClaimXmlImportItem.batch_id == ghims_batch_id,
-                    ClaimXmlImportItem.claim_claim_id == err["claim_id"],
-                )
-                .first()
-            )
-            if item:
-                item_id = item.id
+        main_item = canonical_items.get(str(err.get("claim_id") or "").strip())
         db.add(ClaimItReportError(
             batch_id=batch.id,
             claim_claim_id=err["claim_id"],
             outcome=err["outcome"],
             error_messages=err["error_messages"],
             row_index=err.get("row_index"),
-            ghims_import_item_id=item_id,
+            ghims_import_item_id=main_item.id if main_item is not None else None,
         ))
     db.commit()
     db.refresh(batch)
@@ -4484,6 +4477,15 @@ def get_claimit_report_batch(
         .all()
     )
     claim_ids_from_report = [e.claim_claim_id for e in errors]
+    canonical_items, attendance_aligned = align_imported_claim_copies(db, claim_ids_from_report)
+    pointers_changed = False
+    for e in errors:
+        main_item = canonical_items.get(str(e.claim_claim_id or "").strip())
+        if main_item is not None and e.ghims_import_item_id != main_item.id:
+            e.ghims_import_item_id = main_item.id
+            pointers_changed = True
+    if pointers_changed or attendance_aligned:
+        db.commit()
     claims_by_claim_id = {}
     if claim_ids_from_report:
         claims_in_db = db.query(Claim).filter(Claim.claim_id.in_(claim_ids_from_report)).all()
@@ -5171,6 +5173,12 @@ def get_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    claim_key = str(item.claim_claim_id or "").strip()
+    if claim_key:
+        _main_items, attendance_aligned = align_imported_claim_copies(db, [claim_key])
+        if attendance_aligned:
+            db.commit()
+            db.refresh(item)
     _ensure_claim_vetting_columns(db)
     payload = item.payload or {}
     claim_summary = compute_claim_summary_from_ghims_payload(

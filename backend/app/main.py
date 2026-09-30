@@ -313,6 +313,14 @@ async def startup_event():
         print("Server will continue without scheduled backups.")
         import traceback
         traceback.print_exc()
+    try:
+        from app.services.ghims_companion_sync import start_companion_ghims_scheduler
+        start_companion_ghims_scheduler()
+        print("GHIMS co-payment sync scheduler started")
+    except Exception as e:
+        print(f"WARNING: GHIMS co-payment sync scheduler failed to start: {e}")
+        import traceback
+        traceback.print_exc()
     
     print("=" * 70)
     print("Application startup complete")
@@ -339,4 +347,9 @@ async def shutdown_event():
         print("Backup scheduler stopped")
     except Exception as e:
         print(f"ERROR: Failed to stop backup scheduler: {e}")
+    try:
+        from app.services.ghims_companion_sync import stop_companion_ghims_scheduler
+        stop_companion_ghims_scheduler()
+    except Exception as e:
+        print(f"ERROR: Failed to stop GHIMS co-payment sync scheduler: {e}")
 

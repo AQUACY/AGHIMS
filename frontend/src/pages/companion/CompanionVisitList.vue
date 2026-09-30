@@ -14,12 +14,16 @@
       </template>
     </HmsPageHeader>
 
+    <q-banner v-if="ghimsLiveSync" class="bg-blue-1 text-dark q-mb-md" rounded>
+      Live GHIMS sync is on. Insured visits with a completed service or a dispensed medicine are added here. Excel upload and Create service stay available.
+    </q-banner>
+
     <section class="diag-panel">
       <div class="panel-head">
         <div>
           <div class="panel-title">Filters</div>
           <div class="panel-sub">
-            Defaults to visits created today. Change the date range for other days, or clear both dates to load all visits.
+            Defaults to today. Synced GHIMS visits use the GHIMS visit date, so older admissions stay off this list. Clear both dates to load every visit.
           </div>
         </div>
       </div>
@@ -33,7 +37,7 @@
             label="From (created)"
             clearable
             class="col-12 col-sm-6 col-md-3"
-            hint="Visit created_at ≥ this day"
+            hint="GHIMS visit date for synced visits. Otherwise the day the visit was created."
           />
           <q-input
             v-model="filters.date_to"
@@ -43,7 +47,7 @@
             label="To (created)"
             clearable
             class="col-12 col-sm-6 col-md-3"
-            hint="Visit created_at ≤ this day"
+            hint="GHIMS visit date for synced visits. Otherwise the day the visit was created."
           />
           <div class="col-12 col-sm-12 col-md-6 row q-gutter-sm items-center">
             <HmsButton variant="secondary" size="sm" @click="setTodayRange">Today only</HmsButton>
@@ -175,7 +179,7 @@ import { ref, reactive, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
-import { companionVisitsAPI } from '../../services/api';
+import { companionVisitsAPI, moduleSettingsAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
 import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
 import HmsButton from '../../components/ui/HmsButton.vue';
@@ -184,7 +188,9 @@ const router = useRouter();
 const $q = useQuasar();
 const authStore = useAuthStore();
 const loading = ref(false);
+const ghimsLiveSync = ref(false);
 const visits = ref([]);
+let listLoadSeq = 0;
 function localYmd(d = new Date()) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -286,20 +292,44 @@ function formatDate(iso) {
 }
 
 async function loadVisits() {
+  const seq = ++listLoadSeq;
   loading.value = true;
+  const card = (filters.card_number || '').trim();
+  const visitNo = (filters.visit_number || '').trim();
   try {
-    const params = {};
-    if (filters.card_number) params.card_number = filters.card_number;
-    if (filters.visit_number) params.visit_number = filters.visit_number;
-    if (filters.status) params.status_filter = filters.status;
-    if (filters.date_from) params.date_from = filters.date_from;
-    if (filters.date_to) params.date_to = filters.date_to;
-    const res = await companionVisitsAPI.list(params);
+    const res = await companionVisitsAPI.list(visitListParams());
+    if (seq !== listLoadSeq) return;
     visits.value = res.data || [];
   } catch (e) {
+    if (seq !== listLoadSeq) return;
     visits.value = [];
   } finally {
-    loading.value = false;
+    if (seq === listLoadSeq) loading.value = false;
+  }
+  if (ghimsLiveSync.value && (card || visitNo)) {
+    window.setTimeout(() => {
+      if (seq === listLoadSeq) refreshVisitsQuietly(seq);
+    }, 2000);
+  }
+}
+
+function visitListParams() {
+  const params = {};
+  if (filters.card_number) params.card_number = filters.card_number;
+  if (filters.visit_number) params.visit_number = filters.visit_number;
+  if (filters.status) params.status_filter = filters.status;
+  if (filters.date_from) params.date_from = filters.date_from;
+  if (filters.date_to) params.date_to = filters.date_to;
+  return params;
+}
+
+async function refreshVisitsQuietly(seq) {
+  try {
+    const res = await companionVisitsAPI.list(visitListParams());
+    if (seq !== listLoadSeq) return;
+    visits.value = res.data || [];
+  } catch (e) {
+    /* Keep the list already on screen. */
   }
 }
 
@@ -332,7 +362,15 @@ function confirmDelete(row) {
   });
 }
 
-onMounted(loadVisits);
+onMounted(async () => {
+  try {
+    const res = await moduleSettingsAPI.getStatus('companion_ghims_live');
+    ghimsLiveSync.value = !!res.data?.is_active;
+  } catch {
+    ghimsLiveSync.value = false;
+  }
+  loadVisits();
+});
 </script>
 
 <style scoped>

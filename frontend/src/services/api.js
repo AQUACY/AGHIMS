@@ -266,6 +266,8 @@ export const companionVisitsAPI = {
     api.get(`/companion-visits/${visitId}/items`, { params: category ? { category } : {} }),
   addItem: (visitId, data) => api.post(`/companion-visits/${visitId}/items`, data),
   updateItem: (visitId, itemId, data) => api.patch(`/companion-visits/${visitId}/items/${itemId}`, data),
+  setCopayPrice: (visitId, itemId, unitPrice) =>
+    api.post(`/companion-visits/${visitId}/items/${itemId}/copay-price`, { unit_price: unitPrice }),
   deleteItem: (visitId, itemId) => api.delete(`/companion-visits/${visitId}/items/${itemId}`),
   markItemsPaid: (visitId, data) => api.post(`/companion-visits/${visitId}/items/mark-paid`, data),
   refundItems: (visitId, itemIds) =>
