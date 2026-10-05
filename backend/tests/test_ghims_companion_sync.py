@@ -255,6 +255,39 @@ class DispensedQuantityTests(unittest.TestCase):
         )
         self.assertEqual(rows[0]["IssuedQty"], 20)
 
+    def test_requested_qty_wins_when_issued_stayed_at_one(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[
+                {
+                    "PrescriptionID": "RX-1",
+                    "PrescriptionStatusID": "P002",
+                    "DrugName": "Prednisolone Tablet 5mg",
+                    "Qty": 1,
+                    "IssuedQty": 1,
+                    "RequestedQty": 30,
+                }
+            ],
+        )
+        self.assertEqual(lines[0]["quantity"], 30.0)
+
+    def test_directions_estimate_tablets_when_sale_qty_is_missing(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[
+                {
+                    "PrescriptionID": "RX-1",
+                    "PrescriptionStatusID": "P002",
+                    "DrugName": "Prednisolone Tablet 5mg",
+                    "Qty": 1,
+                    "PrescribeInfo1": "1||Oral||TDS||5",
+                }
+            ],
+        )
+        self.assertEqual(lines[0]["quantity"], 15.0)
+
     def test_one_drug_sale_fills_the_only_prescription_when_sale_has_no_prescription_id(self):
         rows = [
             {"VisitationID": "VE-1", "PrescriptionID": "RX-A", "DrugID": "D1", "Qty": 1},

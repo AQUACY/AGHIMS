@@ -18,8 +18,21 @@ async function refresh() {
   loading.value = true;
   try {
     const res = await companionVisitsAPI.refreshFromGhims(props.visit.id);
-    emit('refreshed', res.data);
-    $q.notify({ type: 'positive', message: 'Latest GHIMS services loaded', position: 'top' });
+    const data = res.data || {};
+    emit('refreshed', data);
+    const info = data.ghims_refresh || {};
+    let message = 'Latest GHIMS services loaded';
+    if (info.note) {
+      message = info.note;
+    } else if (info.drug_qty_gt_one > 0) {
+      message = `Updated ${info.drug_qty_gt_one} drug quantity(ies) from GHIMS`;
+    }
+    $q.notify({
+      type: info.note && info.drug_qty_gt_one === 0 ? 'warning' : 'positive',
+      message,
+      position: 'top',
+      timeout: info.note ? 8000 : 3500,
+    });
   } catch (e) {
     const detail = e.response?.data?.detail;
     $q.notify({
