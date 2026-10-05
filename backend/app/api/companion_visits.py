@@ -2921,7 +2921,7 @@ def get_companion_visit(
     return _visit_to_response(visit, db)
 
 
-@router.post("/{visit_id}/ghims-refresh", response_model=CompanionVisitResponse)
+@router.post("/{visit_id}/ghims-refresh")
 def refresh_companion_visit_from_ghims(
     visit_id: int,
     db: Session = Depends(get_db),
@@ -2944,7 +2944,7 @@ def refresh_companion_visit_from_ghims(
             detail="This visit has no GHIMS visit number to refresh.",
         )
     try:
-        refresh_companion_visit(db, visit, force=True)
+        summary = refresh_companion_visit(db, visit, force=True)
     except TimeoutError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except Exception as exc:
@@ -2955,7 +2955,11 @@ def refresh_companion_visit_from_ghims(
             detail=f"Could not refresh this visit from GHIMS: {exc}",
         ) from exc
     db.refresh(visit)
-    return _visit_to_response(visit, db)
+    payload = _visit_to_response(visit, db)
+    # Attach refresh diagnostics for the UI toast without a schema migration.
+    data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    data["ghims_refresh"] = summary
+    return data
 
 
 @router.post("/{visit_id}/close", response_model=CompanionVisitResponse)
