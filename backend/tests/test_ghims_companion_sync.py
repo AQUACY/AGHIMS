@@ -1,7 +1,12 @@
 """Billable-line rules for live GHIMS co-payment sync."""
 import unittest
 
-from app.services.ghims_companion_sync import _new_item_id, is_cash_visit, select_billable_lines
+from app.services.ghims_companion_sync import (
+    _new_item_id,
+    attach_issued_quantities,
+    is_cash_visit,
+    select_billable_lines,
+)
 
 
 class BillableLineTests(unittest.TestCase):
@@ -196,6 +201,59 @@ class DrugNameMatchTests(unittest.TestCase):
                 "500 mg",
             )
         )
+
+
+class DispensedQuantityTests(unittest.TestCase):
+    def test_issued_quantity_replaces_a_prescription_qty_of_one(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[
+                {
+                    "PrescriptionID": "RX-1",
+                    "PrescriptionStatusID": "P002",
+                    "DrugName": "Furosemide Injection 10mg/ml",
+                    "Qty": 1,
+                    "IssuedQty": 30,
+                }
+            ],
+        )
+        self.assertEqual(lines[0]["quantity"], 30.0)
+
+    def test_sale_lines_are_copied_onto_the_matching_prescription(self):
+        rows = [
+            {
+                "VisitationID": "VE-1",
+                "PrescriptionID": "RX-A",
+                "DrugID": "D1",
+                "Qty": 1,
+            },
+            {
+                "VisitationID": "VE-1",
+                "PrescriptionID": "RX-B",
+                "DrugID": "D1",
+                "Qty": 1,
+            },
+        ]
+        attach_issued_quantities(
+            rows,
+            [
+                {"VisitationID": "VE-1", "PrescriptionID": "RX-A", "DrugID": "D1", "IssuedQty": 10},
+                {"VisitationID": "VE-1", "PrescriptionID": "RX-B", "DrugID": "D1", "IssuedQty": 5},
+            ],
+        )
+        self.assertEqual(rows[0]["IssuedQty"], 10)
+        self.assertEqual(rows[1]["IssuedQty"], 5)
+
+    def test_one_drug_sale_fills_the_only_prescription_when_sale_has_no_prescription_id(self):
+        rows = [
+            {"VisitationID": "VE-1", "PrescriptionID": "RX-A", "DrugID": "D1", "Qty": 1},
+        ]
+        attach_issued_quantities(
+            rows,
+            [{"VisitationID": "VE-1", "DrugID": "D1", "IssuedQty": 14}],
+        )
+        self.assertEqual(rows[0]["IssuedQty"], 14)
 
 
 if __name__ == "__main__":
