@@ -296,6 +296,26 @@ def _resolve_odbc_driver(configured: str) -> str:
     )
 
 
+def _legacy_sql_server_driver(driver: str) -> bool:
+    """The Windows MDAC driver named 'SQL Server'. It rejects Encrypt and only speaks old TLS."""
+    return (driver or "").strip().lower() == "sql server"
+
+
+def ghims_odbc_connection_string(driver: str, server: str, database: str, user: str, password: str) -> str:
+    parts = [
+        f"DRIVER={{{driver}}};",
+        f"SERVER={server};",
+        f"DATABASE={database};",
+        f"UID={user};",
+        f"PWD={password};",
+    ]
+    if not _legacy_sql_server_driver(driver):
+        # Driver 17/18 require encryption. Trust the hospital certificate.
+        parts.append("Encrypt=yes;")
+        parts.append("TrustServerCertificate=yes;")
+    return "".join(parts)
+
+
 def _connect():
     if pyodbc is None:
         raise GhimsLiveConfigError(
@@ -314,25 +334,26 @@ def _connect():
     password = settings.GHIMS_MSSQL_PASSWORD
     driver = _resolve_odbc_driver(settings.GHIMS_MSSQL_ODBC_DRIVER or "")
     server = f"{host},{port}"
-    conn_str = (
-        f"DRIVER={{{driver}}};"
-        f"SERVER={server};"
-        f"DATABASE={database};"
-        f"UID={user};"
-        f"PWD={password};"
-        "Encrypt=yes;"
-        "TrustServerCertificate=yes;"
-        "Connection Timeout=20;"
-    )
+    conn_str = ghims_odbc_connection_string(driver, server, database, user, password)
     try:
-        return pyodbc.connect(conn_str)
+        return pyodbc.connect(conn_str, timeout=20)
     except Exception as exc:
         msg = str(exc)
+        listed = ", ".join(_installed_odbc_drivers()) or "(none)"
         if "IM002" in msg or "Data source name not found" in msg:
-            listed = ", ".join(_installed_odbc_drivers()) or "(none)"
             raise GhimsLiveConfigError(
                 f"ODBC driver {driver!r} was not found. Install Microsoft ODBC Driver 18 "
                 f"for SQL Server (same 32/64-bit as Python) and restart the backend. "
+                f"pyodbc currently sees: {listed}."
+            ) from exc
+        if _legacy_sql_server_driver(driver) and (
+            "SSL Security error" in msg or "SECDoClientHandshake" in msg
+        ):
+            raise GhimsLiveConfigError(
+                "GHIMS could not be reached because this computer only has the old "
+                "'SQL Server' ODBC driver. That driver cannot complete the secure "
+                "connection GHIMS requires. Install Microsoft ODBC Driver 18 for SQL Server "
+                "(same 32/64-bit as the Python that runs the backend), then restart the backend. "
                 f"pyodbc currently sees: {listed}."
             ) from exc
         raise
