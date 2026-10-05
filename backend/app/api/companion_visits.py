@@ -2921,6 +2921,43 @@ def get_companion_visit(
     return _visit_to_response(visit, db)
 
 
+@router.post("/{visit_id}/ghims-refresh", response_model=CompanionVisitResponse)
+def refresh_companion_visit_from_ghims(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read this visit from GHIMS now, without waiting for the automatic sync."""
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    from app.services.ghims_companion_sync import live_sync_enabled, refresh_companion_visit
+
+    if not live_sync_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Live GHIMS sync is turned off.",
+        )
+    if not (visit.external_visit_number or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This visit has no GHIMS visit number to refresh.",
+        )
+    try:
+        refresh_companion_visit(db, visit, force=True)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        logging.getLogger(__name__).exception("Manual GHIMS refresh failed for companion visit %s", visit_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not refresh this visit from GHIMS: {exc}",
+        ) from exc
+    db.refresh(visit)
+    return _visit_to_response(visit, db)
+
+
 @router.post("/{visit_id}/close", response_model=CompanionVisitResponse)
 def close_companion_visit(
     request: Request,

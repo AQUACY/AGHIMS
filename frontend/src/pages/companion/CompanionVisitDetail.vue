@@ -2,6 +2,7 @@
   <q-page class="hms-page">
     <HmsPageHeader title="Service details" subtitle="Visit identity, account summary, and role-based service actions.">
       <template #actions>
+        <CompanionGhimsRefreshButton :visit="visit" @refreshed="onGhimsRefreshed" />
         <HmsButton
           v-if="visit && canEdit"
           variant="secondary"
@@ -244,6 +245,7 @@ import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { companionVisitsAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
+import CompanionGhimsRefreshButton from '../../components/companion/CompanionGhimsRefreshButton.vue';
 import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
 import HmsButton from '../../components/ui/HmsButton.vue';
 import HmsCard from '../../components/ui/HmsCard.vue';
@@ -449,6 +451,11 @@ function confirmDelete() {
       });
     }
   });
+}
+
+async function onGhimsRefreshed(updated) {
+  visit.value = updated || visit.value;
+  await loadItems();
 }
 
 async function loadVisit() {

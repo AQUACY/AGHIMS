@@ -321,6 +321,7 @@
             <div class="panel-sub">Sections: Drugs, Investigations, Scans, X-rays, Surgeries (day &amp; major), Dressing / Treatment room, Oxygen, Inpatient.</div>
           </div>
           <div class="panel-actions row q-gutter-sm flex-wrap items-center">
+            <CompanionGhimsRefreshButton :visit="selectedVisit" @refreshed="onGhimsRefreshed" />
             <q-btn
               v-if="selectedVisit"
               flat
@@ -1548,6 +1549,7 @@ import { useAuthStore } from '../../stores/auth';
 import { useFacilityStore } from '../../stores/facility';
 import { companionVisitsAPI, billingAPI, moduleSettingsAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
+import CompanionGhimsRefreshButton from '../../components/companion/CompanionGhimsRefreshButton.vue';
 import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
 import HmsButton from '../../components/ui/HmsButton.vue';
 import HmsBadge from '../../components/ui/HmsBadge.vue';
@@ -2462,6 +2464,20 @@ async function loadVisits() {
     visits.value = [];
   } finally {
     loadingVisits.value = false;
+  }
+}
+
+async function onGhimsRefreshed(updated) {
+  if (!selectedVisit.value) return;
+  selectedVisit.value = updated || selectedVisit.value;
+  loadingItems.value = true;
+  try {
+    const itemsRes = await companionVisitsAPI.getItems(selectedVisit.value.id);
+    billItems.value = itemsRes.data || [];
+  } catch {
+    billItems.value = [];
+  } finally {
+    loadingItems.value = false;
   }
 }
 

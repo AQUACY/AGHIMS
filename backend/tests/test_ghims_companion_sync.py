@@ -245,6 +245,16 @@ class DispensedQuantityTests(unittest.TestCase):
         self.assertEqual(rows[0]["IssuedQty"], 10)
         self.assertEqual(rows[1]["IssuedQty"], 5)
 
+    def test_drug_sale_still_applies_when_the_prescription_id_does_not_match(self):
+        rows = [
+            {"VisitationID": "VE-1", "PrescriptionID": "RX-A", "DrugID": "D1", "Qty": 1},
+        ]
+        attach_issued_quantities(
+            rows,
+            [{"VisitationID": "VE-1", "PrescriptionID": "SALE-9", "DrugID": "D1", "IssuedQty": 20}],
+        )
+        self.assertEqual(rows[0]["IssuedQty"], 20)
+
     def test_one_drug_sale_fills_the_only_prescription_when_sale_has_no_prescription_id(self):
         rows = [
             {"VisitationID": "VE-1", "PrescriptionID": "RX-A", "DrugID": "D1", "Qty": 1},

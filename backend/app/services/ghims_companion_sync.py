@@ -293,16 +293,23 @@ def sync_visitation(db: Session, visitation_id: str) -> None:
         _sync_lock.release()
 
 
-def refresh_companion_visit(db: Session, visit: CompanionVisit) -> None:
+def refresh_companion_visit(db: Session, visit: CompanionVisit, *, force: bool = False) -> None:
     """Re-read the visit already stored in Copayment."""
     if visit is None or not live_sync_enabled(db):
         return
     vid = (visit.external_visit_number or "").strip()
     if not vid:
         return
-    if not visit_needs_ghims_refresh(visit):
+    if not force and not visit_needs_ghims_refresh(visit):
         return
-    if not _sync_lock.acquire(blocking=False):
+    acquired = (
+        _sync_lock.acquire(blocking=True, timeout=45)
+        if force
+        else _sync_lock.acquire(blocking=False)
+    )
+    if not acquired:
+        if force:
+            raise TimeoutError("GHIMS sync is already running. Try again in a moment.")
         return
     try:
         headers = _fetch_header(vid)
@@ -490,7 +497,7 @@ def attach_issued_quantities(
         if rx:
             has_rx = True
             by_rx[(vid, rx)] += qty
-        elif vid and drug:
+        if vid and drug:
             by_drug[(vid, drug)].append(qty)
     if has_rx:
         for row in prescriptions:
@@ -499,25 +506,31 @@ def attach_issued_quantities(
             issued = by_rx.get((vid, rx), 0.0)
             if issued > 0:
                 row["IssuedQty"] = issued
-        return
+    already: Dict[tuple, float] = defaultdict(float)
     grouped: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
     for row in prescriptions:
         vid = str(row.get("VisitationID") or "").strip()
         drug = str(row.get("DrugID") or "").strip()
+        issued = _stated_qty(row.get("IssuedQty"))
+        if issued > 0:
+            if vid and drug:
+                already[(vid, drug)] += issued
+            continue
         if vid and drug:
             grouped[(vid, drug)].append(row)
     for key, rows in grouped.items():
         qtys = list(by_drug.get(key) or [])
-        if not qtys:
+        remaining = sum(qtys) - already.get(key, 0.0)
+        if remaining <= 0.001:
             continue
         rows.sort(key=lambda item: str(item.get("PrescriptionID") or ""))
         if len(rows) == 1:
-            rows[0]["IssuedQty"] = sum(qtys)
-        elif len(qtys) == len(rows):
+            rows[0]["IssuedQty"] = remaining
+        elif not already.get(key) and len(qtys) == len(rows):
             for row, qty in zip(rows, qtys):
                 row["IssuedQty"] = qty
         else:
-            rows[0]["IssuedQty"] = sum(qtys)
+            rows[0]["IssuedQty"] = remaining
 
 
 def _sync_actor_id(db: Session) -> Optional[int]:
@@ -706,6 +719,17 @@ def _add_unpriced_line(
     return item
 
 
+def _quantity_is_locked(item: CompanionVisitItem) -> bool:
+    """A recorded payment keeps the quantity that was billed. A zero co-payment does not."""
+    if getattr(item, "paid_at", None):
+        return True
+    if (getattr(item, "receipt_number", None) or "").strip():
+        return True
+    if (getattr(item, "admission_deposit_line_receipt", None) or "").strip():
+        return True
+    return False
+
+
 def _billable_lines_match_items(lines: List[Dict[str, Any]], items: List[CompanionVisitItem]) -> bool:
     """True when stored bill lines already match the completed GHIMS services."""
     from app.api.companion_visits import _companion_item_is_paid
@@ -724,7 +748,7 @@ def _billable_lines_match_items(lines: List[Dict[str, Any]], items: List[Compani
         item = active.get(key)
         if item is None:
             return False
-        if _companion_item_is_paid(item):
+        if _quantity_is_locked(item):
             continue
         if abs(float(item.quantity or 0) - float(line["quantity"])) > 0.001:
             return False
@@ -770,7 +794,7 @@ def _upsert_lines(
         seen.add(key)
         item = by_key.get(key)
         if item is not None:
-            if _companion_item_is_paid(item):
+            if _quantity_is_locked(item):
                 continue
             if item.cancelled and (item.cancel_reason or "") != SYNC_CANCEL_REASON:
                 continue
