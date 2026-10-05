@@ -2,6 +2,7 @@
   <q-page class="hms-page">
     <HmsPageHeader title="Add drugs (Pharmacy)">
       <template #actions>
+        <CompanionGhimsRefreshButton :visit="visit" @refreshed="onGhimsRefreshed" />
         <HmsButton variant="ghost" size="sm" @click="$router.push(backLink)">Back</HmsButton>
       </template>
     </HmsPageHeader>
@@ -281,6 +282,7 @@ import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { companionVisitsAPI, priceListAPI } from '../../services/api';
 import { isCompanionBillItemPaid, companionBillPaidLabel } from '../../utils/companionBillItemPaid.js';
+import CompanionGhimsRefreshButton from '../../components/companion/CompanionGhimsRefreshButton.vue';
 import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
 import HmsButton from '../../components/ui/HmsButton.vue';
 
@@ -616,6 +618,11 @@ async function confirmAddWithQuantity() {
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to add', position: 'top' });
   }
+}
+
+async function onGhimsRefreshed(updated) {
+  visit.value = updated || visit.value;
+  await loadAddedItems();
 }
 
 async function loadVisit() {

@@ -250,6 +250,8 @@ export const companionVisitsAPI = {
     }),
   list: (params = {}) => api.get('/companion-visits/', { params }),
   get: (visitId) => api.get(`/companion-visits/${visitId}`),
+  refreshFromGhims: (visitId) =>
+    api.post(`/companion-visits/${visitId}/ghims-refresh`, {}, { timeout: 60000 }),
   update: (visitId, data) => api.patch(`/companion-visits/${visitId}`, data),
   delete: (visitId) => api.delete(`/companion-visits/${visitId}`),
   close: (visitId) => api.post(`/companion-visits/${visitId}/close`),
