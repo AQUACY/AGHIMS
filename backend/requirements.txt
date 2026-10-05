@@ -21,4 +21,4 @@ certifi>=2024.0.0
 pytesseract>=0.3.10
 pillow>=10.0.0
 cryptography>=42.0.0
-
+pyodbc>=5.0.0

@@ -23,6 +23,12 @@ class CompanionVisit(Base):
     external_visit_number = Column(String(50), nullable=False, index=True)
     client_name = Column(String(255), nullable=True)  # Optional display name from Records
     status = Column(String(20), default="open", nullable=False)  # open | closed
+    # manual | excel | ghims_live. Null on rows created before live sync.
+    source = Column(String(20), nullable=True)
+    ghims_synced_at = Column(DateTime, nullable=True)
+    ghims_visit_date = Column(DateTime, nullable=True)
+    ghims_sync_note = Column(Text, nullable=True)
+    ghims_unmatched_json = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=utcnow_callable)
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable)

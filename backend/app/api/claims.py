@@ -24,6 +24,21 @@ from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.services.claimit_report_parser import parse_claimit_report_html
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
 from app.services.claim_xml_import_parser import parse_claims_xml, build_claims_xml_from_payloads
+from app.services.ghims_live_compare import (
+    GhimsLiveConfigError,
+    GhimsLiveNotFound,
+    build_live_compare_for_payload,
+)
+from app.services.ghims_month_workbench import (
+    SOURCE_GHIMS_LIVE,
+    align_imported_claim_copies,
+    existing_items_by_claim_id,
+    fetch_month_claim_headers,
+    list_ghims_bill_months,
+    month_label,
+    serialize_item_row,
+    sync_month_from_ghims,
+)
 from app.services.cxf_claims import (
     CxfParseError,
     convert_cxf_to_xml,
@@ -85,6 +100,7 @@ EXPORTABLE_CLAIM_STATUSES = frozenset({
     "pharmacy_vetted",
     "doctor_vetted",
     "vetted",
+    "claims_vetted",
     "ai_vetted",
 })
 
@@ -117,9 +133,18 @@ def _refresh_vet_workflow_status(obj) -> None:
         obj.status = ClaimStatus.PHARMACY_VETTED.value if isinstance(obj, Claim) else "pharmacy_vetted"
     elif has_doc:
         obj.status = ClaimStatus.DOCTOR_VETTED.value if isinstance(obj, Claim) else "doctor_vetted"
-    elif status in ("pharmacy_vetted", "doctor_vetted", "vetted"):
-        # All vets cleared — return to draft for further work
-        obj.status = ClaimStatus.DRAFT.value if isinstance(obj, Claim) else "draft"
+    elif status in ("pharmacy_vetted", "doctor_vetted", "vetted", "claims_vetted"):
+        # All clinical vets cleared. XML import returns to draft; GHIMS-direct
+        # month rows stay claims-vetted until pharmacy/doctor vet again.
+        if isinstance(obj, Claim):
+            obj.status = ClaimStatus.DRAFT.value
+        else:
+            fallback = "draft"
+            batch = getattr(obj, "batch", None)
+            src = getattr(batch, "source", None) if batch is not None else None
+            if src == SOURCE_GHIMS_LIVE or status == "claims_vetted":
+                fallback = "claims_vetted"
+            obj.status = fallback
 
 
 def _apply_claim_status_filter(query, claim_status: str):
@@ -231,6 +256,9 @@ def _ensure_claim_vetting_columns(db: Session) -> None:
         ("claim_xml_import_items", "assigned_by_id", "INTEGER NULL"),
         ("claim_xml_import_items", "assignment_note", "VARCHAR(255) NULL"),
         ("claim_xml_import_batches", "demarcation_rules", "JSON NULL"),
+        ("claim_xml_import_batches", "source", "VARCHAR(30) NULL"),
+        ("claim_xml_import_batches", "working_month", "VARCHAR(7) NULL"),
+        ("claim_xml_import_batches", "pinned", "VARCHAR(1) NULL"),
     ]
     for table, col, typ in specs:
         try:
@@ -2941,6 +2969,113 @@ def get_all_claims(
     return claims
 
 
+@router.get("/ghims-months")
+def list_ghims_months(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """List GHIMS billing months (MTHYYYYMM) with claim counts."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        months = list_ghims_bill_months()
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not list GHIMS months: {exc}")
+
+    local = (
+        db.query(ClaimXmlImportBatch)
+        .filter(ClaimXmlImportBatch.source == SOURCE_GHIMS_LIVE)
+        .all()
+    )
+    by_key = {str(b.working_month or ""): b for b in local if b.working_month}
+    now = datetime.utcnow()
+    current_key = f"{now.year:04d}-{now.month:02d}"
+    out = []
+    for m in months:
+        key = m["month_key"]
+        batch = by_key.get(key)
+        aghims_count = 0
+        if batch:
+            aghims_count = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.batch_id == batch.id).count()
+        out.append({
+            **m,
+            "batch_id": batch.id if batch else None,
+            "aghims_count": aghims_count,
+            "pinned": bool(batch and str(getattr(batch, "pinned", "") or "") in ("1", "true", "True")),
+            "is_current": key == current_key,
+        })
+    return out
+
+
+@router.get("/ghims-months/{month_key}")
+def get_ghims_month(
+    month_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Claims in one GHIMS billing month, joined to AGHIMS import rows when present."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        headers = fetch_month_claim_headers(month_key)
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not load GHIMS month: {exc}")
+
+    ids = [str(h.get("claimID") or "").strip() for h in headers if h.get("claimID")]
+    existing = existing_items_by_claim_id(db, ids)
+    claims = [serialize_item_row(existing.get(str(h.get("claimID") or "").strip()), h) for h in headers]
+    vetted = sum(1 for c in claims if c.get("status") == "vetted")
+    in_aghims = sum(1 for c in claims if c.get("in_aghims"))
+    return {
+        "month_key": month_key,
+        "label": month_label(month_key),
+        "ghims_count": len(headers),
+        "aghims_count": in_aghims,
+        "vetted_count": vetted,
+        "claims": claims,
+    }
+
+
+@router.post("/ghims-months/{month_key}/sync")
+def sync_ghims_month(
+    month_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Pull GHIMS-approved claims for the month into AGHIMS as claims-vetted rows."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        return sync_month_from_ghims(db, month_key, get_effective_creator_id(db, current_user), create_missing=True)
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GHIMS month sync failed: {exc}")
+
+
+@router.post("/ghims-months/{month_key}/backfill")
+def backfill_ghims_month(
+    month_key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_super_admin),
+    _module_check: User = Depends(require_module_permission("claims", "create")),
+):
+    """Admin: fetch already-approved GHIMS claims for this month (pre-module history)."""
+    _ensure_claim_vetting_columns(db)
+    try:
+        result = sync_month_from_ghims(db, month_key, get_effective_creator_id(db, current_user), create_missing=True)
+        result["backfill"] = True
+        return result
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GHIMS month backfill failed: {exc}")
+
+
 @router.get("/{claim_id}", response_model=ClaimResponse)
 def get_claim(
     claim_id: int,
@@ -4263,26 +4398,18 @@ async def upload_claimit_report(
     )
     db.add(batch)
     db.flush()
+    canonical_items, _aligned = align_imported_claim_copies(
+        db, [e.get("claim_id") for e in errors_list]
+    )
     for err in errors_list:
-        item_id = None
-        if ghims_batch_id is not None:
-            item = (
-                db.query(ClaimXmlImportItem)
-                .filter(
-                    ClaimXmlImportItem.batch_id == ghims_batch_id,
-                    ClaimXmlImportItem.claim_claim_id == err["claim_id"],
-                )
-                .first()
-            )
-            if item:
-                item_id = item.id
+        main_item = canonical_items.get(str(err.get("claim_id") or "").strip())
         db.add(ClaimItReportError(
             batch_id=batch.id,
             claim_claim_id=err["claim_id"],
             outcome=err["outcome"],
             error_messages=err["error_messages"],
             row_index=err.get("row_index"),
-            ghims_import_item_id=item_id,
+            ghims_import_item_id=main_item.id if main_item is not None else None,
         ))
     db.commit()
     db.refresh(batch)
@@ -4350,6 +4477,15 @@ def get_claimit_report_batch(
         .all()
     )
     claim_ids_from_report = [e.claim_claim_id for e in errors]
+    canonical_items, attendance_aligned = align_imported_claim_copies(db, claim_ids_from_report)
+    pointers_changed = False
+    for e in errors:
+        main_item = canonical_items.get(str(e.claim_claim_id or "").strip())
+        if main_item is not None and e.ghims_import_item_id != main_item.id:
+            e.ghims_import_item_id = main_item.id
+            pointers_changed = True
+    if pointers_changed or attendance_aligned:
+        db.commit()
     claims_by_claim_id = {}
     if claim_ids_from_report:
         claims_in_db = db.query(Claim).filter(Claim.claim_id.in_(claim_ids_from_report)).all()
@@ -4496,6 +4632,8 @@ def set_claimit_error_completed(
 
 # ---------- GHIMS XML import batches ----------
 
+
+
 @router.post("/ghims-import/upload")
 async def upload_ghims_claims_xml(
     file: UploadFile = File(...),
@@ -4561,12 +4699,14 @@ def list_ghims_import_batches(
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
     """List GHIMS XML import batches (newest first)."""
-    batches = (
-        db.query(ClaimXmlImportBatch)
-        .order_by(ClaimXmlImportBatch.uploaded_at.desc())
-        .limit(100)
-        .all()
-    )
+    q = db.query(ClaimXmlImportBatch).order_by(ClaimXmlImportBatch.uploaded_at.desc())
+    batches = []
+    for b in q.limit(200).all():
+        if getattr(b, "source", None) == SOURCE_GHIMS_LIVE:
+            continue
+        batches.append(b)
+        if len(batches) >= 100:
+            break
     return [
         {
             "id": b.id,
@@ -5033,6 +5173,12 @@ def get_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    claim_key = str(item.claim_claim_id or "").strip()
+    if claim_key:
+        _main_items, attendance_aligned = align_imported_claim_copies(db, [claim_key])
+        if attendance_aligned:
+            db.commit()
+            db.refresh(item)
     _ensure_claim_vetting_columns(db)
     payload = item.payload or {}
     claim_summary = compute_claim_summary_from_ghims_payload(
@@ -5059,6 +5205,35 @@ def get_ghims_import_item(
         **_ownership_snapshot(item, db),
     }
 
+
+
+
+@router.get("/ghims-import/items/{item_id}/ghims-live-compare")
+def ghims_live_compare_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Read-only compare of an imported claim against live government GHIMS (MSSQL)."""
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    payload = item.payload or {}
+    claim_id = str(payload.get("claimID") or item.claim_claim_id or "").strip()
+    if not claim_id:
+        raise HTTPException(status_code=400, detail="Imported claim has no claimID / VisitationID to look up.")
+    try:
+        result = build_live_compare_for_payload(payload)
+    except GhimsLiveConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except GhimsLiveNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GHIMS live compare failed: {exc}")
+    result["item_id"] = item.id
+    result["claim_claim_id"] = claim_id
+    return result
 
 @router.get("/ghims-import/items/{item_id}/related")
 def get_ghims_import_related_items(

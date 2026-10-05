@@ -6,11 +6,12 @@ come from the external government system; no internal patient/encounter IDs are 
 """
 import io
 import json
+import logging
 import math
 import re
 import shutil
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Request, Response
-from sqlalchemy import and_, func
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Any, Optional, List, Tuple, Dict, Set
@@ -128,6 +129,11 @@ class CompanionVisitResponse(BaseModel):
     bill_total: float = 0.0
     paid_amount: float = 0.0
     balance_due: float = 0.0
+    source: Optional[str] = None
+    ghims_synced_at: Optional[datetime] = None
+    ghims_visit_date: Optional[datetime] = None
+    ghims_sync_note: Optional[str] = None
+    ghims_unmatched: List[Dict[str, Any]] = []
 
     class Config:
         from_attributes = True
@@ -221,12 +227,254 @@ def _raise_outstanding_block(
     )
 
 
+_FORM_WORDS = (
+    ("injections", "injection"),
+    ("injection", "injection"),
+    ("infusion", "infusion"),
+    ("suspension", "suspension"),
+    ("capsules", "capsule"),
+    ("capsule", "capsule"),
+    ("tablets", "tablet"),
+    ("tablet", "tablet"),
+    ("syrup", "syrup"),
+    ("cream", "cream"),
+    ("ointment", "ointment"),
+    ("drops", "drops"),
+    ("drop", "drops"),
+    ("solution", "solution"),
+)
+
+# Same medicine, different spelling on the GHIMS label and the price list.
+_GENERIC_CANON = {
+    "bendrofluazide": "bendroflumethiazide",
+}
+
+
+def _canon_generic(value: str) -> str:
+    token = re.sub(r"[^a-z]", "", (value or "").lower())
+    token = token.replace("sulphate", "sulfate")
+    return _GENERIC_CANON.get(token, token)
+
+
+def _medicine_form(text: str) -> Optional[str]:
+    words = set(re.sub(r"[^a-z]+", " ", (text or "").lower()).split())
+    for word, form in _FORM_WORDS:
+        if word in words:
+            return form
+    return None
+
+
+def _primary_strength(text: str) -> Optional[tuple]:
+    compact = re.sub(r"\s+", "", (text or "").lower())
+    found = re.search(r"(\d+(?:\.\d+)?)(mg/5ml|mg/ml|mcg|mg|g|iu|%)", compact)
+    if not found:
+        return None
+    return (float(found.group(1)), found.group(2))
+
+
+def _medicine_generic(text: str) -> str:
+    cleaned = re.sub(r"\([^)]*\)", " ", text or "")
+    cleaned = re.sub(r"\d+(?:\.\d+)?\s*(?:mg/5ml|mg/ml|mcg|mg|g|iu|%|ml)\b", " ", cleaned, flags=re.IGNORECASE)
+    for word, _form in _FORM_WORDS:
+        cleaned = re.sub(rf"\b{word}\b", " ", cleaned, flags=re.IGNORECASE)
+    return _canon_generic(cleaned)
+
+
+def _generics_close(left: str, right: str) -> bool:
+    a = _canon_generic(left)
+    b = _canon_generic(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    # One-letter spelling differences only, such as Ceftriaxone and Ceftriazone.
+    # A longer name such as Esomeprazole must not match Omeprazole.
+    if len(a) < 6 or len(b) < 6 or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(1 for x, y in zip(a, b) if x != y) == 1
+    longer, shorter = (a, b) if len(a) > len(b) else (b, a)
+    for index in range(len(longer)):
+        if longer[:index] + longer[index + 1 :] == shorter:
+            return True
+    return False
+
+
+def _drug_product_fits(drug_name: str, generic: Optional[str], product_name: str, formulation: Optional[str], strength: Optional[str]) -> bool:
+    """True when a price-list product is the same medicine, form, and strength."""
+    ghims_generic = _medicine_generic(generic or "") or _medicine_generic(drug_name)
+    price_generic = _medicine_generic(product_name)
+    if not _generics_close(ghims_generic, price_generic):
+        return False
+    ghims_form = _medicine_form(drug_name)
+    price_form = _medicine_form(formulation or "") or _medicine_form(product_name)
+    if ghims_form and price_form and ghims_form != price_form:
+        return False
+    ghims_strength = _primary_strength(drug_name)
+    price_strength = _primary_strength(strength or "") or _primary_strength(product_name)
+    if ghims_strength and price_strength and ghims_strength != price_strength:
+        return False
+    return True
+
+
+def _match_dispensed_drug(db: Session, drug_name: str, generic: Optional[str] = None) -> Optional[dict]:
+    """Match a dispensed GHIMS medicine to the price list without a G-DRG code.
+
+    GHIMS stores an internal stock id, not the price-list medication code.
+    The generic name, dosage form, and strength are what the two lists share.
+    """
+    from app.models.product_price import ProductPrice
+
+    ghims_generic = _medicine_generic(generic or "") or _medicine_generic(drug_name)
+    if len(ghims_generic) < 4:
+        return None
+    stem = ghims_generic[:5]
+    products = (
+        db.query(ProductPrice)
+        .filter(ProductPrice.is_active == True, ProductPrice.product_name.ilike(f"%{stem}%"))  # noqa: E712
+        .all()
+    )
+    fits = [
+        product
+        for product in products
+        if _drug_product_fits(drug_name, generic, product.product_name or "", product.formulation, product.strength)
+    ]
+    codes = {(product.medication_code or product.g_drg_code or "").strip() for product in fits}
+    codes.discard("")
+    if len(fits) != 1 and len(codes) != 1:
+        return None
+    product = fits[0]
+    code = (product.medication_code or product.g_drg_code or "").strip()
+    if not code:
+        return None
+    unit_price = float(get_price_from_all_tables(db, code, is_insured=True))
+    return {
+        "item_code": code,
+        "item_name": (product.product_name or drug_name).strip(),
+        "category": "drug",
+        "unit_price": unit_price,
+        "match_type": "product",
+        "matched_service_type": None,
+    }
+
+
+def _government_price_candidates(db: Session, description: str) -> list:
+    """Find price-list rows for a GHIMS service name.
+
+    A direct search misses rows that differ only by a space, such as
+    "(HBSAG)" in GHIMS and "( HBSAG)" on the price list. When that happens,
+    compare the names after spacing and bracket text are removed.
+    """
+    desc = (description or "").strip()
+    if not desc:
+        return []
+    candidates: list = []
+    for service_type in (
+        "INVESTIGATIONS",
+        "ULTRASOUND",
+        "X RAY",
+        "DAY SURGERY",
+        "MAJOR SURGERY",
+        "DRESSING AND TREATMENT ROOM",
+        "DRESSING",
+        "OXYGEN",
+    ):
+        candidates.extend(
+            search_price_items_all_tables(db, search_term=desc, service_type=service_type, file_type="procedure") or []
+        )
+    candidates.extend(search_price_items_all_tables(db, search_term=desc, file_type="product") or [])
+    if candidates:
+        return candidates
+
+    target = normalize_service_name(desc)
+    words = [word for word in target.split() if len(word) >= 5]
+    if not words:
+        return []
+    hint = max(words, key=len)
+    rough = search_price_items_all_tables(db, search_term=hint, file_type=None) or []
+    narrowed = []
+    for type_name, item in rough:
+        stored = getattr(item, "service_name", None) or getattr(item, "product_name", None) or ""
+        candidate = normalize_service_name(str(stored))
+        if not candidate or not target:
+            continue
+        if candidate == target:
+            narrowed.append((type_name, item))
+            continue
+        if candidate in target or target in candidate:
+            if len(candidate.split()) >= 3 and len(target.split()) >= 3:
+                narrowed.append((type_name, item))
+    return narrowed
+
+
+def _lookup_government_line_price(
+    db: Session,
+    description: str,
+    generic: Optional[str] = None,
+    source_type: Optional[str] = None,
+) -> Optional[dict]:
+    """Price-list co-payment for one GHIMS service name, without creating a bill line."""
+    desc = (description or "").strip()
+    if not desc and not (generic or "").strip():
+        return None
+    if (source_type or "") == "prescription":
+        drug = _match_dispensed_drug(db, desc, generic)
+        if drug:
+            return drug
+    if not desc:
+        return None
+    picked = _pick_best_price_match(_government_price_candidates(db, desc), desc)
+    if not picked:
+        return None
+    type_name, item = picked
+    if type_name == "product":
+        matched_code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
+        matched_name = getattr(item, "product_name", None) or desc
+        matched_service_type = None
+        category = "drug"
+        unit_price = (
+            float(get_price_from_all_tables(db, str(matched_code), is_insured=True))
+            if matched_code
+            else 0.0
+        )
+    else:
+        matched_code = getattr(item, "g_drg_code", None)
+        matched_name = getattr(item, "service_name", None) or desc
+        matched_service_type = getattr(item, "service_type", None)
+        category = _service_type_to_category(matched_service_type)
+        unit_price = (
+            float(
+                get_price_from_all_tables(
+                    db,
+                    str(matched_code),
+                    is_insured=True,
+                    service_type=matched_service_type,
+                    procedure_name=matched_name,
+                )
+            )
+            if matched_code
+            else 0.0
+        )
+    if not matched_code:
+        return None
+    return {
+        "item_code": str(matched_code).strip(),
+        "item_name": str(matched_name).strip() or desc,
+        "category": category or "lab",
+        "unit_price": float(unit_price),
+        "match_type": type_name,
+        "matched_service_type": matched_service_type,
+    }
+
+
 def _try_add_visit_item_from_government_line(
     db: Session,
     visit_id: int,
     description: str,
     quantity: float,
     created_by_id: int,
+    generic: Optional[str] = None,
+    source_type: Optional[str] = None,
 ) -> tuple[bool, Optional[dict], Optional[str]]:
     """
     Match one government service line to the price list and insert a CompanionVisitItem.
@@ -240,50 +488,16 @@ def _try_add_visit_item_from_government_line(
     if qty <= 0:
         return False, None, "Invalid quantity"
 
-    candidates: list = []
-    for st in ("INVESTIGATIONS", "ULTRASOUND", "X RAY", "DAY SURGERY", "MAJOR SURGERY", "DRESSING AND TREATMENT ROOM", "DRESSING", "OXYGEN"):
-        candidates.extend(search_price_items_all_tables(db, search_term=desc, service_type=st, file_type="procedure") or [])
-    candidates.extend(search_price_items_all_tables(db, search_term=desc, file_type="product") or [])
-    if not candidates:
-        candidates = search_price_items_all_tables(db, search_term=normalize_service_name(desc), file_type=None) or []
-
-    picked = _pick_best_price_match(candidates, desc)
-    if not picked:
+    match = _lookup_government_line_price(db, desc, generic=generic, source_type=source_type)
+    if not match:
         return False, None, "No price list match found"
 
-    type_name, item = picked
-
-    matched_code = None
-    matched_name = None
-    matched_service_type = None
-    category = None
-    unit_price = 0.0
-
-    if type_name == "product":
-        matched_code = getattr(item, "medication_code", None) or getattr(item, "g_drg_code", None)
-        matched_name = getattr(item, "product_name", None) or desc
-        matched_service_type = None
-        category = "drug"
-        if matched_code:
-            unit_price = float(get_price_from_all_tables(db, str(matched_code), is_insured=True))
-    else:
-        matched_code = getattr(item, "g_drg_code", None)
-        matched_name = getattr(item, "service_name", None) or desc
-        matched_service_type = getattr(item, "service_type", None)
-        category = _service_type_to_category(matched_service_type)
-        if matched_code:
-            unit_price = float(
-                get_price_from_all_tables(
-                    db,
-                    str(matched_code),
-                    is_insured=True,
-                    service_type=matched_service_type,
-                    procedure_name=matched_name,
-                )
-            )
-
-    if not matched_code:
-        return False, None, "Matched price item has no code"
+    matched_code = match["item_code"]
+    matched_name = match["item_name"]
+    matched_service_type = match["matched_service_type"]
+    category = match["category"]
+    unit_price = match["unit_price"]
+    type_name = match["match_type"]
 
     new_item = CompanionVisitItem(
         companion_visit_id=visit_id,
@@ -354,6 +568,8 @@ def _admission_deposit_applied_on_item(it: CompanionVisitItem) -> float:
 
 
 def _companion_item_is_paid(it: CompanionVisitItem) -> bool:
+    if getattr(it, "needs_copay_price", False):
+        return False
     T = round(_companion_item_row_amount(it), 2)
     if T <= 0:
         return True
@@ -423,16 +639,46 @@ def _max_admission_deposit_receipt_suffix(items: List[CompanionVisitItem], base:
     return max_n
 
 
-def _batch_visit_billing_summaries(db: Session, visits: List[CompanionVisit]) -> Dict[int, Tuple[float, float, float]]:
+def _undertaking_user_names(db: Session, visits: List[CompanionVisit]) -> Dict[int, str]:
+    ids = set()
+    for visit in visits:
+        for attr in (
+            "undertaking_requested_by_id",
+            "undertaking_approved_by_id",
+            "undertaking_unapproved_by_id",
+        ):
+            value = getattr(visit, attr, None)
+            if value:
+                ids.add(value)
+    if not ids:
+        return {}
+    rows = db.query(User).filter(User.id.in_(ids)).all()
+    return {row.id: (row.full_name or row.username) for row in rows}
+
+
+def _load_items_by_visit(db: Session, visits: List[CompanionVisit]) -> Dict[int, List[CompanionVisitItem]]:
     if not visits:
         return {}
     ids = [v.id for v in visits]
-    deposit_map = {v.id: float(getattr(v, "undertaking_deposit_amount", None) or 0) for v in visits}
     all_items = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id.in_(ids)).all()
     by_vid: Dict[int, List[CompanionVisitItem]] = defaultdict(list)
     for it in all_items:
         by_vid[it.companion_visit_id].append(it)
-    return {vid: _billing_summary_for_items(by_vid.get(vid, []), deposit_map.get(vid, 0.0)) for vid in ids}
+    return by_vid
+
+
+def _batch_visit_billing_summaries(
+    db: Session,
+    visits: List[CompanionVisit],
+    items_by: Optional[Dict[int, List[CompanionVisitItem]]] = None,
+) -> Dict[int, Tuple[float, float, float]]:
+    if not visits:
+        return {}
+    ids = [v.id for v in visits]
+    deposit_map = {v.id: float(getattr(v, "undertaking_deposit_amount", None) or 0) for v in visits}
+    if items_by is None:
+        items_by = _load_items_by_visit(db, visits)
+    return {vid: _billing_summary_for_items(items_by.get(vid, []), deposit_map.get(vid, 0.0)) for vid in ids}
 
 
 def _visit_all_items_paid(visit_id: int, db: Session) -> bool:
@@ -487,6 +733,7 @@ def create_companion_visit(
         external_visit_number=visit,
         client_name=(data.client_name or "").strip() or None,
         status="open",
+        source="manual",
         created_by=get_effective_creator_id(db, current_user),
     )
     db.add(visit_obj)
@@ -510,6 +757,7 @@ def list_companion_visits(
     List companion visits with optional filters.
     Used by Records to see created services; by Lab/Scan/Xray/Billing to find a visit; by Management for pending undertakings.
     """
+    _maybe_sync_companion_from_ghims(db, card_number=card_number, visit_number=visit_number)
     q = db.query(CompanionVisit)
     if card_number and card_number.strip():
         q = q.filter(CompanionVisit.external_card_number.like(f"%{card_number.strip()}%"))
@@ -519,14 +767,32 @@ def list_companion_visits(
         q = q.filter(CompanionVisit.status == status_filter.strip().lower())
     if undertaking_status and undertaking_status.strip():
         q = q.filter(CompanionVisit.undertaking_status == undertaking_status.strip().lower())
+    listed_on = case(
+        (
+            CompanionVisit.source == "ghims_live",
+            func.coalesce(CompanionVisit.ghims_visit_date, CompanionVisit.created_at),
+        ),
+        else_=CompanionVisit.created_at,
+    )
     if date_from:
-        q = q.filter(CompanionVisit.created_at >= datetime.combine(date_from, datetime.min.time()))
+        q = q.filter(listed_on >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
-        q = q.filter(CompanionVisit.created_at <= datetime.combine(date_to, datetime.max.time()))
+        q = q.filter(listed_on <= datetime.combine(date_to, datetime.max.time()))
     q = q.order_by(CompanionVisit.created_at.desc())
     visits = q.all()
-    summaries = _batch_visit_billing_summaries(db, visits)
-    return [_visit_to_response(v, db, billing=summaries.get(v.id)) for v in visits]
+    items_by = _load_items_by_visit(db, visits)
+    summaries = _batch_visit_billing_summaries(db, visits, items_by=items_by)
+    user_names = _undertaking_user_names(db, visits)
+    return [
+        _visit_to_response(
+            v,
+            db,
+            billing=summaries.get(v.id),
+            items=items_by.get(v.id, []),
+            user_names=user_names,
+        )
+        for v in visits
+    ]
 
 
 @router.get("/outstanding-check")
@@ -616,6 +882,7 @@ async def create_companion_visit_from_government_export(
         external_visit_number=vn,
         client_name=client_name,
         status="open",
+        source="excel",
         created_by=get_effective_creator_id(db, current_user),
     )
     db.add(visit_obj)
@@ -2517,28 +2784,71 @@ def parse_drugs_excel(
     return [ParsedDrugLine(drug_name=x["drug_name"], quantity=x["quantity"]) for x in lines]
 
 
+def _parse_ghims_unmatched(raw: Optional[str]) -> List[Dict[str, Any]]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [row for row in data if isinstance(row, dict)]
+
+
+def _maybe_sync_companion_from_ghims(
+    db: Session,
+    *,
+    card_number: Optional[str] = None,
+    visit_number: Optional[str] = None,
+) -> None:
+    """Queue a GHIMS pull. The list itself is answered from data already saved."""
+    try:
+        from app.services.ghims_companion_sync import (
+            live_sync_enabled,
+            schedule_patient_sync,
+            schedule_visitation_sync,
+        )
+
+        if not live_sync_enabled(db):
+            return
+        card = str(card_number or "").strip()
+        visit = str(visit_number or "").strip()
+        if card:
+            schedule_patient_sync(card)
+        if visit:
+            schedule_visitation_sync(visit)
+    except Exception:
+        logging.getLogger(__name__).exception("GHIMS co-payment sync skipped")
+
+
 def _visit_to_response(
     visit: CompanionVisit,
     db: Session,
     billing: Optional[Tuple[float, float, float]] = None,
+    items: Optional[List[CompanionVisitItem]] = None,
+    user_names: Optional[Dict[int, str]] = None,
 ) -> CompanionVisitResponse:
     """Build visit response with optional undertaking_*_by_name fields and billing totals."""
-    req_by_name = None
-    if getattr(visit, "undertaking_requested_by_id", None):
-        u = db.query(User).filter(User.id == visit.undertaking_requested_by_id).first()
-        if u:
-            req_by_name = u.full_name or u.username
-    approved_by_name = None
-    if getattr(visit, "undertaking_approved_by_id", None):
-        u = db.query(User).filter(User.id == visit.undertaking_approved_by_id).first()
-        if u:
-            approved_by_name = u.full_name or u.username
-    unapproved_by_name = None
-    if getattr(visit, "undertaking_unapproved_by_id", None):
-        u = db.query(User).filter(User.id == visit.undertaking_unapproved_by_id).first()
-        if u:
-            unapproved_by_name = u.full_name or u.username
-    items_for_admission = db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit.id).all()
+
+    def _user_name(user_id: Optional[int]) -> Optional[str]:
+        if not user_id:
+            return None
+        if user_names is not None:
+            return user_names.get(user_id)
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+        return user.full_name or user.username
+
+    req_by_name = _user_name(getattr(visit, "undertaking_requested_by_id", None))
+    approved_by_name = _user_name(getattr(visit, "undertaking_approved_by_id", None))
+    unapproved_by_name = _user_name(getattr(visit, "undertaking_unapproved_by_id", None))
+    items_for_admission = (
+        items
+        if items is not None
+        else db.query(CompanionVisitItem).filter(CompanionVisitItem.companion_visit_id == visit.id).all()
+    )
     if billing is None:
         dep = float(getattr(visit, "undertaking_deposit_amount", None) or 0)
         billing = _billing_summary_for_items(items_for_admission, dep)
@@ -2579,6 +2889,11 @@ def _visit_to_response(
         bill_total=bill_total,
         paid_amount=paid_amount,
         balance_due=balance_due,
+        source=getattr(visit, "source", None),
+        ghims_synced_at=getattr(visit, "ghims_synced_at", None),
+        ghims_visit_date=getattr(visit, "ghims_visit_date", None),
+        ghims_sync_note=getattr(visit, "ghims_sync_note", None),
+        ghims_unmatched=_parse_ghims_unmatched(getattr(visit, "ghims_unmatched_json", None)),
     )
 
 
@@ -2592,6 +2907,17 @@ def get_companion_visit(
     visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
     if not visit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    try:
+        from app.services.ghims_companion_sync import (
+            live_sync_enabled,
+            schedule_visit_refresh,
+            visit_needs_ghims_refresh,
+        )
+
+        if live_sync_enabled(db) and visit_needs_ghims_refresh(visit):
+            schedule_visit_refresh(visit.id)
+    except Exception:
+        logging.getLogger(__name__).exception("GHIMS refresh failed for companion visit %s", visit_id)
     return _visit_to_response(visit, db)
 
 
@@ -3104,6 +3430,7 @@ class CompanionVisitItemResponse(BaseModel):
     payment_method: Optional[str] = None
     admission_deposit_applied: Optional[float] = None
     admission_deposit_line_receipt: Optional[str] = None
+    needs_copay_price: bool = False
 
     class Config:
         from_attributes = True
@@ -3174,6 +3501,7 @@ def list_companion_visit_items(
                 "payment_method": it.payment_method,
                 "admission_deposit_applied": getattr(it, "admission_deposit_applied", None),
                 "admission_deposit_line_receipt": getattr(it, "admission_deposit_line_receipt", None),
+                "needs_copay_price": bool(getattr(it, "needs_copay_price", False)),
             }
         )
     return out
@@ -3430,6 +3758,152 @@ def update_companion_visit_item(
         item.item_name = (data.item_name or "").strip() or item.item_name
     if data.unit_price is not None:
         item.unit_price = float(data.unit_price)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+class SetCopayPriceBody(BaseModel):
+    unit_price: float
+
+
+def _unique_copay_code(db: Session) -> str:
+    import uuid
+
+    from app.models.procedure_price import ProcedurePrice
+    from app.models.product_price import ProductPrice
+
+    for _ in range(8):
+        code = "CP-" + uuid.uuid4().hex[:8].upper()
+        procedure = db.query(ProcedurePrice.id).filter(ProcedurePrice.g_drg_code == code).first()
+        product = db.query(ProductPrice.id).filter(ProductPrice.medication_code == code).first()
+        if procedure is None and product is None:
+            return code
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not create a price list code")
+
+
+def _save_copayment_to_price_list(db: Session, name: str, category: str, amount: float) -> str:
+    """Store a co-payment the user typed, so the next GHIMS sync can price the same service."""
+    from sqlalchemy import func
+
+    from app.models.procedure_price import ProcedurePrice
+    from app.models.product_price import ProductPrice
+
+    clean = " ".join((name or "").split())
+    if not clean:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Service name is empty")
+    target = clean.lower()
+    amount = round(float(amount), 2)
+    if (category or "").strip().lower() == "drug":
+        existing = (
+            db.query(ProductPrice)
+            .filter(
+                ProductPrice.is_active == True,  # noqa: E712
+                func.lower(func.trim(ProductPrice.product_name)) == target,
+            )
+            .first()
+        )
+        if existing:
+            existing.nhia_claim_co_payment = amount
+            code = (existing.medication_code or existing.g_drg_code or "").strip()
+            if not code:
+                code = _unique_copay_code(db)
+                existing.medication_code = code
+                existing.g_drg_code = code
+            return code[:50]
+        code = _unique_copay_code(db)
+        db.add(
+            ProductPrice(
+                product_name=clean[:500],
+                medication_code=code,
+                g_drg_code=code,
+                service_name=clean[:500],
+                base_rate=0.0,
+                nhia_claim_co_payment=amount,
+                insurance_covered="yes",
+                is_active=True,
+            )
+        )
+        return code
+
+    service_type = _category_to_service_type(category) or "INVESTIGATIONS"
+    existing = (
+        db.query(ProcedurePrice)
+        .filter(
+            ProcedurePrice.is_active == True,  # noqa: E712
+            ProcedurePrice.service_type == service_type,
+            func.lower(func.trim(ProcedurePrice.service_name)) == target,
+        )
+        .first()
+    )
+    if existing:
+        existing.nhia_claim_co_payment = amount
+        return str(existing.g_drg_code)[:50]
+    code = _unique_copay_code(db)
+    db.add(
+        ProcedurePrice(
+            g_drg_code=code,
+            service_type=service_type,
+            service_name=clean[:500],
+            base_rate=0.0,
+            nhia_claim_co_payment=amount,
+            insurance_covered="yes",
+            is_active=True,
+        )
+    )
+    return code
+
+
+def _apply_saved_copay_price(item: CompanionVisitItem, code: str, amount: float) -> None:
+    item.item_code = code[:50]
+    item.unit_price = amount
+    item.needs_copay_price = False
+
+
+@router.post("/{visit_id}/items/{item_id}/copay-price", response_model=CompanionVisitItemResponse)
+def set_companion_item_copay_price(
+    visit_id: int,
+    item_id: int,
+    data: SetCopayPriceBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Records", "Admin"])),
+):
+    """Enter the co-payment for a GHIMS service that was not on the price list, and save that price."""
+    if data.unit_price is None or float(data.unit_price) < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enter a co-payment amount of zero or more")
+    visit = db.query(CompanionVisit).filter(CompanionVisit.id == visit_id).first()
+    if not visit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if visit.status != "open":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit items on a closed visit")
+    item = db.query(CompanionVisitItem).filter(
+        CompanionVisitItem.id == item_id,
+        CompanionVisitItem.companion_visit_id == visit_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if not getattr(item, "needs_copay_price", False):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This line already has a co-payment price")
+    if _companion_item_cancelled(item):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This line is cancelled")
+    amount = round(float(data.unit_price), 2)
+    code = _save_copayment_to_price_list(db, item.item_name, item.category, amount)
+    _apply_saved_copay_price(item, code, amount)
+    target = " ".join((item.item_name or "").split()).lower()
+    siblings = (
+        db.query(CompanionVisitItem)
+        .filter(
+            CompanionVisitItem.needs_copay_price == True,  # noqa: E712
+            CompanionVisitItem.cancelled == False,  # noqa: E712
+            CompanionVisitItem.id != item.id,
+        )
+        .all()
+    )
+    for other in siblings:
+        other_name = " ".join((other.item_name or "").split()).lower()
+        if other_name != target or (other.category or "") != (item.category or ""):
+            continue
+        _apply_saved_copay_price(other, code, amount)
     db.commit()
     db.refresh(item)
     return item

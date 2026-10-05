@@ -5,6 +5,7 @@ export function companionItemRowAmount(row) {
 }
 
 export function isCompanionBillItemPaid(row) {
+  if (row.needs_copay_price) return false;
   if (companionItemRowAmount(row) === 0) return true;
   const T = companionItemRowAmount(row);
   const ln = String(row.admission_deposit_line_receipt || '').trim();
@@ -24,6 +25,7 @@ export function isCompanionBillItemPaid(row) {
 }
 
 export function companionBillPaidLabel(row) {
+  if (row.needs_copay_price) return 'Price not set';
   if (companionItemRowAmount(row) === 0) return 'Paid (0.00)';
   const ln = String(row.admission_deposit_line_receipt || '').trim();
   const rn = String(row.receipt_number || '').trim();

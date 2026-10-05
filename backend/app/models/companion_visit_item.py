@@ -36,6 +36,11 @@ class CompanionVisitItem(Base):
     payment_method = Column(String(50), nullable=True)  # cash, admission_deposit, mixed, etc.
     admission_deposit_applied = Column(Float, nullable=True)  # portion taken from visit admission deposit pool
     admission_deposit_line_receipt = Column(String(50), nullable=True)  # synthetic e.g. BASE-1 when pool applied
+    # Set when the line was created by live GHIMS sync. Manual and Excel lines leave these null.
+    ghims_source_type = Column(String(30), nullable=True)
+    ghims_source_id = Column(String(150), nullable=True)
+    # Completed in GHIMS, but no co-payment price exists yet. The line stays on the bill until someone enters one.
+    needs_copay_price = Column(Boolean, default=False, nullable=False)
 
     def __repr__(self):
         return f"<CompanionVisitItem {self.item_code} - {self.item_name}>"

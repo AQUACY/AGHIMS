@@ -11,6 +11,10 @@
       </template>
     </HmsPageHeader>
 
+    <q-banner v-if="ghimsLiveSync" class="bg-blue-1 text-dark q-mb-md" rounded>
+      Live GHIMS sync is on. Insured patients get a co-payment bill when a service is done or a medicine is dispensed. Excel upload and manual create are still available.
+    </q-banner>
+
     <!-- Create visit from GHIMS government export -->
     <section class="diag-panel">
       <div class="panel-head">
@@ -172,6 +176,13 @@
             </div>
             <div v-if="selectedVisit.undertaking_unapproved_by_name" class="q-mt-xs text-caption text-grey-8">
               Unapproved by <strong>{{ selectedVisit.undertaking_unapproved_by_name }}</strong> on {{ formatDate(selectedVisit.undertaking_unapproved_at) }}
+            </div>
+            <div v-if="selectedVisit.ghims_sync_note" class="text-caption text-warning q-mt-sm">
+              {{ selectedVisit.ghims_sync_note }}
+            </div>
+            <div v-if="unmatchedGhimsLines.length" class="text-caption text-warning q-mt-sm">
+              Completed in GHIMS, no co-payment price yet:
+              {{ unmatchedGhimsLines.map((row) => row.description).join(', ') }}
             </div>
           </div>
         </div>
@@ -410,6 +421,9 @@
                         {{ formatOxygenPeriod(props.row) }}
                       </div>
                       <div v-if="props.row.created_by_name" class="text-caption text-grey-7">Added by: {{ props.row.created_by_name }}</div>
+                      <div v-if="props.row.needs_copay_price && !props.row.cancelled" class="text-caption text-warning q-mt-xs">
+                        Not on the price list. Enter the co-payment and it will be saved for next time.
+                      </div>
                       <div v-if="props.row.cancelled" class="text-caption text-negative q-mt-xs">
                         Cancelled {{ formatDate(props.row.cancelled_at) }} by {{ props.row.cancelled_by_name || '—' }} — {{ props.row.cancel_reason || '—' }}
                       </div>
@@ -419,15 +433,43 @@
                     <q-td :props="props">{{ formatDate(props.row.created_at) }}</q-td>
                   </template>
                   <template v-slot:body-cell-unit_price="props">
-                    <q-td :props="props">GH¢ {{ formatPrice(props.row.unit_price) }}</q-td>
+                    <q-td :props="props">
+                      <div v-if="props.row.needs_copay_price && !props.row.cancelled" class="row items-center no-wrap q-gutter-xs">
+                        <q-input
+                          v-model.number="copayDrafts[props.row.id]"
+                          type="number"
+                          dense
+                          outlined
+                          prefix="GH¢"
+                          min="0"
+                          step="0.01"
+                          placeholder="0.00"
+                          style="width: 120px"
+                          @keyup.enter="saveCopayPrice(props.row)"
+                        />
+                        <q-btn
+                          dense
+                          unelevated
+                          color="primary"
+                          label="Save"
+                          :loading="savingCopayId === props.row.id"
+                          @click="saveCopayPrice(props.row)"
+                        />
+                      </div>
+                      <span v-else>GH¢ {{ formatPrice(props.row.unit_price) }}</span>
+                    </q-td>
                   </template>
                   <template v-slot:body-cell-amount="props">
-                    <q-td :props="props">GH¢ {{ formatPrice((props.row.unit_price || 0) * (props.row.quantity || 1)) }}</q-td>
+                    <q-td :props="props">
+                      <span v-if="props.row.needs_copay_price && !props.row.cancelled" class="text-warning">Set price</span>
+                      <span v-else>GH¢ {{ formatPrice((props.row.unit_price || 0) * (props.row.quantity || 1)) }}</span>
+                    </q-td>
                   </template>
                   <template v-slot:body-cell-paid="props">
                     <q-td :props="props">
                       <q-badge v-if="props.row.cancelled" color="negative">Cancelled</q-badge>
-                      <template v-if="isPaidRow(props.row)">
+                      <q-badge v-else-if="props.row.needs_copay_price" color="warning">Price needed</q-badge>
+                      <template v-else-if="isPaidRow(props.row)">
                         <q-badge color="positive">{{ paidLabel(props.row) }}</q-badge>
                         <div v-if="props.row.paid_at" class="text-caption text-grey-7">{{ formatDate(props.row.paid_at) }}</div>
                       </template>
@@ -436,7 +478,7 @@
                   </template>
                   <template v-slot:body-cell-actions="props">
                     <q-td :props="props">
-                      <template v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open' && !isPaidRow(props.row) && !props.row.cancelled">
+                      <template v-if="canMarkPaid && selectedVisit && selectedVisit.status === 'open' && !isPaidRow(props.row) && !props.row.cancelled && !props.row.needs_copay_price">
                         <q-btn
                           flat
                           dense
@@ -1500,11 +1542,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../../stores/auth';
 import { useFacilityStore } from '../../stores/facility';
-import { companionVisitsAPI, billingAPI } from '../../services/api';
+import { companionVisitsAPI, billingAPI, moduleSettingsAPI } from '../../services/api';
 import CompanionBillingReceiptDialog from '../../components/companion/CompanionBillingReceiptDialog.vue';
 import HmsPageHeader from '../../components/ui/HmsPageHeader.vue';
 import HmsButton from '../../components/ui/HmsButton.vue';
@@ -1521,11 +1563,27 @@ const creatingFromExport = ref(false);
 const searched = ref(false);
 const visits = ref([]);
 const selectedVisit = ref(null);
+const copayDrafts = reactive({});
+const savingCopayId = ref(null);
 const billItems = ref([]);
 const filters = reactive({
   card_number: '',
   visit_number: '',
   status: null,
+});
+const ghimsLiveSync = ref(false);
+const unmatchedGhimsLines = computed(() => {
+  const rows = selectedVisit.value?.ghims_unmatched;
+  return Array.isArray(rows) ? rows : [];
+});
+
+onMounted(async () => {
+  try {
+    const res = await moduleSettingsAPI.getStatus('companion_ghims_live');
+    ghimsLiveSync.value = !!res.data?.is_active;
+  } catch {
+    ghimsLiveSync.value = false;
+  }
 });
 const statusOptions = [
   { label: 'Open', value: 'open' },
@@ -1786,6 +1844,7 @@ function admissionAppliedOnRow(row) {
 }
 
 function isPaidRow(row) {
+  if (row.needs_copay_price) return false;
   if (rowAmount(row) === 0) return true;
   const T = rowAmount(row);
   const d = admissionAppliedOnRow(row);
@@ -1803,6 +1862,29 @@ function isPaidRow(row) {
     return Boolean(ln && rn);
   }
   return Boolean(rn);
+}
+
+async function saveCopayPrice(row) {
+  if (!selectedVisit.value || !row) return;
+  const amount = Number(copayDrafts[row.id]);
+  if (!Number.isFinite(amount) || amount < 0) {
+    $q.notify({ type: 'warning', message: 'Enter the co-payment amount', position: 'top' });
+    return;
+  }
+  savingCopayId.value = row.id;
+  try {
+    await companionVisitsAPI.setCopayPrice(selectedVisit.value.id, row.id, amount);
+    $q.notify({ type: 'positive', message: 'Co-payment saved to the price list', position: 'top' });
+    await selectVisit(selectedVisit.value);
+  } catch (e) {
+    $q.notify({
+      type: 'negative',
+      message: e.response?.data?.detail || 'Could not save the co-payment',
+      position: 'top',
+    });
+  } finally {
+    savingCopayId.value = null;
+  }
 }
 
 function isCancelledRow(row) {

@@ -52,6 +52,22 @@
       </q-card-section>
     </q-card>
 
+    <q-card class="q-mb-md glass-card" flat>
+      <q-card-section>
+        <div class="text-h6 q-mb-sm glass-text">Copayment</div>
+        <div class="text-caption q-mb-md">
+          When enabled, Copayment reads insured visits from GHIMS. A service is billed only after it is done, and a medicine only after it is dispensed. Excel upload and manual create stay available. Leave this off when this facility has no GHIMS database login.
+        </div>
+        <q-toggle
+          :model-value="ghimsLiveSync"
+          label="Live GHIMS co-payment sync"
+          color="primary"
+          :loading="togglingGhimsLive"
+          @update:model-value="updateGhimsLiveToggle"
+        />
+      </q-card-section>
+    </q-card>
+
     <q-card v-if="isSuperAdmin" class="q-mb-md glass-card" flat>
       <q-card-section>
         <div class="text-h6 q-mb-sm glass-text">Facility Mode Setup</div>
@@ -261,6 +277,7 @@ const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 const GHIMS_MODULE_KEY = 'ghims';
 const CLAIMS_MODULE_KEY = 'claims';
 const AI_CLAIMS_VETTING_MODULE_KEY = 'ai_claims_vetting';
+const GHIMS_LIVE_SYNC_MODULE_KEY = 'companion_ghims_live';
 const APP_MODE_MODULE_KEY_SET = new Set(Object.values(APP_MODE_MODULE_KEYS));
 /** Shown in dedicated toggles above, not the modules table */
 const DEDICATED_TOGGLE_MODULE_KEYS = new Set([
@@ -268,11 +285,14 @@ const DEDICATED_TOGGLE_MODULE_KEYS = new Set([
   GHIMS_MODULE_KEY,
   CLAIMS_MODULE_KEY,
   AI_CLAIMS_VETTING_MODULE_KEY,
+  GHIMS_LIVE_SYNC_MODULE_KEY,
 ]);
 const togglingMode = ref(null);
 const togglingGhims = ref(false);
 const togglingClaims = ref(false);
 const togglingAiVetting = ref(false);
+const togglingGhimsLive = ref(false);
+const ghimsLiveSync = ref(false);
 const claimsModuleActive = ref(false);
 const aiClaimsVettingActive = ref(false);
 const ghimsCardMode = ref(false);
@@ -419,6 +439,43 @@ const updateClaimsToggle = async (value) => {
     });
   } finally {
     togglingClaims.value = false;
+  }
+};
+
+const loadGhimsLiveToggle = async () => {
+  try {
+    const res = await moduleSettingsAPI.getStatus(GHIMS_LIVE_SYNC_MODULE_KEY);
+    ghimsLiveSync.value = !!res.data?.is_active;
+  } catch (error) {
+    ghimsLiveSync.value = false;
+    console.error('Error loading live GHIMS co-payment sync status:', error);
+  }
+};
+
+const updateGhimsLiveToggle = async (value) => {
+  const previousValue = ghimsLiveSync.value;
+  ghimsLiveSync.value = value;
+  try {
+    togglingGhimsLive.value = true;
+    await moduleSettingsAPI.update(GHIMS_LIVE_SYNC_MODULE_KEY, { is_active: value });
+    moduleSettingsStore.clearCache();
+    await moduleSettingsStore.fetchModuleStatus(GHIMS_LIVE_SYNC_MODULE_KEY);
+    ghimsLiveSync.value = moduleSettingsStore.isModuleActive(GHIMS_LIVE_SYNC_MODULE_KEY);
+    $q.notify({
+      type: 'positive',
+      message: value ? 'Live GHIMS co-payment sync is on' : 'Live GHIMS co-payment sync is off',
+      position: 'top',
+    });
+  } catch (error) {
+    ghimsLiveSync.value = previousValue;
+    const detail = error?.response?.data?.detail;
+    $q.notify({
+      type: 'negative',
+      message: typeof detail === 'string' ? detail : 'Failed to update live GHIMS co-payment sync',
+      position: 'top',
+    });
+  } finally {
+    togglingGhimsLive.value = false;
   }
 };
 
@@ -614,6 +671,7 @@ onMounted(() => {
   loadGhimsToggle();
   loadClaimsToggle();
   loadAiClaimsVettingToggle();
+  loadGhimsLiveToggle();
   loadModeSetup();
 });
 </script>

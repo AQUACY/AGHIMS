@@ -266,6 +266,8 @@ export const companionVisitsAPI = {
     api.get(`/companion-visits/${visitId}/items`, { params: category ? { category } : {} }),
   addItem: (visitId, data) => api.post(`/companion-visits/${visitId}/items`, data),
   updateItem: (visitId, itemId, data) => api.patch(`/companion-visits/${visitId}/items/${itemId}`, data),
+  setCopayPrice: (visitId, itemId, unitPrice) =>
+    api.post(`/companion-visits/${visitId}/items/${itemId}/copay-price`, { unit_price: unitPrice }),
   deleteItem: (visitId, itemId) => api.delete(`/companion-visits/${visitId}/items/${itemId}`),
   markItemsPaid: (visitId, data) => api.post(`/companion-visits/${visitId}/items/mark-paid`, data),
   refundItems: (visitId, itemIds) =>
@@ -928,6 +930,11 @@ export const claimsAPI = {
     api.get(`/claims/ghims-import/batches/${batchId}/claim-totals`),
   deleteGhimsImportBatch: (batchId) => api.delete(`/claims/ghims-import/batches/${batchId}`),
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
+  ghimsLiveCompareItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/ghims-live-compare`, { timeout: 60000 }),
+  listGhimsMonths: () => api.get('/claims/ghims-months', { timeout: 60000 }),
+  getGhimsMonth: (monthKey) => api.get(`/claims/ghims-months/${encodeURIComponent(monthKey)}`, { timeout: 60000 }),
+  syncGhimsMonth: (monthKey) => api.post(`/claims/ghims-months/${encodeURIComponent(monthKey)}/sync`, {}, { timeout: 180000 }),
+  backfillGhimsMonth: (monthKey) => api.post(`/claims/ghims-months/${encodeURIComponent(monthKey)}/backfill`, {}, { timeout: 180000 }),
   getGhimsRelatedItems: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/related`),
   updateGhimsImportItem: (itemId, payload) => api.put(`/claims/ghims-import/items/${itemId}`, { payload }),
   finalizeGhimsImportItem: (itemId) => api.patch(`/claims/ghims-import/items/${itemId}/finalize`),

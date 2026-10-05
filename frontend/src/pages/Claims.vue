@@ -68,6 +68,7 @@ import {
   BookOpen,
   Sparkles,
   Bot,
+  CalendarDays,
 } from 'lucide-vue-next';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsCard from '../components/ui/HmsCard.vue';
@@ -93,7 +94,7 @@ const groups = computed(() => {
   const work = {
     id: 'work',
     label: 'Daily work',
-    note: 'Overview, generate, and export for ClaimIT',
+    note: 'Monthly GHIMS workbench, generate, and export for ClaimIT',
     modules: [
       {
         title: 'Dashboard',
@@ -102,6 +103,14 @@ const groups = computed(() => {
         icon: LayoutDashboard,
         color: 'var(--hms-accent)',
         bg: 'var(--hms-accent-muted)',
+      },
+      {
+        title: 'GHIMS monthly claims',
+        hint: 'Approved GHIMS claims by working month — view, edit, export, pharmacy-vet',
+        path: '/claims/ghims-months',
+        icon: CalendarDays,
+        color: 'var(--hms-healthcare)',
+        bg: 'var(--hms-healthcare-muted)',
       },
       {
         title: 'Claims list',

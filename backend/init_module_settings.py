@@ -187,6 +187,13 @@ DEFAULT_MODULES = [
         "category": "administrative",
         "display_order": 24
     },
+    {
+        "module_key": "companion_ghims_live",
+        "module_name": "Live GHIMS co-payment sync",
+        "description": "When enabled, Copayment reads insured visits from the GHIMS database. Only completed services and dispensed medicines are billed. Excel upload and manual create stay available.",
+        "category": "core",
+        "display_order": 25
+    },
 ]
 
 
@@ -224,7 +231,7 @@ def init_module_settings():
                             module_key=module_data["module_key"],
                             module_name=module_data["module_name"],
                             description=module_data.get("description", ""),
-                            is_active=module_data["module_key"] not in ("ghims", "ai_claims_vetting"),
+                            is_active=module_data["module_key"] not in ("ghims", "ai_claims_vetting", "companion_ghims_live"),
                             allow_read=True,
                             allow_create=True,
                             allow_update=True,
@@ -285,7 +292,7 @@ def init_module_settings():
                 existing = cursor.fetchone()
                 
                 if not existing:
-                    ghims_active = module_data["module_key"] not in ("ghims", "ai_claims_vetting")
+                    ghims_active = module_data["module_key"] not in ("ghims", "ai_claims_vetting", "companion_ghims_live")
                     cursor.execute("""
                         INSERT INTO module_settings 
                         (module_key, module_name, description, is_active, allow_read, 
