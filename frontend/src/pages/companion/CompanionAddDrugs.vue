@@ -52,11 +52,13 @@
                 <q-item-label class="text-weight-medium" :style="item.cancelled ? 'text-decoration: line-through; opacity: 0.75;' : ''">
                   {{ item.item_name }}
                 </q-item-label>
-                <q-item-label caption>{{ item.item_code }} · {{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }} = GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
+                <q-item-label caption>{{ item.item_code }} · Qty {{ item.quantity }} × GH¢ {{ formatPrice(item.unit_price) }} = GH¢ {{ formatPrice(item.unit_price * item.quantity) }}</q-item-label>
                 <q-item-label v-if="item.needs_copay_price && !item.cancelled" caption class="text-warning">
                   Co-payment price not set. Enter it on the billing page so it is saved to the price list.
                 </q-item-label>
-                <q-item-label v-if="item.created_at" caption class="text-grey-7 q-mt-xs">Service date & time: {{ formatDateTime(item.created_at) }}</q-item-label>
+                <q-item-label v-if="item.start_time || item.created_at" caption class="text-grey-7 q-mt-xs">
+                  Dispensed: {{ formatDateTime(item.start_time || item.created_at) }}
+                </q-item-label>
                 <q-item-label v-if="item.cancelled" caption class="text-negative q-mt-xs">
                   Cancelled {{ formatDateTime(item.cancelled_at) }} by {{ item.cancelled_by_name || '—' }} — {{ item.cancel_reason || '—' }}
                 </q-item-label>

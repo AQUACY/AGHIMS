@@ -288,6 +288,57 @@ class DispensedQuantityTests(unittest.TestCase):
         )
         self.assertEqual(lines[0]["quantity"], 15.0)
 
+    def test_dispense_amt_from_pharmacy_screen_beats_sale_qty_of_one(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[],
+            sales=[
+                {
+                    "DrugSaleID": "DE-1",
+                    "VisitationID": "VE-1",
+                    "PrescriptionID": "RX-1",
+                    "DrugID": "D1",
+                    "DrugName": "Omeprazole Injection 40mg",
+                    "Qty": 1,
+                    "DispenseAmt1": 2,
+                    "DispenseDate": "2026-10-05 15:39:56",
+                }
+            ],
+        )
+        self.assertEqual(lines[0]["quantity"], 2.0)
+        self.assertIsNotNone(lines[0]["service_at"])
+
+    def test_later_dispense_on_visit_c_is_included_even_if_prescription_is_still_new(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[
+                {
+                    "VisitationID": "VE-1",
+                    "PrescriptionID": "RX-P",
+                    "DrugID": "D-PARA",
+                    "PrescriptionStatusID": "P001",
+                    "DrugName": "Paracetamol Injection 1000 MG",
+                    "Qty": 1,
+                }
+            ],
+            sales=[
+                {
+                    "DrugSaleID": "DE-2",
+                    "VisitationID": "VE-1-C",
+                    "DrugID": "D-PARA",
+                    "DrugName": "Paracetamol Injection 1000 MG",
+                    "Qty": 2,
+                    "DispenseDate": "2026-10-05 15:41:27",
+                }
+            ],
+        )
+        self.assertEqual(
+            [(row["description"], row["quantity"]) for row in lines],
+            [("Paracetamol Injection 1000 MG", 2.0)],
+        )
+
     def test_one_drug_sale_fills_the_only_prescription_when_sale_has_no_prescription_id(self):
         rows = [
             {"VisitationID": "VE-1", "PrescriptionID": "RX-A", "DrugID": "D1", "Qty": 1},
