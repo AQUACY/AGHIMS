@@ -418,6 +418,13 @@
                       <div class="text-body2" :style="props.row.cancelled ? 'text-decoration: line-through; opacity: 0.75;' : ''">
                         {{ props.row.item_name }}
                       </div>
+                      <div
+                        v-if="props.row.category !== 'oxygen' && serviceDoneAt(props.row)"
+                        class="text-caption text-grey-7"
+                      >
+                        {{ props.row.category === 'drug' ? 'Dispensed' : 'Done' }}
+                        {{ formatDate(serviceDoneAt(props.row)) }}
+                      </div>
                       <div v-if="props.row.category === 'oxygen' && props.row.start_time && props.row.end_time" class="text-caption text-grey-7">
                         {{ formatOxygenPeriod(props.row) }}
                       </div>
@@ -431,7 +438,7 @@
                     </q-td>
                   </template>
                   <template v-slot:body-cell-created_at="props">
-                    <q-td :props="props">{{ formatDate(props.row.created_at) }}</q-td>
+                    <q-td :props="props">{{ formatDate(serviceDoneAt(props.row) || props.row.created_at) }}</q-td>
                   </template>
                   <template v-slot:body-cell-unit_price="props">
                     <q-td :props="props">
@@ -1605,7 +1612,7 @@ const billColumns = [
   { name: 'item_name', label: 'Item', field: 'item_name', align: 'left' },
   { name: 'item_code', label: 'Code', field: 'item_code', align: 'left' },
   { name: 'category', label: 'Category', field: 'category', align: 'left' },
-  { name: 'created_at', label: 'Added', field: 'created_at', align: 'left' },
+  { name: 'created_at', label: 'Done / dispensed', field: 'created_at', align: 'left' },
   { name: 'unit_price', label: 'Unit price', align: 'right' },
   { name: 'quantity', label: 'Qty', field: 'quantity', align: 'right' },
   { name: 'amount', label: 'Amount', align: 'right' },
@@ -2161,6 +2168,10 @@ function formatPrice(val) {
   const n = Number(val);
   if (Number.isNaN(n)) return '0.00';
   return n.toFixed(2);
+}
+
+function serviceDoneAt(row) {
+  return row?.start_time || null;
 }
 
 function formatDate(iso) {

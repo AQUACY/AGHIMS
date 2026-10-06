@@ -101,7 +101,12 @@
                   <div class="row items-start justify-between">
                     <div class="col">
                       <div class="text-body2" :class="{ 'text-strike text-grey-6': row.cancelled }">{{ row.item_name }}</div>
-                      <div class="text-caption text-grey-7">{{ row.item_code }} · Qty {{ row.quantity }}</div>
+                      <div class="text-caption text-grey-7">
+                        {{ row.item_code }} · Qty {{ row.quantity }}
+                        <span v-if="row.start_time">
+                          · {{ row.category === 'drug' ? 'Dispensed' : 'Done' }} {{ formatDate(row.start_time) }}
+                        </span>
+                      </div>
                       <div v-if="row.cancelled" class="text-caption text-negative">Cancelled</div>
                       <div v-else-if="isPaidRow(row)" class="text-caption text-positive q-mt-xs">
                         Paid · Receipt <strong>{{ row.receipt_number || '—' }}</strong>
