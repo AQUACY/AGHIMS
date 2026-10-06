@@ -75,7 +75,6 @@ def select_billable_lines(
     labs: List[Dict[str, Any]],
     prescriptions: List[Dict[str, Any]],
     sales: Optional[List[Dict[str, Any]]] = None,
-    sales: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Turn GHIMS rows for one visit into billable co-payment lines.
@@ -111,9 +110,6 @@ def select_billable_lines(
                     "service_at": _parse_visit_date(
                         row.get("BillProcessDate") or row.get("RequestDate")
                     ),
-                    "service_at": _parse_visit_date(
-                        row.get("BillProcessDate") or row.get("RequestDate")
-                    ),
                 }
             )
 
@@ -136,9 +132,6 @@ def select_billable_lines(
                 "source_id": source_id[:150],
                 "description": name[:500],
                 "quantity": qty,
-                "service_at": _parse_visit_date(
-                    row.get("PrescriptionDate") or row.get("LabByDoctorDate1")
-                ),
                 "service_at": _parse_visit_date(
                     row.get("PrescriptionDate") or row.get("LabByDoctorDate1")
                 ),
@@ -182,10 +175,6 @@ def select_billable_lines(
         if source_id in covered_rx or (drug_id and drug_id in covered_drug):
             continue
         name = str(row.get("DrugName") or "").strip() or drug_id
-        drug_id = str(row.get("DrugID") or "").strip()
-        if source_id in covered_rx or (drug_id and drug_id in covered_drug):
-            continue
-        name = str(row.get("DrugName") or "").strip() or drug_id
         qty = dispensed_quantity(row)
         if not source_id or not name or qty <= 0:
             continue
@@ -196,9 +185,6 @@ def select_billable_lines(
                 "description": name[:500],
                 "quantity": qty,
                 "generic": str(row.get("ProdInfo2") or "").strip()[:200],
-                "service_at": _parse_visit_date(
-                    row.get("DispenseDate") or row.get("PrescriptionDate")
-                ),
                 "service_at": _parse_visit_date(
                     row.get("DispenseDate") or row.get("PrescriptionDate")
                 ),
@@ -708,44 +694,19 @@ def _visit_id_keys(visitation_ids: List[str]) -> List[str]:
     return keys
 
 
-def _base_visit_id(value: Any) -> str:
-    vid = str(value or "").strip()
-    if vid.upper().endswith("-C"):
-        return vid[:-2]
-    return vid
-
-
-def _visit_id_keys(visitation_ids: List[str]) -> List[str]:
-    keys: List[str] = []
-    seen = set()
-    for raw in visitation_ids:
-        base = _base_visit_id(raw)
-        for key in (base, f"{base}-C"):
-            if key and key not in seen:
-                seen.add(key)
-                keys.append(key)
-    return keys
-
-
 def attach_issued_quantities(
     prescriptions: List[Dict[str, Any]],
     sales: List[Dict[str, Any]],
 ) -> None:
     """Copy pharmacy dispense qty/date onto the matching prescription row."""
-    """Copy pharmacy dispense qty/date onto the matching prescription row."""
     if not prescriptions or not sales:
         return
-    by_rx: Dict[tuple, Dict[str, Any]] = {}
-    by_drug: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
     by_rx: Dict[tuple, Dict[str, Any]] = {}
     by_drug: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
     for sale in sales:
         qty = dispensed_quantity(sale)
         if qty <= 0:
-        qty = dispensed_quantity(sale)
-        if qty <= 0:
             continue
-        vid = _base_visit_id(sale.get("VisitationID"))
         vid = _base_visit_id(sale.get("VisitationID"))
         drug = str(sale.get("DrugID") or "").strip()
         rx = str(sale.get("PrescriptionID") or "").strip()
@@ -762,16 +723,6 @@ def attach_issued_quantities(
             if prev is None or float(prev.get("IssuedQty") or 0) < qty:
                 by_rx[(vid, rx)] = payload
         if vid and drug:
-            by_drug[(vid, drug)].append(payload)
-    for row in prescriptions:
-        vid = _base_visit_id(row.get("VisitationID"))
-        rx = str(row.get("PrescriptionID") or "").strip()
-        found = by_rx.get((vid, rx))
-        if not found:
-            drug = str(row.get("DrugID") or "").strip()
-            candidates = list(by_drug.get((vid, drug)) or [])
-            found = candidates[0] if len(candidates) == 1 else None
-        if not found:
             by_drug[(vid, drug)].append(payload)
     for row in prescriptions:
         vid = _base_visit_id(row.get("VisitationID"))
@@ -902,12 +853,10 @@ def _apply_one(
         return False
     if bundle is None:
         bundle = _fetch_bundles([vid]).get(vid) or _empty_bundle()
-        bundle = _fetch_bundles([vid]).get(vid) or _empty_bundle()
     lines = select_billable_lines(
         bundle.get("investigations") or [],
         bundle.get("labs") or [],
         bundle.get("prescriptions") or [],
-        bundle.get("sales") or [],
         bundle.get("sales") or [],
     )
     visit = existing
@@ -997,7 +946,6 @@ def _add_unpriced_line(
         category=category,
         unit_price=0.0,
         quantity=float(line["quantity"]),
-        start_time=line.get("service_at"),
         start_time=line.get("service_at"),
         created_by_id=actor_id,
         needs_copay_price=True,
@@ -1239,7 +1187,6 @@ def _fetch_header(visitation_id: str) -> List[Dict[str, Any]]:
 def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     bundles: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         vid: _empty_bundle() for vid in visitation_ids
-        vid: _empty_bundle() for vid in visitation_ids
     }
     for chunk in _chunks(visitation_ids, 80):
         marks = ",".join("?" for _ in chunk)
@@ -1247,7 +1194,6 @@ def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[s
             f"""
             SELECT
               i.VisitationID, i.LabRequestID, i.LabTestID, i.RequestStatusID, i.Qty,
-              i.BillProcessDate, i.RequestDate,
               i.BillProcessDate, i.RequestDate,
               t.LabTestName
             FROM dbo.Investigation i
@@ -1260,7 +1206,6 @@ def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[s
             f"""
             SELECT
               l.VisitationID, l.LabByDoctorID, l.LabTestID, l.LabByDoctorStatusID, l.Qty,
-              l.PrescriptionDate, l.LabByDoctorDate1,
               l.PrescriptionDate, l.LabByDoctorDate1,
               t.LabTestName
             FROM dbo.LabByDoctor l
@@ -1275,7 +1220,6 @@ def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[s
                 SELECT
                   pr.VisitationID, pr.PrescriptionID, pr.DrugID, pr.Qty, pr.PrescriptionStatusID,
                   pr.PrescribeInfo1, pr.PrescInfo1, pr.PrescriptionDate,
-                  pr.PrescribeInfo1, pr.PrescInfo1, pr.PrescriptionDate,
                   dr.DrugName, dr.ProdInfo2
                 FROM dbo.Prescription pr
                 LEFT JOIN dbo.Drug dr ON dr.DrugID = pr.DrugID
@@ -1289,7 +1233,6 @@ def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[s
                 SELECT
                   pr.VisitationID, pr.PrescriptionID, pr.DrugID, pr.Qty, pr.PrescriptionStatusID,
                   pr.PrescriptionDate,
-                  pr.PrescriptionDate,
                   dr.DrugName, dr.ProdInfo2
                 FROM dbo.Prescription pr
                 LEFT JOIN dbo.Drug dr ON dr.DrugID = pr.DrugID
@@ -1299,24 +1242,12 @@ def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[s
             )
         sales = _fetch_issued_sales(chunk)
         attach_issued_quantities(rxs, sales)
-        sales = _fetch_issued_sales(chunk)
-        attach_issued_quantities(rxs, sales)
         attach_nhia_quantities(rxs, _fetch_nhia_medicine_qty(chunk))
         for row in inv:
             bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["investigations"].append(row)
-            bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["investigations"].append(row)
         for row in labs:
             bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["labs"].append(row)
-            bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["labs"].append(row)
         for row in rxs:
-            bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["prescriptions"].append(row)
-        for row in sales:
-            bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["sales"].append(row)
-        for vid in chunk:
-            base = _base_visit_id(vid)
-            bundles.setdefault(base, _empty_bundle())
-            if base != vid:
-                bundles[vid] = bundles[base]
             bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["prescriptions"].append(row)
         for row in sales:
             bundles.setdefault(_base_visit_id(row.get("VisitationID")), _empty_bundle())["sales"].append(row)
@@ -1329,7 +1260,6 @@ def _fetch_bundles(visitation_ids: List[str]) -> Dict[str, Dict[str, List[Dict[s
 
 
 def _empty_bundle() -> Dict[str, List[Dict[str, Any]]]:
-    return {"investigations": [], "labs": [], "prescriptions": [], "sales": []}
     return {"investigations": [], "labs": [], "prescriptions": [], "sales": []}
 
 
@@ -1348,14 +1278,8 @@ def _fetch_issued_sales(visitation_ids: List[str], *, force_reload_plan: bool = 
     del force_reload_plan
     keys = _visit_id_keys(visitation_ids)
     if not keys:
-    """Pharmacy dispense lines from DrugSaleItems and DrugSaleItems2, including visit-C ids."""
-    del force_reload_plan
-    keys = _visit_id_keys(visitation_ids)
-    if not keys:
         return []
     out: List[Dict[str, Any]] = []
-    seen = set()
-    for chunk in _chunks(keys, 80):
     seen = set()
     for chunk in _chunks(keys, 80):
         marks = ",".join("?" for _ in chunk)
@@ -1413,11 +1337,8 @@ def _fetch_issued_sales(visitation_ids: List[str], *, force_reload_plan: bool = 
 def _fetch_nhia_medicine_qty(visitation_ids: List[str]) -> List[Dict[str, Any]]:
     keys = _visit_id_keys(visitation_ids)
     if not keys:
-    keys = _visit_id_keys(visitation_ids)
-    if not keys:
         return []
     out: List[Dict[str, Any]] = []
-    for chunk in _chunks(keys, 80):
     for chunk in _chunks(keys, 80):
         marks = ",".join("?" for _ in chunk)
         try:
@@ -1446,6 +1367,7 @@ def _query(sql: str, params: Optional[List[Any]] = None) -> List[Dict[str, Any]]
         return _rows_as_dicts(cur)
     finally:
         cn.close()
+
 
 
 def repair_duplicate_live_sync(db: Session) -> Dict[str, int]:
