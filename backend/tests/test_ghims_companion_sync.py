@@ -4,6 +4,7 @@ import unittest
 from app.services.ghims_companion_sync import (
     _new_item_id,
     attach_issued_quantities,
+    dispensed_quantity,
     is_cash_visit,
     select_billable_lines,
 )
@@ -348,6 +349,80 @@ class DispensedQuantityTests(unittest.TestCase):
             [{"VisitationID": "VE-1", "DrugID": "D1", "IssuedQty": 14}],
         )
         self.assertEqual(rows[0]["IssuedQty"], 14)
+
+    def test_dispense_cost_is_not_treated_as_quantity(self):
+        # GHIMS pharmacy screen: Qty 6, unit 5, initial/final cost 30.
+        qty = dispensed_quantity(
+            {
+                "DrugName": "Magnesium Sulphate Injection 50%",
+                "Qty": 6,
+                "DispenseAmt1": 30,
+                "UnitCost": 5,
+                "InitAmt": 30,
+                "FinalAmt": 30,
+            }
+        )
+        self.assertEqual(qty, 6.0)
+
+    def test_sale_qty_wins_over_dispense_amount_money_total(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[
+                {
+                    "PrescriptionID": "RX-MG",
+                    "PrescriptionStatusID": "P002",
+                    "DrugID": "MAG",
+                    "DrugName": "Magnesium Sulphate Injection 50%",
+                    "Qty": 1,
+                }
+            ],
+            sales=[
+                {
+                    "PrescriptionID": "RX-MG",
+                    "DrugSaleID": "DS-1",
+                    "DrugID": "MAG",
+                    "DrugName": "Magnesium Sulphate Injection 50%",
+                    "Qty": 6,
+                    "DispenseAmt1": 30,
+                    "UnitCost": 5.0,
+                    "InitAmt": 30.0,
+                    "FinalAmt": 30.0,
+                }
+            ],
+        )
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["quantity"], 6.0)
+
+    def test_sales_line_is_billed_even_when_prescription_is_still_new(self):
+        lines = select_billable_lines(
+            investigations=[],
+            labs=[],
+            prescriptions=[
+                {
+                    "PrescriptionID": "RX-P",
+                    "PrescriptionStatusID": "P001",
+                    "DrugID": "PARA",
+                    "DrugName": "Paracetamol Tablet 500mg",
+                    "Qty": 1,
+                }
+            ],
+            sales=[
+                {
+                    "PrescriptionID": "RX-P",
+                    "DrugSaleID": "DS-2",
+                    "DrugID": "PARA",
+                    "DrugName": "Paracetamol Tablet 500mg",
+                    "Qty": 20,
+                    "DispenseAmt1": 4.0,
+                    "UnitCost": 0.2,
+                    "InitAmt": 4.0,
+                    "FinalAmt": 4.0,
+                }
+            ],
+        )
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["quantity"], 20.0)
 
 
 if __name__ == "__main__":

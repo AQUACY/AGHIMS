@@ -3,8 +3,10 @@ Read-only GHIMS pull into Companion (co-payment) visits.
 
 Insured visits only. A lab is billable once GHIMS shows it was done
 (investigation Ready / Partially Ready, or — when no investigation row
-exists — received at lab / results entered / validated). A medicine is
-billable only when the prescription status is Dispensed.
+exists — received at lab / results entered / validated). Medicines come
+from pharmacy dispense sales when present; otherwise a Dispensed
+prescription is used. Pharmacy Qty is trusted when it is already > 1;
+line cost totals (DispenseAmt1 / FinalAmt) are never treated as quantity.
 
 Never writes to GHIMS.
 """
@@ -77,11 +79,10 @@ def select_billable_lines(
     """
     Turn GHIMS rows for one visit into billable co-payment lines.
 
-    Investigation status wins for a lab test. A pending request (or an
-    investigation that is Not Ready) does not become a line, even if a
-    doctor order exists. Medicines come from pharmacy dispense sales when
-    present (even if the prescription is still marked New); otherwise a
-    Dispensed prescription is used.
+    Investigation status wins for a lab test. Medicines come from pharmacy
+    dispense sales when present (including visit ids ending in -C, and even
+    when the prescription is still New). Otherwise a Dispensed prescription
+    is used. Pharmacy Qty is trusted when it is already > 1.
     """
     inv_by_test: Dict[str, List[Dict[str, Any]]] = {}
     for row in investigations or []:
@@ -146,10 +147,7 @@ def select_billable_lines(
         drug_id = str(sale.get("DrugID") or "").strip()
         rx_id = str(sale.get("PrescriptionID") or "").strip()
         sale_id = str(sale.get("DrugSaleID") or "").strip()
-        name = (
-            str(sale.get("DrugName") or "").strip()
-            or drug_id
-        )
+        name = str(sale.get("DrugName") or "").strip() or drug_id
         source_id = rx_id or f"{sale_id}|{drug_id}".strip("|")
         if not source_id or not name or qty <= 0:
             continue
@@ -159,8 +157,8 @@ def select_billable_lines(
                 "source_id": source_id[:150],
                 "description": name[:500],
                 "quantity": qty,
-                "generic": str(sale.get("ProdInfo2") or sale.get("generic") or "").strip()[:200],
-                "service_at": _parse_visit_date(sale.get("DispenseDate") or sale.get("service_at")),
+                "generic": str(sale.get("ProdInfo2") or "").strip()[:200],
+                "service_at": _parse_visit_date(sale.get("DispenseDate")),
             }
         )
         if rx_id:
@@ -384,19 +382,16 @@ def refresh_companion_visit(db: Session, visit: CompanionVisit, *, force: bool =
             db.commit()
             summary["note"] = "This visit is cash/self-pay in GHIMS."
             return summary
-        sales = _fetch_issued_sales([vid], force_reload_plan=force)
-        summary["pharmacy_sale_rows"] = len(sales)
         bundle = _fetch_bundles([vid]).get(vid) or _empty_bundle()
-        if not summary["pharmacy_sale_rows"]:
-            summary["pharmacy_sale_rows"] = len(bundle.get("sales") or [])
-        # Force path already attached sales inside _fetch_bundles; count resulting drug qty.
+        sales = bundle.get("sales") or _fetch_issued_sales([vid], force_reload_plan=force)
+        summary["pharmacy_sale_rows"] = len(sales)
         drug_lines = [
             line
             for line in select_billable_lines(
                 bundle.get("investigations") or [],
                 bundle.get("labs") or [],
                 bundle.get("prescriptions") or [],
-                bundle.get("sales") or sales,
+                sales,
             )
             if line.get("source_type") == "prescription"
         ]
@@ -571,36 +566,49 @@ def _stated_qty(value: Any) -> float:
 
 
 def dispensed_quantity(row: Dict[str, Any]) -> float:
-    """Best pharmacy quantity. Prescription.Qty is often 1 and is the last resort."""
-    # GHIMS pharmacy screen uses DispenseAmt1; Qty on the sale line is often still 1.
+    """Pharmacy screen quantity.
+
+    Trust Qty when it is already > 1. DispenseAmt1 is sometimes the money
+    total (qty x unit cost), e.g. Magnesium Sulphate Qty 6 / cost 30 — never
+    treat that 30 as quantity. Dose x frequency is only a last resort when Qty
+    stayed at 1 and no sale quantity exists.
+    """
+    qty = _stated_qty(row.get("Qty"))
+    issued = _stated_qty(row.get("IssuedQty"))
+    requested = _stated_qty(row.get("RequestedQty"))
+    nhia = _stated_qty(row.get("NhiaQty"))
     dispense_amt = max(
         _stated_qty(row.get("DispenseAmt1")),
         _stated_qty(row.get("DispenseAmt2")),
     )
-    issued = max(_stated_qty(row.get("IssuedQty")), dispense_amt)
-    requested = _stated_qty(row.get("RequestedQty"))
-    nhia = _stated_qty(row.get("NhiaQty"))
-    prescribed = _stated_qty(row.get("Qty"))
-    derived = _qty_from_directions(row)
-    if dispense_amt > 0:
+    unit = _stated_qty(row.get("UnitCost"))
+    final = _stated_qty(row.get("FinalAmt")) or _stated_qty(row.get("InitAmt"))
+
+    # DispenseAmt1 equals the line cost => it is money, not quantity.
+    if dispense_amt > 0 and final > 0 and abs(dispense_amt - final) < 0.011:
+        dispense_amt = 0.0
+    if dispense_amt > 0 and unit > 0 and qty > 0 and abs(dispense_amt - (qty * unit)) < 0.011:
+        dispense_amt = 0.0
+
+    counted = max(qty, issued)
+    if counted > 1:
+        return qty if qty > 1 else issued
+    if dispense_amt > 1:
         return dispense_amt
-    if issued > 1:
-        return issued
     if requested > 1:
         return requested
     if nhia > 1:
         return nhia
+    derived = _qty_from_directions(row)
     if derived > 1:
         return derived
-    if issued > 0:
-        return issued
+    if counted > 0:
+        return counted
     if requested > 0:
         return requested
     if nhia > 0:
         return nhia
-    if derived > 0:
-        return derived
-    return prescribed if prescribed > 0 else _positive_qty(row.get("Qty"))
+    return _positive_qty(row.get("Qty"))
 
 
 _FREQ_PER_DAY = {
@@ -704,14 +712,16 @@ def attach_issued_quantities(
         rx = str(sale.get("PrescriptionID") or "").strip()
         payload = {
             "IssuedQty": qty,
-            "DispenseAmt1": qty,
+            "Qty": qty,
             "DispenseDate": sale.get("DispenseDate"),
+            "UnitCost": sale.get("UnitCost"),
+            "FinalAmt": sale.get("FinalAmt"),
+            "InitAmt": sale.get("InitAmt"),
         }
         if rx:
-            key = (vid, rx)
-            prev = by_rx.get(key)
+            prev = by_rx.get((vid, rx))
             if prev is None or float(prev.get("IssuedQty") or 0) < qty:
-                by_rx[key] = payload
+                by_rx[(vid, rx)] = payload
         if vid and drug:
             by_drug[(vid, drug)].append(payload)
     for row in prescriptions:
@@ -725,7 +735,7 @@ def attach_issued_quantities(
         if not found:
             continue
         row["IssuedQty"] = found["IssuedQty"]
-        row["DispenseAmt1"] = found["DispenseAmt1"]
+        row["Qty"] = found["Qty"]
         if found.get("DispenseDate"):
             row["DispenseDate"] = found["DispenseDate"]
 
@@ -743,7 +753,7 @@ def attach_nhia_quantities(
         qty = _stated_qty(row.get("qty") if row.get("qty") is not None else row.get("Qty"))
         if qty <= 0:
             continue
-        vid = str(row.get("claimID") or row.get("VisitationID") or "").strip()
+        vid = _base_visit_id(row.get("claimID") or row.get("VisitationID"))
         drug = str(row.get("DrugID") or row.get("medicineCode") or "").strip()
         name = _norm_name(
             row.get("medicineName") or row.get("drugName") or row.get("description") or ""
@@ -755,7 +765,7 @@ def attach_nhia_quantities(
     for row in prescriptions:
         if max(_stated_qty(row.get("IssuedQty")), _stated_qty(row.get("RequestedQty")), _stated_qty(row.get("NhiaQty"))) > 1:
             continue
-        vid = str(row.get("VisitationID") or "").strip()
+        vid = _base_visit_id(row.get("VisitationID"))
         drug = str(row.get("DrugID") or "").strip()
         name = _norm_name(row.get("DrugName") or "")
         qty = by_drug.get((vid, drug), 0.0) or by_name.get((vid, name), 0.0)
@@ -1048,7 +1058,7 @@ def _upsert_lines(
                     item.needs_copay_price = False
             if abs(float(item.quantity or 0) - float(line["quantity"])) > 0.001:
                 item.quantity = float(line["quantity"])
-            if line.get("service_at") and getattr(item, "start_time", None) != line.get("service_at"):
+            if line.get("service_at") is not None:
                 item.start_time = line.get("service_at")
             continue
         if not mutate:
@@ -1061,7 +1071,7 @@ def _upsert_lines(
             by_key[key] = claimed
             if abs(float(claimed.quantity or 0) - float(line["quantity"])) > 0.001:
                 claimed.quantity = float(line["quantity"])
-            if line.get("service_at"):
+            if line.get("service_at") is not None:
                 claimed.start_time = line.get("service_at")
             continue
         ok, extra, reason = _try_add_visit_item_from_government_line(
@@ -1100,7 +1110,7 @@ def _upsert_lines(
             continue
         new_item.ghims_source_type = line["source_type"]
         new_item.ghims_source_id = line["source_id"]
-        if line.get("service_at"):
+        if line.get("service_at") is not None:
             new_item.start_time = line.get("service_at")
         by_key[key] = new_item
 
@@ -1258,11 +1268,8 @@ def _chunks(values: List[str], size: int) -> List[List[str]]:
 
 
 def _normalize_sale_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    qty = dispensed_quantity(row)
     out = dict(row)
-    out["IssuedQty"] = qty
-    if qty > 0:
-        out["Qty"] = qty
+    out["IssuedQty"] = dispensed_quantity(out)
     return out
 
 
@@ -1283,6 +1290,7 @@ def _fetch_issued_sales(visitation_ids: List[str], *, force_reload_plan: bool = 
                 SELECT
                   d.DrugSaleID, d.VisitationID, d.DrugID, d.PrescriptionID,
                   d.DispenseAmt1, d.DispenseAmt2, d.DispenseDate, d.Qty,
+                  d.UnitCost, d.InitAmt, d.FinalAmt,
                   dr.DrugName, dr.ProdInfo2
                 FROM dbo.DrugSaleItems2 d
                 LEFT JOIN dbo.Drug dr ON dr.DrugID = d.DrugID
@@ -1298,6 +1306,7 @@ def _fetch_issued_sales(visitation_ids: List[str], *, force_reload_plan: bool = 
                   CAST(NULL AS float) AS DispenseAmt1,
                   CAST(NULL AS float) AS DispenseAmt2,
                   d.DispenseDate, d.Qty,
+                  d.UnitCost, d.InitAmt, d.FinalAmt,
                   dr.DrugName, dr.ProdInfo2
                 FROM dbo.DrugSaleItems d
                 LEFT JOIN dbo.Drug dr ON dr.DrugID = d.DrugID
@@ -1358,6 +1367,7 @@ def _query(sql: str, params: Optional[List[Any]] = None) -> List[Dict[str, Any]]
         return _rows_as_dicts(cur)
     finally:
         cn.close()
+
 
 
 def repair_duplicate_live_sync(db: Session) -> Dict[str, int]:
