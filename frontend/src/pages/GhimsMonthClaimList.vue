@@ -133,6 +133,26 @@
             :label="ownershipCategory === 'pharmacy' ? 'Pharmacy owner' : 'Doctor owner'"
             class="col-12 col-md-3"
           />
+          <q-select
+            v-model="pharmacyVettedByFilter"
+            :options="pharmacyVettedByOptions"
+            emit-value
+            map-options
+            outlined
+            dense
+            label="Pharmacy vetted by"
+            class="col-12 col-md-3"
+          />
+          <q-select
+            v-model="doctorVettedByFilter"
+            :options="doctorVettedByOptions"
+            emit-value
+            map-options
+            outlined
+            dense
+            label="Doctor vetted by"
+            class="col-12 col-md-3"
+          />
           <q-btn
             v-if="isAdmin"
             flat
@@ -357,8 +377,20 @@
                 </td>
                 <td>
                   <q-badge :color="claimStatusColor(row.status)" :label="vetStatusLabel(row.status)" />
-                  <q-badge v-if="row.pharmacy_vetted" class="q-ml-xs q-mt-xs" dense color="teal" label="Pharmacy" />
-                  <q-badge v-if="row.doctor_vetted" class="q-ml-xs q-mt-xs" dense color="indigo" label="Doctor" />
+                  <q-badge
+                    v-if="row.pharmacy_vetted"
+                    class="q-ml-xs q-mt-xs"
+                    dense
+                    color="teal"
+                    :label="row.pharmacy_vetted_by_name ? `Pharmacy · ${row.pharmacy_vetted_by_name}` : 'Pharmacy'"
+                  />
+                  <q-badge
+                    v-if="row.doctor_vetted"
+                    class="q-ml-xs q-mt-xs"
+                    dense
+                    color="indigo"
+                    :label="row.doctor_vetted_by_name ? `Doctor · ${row.doctor_vetted_by_name}` : 'Doctor'"
+                  />
                   <q-chip
                     v-if="row.status === 'flagged' && row.flag_comment"
                     class="q-ml-sm q-mt-xs"
@@ -708,6 +740,8 @@ const specialtyFilter = ref('all');
 const serviceTypeFilter = ref('all');
 const statusFilter = ref('all');
 const ownerFilter = ref('all');
+const pharmacyVettedByFilter = ref('all');
+const doctorVettedByFilter = ref('all');
 const ageGroupFilter = ref('all');
 const missingSectionsOnly = ref(false);
 const ghanaCardMemberOnly = ref(false);
@@ -1038,6 +1072,38 @@ function rowOwnerName(row, category = ownershipCategory.value) {
   return category === 'pharmacy' ? row?.pharmacy_assigned_to_name : row?.assigned_to_name;
 }
 
+function vetterFilterOptions(rows, idKey, nameKey, noneLabel) {
+  const byId = new Map();
+  rows.forEach((r) => {
+    const id = r?.[idKey];
+    if (id) byId.set(id, r?.[nameKey] || `User #${id}`);
+  });
+  const people = Array.from(byId.entries())
+    .map(([id, name]) => ({ label: name, value: `user:${id}` }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return [
+    { label: 'All', value: 'all' },
+    { label: noneLabel, value: 'none' },
+    ...people,
+  ];
+}
+
+function matchesVetterFilter(row, filterValue, idKey) {
+  if (!filterValue || filterValue === 'all') return true;
+  if (filterValue === 'none') return !row?.[idKey];
+  if (String(filterValue).startsWith('user:')) {
+    return Number(row?.[idKey]) === Number(String(filterValue).slice(5));
+  }
+  return true;
+}
+
+const pharmacyVettedByOptions = computed(() =>
+  vetterFilterOptions(currentBatch.value?.claims || [], 'pharmacy_vetted_by', 'pharmacy_vetted_by_name', 'Not pharmacy vetted')
+);
+const doctorVettedByOptions = computed(() =>
+  vetterFilterOptions(currentBatch.value?.claims || [], 'doctor_vetted_by', 'doctor_vetted_by_name', 'Not doctor vetted')
+);
+
 const ownerFilterOptions = computed(() => {
   const rows = currentBatch.value?.claims || [];
   const byId = new Map();
@@ -1133,6 +1199,8 @@ const filteredClaims = computed(() => {
       const uid = Number(String(ownerFilter.value).slice(5));
       if (Number(rowOwnerId(r)) !== uid) return false;
     }
+    if (!matchesVetterFilter(r, pharmacyVettedByFilter.value, 'pharmacy_vetted_by')) return false;
+    if (!matchesVetterFilter(r, doctorVettedByFilter.value, 'doctor_vetted_by')) return false;
     if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
     const age = claimClientAgeYears(r);
     if (ageGroupFilter.value === 'kids' && !(age !== null && age <= 11)) return false;
@@ -1860,6 +1928,8 @@ function persistFilterState() {
         statusFilter: statusFilter.value,
         ownershipCategory: ownershipCategory.value,
         ownerFilter: ownerFilter.value,
+        pharmacyVettedByFilter: pharmacyVettedByFilter.value,
+        doctorVettedByFilter: doctorVettedByFilter.value,
         missingSectionsOnly: missingSectionsOnly.value,
         ghanaCardMemberOnly: ghanaCardMemberOnly.value,
         likelyDuplicatesOnly: likelyDuplicatesOnly.value,
@@ -1884,6 +1954,8 @@ function restoreFilterState() {
     statusFilter.value = s.statusFilter || 'all';
     ownershipCategory.value = s.ownershipCategory === 'pharmacy' ? 'pharmacy' : 'doctor';
     ownerFilter.value = s.ownerFilter || 'all';
+    pharmacyVettedByFilter.value = s.pharmacyVettedByFilter || 'all';
+    doctorVettedByFilter.value = s.doctorVettedByFilter || 'all';
     missingSectionsOnly.value = Boolean(s.missingSectionsOnly);
     ghanaCardMemberOnly.value = Boolean(s.ghanaCardMemberOnly);
     likelyDuplicatesOnly.value = Boolean(s.likelyDuplicatesOnly);
@@ -1899,12 +1971,14 @@ function clearAllFilters() {
   specialtyFilter.value = 'all';
   statusFilter.value = 'all';
   ownerFilter.value = 'all';
+  pharmacyVettedByFilter.value = 'all';
+  doctorVettedByFilter.value = 'all';
   missingSectionsOnly.value = false;
   ghanaCardMemberOnly.value = false;
   likelyDuplicatesOnly.value = false;
 }
 
-watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, ownerFilter, ownershipCategory, missingSectionsOnly, ghanaCardMemberOnly, likelyDuplicatesOnly, rowsPerPage, filtersLocked], () => {
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, ownerFilter, pharmacyVettedByFilter, doctorVettedByFilter, ownershipCategory, missingSectionsOnly, ghanaCardMemberOnly, likelyDuplicatesOnly, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
 });
