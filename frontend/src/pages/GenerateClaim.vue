@@ -626,7 +626,7 @@ const loadEncounter = async () => {
   error.value = null;
 
   try {
-    const response = await encountersAPI.get(encounterId);
+    const response = await encountersAPI.get(encounterId, { reveal: 'claim' });
     encounter.value = response.data;
     
     // For IPD claims, load ward admission data
@@ -730,7 +730,7 @@ const loadSurgeriesForEncounter = async (encounterId) => {
   try {
     // For OPD, try to find surgeries linked to this encounter
     // First check if there's a ward admission for this encounter
-    const encounterResponse = await encountersAPI.get(encounterId);
+    const encounterResponse = await encountersAPI.get(encounterId, { reveal: 'claim' });
     const encounterData = encounterResponse.data;
     
     // Check if encounter has surgeries via ward admission

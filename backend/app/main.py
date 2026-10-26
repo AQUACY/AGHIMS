@@ -41,6 +41,7 @@ from app.api import (
     inventory_analytics,
     inventory_reports,
     ai_claim_vetting,
+    confidential,
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -54,6 +55,15 @@ import app.models  # This imports all models from __init__.py
 try:
     Base.metadata.create_all(bind=engine)
     print("Database tables verified/created successfully")
+    from app.core.database import SessionLocal
+    from app.services.confidential import ensure_confidential_schema
+
+    _schema_db = SessionLocal()
+    try:
+        ensure_confidential_schema(_schema_db)
+        _schema_db.commit()
+    finally:
+        _schema_db.close()
 except Exception as e:
     print(f"WARNING: Could not create/verify database tables: {e}")
     print("This might be a connection issue. Server will start but database operations may fail.")
@@ -240,6 +250,7 @@ app.include_router(facility_settings.router, prefix="/api")
 app.include_router(inventory_analytics.router, prefix="/api")
 app.include_router(inventory_reports.router, prefix="/api")
 app.include_router(ai_claim_vetting.router, prefix="/api")
+app.include_router(confidential.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

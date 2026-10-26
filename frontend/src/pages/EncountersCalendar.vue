@@ -56,7 +56,7 @@
           v-model="cardSearch"
           type="search"
           class="filter-input"
-          placeholder="Filter by card…"
+          placeholder="Filter by card or code…"
         />
       </div>
     </div>
@@ -128,7 +128,7 @@
                 <span class="status-text">{{ statusLabel(item.status) }}</span>
               </div>
               <div v-if="item.procedure_name || item.department" class="appt-tag">
-                {{ item.procedure_name || item.department }}
+                {{ item.procedure_name || item.department }}<template v-if="item.procedure_g_drg_code"> · {{ item.procedure_g_drg_code }}</template>
               </div>
               <div class="appt-actions" @click.stop>
                 <button type="button" class="mini-btn" title="Edit" @click="editEncounter(item)">Edit</button>
@@ -193,7 +193,9 @@
     <q-dialog v-model="showEditDialog" persistent>
       <q-card style="min-width: 500px">
         <q-card-section>
-          <div class="text-h6">Edit Appointment #{{ currentEncounter?.id }}</div>
+          <div class="text-h6">
+            {{ currentEncounter?.is_confidential ? currentEncounter.confidential_code : `Edit Appointment #${currentEncounter?.id}` }}
+          </div>
         </q-card-section>
 
         <q-card-section>
@@ -246,7 +248,7 @@
               </template>
             </q-select>
 
-            <q-input v-model="editForm.ccc_number" filled label="CCC Number" />
+            <q-input v-if="!currentEncounter?.is_confidential" v-model="editForm.ccc_number" filled label="CCC Number" />
             <q-select v-model="editForm.status" filled :options="statusOptions" label="Status" />
             <div>
               <q-btn label="Save Changes" type="submit" color="primary" />
@@ -324,6 +326,8 @@ const filteredEncounters = computed(() => {
   if (needle) {
     filtered = filtered.filter((e) =>
       (e.patient_card_number || '').toLowerCase().includes(needle)
+      || (e.confidential_code || '').toLowerCase().includes(needle)
+      || (e.is_confidential && (e.patient_name || '').toLowerCase().includes(needle))
     );
   }
 
@@ -457,6 +461,7 @@ const formatTime = (dateString) => {
 };
 
 const displayPatient = (item) => {
+  if (item.is_confidential) return item.confidential_code || item.patient_name || 'Confidential';
   const name = (item.patient_name || 'Patient').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
   return name;
 };
@@ -583,7 +588,9 @@ const editEncounter = async (encounter) => {
 const deleteEncounterConfirm = (encounter) => {
   $q.dialog({
     title: 'Archive Appointment',
-    message: `Are you sure you want to archive Appointment #${encounter.id} for ${encounter.patient_name}? This action cannot be undone.`,
+    message: encounter.is_confidential
+      ? `Archive confidential visit ${encounter.confidential_code || ''}? This action cannot be undone.`
+      : `Are you sure you want to archive Appointment #${encounter.id} for ${encounter.patient_name}? This action cannot be undone.`,
     cancel: true,
     persistent: true,
     ok: {
@@ -651,7 +658,7 @@ const saveEncounterEdit = async () => {
   if (editForm.department !== currentEncounter.value.department) {
     updateData.department = editForm.department;
   }
-  if (editForm.ccc_number !== currentEncounter.value.ccc_number) {
+  if (!currentEncounter.value.is_confidential && editForm.ccc_number !== currentEncounter.value.ccc_number) {
     updateData.ccc_number = editForm.ccc_number || null;
   }
   if (editForm.status !== currentEncounter.value.status) {

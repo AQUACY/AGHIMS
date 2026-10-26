@@ -73,6 +73,15 @@ const routes = [
         meta: { requiresAuth: true },
       },
       {
+        path: '/confidential',
+        name: 'Confidential',
+        component: () => import('../pages/Confidential.vue'),
+        meta: {
+          requiresAuth: true,
+          allowedRoles: ['Records', 'Admin', 'Doctor', 'PA', 'Nurse', 'Lab', 'Lab Head', 'Scan', 'Scan Head', 'Xray', 'Xray Head', 'Claims'],
+        },
+      },
+      {
         path: '/vitals',
         name: 'Vitals',
         component: () => import('../pages/Vitals.vue'),
@@ -262,7 +271,7 @@ const routes = [
         path: '/claims/ghims-import/item/:itemId',
         name: 'GhimsImportedClaimEdit',
         component: () => import('../pages/GhimsImportedClaimEdit.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA', 'Pharmacy', 'Pharmacy Head'] },
       },
       {
         path: '/claims/cxf-tools',
@@ -274,6 +283,12 @@ const routes = [
         path: '/claims/edit/:claimId',
         name: 'EditClaim',
         component: () => import('../pages/EditClaim.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/confidential',
+        name: 'ClaimsConfidential',
+        component: () => import('../pages/Confidential.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {

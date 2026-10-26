@@ -34,6 +34,9 @@
             </div>
           </div>
         </div>
+        <div v-if="confidentialView" class="confidential-banner">
+          Confidential register. Consultations hidden from the general profile are included here, and print uses this copy.
+        </div>
         <div class="hero-actions">
           <HmsButton
             v-if="canAccess(['Admin', 'Records'])"
@@ -975,11 +978,15 @@ const loadPatient = async () => {
   }
 };
 
+const confidentialView = computed(() => String(route.query.confidential || '') === '1');
+
 const loadEncounters = async (patientId) => {
   loadingEncounters.value = true;
   try {
-    const response = await encountersAPI.getPatientEncounters(patientId);
-    patientEncounters.value = response.data;
+    const reveal = confidentialView.value && canAccess(['Admin', 'Doctor', 'PA', 'Claims']);
+    const response = await encountersAPI.getPatientEncounters(patientId, reveal);
+    const rows = response.data || [];
+    patientEncounters.value = reveal ? rows : rows.filter((encounter) => !encounter.is_confidential);
     
     // Load bill information for all encounters
     await loadBillSummary(patientId);
@@ -2260,6 +2267,7 @@ onMounted(async () => {
 .profile-loading { padding:1.25rem; border-radius:var(--hms-radius-xl); background:var(--hms-panel-bg); border:1px solid var(--hms-border); }
 .loading-label { margin-top:0.85rem; color:var(--hms-text-secondary); font-size:var(--hms-text-sm); }
 .patient-hero { position:sticky; top:0.65rem; z-index:5; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0.85rem; padding:1.05rem 1.2rem; border-radius:var(--hms-radius-xl); background:var(--hms-glass-bg-strong); border:1px solid var(--hms-border-strong); box-shadow:var(--hms-shadow-lg), var(--hms-shadow-inner); backdrop-filter:blur(18px); }
+.confidential-banner { flex: 1 0 100%; padding: 0.55rem 0.75rem; border-radius: 8px; background: #fff6e8; color: #7a4b08; font-size: 0.85rem; }
 .hero-main { display:flex; align-items:center; gap:0.85rem; min-width:0; }
 .hero-avatar { width:3.25rem; height:3.25rem; border-radius:9999px; background:linear-gradient(145deg, var(--hms-accent-muted), rgba(6, 182, 212, 0.18)); color:var(--hms-accent); display:inline-flex; align-items:center; justify-content:center; font-weight:750; font-size:var(--hms-text-base); flex-shrink:0; }
 .hero-name-row { display:flex; flex-wrap:wrap; align-items:center; gap:0.45rem; }

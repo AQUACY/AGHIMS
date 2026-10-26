@@ -35,6 +35,8 @@ class EncounterResponse(BaseModel):
     finalized_by_role: Optional[str] = None  # Role of doctor/PA who finalized
     finalized_by_username: Optional[str] = None  # Username of doctor/PA who finalized
     archived: bool = False
+    is_confidential: bool = False
+    confidential_code: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -49,9 +51,31 @@ class EncounterUpdate(BaseModel):
     procedure_name: Optional[str] = None
 
 
+def _confidential_view(db: Session, encounter: Encounter, payload: dict, reveal: Optional[str], user: User) -> dict:
+    from app.models.confidential import ConfidentialCode
+    from app.services.confidential import CLAIM_REVEAL_ROLES, redact_service_payload, user_has_role
+
+    code = None
+    if getattr(encounter, "is_confidential", False):
+        link = getattr(encounter, "code_link", None)
+        if link is not None and getattr(link, "code", None):
+            code = link.code
+        elif encounter.confidential_code_id:
+            row = db.query(ConfidentialCode).filter(ConfidentialCode.id == encounter.confidential_code_id).first()
+            code = row.code if row else None
+    reveal_identity = reveal == "claim" and user_has_role(user, CLAIM_REVEAL_ROLES, db)
+    return redact_service_payload(
+        payload,
+        confidential=bool(getattr(encounter, "is_confidential", False)),
+        code=code,
+        reveal=reveal_identity,
+    )
+
+
 @router.get("/{encounter_id}", response_model=EncounterResponse)
 def get_encounter(
     encounter_id: int,
+    reveal: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _module_check: User = Depends(require_module_permission("encounters", "read"))
@@ -90,7 +114,7 @@ def get_encounter(
         patient_card_number = patient.card_number or ""
         patient_insurance_id = patient.insurance_id or ""
     
-    return {
+    return _confidential_view(db, encounter, {
         "id": encounter.id,
         "patient_id": encounter.patient_id,
         "patient_name": patient_name,
@@ -108,7 +132,7 @@ def get_encounter(
         "finalized_by_role": finalized_by_role,
         "finalized_by_username": finalized_by_username,
         "archived": encounter.archived,
-    }
+    }, reveal, current_user)
 
 
 @router.get("/{encounter_id}/bill-total")
@@ -221,15 +245,25 @@ def update_encounter_status(
 @router.get("/patient/{patient_id}", response_model=List[EncounterResponse])
 def get_patient_encounters(
     patient_id: int,
+    include_confidential: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _module_check: User = Depends(require_module_permission("encounters", "read"))
 ):
-    """Get all encounters for a patient (excluding archived)"""
-    encounters = db.query(Encounter).filter(
+    """Get encounters for a patient. Confidential visits stay off the general profile."""
+    from sqlalchemy import or_
+    from app.services.confidential import REGISTER_ROLES, user_has_role
+
+    query = db.query(Encounter).filter(
         Encounter.patient_id == patient_id,
         Encounter.archived == False
-    ).order_by(Encounter.created_at.desc()).all()
+    )
+    show_confidential = include_confidential and user_has_role(current_user, REGISTER_ROLES, db)
+    if not show_confidential:
+        query = query.filter(
+            or_(Encounter.is_confidential.is_(False), Encounter.is_confidential.is_(None))
+        )
+    encounters = query.order_by(Encounter.created_at.desc()).all()
     return encounters
 
 
@@ -410,16 +444,18 @@ def get_encounters_by_date(
         start_datetime = datetime.combine(target_date, datetime.min.time())
         end_datetime = datetime.combine(target_date, datetime.max.time())
         
-        encounters = db.query(Encounter).filter(
+        from sqlalchemy.orm import joinedload
+
+        encounters = db.query(Encounter).options(joinedload(Encounter.code_link)).filter(
             Encounter.created_at >= start_datetime,
             Encounter.created_at <= end_datetime,
             Encounter.archived == False  # Exclude archived encounters
         ).order_by(Encounter.created_at).all()
         
-        # Include patient information
+        # Include patient information. Confidential visits show the code only.
         result = []
         for encounter in encounters:
-            result.append({
+            result.append(_confidential_view(db, encounter, {
                 "id": encounter.id,
                 "patient_id": encounter.patient_id,
                 "patient_name": f"{encounter.patient.name or ''} {encounter.patient.surname or ''} {encounter.patient.other_names or ''}".strip(),
@@ -431,8 +467,10 @@ def get_encounters_by_date(
                 "ccc_number": encounter.ccc_number,
                 "status": encounter.status,
                 "department": encounter.department,
+                "procedure_g_drg_code": encounter.procedure_g_drg_code,
+                "procedure_name": encounter.procedure_name,
                 "created_at": encounter.created_at,
-            })
+            }, None, current_user))
         
         return result
     except ValueError:

@@ -62,7 +62,7 @@
               <div class="batch-meta">
                 {{ formatDate(b.uploaded_at) }} · {{ b.claim_count }} claim(s) · {{ b.finalized_count || 0 }} finalized
                 · {{ b.pharmacy_vetted_count || 0 }} pharmacy-vetted · {{ b.doctor_vetted_count || 0 }} doctor-vetted
-                · {{ b.assigned_count || 0 }} assigned
+                · {{ b.assigned_count || 0 }} doctor-assigned · {{ b.pharmacy_assigned_count || 0 }} pharmacy-assigned
               </div>
             </div>
             <div v-if="canDeleteImportBatch" class="batch-actions" @click.stop>
@@ -118,7 +118,10 @@
             Pharmacy vetted: {{ batchPharmacyVettedCount }} · Doctor vetted: {{ batchDoctorVettedCount }}
           </div>
           <div class="text-body2 text-blue-grey">
-            Assigned: {{ batchAssignedCount }} · Unassigned: {{ batchUnassignedCount }}
+            {{ ownershipCategoryLabel }} assigned: {{ batchAssignedCount }} · Hanging: {{ batchUnassignedCount }}
+            <span class="text-grey-6 q-ml-sm">
+              (Doctors {{ doctorAssignedCount }}/{{ batchClaimCount }} · Pharmacy {{ pharmacyAssignedCount }}/{{ batchClaimCount }})
+            </span>
           </div>
           <q-checkbox
             :model-value="allExportableSelected"
@@ -181,6 +184,16 @@
             label="Filter by status"
             class="col-12 col-md-3"
           />
+          <q-btn-toggle
+            v-model="ownershipCategory"
+            unelevated
+            no-caps
+            toggle-color="deep-purple"
+            color="grey-3"
+            text-color="grey-8"
+            :options="ownershipCategoryOptions"
+            class="col-12 col-md-auto"
+          />
           <q-select
             v-model="ownerFilter"
             :options="ownerFilterOptions"
@@ -188,8 +201,18 @@
             map-options
             outlined
             dense
-            label="Owner"
+            :label="ownershipCategory === 'pharmacy' ? 'Pharmacy owner' : 'Doctor owner'"
             class="col-12 col-md-3"
+          />
+          <q-btn
+            v-if="isAdmin"
+            flat
+            dense
+            color="grey-8"
+            icon="filter_alt_off"
+            label="Clear all filters"
+            class="col-12 col-md-auto"
+            @click="clearAllFilters"
           />
           <q-select
             v-model="ageGroupFilter"
@@ -261,7 +284,7 @@
             </template>
           </q-banner>
           <div v-if="ownershipSummary.length" class="col-12 ownership-summary">
-            <span class="text-caption text-grey-7 q-mr-sm">Demarcation:</span>
+            <span class="text-caption text-grey-7 q-mr-sm">{{ ownershipCategoryLabel }} demarcation:</span>
             <q-chip
               v-for="row in ownershipSummary"
               :key="row.key"
@@ -352,7 +375,8 @@
                 </th>
                 <th class="text-left">Claim ID</th>
                 <th class="text-left">Client</th>
-                <th class="text-left">Owner</th>
+                <th class="text-left">Doctor owner</th>
+                <th class="text-left">Pharmacy owner</th>
                 <th class="text-left">Hosp Rec No</th>
                 <th class="text-left">Age</th>
                 <th class="text-left">Visit Start Date</th>
@@ -379,7 +403,14 @@
                     <div class="text-body2">{{ row.assigned_to_name }}</div>
                     <div v-if="row.assignment_note" class="text-caption text-grey-7">{{ row.assignment_note }}</div>
                   </template>
-                  <span v-else class="text-grey-6">Unassigned</span>
+                  <span v-else class="text-grey-6">Hanging</span>
+                </td>
+                <td>
+                  <template v-if="row.pharmacy_assigned_to_name">
+                    <div class="text-body2">{{ row.pharmacy_assigned_to_name }}</div>
+                    <div v-if="row.pharmacy_assignment_note" class="text-caption text-grey-7">{{ row.pharmacy_assignment_note }}</div>
+                  </template>
+                  <span v-else class="text-grey-6">Hanging</span>
                 </td>
                 <td>{{ claimHospitalRecNo(row) || '-' }}</td>
                 <td>{{ claimClientAge(row) }}</td>
@@ -465,7 +496,7 @@
                 </td>
               </tr>
               <tr v-if="pagedClaims.length === 0">
-                <td colspan="12" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
+                <td colspan="13" class="text-center text-grey-7 q-pa-md">No claims match the current filters.</td>
               </tr>
             </tbody>
           </q-markup-table>
@@ -496,12 +527,22 @@
     <q-dialog v-model="showDemarcateDialog" persistent>
       <q-card style="min-width: 720px; max-width: 980px">
         <q-card-section>
-          <div class="text-h6">Demarcate claim ownership</div>
+          <div class="text-h6">Demarcate {{ ownershipCategoryLabel.toLowerCase() }} ownership</div>
           <div class="text-caption text-grey-7">
-            With filters (OPD, age, specialty…): Match # from/to = 1st–Nth matching claim in XML order.
-            Without filters: XML row numbers. Later rules overwrite earlier ones — if a chip shows
-            “547 match → 428 final”, later rules took 119 of those claims.
+            Share this import’s claims for {{ ownershipCategory === 'pharmacy' ? 'pharmacists' : 'doctors / PAs' }}
+            without changing the other team’s assignments. With filters (OPD, age, specialty…):
+            Match # from/to = 1st–Nth matching claim. Later rules overwrite earlier ones in this category only.
           </div>
+          <q-btn-toggle
+            v-model="ownershipCategory"
+            unelevated
+            no-caps
+            toggle-color="deep-purple"
+            color="grey-3"
+            text-color="grey-8"
+            :options="ownershipCategoryOptions"
+            class="q-mt-sm"
+          />
           <div v-if="demarcateDialogBusy" class="row items-center q-gutter-sm q-mt-sm text-caption text-grey-7">
             <q-spinner size="18px" color="primary" />
             <span>Loading rules &amp; match counts…</span>
@@ -692,6 +733,18 @@ const canDeleteImportBatch = computed(() => {
   return roles.includes('Admin') || authStore.isSuperAdmin;
 });
 const canDemarcate = computed(() => authStore.canAccess(['Claims', 'Admin']));
+const isAdmin = computed(() => {
+  const roles = (authStore.allUserRoles || []).map((r) => String(r || '').trim());
+  return roles.includes('Admin') || !!authStore.isSuperAdmin;
+});
+const ownershipCategory = ref('doctor');
+const ownershipCategoryOptions = [
+  { label: 'Doctors / PAs', value: 'doctor' },
+  { label: 'Pharmacy', value: 'pharmacy' },
+];
+const ownershipCategoryLabel = computed(() =>
+  ownershipCategory.value === 'pharmacy' ? 'Pharmacy' : 'Doctor'
+);
 const uploadFile = ref(null);
 const uploading = ref(false);
 const exporting = ref(false);
@@ -1042,12 +1095,20 @@ const serviceTypeFilterOptions = computed(() => {
   return [{ label: 'All', value: 'all' }, ...vals.map((v) => ({ label: v, value: v }))];
 });
 
+function rowOwnerId(row, category = ownershipCategory.value) {
+  return category === 'pharmacy' ? row?.pharmacy_assigned_to_id : row?.assigned_to_id;
+}
+function rowOwnerName(row, category = ownershipCategory.value) {
+  return category === 'pharmacy' ? row?.pharmacy_assigned_to_name : row?.assigned_to_name;
+}
+
 const ownerFilterOptions = computed(() => {
   const rows = currentBatch.value?.claims || [];
   const byId = new Map();
   rows.forEach((r) => {
-    if (r.assigned_to_id) {
-      byId.set(r.assigned_to_id, r.assigned_to_name || `User #${r.assigned_to_id}`);
+    const id = rowOwnerId(r);
+    if (id) {
+      byId.set(id, rowOwnerName(r) || `User #${id}`);
     }
   });
   const owners = Array.from(byId.entries())
@@ -1056,7 +1117,7 @@ const ownerFilterOptions = computed(() => {
   return [
     { label: 'All', value: 'all' },
     { label: 'My claims', value: 'mine' },
-    { label: 'Unassigned', value: 'unassigned' },
+    { label: 'Hanging (unassigned)', value: 'unassigned' },
     ...owners,
   ];
 });
@@ -1068,18 +1129,19 @@ const ownershipSummary = computed(() => {
   const counts = new Map();
   let unassigned = 0;
   rows.forEach((r) => {
-    if (!r.assigned_to_id) {
+    const id = rowOwnerId(r);
+    if (!id) {
       unassigned += 1;
       return;
     }
-    const key = `user:${r.assigned_to_id}`;
-    const prev = counts.get(key) || { key, label: r.assigned_to_name || `User #${r.assigned_to_id}`, count: 0, filterValue: key };
+    const key = `user:${id}`;
+    const prev = counts.get(key) || { key, label: rowOwnerName(r) || `User #${id}`, count: 0, filterValue: key };
     prev.count += 1;
     counts.set(key, prev);
   });
   const list = Array.from(counts.values()).sort((a, b) => a.label.localeCompare(b.label));
   if (unassigned) {
-    list.push({ key: 'unassigned', label: 'Unassigned', count: unassigned, filterValue: 'unassigned' });
+    list.push({ key: 'unassigned', label: 'Hanging', count: unassigned, filterValue: 'unassigned' });
   }
   return list;
 });
@@ -1128,12 +1190,12 @@ const filteredClaims = computed(() => {
       }
     }
     if (ownerFilter.value === 'mine') {
-      if (!myId || Number(r.assigned_to_id) !== Number(myId)) return false;
+      if (!myId || Number(rowOwnerId(r)) !== Number(myId)) return false;
     } else if (ownerFilter.value === 'unassigned') {
-      if (r.assigned_to_id) return false;
+      if (rowOwnerId(r)) return false;
     } else if (String(ownerFilter.value || '').startsWith('user:')) {
       const uid = Number(String(ownerFilter.value).slice(5));
-      if (Number(r.assigned_to_id) !== uid) return false;
+      if (Number(rowOwnerId(r)) !== uid) return false;
     }
     if (serviceTypeFilter.value !== 'all' && getServiceType(r) !== serviceTypeFilter.value) return false;
     const age = claimClientAgeYears(r);
@@ -1153,6 +1215,8 @@ const filteredClaims = computed(() => {
       r.member_no,
       r.assigned_to_name,
       r.assignment_note,
+      r.pharmacy_assigned_to_name,
+      r.pharmacy_assignment_note,
       getServiceType(r),
       r.type_of_attendance,
       r.specialty_attended,
@@ -1225,11 +1289,18 @@ const batchPharmacyVettedCount = computed(() =>
 const batchDoctorVettedCount = computed(() =>
   (currentBatch.value?.claims || []).filter((r) => isDoctorVettedStatus(r)).length
 );
-const batchAssignedCount = computed(() =>
+const batchClaimCount = computed(() => (currentBatch.value?.claims || []).length);
+const doctorAssignedCount = computed(() =>
   (currentBatch.value?.claims || []).filter((r) => r.assigned_to_id).length
 );
+const pharmacyAssignedCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => r.pharmacy_assigned_to_id).length
+);
+const batchAssignedCount = computed(() =>
+  (currentBatch.value?.claims || []).filter((r) => rowOwnerId(r)).length
+);
 const batchUnassignedCount = computed(() =>
-  (currentBatch.value?.claims || []).filter((r) => !r.assigned_to_id).length
+  (currentBatch.value?.claims || []).filter((r) => !rowOwnerId(r)).length
 );
 
 const allExportableSelected = computed(() => {
@@ -1430,7 +1501,7 @@ function mapAssigneesToOptions(list) {
 
 async function loadAssignees() {
   try {
-    const res = await claimsAPI.getGhimsImportAssignees();
+    const res = await claimsAPI.getGhimsImportAssignees(ownershipCategory.value);
     assignees.value = res.data || [];
     assigneeFilterOptions.value = mapAssigneesToOptions(assignees.value);
   } catch (e) {
@@ -1470,9 +1541,11 @@ async function openDemarcateDialog() {
   showDemarcateDialog.value = true;
   await nextTick();
   try {
-    if (!assignees.value.length) await loadAssignees();
+    await loadAssignees();
     assigneeFilterOptions.value = mapAssigneesToOptions(assignees.value);
-    const saved = currentBatch.value?.demarcation_rules;
+    const saved = ownershipCategory.value === 'pharmacy'
+      ? currentBatch.value?.pharmacy_demarcation_rules
+      : currentBatch.value?.demarcation_rules;
     if (Array.isArray(saved) && saved.length) {
       demarcateRules.value = saved.map(normalizeSavedRule);
     }
@@ -1532,9 +1605,10 @@ async function applyDemarcation() {
   assigning.value = true;
   try {
     const beforeStats = computeAllDemarcatePreviews(demarcateRules.value);
-    const res = await claimsAPI.bulkAssignGhimsImportBatch(viewingBatchId.value, rules, {
+    await claimsAPI.bulkAssignGhimsImportBatch(viewingBatchId.value, rules, {
       replace_plan: true,
       save_plan: true,
+      category: ownershipCategory.value,
     });
     showDemarcateDialog.value = false;
     await loadBatchClaims(viewingBatchId.value);
@@ -1561,8 +1635,8 @@ async function assignSelectedClaims() {
 
   const assignedToId = await new Promise((resolve) => {
     $q.dialog({
-      title: `Assign ${selectedBulkItemIds.value.length} selected claim(s)`,
-      message: 'Ownership does not restrict who can vet — it only tracks the owner.',
+      title: `Assign ${selectedBulkItemIds.value.length} selected claim(s) to ${ownershipCategoryLabel.value.toLowerCase()}`,
+      message: `${ownershipCategoryLabel.value} ownership does not change the other team’s assignments, and does not restrict who can vet.`,
       options: {
         type: 'radio',
         model: options[0]?.value ?? '__clear__',
@@ -1598,13 +1672,17 @@ async function assignSelectedClaims() {
 
   assigning.value = true;
   try {
-    await claimsAPI.bulkAssignGhimsImportBatch(viewingBatchId.value, [
-      {
-        item_ids: [...selectedBulkItemIds.value],
-        assigned_to_id: assignedToId,
-        assignment_note: note || null,
-      },
-    ]);
+    await claimsAPI.bulkAssignGhimsImportBatch(
+      viewingBatchId.value,
+      [
+        {
+          item_ids: [...selectedBulkItemIds.value],
+          assigned_to_id: assignedToId,
+          assignment_note: note || null,
+        },
+      ],
+      { category: ownershipCategory.value },
+    );
     await loadBatchClaims(viewingBatchId.value);
     $q.notify({ type: 'positive', message: 'Ownership updated for selected claims' });
   } catch (e) {
@@ -1887,6 +1965,7 @@ function persistFilterState() {
         attendanceFilter: attendanceFilter.value,
         specialtyFilter: specialtyFilter.value,
         statusFilter: statusFilter.value,
+        ownershipCategory: ownershipCategory.value,
         ownerFilter: ownerFilter.value,
         missingSectionsOnly: missingSectionsOnly.value,
         ghanaCardMemberOnly: ghanaCardMemberOnly.value,
@@ -1910,6 +1989,7 @@ function restoreFilterState() {
     attendanceFilter.value = s.attendanceFilter || 'all';
     specialtyFilter.value = s.specialtyFilter || 'all';
     statusFilter.value = s.statusFilter || 'all';
+    ownershipCategory.value = s.ownershipCategory === 'pharmacy' ? 'pharmacy' : 'doctor';
     ownerFilter.value = s.ownerFilter || 'all';
     missingSectionsOnly.value = Boolean(s.missingSectionsOnly);
     ghanaCardMemberOnly.value = Boolean(s.ghanaCardMemberOnly);
@@ -1918,9 +1998,37 @@ function restoreFilterState() {
   } catch (_) {}
 }
 
-watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, ownerFilter, missingSectionsOnly, ghanaCardMemberOnly, likelyDuplicatesOnly, rowsPerPage, filtersLocked], () => {
+function clearAllFilters() {
+  searchText.value = '';
+  serviceTypeFilter.value = 'all';
+  ageGroupFilter.value = 'all';
+  attendanceFilter.value = 'all';
+  specialtyFilter.value = 'all';
+  statusFilter.value = 'all';
+  ownerFilter.value = 'all';
+  missingSectionsOnly.value = false;
+  ghanaCardMemberOnly.value = false;
+  likelyDuplicatesOnly.value = false;
+}
+
+watch([searchText, serviceTypeFilter, ageGroupFilter, attendanceFilter, specialtyFilter, statusFilter, ownerFilter, ownershipCategory, missingSectionsOnly, ghanaCardMemberOnly, likelyDuplicatesOnly, rowsPerPage, filtersLocked], () => {
   currentPage.value = 1;
   persistFilterState();
+});
+
+watch(ownershipCategory, async (next, prev) => {
+  if (prev && String(ownerFilter.value || '').startsWith('user:')) {
+    ownerFilter.value = 'all';
+  }
+  await loadAssignees();
+  if (showDemarcateDialog.value) {
+    const saved = next === 'pharmacy'
+      ? currentBatch.value?.pharmacy_demarcation_rules
+      : currentBatch.value?.demarcation_rules;
+    demarcateRules.value = Array.isArray(saved) && saved.length
+      ? saved.map(normalizeSavedRule)
+      : [blankDemarcateRule()];
+  }
 });
 
 watch(

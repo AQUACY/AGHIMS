@@ -554,11 +554,11 @@ const searchEncounter = async () => {
 
   loading.value = true;
   try {
-    const encounter = await encountersAPI.get(searchEncounterId.value);
+    const encounter = await encountersAPI.get(searchEncounterId.value, { reveal: 'claim' });
     if (encounter.data.status === 'finalized') {
       finalizedEncounters.value = [{
         id: encounter.data.id,
-        patient_name: 'Patient', // You may need to fetch patient info
+        patient_name: encounter.data.patient_name || 'Patient',
         visit_start_date: encounter.data.created_at || null,
         finalized_at: encounter.data.finalized_at,
         claim_id: null,

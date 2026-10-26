@@ -584,6 +584,8 @@ class InvestigationResponse(BaseModel):
     requested_by_name: Optional[str] = None
     confirmed_by_name: Optional[str] = None
     completed_by_name: Optional[str] = None
+    is_confidential: bool = False
+    confidential_code: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -2190,6 +2192,13 @@ def get_investigation(
     if investigation.completed_by:
         completed_user = db.query(User).filter(User.id == investigation.completed_by).first()
         completed_by_name = completed_user.full_name if completed_user else None
+
+    from app.services.confidential import masked_patient_label
+
+    _raw_name = f"{investigation.encounter.patient.name or ''} {investigation.encounter.patient.surname or ''} {investigation.encounter.patient.other_names or ''}".strip()
+    _masked_name, _masked_card, _masked_flag, _masked_code = masked_patient_label(
+        db, investigation.encounter, _raw_name, investigation.encounter.patient.card_number
+    )
     
     inv_dict = {
         "id": investigation.id,
@@ -2206,8 +2215,10 @@ def get_investigation(
         "cancellation_reason": investigation.cancellation_reason,
         "cancelled_at": investigation.cancelled_at,
         "created_at": investigation.created_at,
-        "patient_name": f"{investigation.encounter.patient.name or ''} {investigation.encounter.patient.surname or ''} {investigation.encounter.patient.other_names or ''}".strip(),
-        "patient_card_number": investigation.encounter.patient.card_number,
+        "patient_name": _masked_name,
+        "patient_card_number": _masked_card,
+        "is_confidential": _masked_flag,
+        "confidential_code": _masked_code,
         "encounter_date": investigation.encounter.created_at,
         "requested_by_name": requested_by_name,
         "confirmed_by_name": confirmed_by_name,
@@ -2461,10 +2472,13 @@ def get_investigations_by_type(
         raise HTTPException(status_code=400, detail=f"Invalid investigation_type. Must be one of: {', '.join(valid_types)}")
     
     # Build base query with joins
+    from app.models.confidential import ConfidentialCode
+
     query = (
         db.query(Investigation)
         .join(Encounter, Investigation.encounter_id == Encounter.id)
         .join(Patient, Encounter.patient_id == Patient.id)
+        .outerjoin(ConfidentialCode, Encounter.confidential_code_id == ConfidentialCode.id)
     )
     
     # Filter by investigation type
@@ -2509,16 +2523,8 @@ def get_investigations_by_type(
     # Search by card number or patient name
     if search:
         search_term = f"%{search.strip()}%"
-        from sqlalchemy import or_
-        # Search in card number, name, or surname
-        # For full name search, we'll check if search term matches name or surname separately
-        query = query.filter(
-            or_(
-                Patient.card_number.ilike(search_term),
-                Patient.name.ilike(search_term),
-                Patient.surname.ilike(search_term)
-            )
-        )
+        from app.services.confidential import service_point_name_filter
+        query = query.filter(service_point_name_filter(search_term))
     
     # Filter by procedure name
     if procedure:
@@ -2548,6 +2554,13 @@ def get_investigations_by_type(
         if inv.completed_by:
             completed_user = db.query(User).filter(User.id == inv.completed_by).first()
             completed_by_name = completed_user.full_name if completed_user else None
+
+        from app.services.confidential import masked_patient_label
+
+        _raw_name = f"{inv.encounter.patient.name or ''} {inv.encounter.patient.surname or ''} {inv.encounter.patient.other_names or ''}".strip()
+        _list_name, _list_card, _list_flag, _list_code = masked_patient_label(
+            db, inv.encounter, _raw_name, inv.encounter.patient.card_number
+        )
         
         inv_dict = {
             "id": inv.id,
@@ -2564,8 +2577,10 @@ def get_investigations_by_type(
             "cancellation_reason": inv.cancellation_reason,
             "cancelled_at": inv.cancelled_at,
             "created_at": inv.created_at,
-            "patient_name": f"{inv.encounter.patient.name or ''} {inv.encounter.patient.surname or ''} {inv.encounter.patient.other_names or ''}".strip(),
-            "patient_card_number": inv.encounter.patient.card_number,
+            "patient_name": _list_name,
+            "patient_card_number": _list_card,
+            "is_confidential": _list_flag,
+            "confidential_code": _list_code,
             "encounter_date": inv.encounter.created_at,
             "requested_by_name": requested_by_name,
             "confirmed_by_name": confirmed_by_name,
@@ -9499,6 +9514,7 @@ def get_inpatient_investigations_by_type(
     from app.models.inpatient_investigation import InpatientInvestigation
     from app.models.patient import Patient
     from app.models.encounter import Encounter
+    from app.models.confidential import ConfidentialCode
     from datetime import datetime, date as date_class
     
     # Validate investigation type
@@ -9524,6 +9540,7 @@ def get_inpatient_investigations_by_type(
         .join(WardAdmission, InpatientClinicalReview.ward_admission_id == WardAdmission.id)
         .join(Encounter, WardAdmission.encounter_id == Encounter.id)
         .join(Patient, Encounter.patient_id == Patient.id)
+        .outerjoin(ConfidentialCode, Encounter.confidential_code_id == ConfidentialCode.id)
     )
     
     # Filter by investigation type
@@ -9567,17 +9584,11 @@ def get_inpatient_investigations_by_type(
             raise HTTPException(status_code=400, detail=f"Invalid date format. Use YYYY-MM-DD. Error: {str(e)}")
     # If no date provided, don't filter by date (show all investigations)
     
-    # Search by card number or patient name
+    # Search by card number or patient name. Confidential visits match the code only.
     if search:
         search_term = f"%{search.strip()}%"
-        from sqlalchemy import or_
-        query = query.filter(
-            or_(
-                Patient.card_number.ilike(search_term),
-                Patient.name.ilike(search_term),
-                Patient.surname.ilike(search_term)
-            )
-        )
+        from app.services.confidential import service_point_name_filter
+        query = query.filter(service_point_name_filter(search_term))
     
     # Filter by procedure name
     if procedure:
@@ -9658,8 +9669,14 @@ def get_inpatient_investigations_by_type(
             ward_admission_id = None
             
             if patient:
-                patient_name = f"{patient.name or ''} {patient.surname or ''} {patient.other_names or ''}".strip() or "Unknown"
-                patient_card_number = patient.card_number
+                from app.services.confidential import masked_patient_label
+
+                patient_name, patient_card_number, _conf_flag, _conf_code = masked_patient_label(
+                    db,
+                    encounter,
+                    f"{patient.name or ''} {patient.surname or ''} {patient.other_names or ''}".strip() or "Unknown",
+                    patient.card_number,
+                )
             
             if ward_admission:
                 ward = ward_admission.ward

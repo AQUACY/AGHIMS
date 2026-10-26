@@ -32,7 +32,7 @@
           v-model="searchTerm"
           type="search"
           class="tool-input tool-input--search"
-          placeholder="Search card or name…"
+          placeholder="Search card, name, or code…"
           :disabled="filtersLocked"
           @keyup.enter="loadRequests"
         />
@@ -568,7 +568,7 @@
               <q-list bordered separator>
                 <q-item
                   v-for="request in uniquePatients"
-                  :key="request.patient_card_number"
+                  :key="request.is_confidential ? (request.confidential_code || request.encounter_id) : request.patient_card_number"
                   tag="label"
                   v-ripple
                 >
@@ -581,7 +581,7 @@
                   </q-item-section>
                   <q-item-section>
                     <q-item-label>{{ request.patient_name }}</q-item-label>
-                    <q-item-label caption>Card: {{ request.patient_card_number }}</q-item-label>
+                    <q-item-label caption>{{ request.is_confidential ? request.confidential_code : `Card: ${request.patient_card_number}` }}</q-item-label>
                   </q-item-section>
                 </q-item>
               </q-list>
@@ -1456,7 +1456,9 @@ const filterProcedures = (val, update) => {
 const uniquePatients = computed(() => {
   const seen = new Set();
   return requests.value.filter(request => {
-    const key = request.patient_card_number;
+    const key = request.is_confidential
+      ? `code:${request.confidential_code || request.encounter_id}`
+      : request.patient_card_number;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

@@ -130,6 +130,76 @@
       </template>
     </q-banner>
 
+    <q-card v-if="!loading" flat bordered class="q-mb-md claim-audit-card">
+      <q-expansion-item
+        default-opened
+        icon="history"
+        :label="auditActors.length ? `Vetting audit trail (${auditEvents.length})` : 'Vetting audit trail'"
+        caption="Who touched this claim and exactly what they changed"
+      >
+        <q-card-section v-if="auditActors.length" class="q-pt-none">
+          <div class="text-caption text-grey-7 q-mb-xs">People who worked on this claim</div>
+          <div class="row q-gutter-xs">
+            <q-chip
+              v-for="actor in auditActors"
+              :key="actor.user_id || actor.username"
+              dense
+              color="blue-grey-1"
+              text-color="blue-grey-9"
+              icon="person"
+            >
+              {{ actor.full_name || actor.username }}
+              <span v-if="actor.role" class="text-grey-7"> · {{ actor.role }}</span>
+            </q-chip>
+          </div>
+        </q-card-section>
+        <q-inner-loading :showing="auditLoading" color="primary" />
+        <q-card-section v-if="!auditLoading && !auditEvents.length" class="text-grey-7">
+          No vetting actions recorded on this claim yet. Saves, pharmacy/doctor vets, flags, merges, and AI corrections will appear here.
+        </q-card-section>
+        <q-timeline v-else-if="auditEvents.length" color="primary" class="q-px-md q-pb-md">
+          <q-timeline-entry
+            v-for="ev in auditEventsNewestFirst"
+            :key="ev.id"
+            :title="ev.action_label || ev.action"
+            :subtitle="auditWhen(ev.created_at)"
+            :icon="auditIcon(ev.action)"
+            :color="auditColor(ev.action)"
+          >
+            <div class="text-body2">
+              <strong>{{ ev.full_name || ev.username || 'System' }}</strong>
+              <span v-if="ev.role" class="text-grey-7"> ({{ ev.role }})</span>
+            </div>
+            <div v-if="ev.summary" class="text-caption text-grey-8 q-mt-xs">{{ ev.summary }}</div>
+            <ul v-if="ev.changes && ev.changes.length" class="claim-audit-changes q-mt-sm q-mb-none">
+              <li v-for="(ch, idx) in ev.changes" :key="idx">
+                <template v-if="ch.kind === 'added'">
+                  Added {{ ch.item_label || ch.field_label }}: <strong>{{ ch.new }}</strong>
+                </template>
+                <template v-else-if="ch.kind === 'removed'">
+                  Removed {{ ch.item_label || ch.field_label }}
+                </template>
+                <template v-else>
+                  <span v-if="ch.item_label">{{ ch.item_label }} — </span>
+                  {{ ch.field_label || ch.field }}:
+                  <span class="claim-audit-old">{{ ch.old }}</span>
+                  →
+                  <span class="claim-audit-new">{{ ch.new }}</span>
+                </template>
+              </li>
+            </ul>
+            <div v-if="ev.details && ev.details.comment" class="text-caption q-mt-xs">
+              Flag: {{ ev.details.comment }}
+            </div>
+            <div v-if="ev.details && (ev.details.to_user_name || ev.details.from_user_name)" class="text-caption q-mt-xs">
+              {{ ev.details.category === 'pharmacy' ? 'Pharmacy owner' : 'Doctor owner' }}:
+              {{ ev.details.from_user_name || 'unassigned' }} → {{ ev.details.to_user_name || 'unassigned' }}
+            </div>
+          </q-timeline-entry>
+        </q-timeline>
+      </q-expansion-item>
+    </q-card>
+
     <q-form
       v-if="!loading"
       @submit.prevent="saveAndFinalize"
@@ -252,6 +322,10 @@
         <q-card-section>
           <div class="text-h6 q-mb-sm">
             Other visits this month ({{ relatedGhimsItems.length }})
+          </div>
+          <div class="text-caption text-grey-7 q-mb-sm">
+            Same source only — XML imports stay with XML, GHIMS monthly stays with monthly.
+            Use Compare to check the live GHIMS record.
           </div>
           <div v-if="relatedGhimsItemsLoading" class="text-caption text-grey-7">Loading related claims…</div>
           <q-list
@@ -1054,7 +1128,15 @@
             <div class="ghims-compare-meta">
               <span class="mono">{{ ghimsCompare?.visitation_id || payload.claimID }}</span>
               <span v-if="ghimsCompare?.hospital_rec_no">Rec {{ ghimsCompare.hospital_rec_no }}</span>
-              <span v-if="ghimsMissingCount" class="ghims-chip ghims-chip--warn">{{ ghimsMissingCount }} missing on claim</span>
+              <button
+                v-if="ghimsMissingCount"
+                type="button"
+                class="ghims-chip ghims-chip--warn"
+                :class="{ 'ghims-chip--active': ghimsRecordFilter === 'missing' }"
+                @click="focusMissingOnClaim"
+              >
+                {{ ghimsMissingCount }} missing on claim
+              </button>
             </div>
           </div>
           <q-btn icon="close" flat round dense v-close-popup />
@@ -1065,10 +1147,25 @@
           <div v-else-if="ghimsCompareLoading" class="text-grey-7 q-pa-lg">Loading from GHIMS…</div>
 
           <div v-else-if="ghimsCompare">
+            <div class="ghims-record-picker">
+              <div class="ghims-record-picker__label">Select Medical Record</div>
+              <q-select
+                v-model="ghimsRecordFilter"
+                :options="ghimsRecordSelectOptions"
+                emit-value
+                map-options
+                dense
+                outlined
+                class="ghims-record-picker__select"
+              />
+              <div class="ghims-record-picker__count">{{ visibleGhimsRecords.length }}</div>
+            </div>
             <article
-              v-for="rec in ghimsRecords"
+              v-for="rec in visibleGhimsRecords"
               :key="rec.request_id"
+              :id="'ghims-rec-' + rec.request_id"
               class="ghims-record"
+              :class="{ 'is-missing-record': ghimsHighlightMissing && recHasMissing(rec) }"
             >
               <div class="ghims-record__bar">
                 <div>
@@ -1104,7 +1201,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="p in rec.prescriptions" :key="p.drug_id + '-' + p.no" :class="ghimsRowClass(p)">
+                    <tr v-for="p in rec.prescriptions" :key="p.drug_id + '-' + p.no" :class="ghimsRowClass(p, rec, 'rx')">
                       <td>{{ p.no }}</td>
                       <td>{{ p.name }}</td>
                       <td>{{ p.dose }}</td>
@@ -1138,7 +1235,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="inv in rec.investigations" :key="(inv.lab_test_id || inv.name) + '-' + inv.no" :class="ghimsRowClass(inv)">
+                    <tr v-for="inv in rec.investigations" :key="(inv.lab_test_id || inv.name) + '-' + inv.no" :class="ghimsRowClass(inv, rec, 'inv')">
                       <td>{{ inv.no }}</td>
                       <td>{{ inv.name || inv.label }}</td>
                       <td class="ghims-row-actions">
@@ -1156,7 +1253,9 @@
                 </table>
               </div>
             </article>
-            <div v-if="!ghimsRecords.length" class="text-grey-6 q-pa-md">No EMR clinical records found for this visit.</div>
+            <div v-if="!visibleGhimsRecords.length" class="text-grey-6 q-pa-md">
+              {{ ghimsRecords.length ? 'No records match this selection.' : 'No EMR clinical records found for this visit.' }}
+            </div>
           </div>
 
         </q-card-section>
@@ -1167,7 +1266,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue';
+import { ref, reactive, computed, watch, nextTick } from 'vue';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
 import AiClaimVettingPanel from '../components/claims/AiClaimVettingPanel.vue';
@@ -1229,6 +1328,76 @@ const canVetPharmacy = computed(() =>
 const canVetDoctor = computed(() =>
   authStore.canAccess(['Doctor', 'PA', 'Claims', 'Admin'])
 );
+const auditLoading = ref(false);
+const auditEvents = ref([]);
+const auditActors = ref([]);
+const auditEventsNewestFirst = computed(() => [...auditEvents.value].reverse());
+
+function auditWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function auditIcon(action) {
+  const map = {
+    imported: 'download',
+    ghims_synced: 'sync',
+    updated: 'edit',
+    pharmacy_vetted: 'local_pharmacy',
+    pharmacy_vet_reverted: 'undo',
+    doctor_vetted: 'medical_services',
+    doctor_vet_reverted: 'undo',
+    finalized: 'lock',
+    reopened: 'lock_open',
+    flagged: 'flag',
+    assigned: 'person_add',
+    unassigned: 'person_remove',
+    merged: 'call_merge',
+    merge_received: 'call_merge',
+    merge_reverted: 'undo',
+    ai_applied: 'smart_toy',
+    ai_vetted: 'smart_toy',
+  };
+  return map[action] || 'history';
+}
+
+function auditColor(action) {
+  const map = {
+    pharmacy_vetted: 'teal',
+    doctor_vetted: 'indigo',
+    flagged: 'negative',
+    finalized: 'positive',
+    updated: 'primary',
+    ai_applied: 'purple',
+    ai_vetted: 'purple',
+    imported: 'blue-grey',
+    ghims_synced: 'blue-grey',
+  };
+  return map[action] || 'grey';
+}
+
+async function loadAuditTrail() {
+  if (!itemId.value) return;
+  auditLoading.value = true;
+  try {
+    const res = await claimsAPI.getGhimsImportItemAudit(itemId.value);
+    auditEvents.value = res.data?.events || [];
+    auditActors.value = res.data?.actors || [];
+  } catch {
+    auditEvents.value = [];
+    auditActors.value = [];
+  } finally {
+    auditLoading.value = false;
+  }
+}
 
 function applyVettingFromItem(data = {}) {
   if (data.status) status.value = data.status;
@@ -1307,6 +1476,7 @@ async function vetByPharmacy() {
       type: 'positive',
       message: clearing ? 'Pharmacy vet removed' : 'Pharmacy vet recorded',
     });
+    loadAuditTrail();
   } catch (e) {
     $q.notify({
       type: 'negative',
@@ -1341,6 +1511,7 @@ async function vetByDoctor() {
       type: 'positive',
       message: clearing ? 'Doctor vet removed' : 'Doctor vet recorded',
     });
+    loadAuditTrail();
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update doctor vet' });
   } finally {
@@ -2757,6 +2928,7 @@ async function revertToDraft() {
 // ─── Merge feature: related items + wizard ───────────────────────────
 const relatedGhimsItems = ref([]);
 const relatedGhimsItemsLoading = ref(false);
+const batchSource = ref('');
 const mergedIntoClaimClaimId = ref(null);
 
 const isLocked = computed(() => status.value === 'finalized' || status.value === 'merged');
@@ -2776,7 +2948,13 @@ async function loadRelatedGhimsItems() {
   relatedGhimsItemsLoading.value = true;
   try {
     const res = await claimsAPI.getGhimsRelatedItems(itemId.value);
-    relatedGhimsItems.value = res.data || [];
+    const pipeline = String(batchSource.value || '').trim().toLowerCase();
+    relatedGhimsItems.value = (res.data || []).filter((it) => {
+      const src = String(it.batch_source || '').trim().toLowerCase();
+      if (!pipeline || !src) return true;
+      if (pipeline === 'ghims_live') return src === 'ghims_live';
+      return src !== 'ghims_live';
+    });
   } catch {
     relatedGhimsItems.value = [];
   } finally {
@@ -2978,19 +3156,107 @@ function formatGhimsDate(val) {
 }
 
 const ghimsRecords = computed(() => ghimsCompare.value?.gaps?.records || ghimsCompare.value?.ghims?.emr_records || []);
+const ghimsRecordFilter = ref('all');
+const ghimsHighlightMissing = ref(false);
 
-const ghimsMissingCount = computed(() => {
+function recTitleKey(rec) {
+  return String(rec?.title || 'Clinical record').trim().toLowerCase();
+}
+
+function isActiveRow(row, rec) {
+  const state = String(row?.state || 'active');
+  return state === 'active' && !rec?.cancelled;
+}
+
+function isMissingRx(rec, p) {
+  return isActiveRow(p, rec) && !claimHasMedicine(p?.name);
+}
+
+function isMissingInv(rec, inv) {
+  return isActiveRow(inv, rec) && !claimHasInvestigation(inv?.name || inv?.label);
+}
+
+function recHasMissing(rec) {
+  if (rec?.cancelled) return false;
+  for (const rx of rec.prescriptions || []) {
+    if (isMissingRx(rec, rx)) return true;
+  }
+  for (const inv of rec.investigations || []) {
+    if (isMissingInv(rec, inv)) return true;
+  }
+  return false;
+}
+
+function recMissingCount(rec) {
   let n = 0;
-  for (const rec of ghimsRecords.value || []) {
-    if (rec?.cancelled) continue;
-    for (const rx of rec.prescriptions || []) {
-      if ((rx.state || 'active') === 'active' && !claimHasMedicine(rx.name)) n += 1;
-    }
-    for (const inv of rec.investigations || []) {
-      if ((inv.state || 'active') === 'active' && !claimHasInvestigation(inv.name || inv.label)) n += 1;
-    }
+  for (const rx of rec.prescriptions || []) {
+    if (isMissingRx(rec, rx)) n += 1;
+  }
+  for (const inv of rec.investigations || []) {
+    if (isMissingInv(rec, inv)) n += 1;
   }
   return n;
+}
+
+const ghimsMissingCount = computed(() =>
+  (ghimsRecords.value || []).reduce((sum, rec) => sum + recMissingCount(rec), 0)
+);
+
+const ghimsRecordSelectOptions = computed(() => {
+  const seen = new Set();
+  const titles = [];
+  for (const rec of ghimsRecords.value || []) {
+    const title = String(rec.title || 'Clinical record').trim() || 'Clinical record';
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const missing = (ghimsRecords.value || [])
+      .filter((r) => recTitleKey(r) === key)
+      .reduce((sum, r) => sum + recMissingCount(r), 0);
+    titles.push({
+      label: missing ? `${title} (${missing} missing)` : title,
+      value: `title:${key}`,
+    });
+  }
+  titles.sort((a, b) => a.label.localeCompare(b.label));
+  const opts = [{ label: 'ALL RECORDS', value: 'all' }, ...titles];
+  if (ghimsMissingCount.value) {
+    opts.push({
+      label: `Missing on claim (${ghimsMissingCount.value})`,
+      value: 'missing',
+    });
+  }
+  return opts;
+});
+
+const visibleGhimsRecords = computed(() => {
+  const recs = ghimsRecords.value || [];
+  const f = ghimsRecordFilter.value;
+  if (f === 'missing') return recs.filter((rec) => recHasMissing(rec));
+  if (String(f || '').startsWith('title:')) {
+    const key = String(f).slice(6);
+    return recs.filter((rec) => recTitleKey(rec) === key);
+  }
+  return recs;
+});
+
+function scrollToFirstMissingRow() {
+  nextTick(() => {
+    const el = document.querySelector('.ghims-compare-body tr.is-missing, .ghims-compare-body .is-missing-record');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+}
+
+function focusMissingOnClaim() {
+  if (!ghimsMissingCount.value) return;
+  ghimsHighlightMissing.value = true;
+  ghimsRecordFilter.value = 'missing';
+  scrollToFirstMissingRow();
+}
+
+watch(ghimsRecordFilter, (value) => {
+  ghimsHighlightMissing.value = value === 'missing';
+  if (value === 'missing') scrollToFirstMissingRow();
 });
 
 async function openGhimsLiveCompare() {
@@ -2999,6 +3265,8 @@ async function openGhimsLiveCompare() {
   ghimsCompareError.value = '';
   ghimsCompare.value = null;
   ghimsAddingKey.value = '';
+  ghimsRecordFilter.value = 'all';
+  ghimsHighlightMissing.value = false;
   try {
     const res = await claimsAPI.ghimsLiveCompareItem(itemId.value);
     ghimsCompare.value = res.data;
@@ -3065,9 +3333,11 @@ function claimHasInvestigation(name) {
   });
 }
 
-function ghimsRowClass(row) {
+function ghimsRowClass(row, rec, kind) {
+  const missing = kind === 'rx' ? isMissingRx(rec, row) : kind === 'inv' ? isMissingInv(rec, row) : false;
   return {
     'is-cancelled': row?.state === 'cancelled' || row?.state === 'unavailable',
+    'is-missing': ghimsHighlightMissing.value && missing,
   };
 }
 
@@ -3211,6 +3481,7 @@ async function load() {
       recalculateClaimSummary();
     }
     mergedIntoClaimClaimId.value = res.data.merged_into_claim_claim_id || null;
+    batchSource.value = String(res.data.batch_source || '').trim();
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to load imported claim' });
   } finally {
@@ -3219,6 +3490,7 @@ async function load() {
     skipServiceDateRebase = false;
     loading.value = false;
     loadRelatedGhimsItems();
+    loadAuditTrail();
   }
 }
 
@@ -3456,7 +3728,38 @@ watch(
 }
 .ghims-compare-title { font-size: 20px; font-weight: 650; margin-top: 2px; }
 .ghims-compare-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; color: #cbd5e1; font-size: 13px; }
-.ghims-chip { background: #f59e0b; color: #111827; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-size: 12px; }
+.ghims-chip { background: #f59e0b; color: #111827; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-size: 12px; border: 0; }
+.ghims-chip--warn { cursor: pointer; }
+.ghims-chip--warn:hover { filter: brightness(1.08); }
+.ghims-chip--active { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #f59e0b; }
+.ghims-record-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 8px;
+}
+.ghims-record-picker__label {
+  font-weight: 700;
+  color: #1b5e20;
+  font-size: 13px;
+}
+.ghims-record-picker__select {
+  min-width: 280px;
+  flex: 1 1 240px;
+  background: #fff;
+  border-radius: 4px;
+}
+.ghims-record-picker__count {
+  font-weight: 700;
+  color: #1b5e20;
+  min-width: 1.5rem;
+  text-align: center;
+}
 .ghims-compare-tabs { border-bottom: 1px solid rgba(15,23,42,.08); }
 .ghims-compare-body { overflow: auto; padding: 16px 20px 20px; background: #f8fafc; min-height: 280px; }
 .ghims-record {
@@ -3465,6 +3768,10 @@ watch(
   border-radius: 12px;
   margin-bottom: 14px;
   overflow: hidden;
+}
+.ghims-record.is-missing-record {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
 }
 .ghims-record__bar {
   background: #e8f1fb;
@@ -3482,8 +3789,19 @@ watch(
 .ghims-table-wrap { padding: 0 0 8px; }
 .ghims-table-caption { font-weight: 700; padding: 10px 12px 6px; }
 .ghims-table tr.is-cancelled td { color: #b91c1c; text-decoration: line-through; }
+.ghims-table tr.is-missing td {
+  background: #fff7ed;
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
 .ghims-row-actions { white-space: nowrap; }
 .ghims-pill { font-size: 12px; font-weight: 600; }
 .ghims-pill--cancel { color: #b91c1c; text-decoration: none; }
 .ghims-pill--on { color: #047857; }
+.claim-audit-changes {
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.claim-audit-old { color: #b91c1c; text-decoration: line-through; }
+.claim-audit-new { color: #047857; font-weight: 600; }
 </style>

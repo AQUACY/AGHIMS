@@ -6,13 +6,19 @@ import re
 import zipfile
 from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func
+from sqlalchemy import text, func, or_
 from pydantic import BaseModel
 from typing import Optional, List, Tuple, Dict
 from datetime import datetime, date, timedelta
 from app.core.database import get_db
 from app.core.dependencies import require_role, require_module_permission, require_admin_or_super_admin
 from app.core.audit import get_effective_creator_id
+from app.services.claim_vetting_audit import (
+    diff_claim_payloads,
+    list_claim_vetting_events,
+    record_claim_vetting_event,
+    snapshot_payload,
+)
 from app.models.user import User
 from app.models.encounter import Encounter
 from app.models.claim import Claim, ClaimStatus
@@ -71,6 +77,8 @@ from app.services.claim_merge import (
     normalize_member_no,
     same_month,
     month_key_from_date,
+    import_pipeline,
+    same_import_pipeline,
 )
 
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -193,32 +201,58 @@ def _vetting_snapshot(obj, db: Session) -> dict:
     }
 
 
+OWNERSHIP_CATEGORIES = ("doctor", "pharmacy")
+DOCTOR_ASSIGNABLE_ROLES = ("Doctor", "PA", "Claims", "Admin")
+PHARMACY_ASSIGNABLE_ROLES = ("Pharmacy", "Pharmacy Head", "Claims", "Admin")
+ASSIGNABLE_ROLES = ("Doctor", "PA", "Claims", "Pharmacy", "Pharmacy Head", "Admin")
+
+
+def normalize_ownership_category(value: Optional[str]) -> str:
+    raw = (value or "doctor").strip().lower()
+    if raw in {"prescriber", "doctors", "pa"}:
+        return "doctor"
+    if raw in {"pharmacists", "pharm"}:
+        return "pharmacy"
+    if raw not in OWNERSHIP_CATEGORIES:
+        raise HTTPException(status_code=400, detail="category must be doctor or pharmacy")
+    return raw
+
+
+def _iso_dt(value):
+    return value.isoformat() if value else None
+
+
 def _ownership_snapshot(obj, db: Session) -> dict:
     """Ownership is a workload signal only — does not restrict who can vet."""
-    assigned_to_name = None
-    assigned_by_name = None
     assigned_to_id = getattr(obj, "assigned_to_id", None)
     assigned_by_id = getattr(obj, "assigned_by_id", None)
-    if assigned_to_id:
-        assigned_to_name = _user_display_name(
-            db.query(User).filter(User.id == assigned_to_id).first()
-        )
-    if assigned_by_id:
-        assigned_by_name = _user_display_name(
-            db.query(User).filter(User.id == assigned_by_id).first()
-        )
+    pharmacy_assigned_to_id = getattr(obj, "pharmacy_assigned_to_id", None)
+    pharmacy_assigned_by_id = getattr(obj, "pharmacy_assigned_by_id", None)
     assigned_at = getattr(obj, "assigned_at", None)
+    pharmacy_assigned_at = getattr(obj, "pharmacy_assigned_at", None)
+    name_ids = {
+        uid
+        for uid in (assigned_to_id, assigned_by_id, pharmacy_assigned_to_id, pharmacy_assigned_by_id)
+        if uid
+    }
+    names_by_id: Dict[int, str] = {}
+    if name_ids:
+        for u in db.query(User).filter(User.id.in_(name_ids)).all():
+            names_by_id[u.id] = _user_display_name(u) or str(u.id)
     return {
         "assigned_to_id": assigned_to_id,
-        "assigned_to_name": assigned_to_name,
-        "assigned_at": assigned_at.isoformat() if assigned_at else None,
+        "assigned_to_name": names_by_id.get(assigned_to_id) if assigned_to_id else None,
+        "assigned_at": _iso_dt(assigned_at),
         "assigned_by_id": assigned_by_id,
-        "assigned_by_name": assigned_by_name,
+        "assigned_by_name": names_by_id.get(assigned_by_id) if assigned_by_id else None,
         "assignment_note": getattr(obj, "assignment_note", None),
+        "pharmacy_assigned_to_id": pharmacy_assigned_to_id,
+        "pharmacy_assigned_to_name": names_by_id.get(pharmacy_assigned_to_id) if pharmacy_assigned_to_id else None,
+        "pharmacy_assigned_at": _iso_dt(pharmacy_assigned_at),
+        "pharmacy_assigned_by_id": pharmacy_assigned_by_id,
+        "pharmacy_assigned_by_name": names_by_id.get(pharmacy_assigned_by_id) if pharmacy_assigned_by_id else None,
+        "pharmacy_assignment_note": getattr(obj, "pharmacy_assignment_note", None),
     }
-
-
-ASSIGNABLE_ROLES = ("Doctor", "PA", "Claims", "Pharmacy", "Pharmacy Head", "Admin")
 
 
 def _list_vet_fields(claim: Optional[Claim], db: Session) -> dict:
@@ -255,7 +289,12 @@ def _ensure_claim_vetting_columns(db: Session) -> None:
         ("claim_xml_import_items", "assigned_at", "DATETIME NULL"),
         ("claim_xml_import_items", "assigned_by_id", "INTEGER NULL"),
         ("claim_xml_import_items", "assignment_note", "VARCHAR(255) NULL"),
+        ("claim_xml_import_items", "pharmacy_assigned_to_id", "INTEGER NULL"),
+        ("claim_xml_import_items", "pharmacy_assigned_at", "DATETIME NULL"),
+        ("claim_xml_import_items", "pharmacy_assigned_by_id", "INTEGER NULL"),
+        ("claim_xml_import_items", "pharmacy_assignment_note", "VARCHAR(255) NULL"),
         ("claim_xml_import_batches", "demarcation_rules", "JSON NULL"),
+        ("claim_xml_import_batches", "pharmacy_demarcation_rules", "JSON NULL"),
         ("claim_xml_import_batches", "source", "VARCHAR(30) NULL"),
         ("claim_xml_import_batches", "working_month", "VARCHAR(7) NULL"),
         ("claim_xml_import_batches", "pinned", "VARCHAR(1) NULL"),
@@ -276,6 +315,34 @@ def _ensure_claim_vetting_columns(db: Session) -> None:
                 if "1060" in err:
                     continue
             raise
+
+
+def _audit_ghims_item(
+    db: Session,
+    item: ClaimXmlImportItem,
+    user: User,
+    action: str,
+    *,
+    old_payload: Optional[dict] = None,
+    new_payload: Optional[dict] = None,
+    details: Optional[dict] = None,
+    skip_if_empty: bool = False,
+) -> None:
+    changes = None
+    if old_payload is not None:
+        changes = diff_claim_payloads(
+            old_payload,
+            new_payload if new_payload is not None else (item.payload or {}),
+        )
+    record_claim_vetting_event(
+        db,
+        item=item,
+        user=user,
+        action=action,
+        changes=changes,
+        details=details,
+        skip_if_empty=skip_if_empty,
+    )
 
 
 def _enrich_encounter_row_with_claim_amount(
@@ -4682,6 +4749,18 @@ async def upload_ghims_claims_xml(
             payload=ghims_payload,
         ))
 
+    db.flush()
+    for item in (
+        db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.batch_id == batch.id).all()
+    ):
+        _audit_ghims_item(
+            db,
+            item,
+            current_user,
+            "imported",
+            details={"source": "xml", "file_name": batch.file_name},
+        )
+
     db.commit()
     db.refresh(batch)
     return {
@@ -4718,6 +4797,7 @@ def list_ghims_import_batches(
             "pharmacy_vetted_count": sum(1 for i in (b.items or []) if i.pharmacy_vetted_at),
             "doctor_vetted_count": sum(1 for i in (b.items or []) if i.doctor_vetted_at),
             "assigned_count": sum(1 for i in (b.items or []) if getattr(i, "assigned_to_id", None)),
+            "pharmacy_assigned_count": sum(1 for i in (b.items or []) if getattr(i, "pharmacy_assigned_to_id", None)),
         }
         for b in batches
     ]
@@ -4763,6 +4843,8 @@ def get_ghims_import_batch(
             getattr(i, "doctor_vetted_by", None),
             getattr(i, "assigned_to_id", None),
             getattr(i, "assigned_by_id", None),
+            getattr(i, "pharmacy_assigned_to_id", None),
+            getattr(i, "pharmacy_assigned_by_id", None),
         ):
             if uid:
                 name_ids.add(uid)
@@ -4789,6 +4871,9 @@ def get_ghims_import_batch(
         assigned_to_id = getattr(i, "assigned_to_id", None)
         assigned_by_id = getattr(i, "assigned_by_id", None)
         assigned_at = getattr(i, "assigned_at", None)
+        pharmacy_assigned_to_id = getattr(i, "pharmacy_assigned_to_id", None)
+        pharmacy_assigned_by_id = getattr(i, "pharmacy_assigned_by_id", None)
+        pharmacy_assigned_at = getattr(i, "pharmacy_assigned_at", None)
         row = {
             "id": i.id,
             "row_index": i.row_index,
@@ -4823,6 +4908,12 @@ def get_ghims_import_batch(
             "assigned_by_id": assigned_by_id,
             "assigned_by_name": names_by_id.get(assigned_by_id) if assigned_by_id else None,
             "assignment_note": getattr(i, "assignment_note", None),
+            "pharmacy_assigned_to_id": pharmacy_assigned_to_id,
+            "pharmacy_assigned_to_name": names_by_id.get(pharmacy_assigned_to_id) if pharmacy_assigned_to_id else None,
+            "pharmacy_assigned_at": pharmacy_assigned_at.isoformat() if pharmacy_assigned_at else None,
+            "pharmacy_assigned_by_id": pharmacy_assigned_by_id,
+            "pharmacy_assigned_by_name": names_by_id.get(pharmacy_assigned_by_id) if pharmacy_assigned_by_id else None,
+            "pharmacy_assignment_note": getattr(i, "pharmacy_assignment_note", None),
         }
         if include_totals:
             item_totals = totals_by_id.get(i.id) or {}
@@ -4837,6 +4928,7 @@ def get_ghims_import_batch(
         "uploaded_at": batch.uploaded_at.isoformat() if batch.uploaded_at else None,
         "claim_count": batch.claim_count,
         "demarcation_rules": getattr(batch, "demarcation_rules", None) or [],
+        "pharmacy_demarcation_rules": getattr(batch, "pharmacy_demarcation_rules", None) or [],
         "claims": rows,
     }
     if include_totals:
@@ -5167,10 +5259,19 @@ def _ghims_missing_sections(payload: dict) -> List[str]:
 def get_ghims_import_item(
     item_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    current_user: User = Depends(
+        require_role(["Claims", "Admin", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
-    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    from sqlalchemy.orm import joinedload
+
+    item = (
+        db.query(ClaimXmlImportItem)
+        .options(joinedload(ClaimXmlImportItem.batch))
+        .filter(ClaimXmlImportItem.id == item_id)
+        .first()
+    )
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     claim_key = str(item.claim_claim_id or "").strip()
@@ -5192,6 +5293,7 @@ def get_ghims_import_item(
     return {
         "id": item.id,
         "batch_id": item.batch_id,
+        "batch_source": import_pipeline(getattr(item, "batch", None)),
         "claim_claim_id": item.claim_claim_id,
         "row_index": item.row_index,
         "status": item.status,
@@ -5206,6 +5308,20 @@ def get_ghims_import_item(
     }
 
 
+@router.get("/ghims-import/items/{item_id}/audit")
+def get_ghims_import_item_audit(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_role(["Claims", "Admin", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
+    _module_check: User = Depends(require_module_permission("claims", "read")),
+):
+    """Who touched this imported / monthly GHIMS claim, and exactly what they changed."""
+    item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Imported claim not found.")
+    return list_claim_vetting_events(db, item.id)
 
 
 @router.get("/ghims-import/items/{item_id}/ghims-live-compare")
@@ -5242,8 +5358,19 @@ def get_ghims_import_related_items(
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
-    """Return other imported GHIMS claim items for the same member number and same service month."""
-    target = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
+    """Return other imported GHIMS claim items for the same member number and same service month.
+
+    XML uploads and GHIMS monthly (live) pulls stay in separate pipelines: an XML
+    claim must not list the live monthly copy of the same visit as a duplicate.
+    """
+    from sqlalchemy.orm import joinedload
+
+    target = (
+        db.query(ClaimXmlImportItem)
+        .options(joinedload(ClaimXmlImportItem.batch))
+        .filter(ClaimXmlImportItem.id == item_id)
+        .first()
+    )
     if not target:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
 
@@ -5252,18 +5379,32 @@ def get_ghims_import_related_items(
         return []
 
     target_month = ghims_payload_month_key(target.payload or {})
+    target_pipeline = import_pipeline(getattr(target, "batch", None))
 
-    candidates = (
+    q = (
         db.query(ClaimXmlImportItem)
+        .join(ClaimXmlImportBatch, ClaimXmlImportItem.batch_id == ClaimXmlImportBatch.id)
+        .options(joinedload(ClaimXmlImportItem.batch))
         .filter(ClaimXmlImportItem.member_no == target_member_no)
         .filter(ClaimXmlImportItem.id != item_id)
         .filter(ClaimXmlImportItem.status != "merged")
-        .order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id)
-        .all()
     )
+    if target_pipeline == SOURCE_GHIMS_LIVE:
+        q = q.filter(ClaimXmlImportBatch.source == SOURCE_GHIMS_LIVE)
+    else:
+        q = q.filter(
+            or_(
+                ClaimXmlImportBatch.source.is_(None),
+                ClaimXmlImportBatch.source == "",
+                ClaimXmlImportBatch.source != SOURCE_GHIMS_LIVE,
+            )
+        )
+    candidates = q.order_by(ClaimXmlImportItem.row_index, ClaimXmlImportItem.id).all()
 
     out = []
     for c in candidates:
+        if not same_import_pipeline(target.batch, getattr(c, "batch", None)):
+            continue
         if target_month and ghims_payload_month_key(c.payload or {}) != target_month:
             continue
         out.append(
@@ -5310,10 +5451,27 @@ def merge_ghims_import_items(
     if keep_dates_from not in ("target", "source"):
         raise HTTPException(status_code=400, detail="keep_dates_from must be 'target' or 'source'")
 
-    target = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == target_id).first()
-    source = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == source_id).first()
+    from sqlalchemy.orm import joinedload
+
+    target = (
+        db.query(ClaimXmlImportItem)
+        .options(joinedload(ClaimXmlImportItem.batch))
+        .filter(ClaimXmlImportItem.id == target_id)
+        .first()
+    )
+    source = (
+        db.query(ClaimXmlImportItem)
+        .options(joinedload(ClaimXmlImportItem.batch))
+        .filter(ClaimXmlImportItem.id == source_id)
+        .first()
+    )
     if not target or not source:
         raise HTTPException(status_code=404, detail="Imported claim(s) not found.")
+    if not same_import_pipeline(getattr(target, "batch", None), getattr(source, "batch", None)):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot merge an XML import claim with a GHIMS monthly claim. Use Compare to check the live GHIMS record.",
+        )
 
     target_status = (target.status or "").strip().lower()
     source_status = (source.status or "").strip().lower()
@@ -5352,12 +5510,31 @@ def merge_ghims_import_items(
     if not claim_id:
         raise HTTPException(status_code=400, detail="Merged payload is missing claimID.")
 
+    old_target = snapshot_payload(target.payload)
     target.claim_claim_id = claim_id
     target.payload = merged_payload
     target.member_no = member_no_from_ghims_payload(merged_payload) or None
 
     source.status = "merged"
     source.merged_into_id = target.id
+
+    merge_details = {
+        "source_item_id": source.id,
+        "source_claim_id": source.claim_claim_id,
+        "target_item_id": target.id,
+        "target_claim_id": target.claim_claim_id,
+        "items_added": items_added,
+    }
+    _audit_ghims_item(
+        db,
+        target,
+        current_user,
+        "merge_received",
+        old_payload=old_target,
+        new_payload=merged_payload,
+        details=merge_details,
+    )
+    _audit_ghims_item(db, source, current_user, "merged", details=merge_details)
 
     db.commit()
     return {
@@ -5388,6 +5565,7 @@ def revert_ghims_import_merge(
     item.merged_into_id = None
     item.finalized_at = None
     _refresh_vet_workflow_status(item)
+    _audit_ghims_item(db, item, current_user, "merge_reverted")
     db.commit()
 
     return {"reverted": True, "source_id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
@@ -5610,6 +5788,11 @@ def vet_ghims_import_item(
             item.doctor_vetted_by = current_user.id
         item.flag_comment = None
     _refresh_vet_workflow_status(item)
+    if by == "pharmacy":
+        vet_action = "pharmacy_vet_reverted" if body.clear else "pharmacy_vetted"
+    else:
+        vet_action = "doctor_vet_reverted" if body.clear else "doctor_vetted"
+    _audit_ghims_item(db, item, current_user, vet_action, details={"by": by, "cleared": bool(body.clear)})
     db.commit()
     db.refresh(item)
     return {"id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
@@ -5620,7 +5803,9 @@ def update_ghims_import_item(
     item_id: int,
     body: GhimsImportItemUpdateBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
+    current_user: User = Depends(
+        require_role(["Claims", "Admin", "Doctor", "PA", "Pharmacy", "Pharmacy Head"])
+    ),
     _module_check: User = Depends(require_module_permission("claims", "update")),
 ):
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
@@ -5633,9 +5818,19 @@ def update_ghims_import_item(
     claim_id = str(payload.get("claimID") or "").strip()
     if not claim_id:
         raise HTTPException(status_code=400, detail="claimID is required.")
+    old_payload = snapshot_payload(item.payload)
     item.claim_claim_id = claim_id
     item.payload = payload
     item.member_no = member_no_from_ghims_payload(payload) or None
+    _audit_ghims_item(
+        db,
+        item,
+        current_user,
+        "updated",
+        old_payload=old_payload,
+        new_payload=payload,
+        skip_if_empty=True,
+    )
     db.commit()
     return {"id": item.id, "updated": True}
 
@@ -5652,12 +5847,21 @@ def finalize_ghims_import_item(
         raise HTTPException(status_code=404, detail="Imported claim not found.")
     if (item.status or "").strip().lower() == "merged":
         raise HTTPException(status_code=400, detail="Cannot finalize a merged claim. Revert merge first.")
+    old_payload = snapshot_payload(item.payload)
     payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
     item.payload = payload
     from app.core.datetime_utils import utcnow
     item.status = "finalized"
     item.finalized_at = utcnow()
     item.member_no = member_no_from_ghims_payload(payload) or None
+    _audit_ghims_item(
+        db,
+        item,
+        current_user,
+        "finalized",
+        old_payload=old_payload,
+        new_payload=payload,
+    )
     db.commit()
     return {"id": item.id, "status": item.status}
 
@@ -5678,6 +5882,7 @@ def reopen_ghims_import_item(
     item.finalized_at = None
     # Keep pharmacy/doctor vet history after revert
     _refresh_vet_workflow_status(item)
+    _audit_ghims_item(db, item, current_user, "reopened")
     db.commit()
     return {"id": item.id, "status": item.status, **_vetting_snapshot(item, db)}
 
@@ -5705,6 +5910,7 @@ def flag_ghims_import_item(
     item.status = "flagged"
     item.finalized_at = None
     item.flag_comment = comment
+    _audit_ghims_item(db, item, current_user, "flagged", details={"comment": comment})
     db.commit()
     return {"id": item.id, "status": item.status, "flag_comment": item.flag_comment}
 
@@ -5781,16 +5987,28 @@ def bulk_update_ghims_import_items_status(
             item.status = "draft"
             item.finalized_at = None
             item.flag_comment = None
+            _audit_ghims_item(db, item, current_user, "reopened", details={"bulk": True})
         elif action == "flag":
             item.status = "flagged"
             item.finalized_at = None
             item.flag_comment = comment
+            _audit_ghims_item(db, item, current_user, "flagged", details={"bulk": True, "comment": comment})
         elif action == "finalize":
+            old_payload = snapshot_payload(item.payload)
             payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
             item.payload = payload
             item.status = "finalized"
             item.finalized_at = utcnow()
             item.flag_comment = None
+            _audit_ghims_item(
+                db,
+                item,
+                current_user,
+                "finalized",
+                old_payload=old_payload,
+                new_payload=payload,
+                details={"bulk": True},
+            )
 
     db.commit()
     return {"updated": len(items), "action": action, "item_ids": sorted([i.id for i in items])}
@@ -5800,6 +6018,7 @@ class GhimsAssignBody(BaseModel):
     """Assign or clear ownership on one imported claim (does not restrict vetting)."""
     assigned_to_id: Optional[int] = None  # null clears ownership
     assignment_note: Optional[str] = None
+    category: str = "doctor"  # doctor | pharmacy
 
 
 class GhimsAssignRule(BaseModel):
@@ -5836,6 +6055,8 @@ class GhimsBulkAssignBody(BaseModel):
     replace_plan: bool = False
     # Persist these rules on the batch so they can be reopened and edited
     save_plan: bool = False
+    # doctor and pharmacy share the same month of claims independently.
+    category: str = "doctor"
 
 
 def _payload_str(payload: dict, *keys) -> str:
@@ -6013,8 +6234,27 @@ def _resolve_assign_targets(batch_items: List[ClaimXmlImportItem], rule: GhimsAs
     ]
 
 
-def _apply_ownership(item: ClaimXmlImportItem, assigned_to_id: Optional[int], note: Optional[str], by_user_id: int) -> None:
+def _apply_ownership(
+    item: ClaimXmlImportItem,
+    assigned_to_id: Optional[int],
+    note: Optional[str],
+    by_user_id: int,
+    category: str = "doctor",
+) -> None:
     note_val = (note or "").strip() or None
+    cat = normalize_ownership_category(category)
+    if cat == "pharmacy":
+        if assigned_to_id is None:
+            item.pharmacy_assigned_to_id = None
+            item.pharmacy_assigned_at = None
+            item.pharmacy_assigned_by_id = None
+            item.pharmacy_assignment_note = None
+            return
+        item.pharmacy_assigned_to_id = assigned_to_id
+        item.pharmacy_assigned_at = datetime.utcnow()
+        item.pharmacy_assigned_by_id = by_user_id
+        item.pharmacy_assignment_note = note_val
+        return
     if assigned_to_id is None:
         item.assigned_to_id = None
         item.assigned_at = None
@@ -6025,6 +6265,45 @@ def _apply_ownership(item: ClaimXmlImportItem, assigned_to_id: Optional[int], no
     item.assigned_at = datetime.utcnow()
     item.assigned_by_id = by_user_id
     item.assignment_note = note_val
+
+
+def _owner_key(item: ClaimXmlImportItem, category: str):
+    cat = normalize_ownership_category(category)
+    if cat == "pharmacy":
+        return item.pharmacy_assigned_to_id, item.pharmacy_assignment_note
+    return item.assigned_to_id, item.assignment_note
+
+
+def _audit_ownership_change(
+    db: Session,
+    item: ClaimXmlImportItem,
+    user: User,
+    category: str,
+    before,
+    after,
+    names_by_id: Optional[dict] = None,
+) -> None:
+    if before == after:
+        return
+    names_by_id = names_by_id or {}
+    old_id, old_note = before
+    new_id, new_note = after
+    action = "assigned" if new_id else "unassigned"
+    _audit_ghims_item(
+        db,
+        item,
+        user,
+        action,
+        details={
+            "category": normalize_ownership_category(category),
+            "from_user_id": old_id,
+            "from_user_name": names_by_id.get(old_id) if old_id else None,
+            "to_user_id": new_id,
+            "to_user_name": names_by_id.get(new_id) if new_id else None,
+            "from_note": old_note,
+            "to_note": new_note,
+        },
+    )
 
 
 def _serialize_assign_rule(rule: GhimsAssignRule) -> dict:
@@ -6046,21 +6325,27 @@ def _serialize_assign_rule(rule: GhimsAssignRule) -> dict:
 
 @router.get("/ghims-import/assignees")
 def list_ghims_import_assignees(
+    category: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Claims", "Admin", "Doctor", "PA"])),
     _module_check: User = Depends(require_module_permission("claims", "read")),
 ):
-    """Active staff who can be claim owners (Doctor, PA, Claims, Pharmacy, Admin)."""
+    """Active staff who can be claim owners. Pass category=doctor or pharmacy to filter."""
     from app.models.user_role import UserRole
+
+    roles = ASSIGNABLE_ROLES
+    if category:
+        cat = normalize_ownership_category(category)
+        roles = PHARMACY_ASSIGNABLE_ROLES if cat == "pharmacy" else DOCTOR_ASSIGNABLE_ROLES
 
     primary = (
         db.query(User)
-        .filter(User.is_active == True, User.role.in_(ASSIGNABLE_ROLES))  # noqa: E712
+        .filter(User.is_active == True, User.role.in_(roles))  # noqa: E712
         .all()
     )
     extra_ids = [
         r.user_id
-        for r in db.query(UserRole.user_id).filter(UserRole.role.in_(ASSIGNABLE_ROLES)).distinct().all()
+        for r in db.query(UserRole.user_id).filter(UserRole.role.in_(roles)).distinct().all()
     ]
     extra = []
     if extra_ids:
@@ -6098,11 +6383,27 @@ def assign_ghims_import_item(
     item = db.query(ClaimXmlImportItem).filter(ClaimXmlImportItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Imported claim not found.")
+    owner = None
     if body.assigned_to_id is not None:
         owner = db.query(User).filter(User.id == body.assigned_to_id, User.is_active == True).first()  # noqa: E712
         if not owner:
             raise HTTPException(status_code=404, detail="Assignee user not found or inactive.")
-    _apply_ownership(item, body.assigned_to_id, body.assignment_note, current_user.id)
+    before = _owner_key(item, body.category)
+    _apply_ownership(
+        item,
+        body.assigned_to_id,
+        body.assignment_note,
+        current_user.id,
+        category=body.category,
+    )
+    names = {}
+    if before[0]:
+        prev = db.query(User).filter(User.id == before[0]).first()
+        if prev:
+            names[prev.id] = _user_display_name(prev) or prev.username
+    if owner:
+        names[owner.id] = _user_display_name(owner) or owner.username
+    _audit_ownership_change(db, item, current_user, body.category, before, _owner_key(item, body.category), names)
     db.commit()
     db.refresh(item)
     return {"id": item.id, **_ownership_snapshot(item, db)}
@@ -6120,12 +6421,15 @@ def bulk_assign_ghims_import_batch(
     Demarcate ownership within a GHIMS import batch.
 
     Rules are applied in order (later rules overwrite earlier ones on the same claim).
-    With replace_plan=True, all ownership is cleared first so editing a saved plan is reliable.
+    With replace_plan=True, ownership for this category is cleared first.
+    Doctor and pharmacy demarcation are independent — assigning pharmacists
+    does not change doctor owners, and vice versa.
     Ownership is informational only — anyone with vet permission can still vet.
     """
     _ensure_claim_vetting_columns(db)
     if not body.rules:
         raise HTTPException(status_code=400, detail="At least one assignment rule is required.")
+    category = normalize_ownership_category(body.category)
 
     batch = db.query(ClaimXmlImportBatch).filter(ClaimXmlImportBatch.id == batch_id).first()
     if not batch:
@@ -6149,9 +6453,17 @@ def bulk_assign_ghims_import_batch(
         if missing:
             raise HTTPException(status_code=404, detail=f"Assignee user(s) not found or inactive: {missing}")
 
+    before_owners = {i.id: _owner_key(i, category) for i in batch_items}
+    name_ids = {uid for uid, _note in before_owners.values() if uid}
+    name_ids |= set(assignee_ids)
+    names_by_id = {
+        u.id: (_user_display_name(u) or u.username)
+        for u in (db.query(User).filter(User.id.in_(name_ids)).all() if name_ids else [])
+    }
+
     if body.replace_plan:
         for item in batch_items:
-            _apply_ownership(item, None, None, current_user.id)
+            _apply_ownership(item, None, None, current_user.id, category=category)
 
     rule_results = []
     touched_ids = set()
@@ -6159,7 +6471,7 @@ def bulk_assign_ghims_import_batch(
         targets = _resolve_assign_targets(batch_items, rule)
         note = rule.assignment_note
         for item in targets:
-            _apply_ownership(item, rule.assigned_to_id, note, current_user.id)
+            _apply_ownership(item, rule.assigned_to_id, note, current_user.id, category=category)
             touched_ids.add(item.id)
         rule_results.append({
             "rule_index": idx,
@@ -6189,7 +6501,21 @@ def bulk_assign_ghims_import_batch(
             serialized = _serialize_assign_rule(rule)
             serialized.pop("item_ids", None)
             plan_rules.append(serialized)
-        batch.demarcation_rules = plan_rules
+        if category == "pharmacy":
+            batch.pharmacy_demarcation_rules = plan_rules
+        else:
+            batch.demarcation_rules = plan_rules
+
+    for item in batch_items:
+        _audit_ownership_change(
+            db,
+            item,
+            current_user,
+            category,
+            before_owners.get(item.id, (None, None)),
+            _owner_key(item, category),
+            names_by_id,
+        )
 
     db.commit()
     return {
@@ -6197,7 +6523,9 @@ def bulk_assign_ghims_import_batch(
         "updated": len(touched_ids),
         "item_ids": sorted(touched_ids),
         "rules": rule_results,
+        "category": category,
         "demarcation_rules": getattr(batch, "demarcation_rules", None) or [],
+        "pharmacy_demarcation_rules": getattr(batch, "pharmacy_demarcation_rules", None) or [],
         "replace_plan": body.replace_plan,
     }
 

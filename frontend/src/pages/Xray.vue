@@ -30,7 +30,7 @@
           v-model="searchTerm"
           type="search"
           class="tool-input tool-input--search"
-          placeholder="Search card or name…"
+          placeholder="Search card, name, or code…"
           @keyup.enter="loadRequests"
         />
         <input

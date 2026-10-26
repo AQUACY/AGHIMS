@@ -23,6 +23,13 @@ export const HMS_NAV_GROUPS = [
         to: { name: 'EncountersCalendar' },
       },
       {
+        id: 'confidential',
+        label: 'Confidential',
+        icon: 'visibility_off',
+        to: { name: 'Confidential' },
+        roles: ['Records', 'Admin', 'Doctor', 'PA', 'Nurse', 'Lab', 'Lab Head', 'Scan', 'Scan Head', 'Xray', 'Xray Head', 'Claims'],
+      },
+      {
         id: 'vitals',
         label: 'Vitals',
         icon: 'favorite',
@@ -219,6 +226,14 @@ export const CLAIMS_NAV_GROUPS = [
     label: 'Claims',
     items: [
       { id: 'claims-home', label: 'Claims home', icon: 'apps', to: { name: 'Claims' }, moduleKey: 'claims' },
+      {
+        id: 'claims-confidential',
+        label: 'Confidential register',
+        icon: 'visibility_off',
+        to: { name: 'ClaimsConfidential' },
+        roles: ['Claims', 'Admin', 'Doctor', 'PA'],
+        moduleKey: 'claims',
+      },
       { id: 'claims-dashboard', label: 'Dashboard', icon: 'dashboard', to: { name: 'ClaimsDashboard' }, moduleKey: 'claims' },
       { id: 'claims-list', label: 'Claims', icon: 'description', to: { name: 'ClaimsList' }, moduleKey: 'claims' },
       { id: 'claims-reports', label: 'Reports', icon: 'assessment', to: { name: 'ClaimsReports' }, moduleKey: 'claims' },

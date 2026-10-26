@@ -193,6 +193,22 @@ def merge_ghims_payloads(
     return target, added, warnings
 
 
+GHIMS_LIVE_SOURCE = "ghims_live"
+
+
+def import_pipeline(batch_or_source: Any) -> str:
+    """xml = uploaded GHIMS XML; ghims_live = monthly pull. Never mix the two."""
+    if batch_or_source is None or isinstance(batch_or_source, str):
+        src = str(batch_or_source or "xml").strip().lower()
+    else:
+        src = str(getattr(batch_or_source, "source", None) or "xml").strip().lower()
+    return GHIMS_LIVE_SOURCE if src == GHIMS_LIVE_SOURCE else "xml"
+
+
+def same_import_pipeline(left_batch_or_source: Any, right_batch_or_source: Any) -> bool:
+    return import_pipeline(left_batch_or_source) == import_pipeline(right_batch_or_source)
+
+
 def serialize_ghims_related_item(item, batch=None, target_payload: Optional[dict] = None) -> dict:
     payload = item.payload or {}
     dates = ghims_payload_dates(payload)
@@ -212,6 +228,7 @@ def serialize_ghims_related_item(item, batch=None, target_payload: Optional[dict
         "principal_gdrg": str(payload.get("principalGDRG") or "").strip(),
         "batch_id": item.batch_id,
         "batch_file_name": getattr(batch, "file_name", None) if batch is not None else None,
+        "batch_source": import_pipeline(batch if batch is not None else getattr(item, "batch", None)),
         "investigations_count": len([i for i in invs if str(i.get("gdrgCode") or "").strip()]),
         "medicines_count": len([
             m for m in meds
