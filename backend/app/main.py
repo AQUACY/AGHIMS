@@ -42,6 +42,7 @@ from app.api import (
     inventory_reports,
     ai_claim_vetting,
     confidential,
+    stock_accountability,
 )
 from app.api import notifications
 from app.core.database import engine, Base
@@ -62,6 +63,9 @@ try:
     try:
         ensure_confidential_schema(_schema_db)
         _schema_db.commit()
+        from app.api.stock_accountability import ensure_stock_accountability_schema
+
+        ensure_stock_accountability_schema(_schema_db)
     finally:
         _schema_db.close()
 except Exception as e:
@@ -251,6 +255,7 @@ app.include_router(inventory_analytics.router, prefix="/api")
 app.include_router(inventory_reports.router, prefix="/api")
 app.include_router(ai_claim_vetting.router, prefix="/api")
 app.include_router(confidential.router, prefix="/api")
+app.include_router(stock_accountability.router, prefix="/api")
 
 # Mount static files for lab result attachments
 uploads_dir = Path("uploads")

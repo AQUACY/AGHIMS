@@ -56,6 +56,13 @@ from app.models.consultation_template import ConsultationTemplate
 from app.models.claim_diagnosis_template import ClaimDiagnosisTemplate
 from app.models.ward_stock import WardStock
 from app.models.pharmacy_requisition import PharmacyRequisition, RequisitionStatus
+from app.models.stock_accountability import (
+    DispenseReport,
+    DispenseReportLine,
+    GhimsCatalogItem,
+    StocktakingLine,
+    StocktakingSheet,
+)
 from app.models.requisition_item import RequisitionItem
 from app.models.requisition_history import RequisitionHistory, HistoryAction
 from app.models.notification import Notification, NotificationType

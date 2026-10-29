@@ -1440,6 +1440,37 @@ export const departmentStaffAssignmentsAPI = {
   delete: (assignmentId) => api.delete(`/department-staff-assignments/${assignmentId}`),
 };
 
+export const stockAccountabilityAPI = {
+  searchCatalog: (q = '', limit = 40) =>
+    api.get('/stock-accountability/catalog', { params: { q, limit } }),
+  listGhimsDrugs: (q = '') =>
+    api.get('/stock-accountability/ghims-drugs', { params: { q } }),
+  syncCatalog: () => api.post('/stock-accountability/catalog/sync'),
+  listSheets: (departmentId) =>
+    api.get('/stock-accountability/sheets', {
+      params: departmentId ? { department_id: departmentId } : {},
+    }),
+  createSheet: (data) => api.post('/stock-accountability/sheets', data),
+  getSheet: (sheetId) => api.get(`/stock-accountability/sheets/${sheetId}`),
+  updateSheet: (sheetId, data) => api.put(`/stock-accountability/sheets/${sheetId}`, data),
+  addLine: (sheetId, drugId) =>
+    api.post(`/stock-accountability/sheets/${sheetId}/lines`, { drug_id: drugId }),
+  deleteLine: (sheetId, lineId) =>
+    api.delete(`/stock-accountability/sheets/${sheetId}/lines/${lineId}`),
+  fillFromRequisitions: (sheetId) =>
+    api.post(`/stock-accountability/sheets/${sheetId}/fill-requisitions`),
+  listReports: () => api.get('/stock-accountability/reports'),
+  uploadReport: (file) => {
+    const body = new FormData();
+    body.append('file', file);
+    return api.post('/stock-accountability/reports/upload', body);
+  },
+  reconcile: (sheetId, reportId) =>
+    api.get(`/stock-accountability/sheets/${sheetId}/reconciliation`, {
+      params: reportId ? { report_id: reportId } : {},
+    }),
+};
+
 export const storeStaffAssignmentsAPI = {
   getAll: (filters = {}) => {
     const params = new URLSearchParams();

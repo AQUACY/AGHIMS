@@ -389,6 +389,7 @@
           <div class="q-gutter-md">
             <div><strong>Requisition Number:</strong> {{ selectedRequisition.requisition_number }}</div>
             <div><strong>Department/Unit:</strong> {{ selectedRequisition.ward }}</div>
+            <div v-if="selectedRequisition.shift"><strong>Shift:</strong> {{ selectedRequisition.shift }}</div>
             <div><strong>Status:</strong> <q-badge :color="getStatusColor(selectedRequisition.status)" :label="selectedRequisition.status" /></div>
             <div><strong>Requested By:</strong> {{ selectedRequisition.requested_by_name }}</div>
             <div v-if="selectedRequisition.approved_by_name"><strong>Approved By:</strong> {{ selectedRequisition.approved_by_name }}</div>
@@ -805,6 +806,7 @@ export default {
     const columns = [
       { name: 'requisition_number', label: 'Requisition #', field: 'requisition_number', align: 'left', sortable: true },
       { name: 'ward', label: 'Department/Unit', field: 'ward', align: 'left', sortable: true },
+      { name: 'shift', label: 'Shift', field: 'shift', align: 'left', sortable: true },
       { name: 'status', label: 'Status', field: 'status', align: 'left', sortable: true },
       { name: 'requested_by_name', label: 'Requested By', field: 'requested_by_name', align: 'left', sortable: true },
       { name: 'created_at', label: 'Created', field: 'created_at', align: 'left', sortable: true },

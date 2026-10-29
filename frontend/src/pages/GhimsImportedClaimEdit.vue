@@ -497,28 +497,42 @@
             />
             <q-input v-model="d._diagnosisName" label="Diagnosis Name" filled dense class="col-12 col-md-6" />
             <q-select
-              v-if="(d._drgOptions || []).length > 1"
               :model-value="d.gdrgCode"
-              :options="d._drgOptions || []"
+              :options="gdrgSelectOptions(d)"
+              option-value="value"
+              option-label="value"
               emit-value
               map-options
+              use-input
+              input-debounce="200"
               clearable
               filled
               dense
-              label="Mapped DRG options"
-              hint="Pick a mapped DRG, or type your own in GDRG"
-              class="col-12 col-md-3"
-              @update:model-value="(val) => onMappedDrgSelect(i, val)"
-            />
-            <q-input
-              v-model="d.gdrgCode"
               label="GDRG"
-              filled
-              dense
-              class="col-12 col-md-2"
-              hint="Editable"
-              @update:model-value="() => onDiagnosisGdrgEdited(i)"
-            />
+              :hint="gdrgFieldHint(d)"
+              class="col-12 col-md-4"
+              @input-value="(val) => { d._gdrgInput = val }"
+              @filter="(val, update, abort) => filterDiagnosisGdrg(i, val, update, abort)"
+              @update:model-value="(val) => onDiagnosisGdrgPicked(i, val)"
+            >
+              <template #option="scope">
+                <q-item v-bind="scope.itemProps" dense class="gdrg-option">
+                  <q-item-section>
+                    <q-item-label class="gdrg-option-code">{{ scope.opt.value }}</q-item-label>
+                    <q-item-label v-if="(scope.opt.descriptions || []).length" caption class="gdrg-option-names">
+                      <span v-for="(name, n) in scope.opt.descriptions" :key="`${scope.opt.value}-${n}`">{{ name }}</span>
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+              <template #no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    No insurance DRG starts with that. Keep typing another code.
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
             <q-checkbox
               :model-value="principalDiagnosisIndex === i"
               label="Principal diagnosis"
@@ -1505,6 +1519,10 @@ async function vetByDoctor() {
   }
   vettingDoctor.value = true;
   try {
+    if (!clearing) {
+      const clean = await buildGhimsSavePayload('doctor vetting');
+      await claimsAPI.updateGhimsImportItem(itemId.value, clean);
+    }
     const res = await claimsAPI.vetGhimsImportItem(itemId.value, 'doctor', clearing);
     applyVettingFromItem(res.data || {});
     $q.notify({
@@ -1513,7 +1531,12 @@ async function vetByDoctor() {
     });
     loadAuditTrail();
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update doctor vet' });
+    $q.notify({
+      type: 'negative',
+      multiLine: true,
+      timeout: 12000,
+      message: e.response?.data?.detail || e.message || 'Failed to update doctor vet',
+    });
   } finally {
     vettingDoctor.value = false;
   }
@@ -1911,6 +1934,7 @@ async function onDiagnosisSelect(index, val) {
     row._diagnosisName = val.icd10_description || row._diagnosisName || '';
     row._selectedOption = val;
     row._drgOptions = [];
+    row._gdrgPickerOptions = undefined;
 
     let drgItems = [];
     const fromSearch = Array.isArray(val.drg_codes) ? val.drg_codes.filter(Boolean) : [];
@@ -1937,7 +1961,7 @@ async function onDiagnosisSelect(index, val) {
         if (!code || seen.has(code)) return null;
         seen.add(code);
         const desc = String(d.drg_description || '').trim();
-        return { label: desc ? `${code} — ${desc}` : code, value: code };
+        return { label: desc ? `${code} — ${desc}` : code, value: code, desc };
       })
       .filter(Boolean);
 
@@ -1954,6 +1978,13 @@ async function onDiagnosisSelect(index, val) {
       });
     } else {
       row.gdrgCode = val.gdrg_code || val.g_drg_code || val.drg_code || val.gdrgCode || '';
+      const token = (row._gdrgFilterToken || 0) + 1;
+      row._gdrgFilterToken = token;
+      loadInsuranceDrgOptions(row, '', token).then((options) => {
+        if (options && row._gdrgFilterToken === token && !String(row._gdrgInput || '').trim()) {
+          row._gdrgPickerOptions = options;
+        }
+      });
     }
     if (principalDiagnosisIndex.value === index) {
       payload.principalGDRG = row.gdrgCode || '';
@@ -1981,14 +2012,162 @@ function syncSpecialtyFromPrincipalDiagnosis() {
   }
 }
 
-function onMappedDrgSelect(index, val) {
+function descriptionList(row) {
+  const many = Array.isArray(row?.drg_descriptions)
+    ? row.drg_descriptions
+    : (Array.isArray(row?.descriptions) ? row.descriptions : []);
+  const names = [];
+  const seen = new Set();
+  for (const raw of many) {
+    const name = String(raw || '').trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  if (names.length) return names;
+  const one = String(row?.drg_description || row?.desc || '').trim();
+  return one ? [one] : [];
+}
+
+function drgRowsToOptions(rows) {
+  const seen = new Set();
+  return (rows || [])
+    .map((d) => {
+      const code = String(d?.drg_code || d?.value || '').trim();
+      if (!code || seen.has(code)) return null;
+      seen.add(code);
+      const descriptions = descriptionList(d);
+      const desc = descriptions[0] || '';
+      return { label: desc ? `${code} — ${desc}` : code, value: code, desc, descriptions };
+    })
+    .filter(Boolean);
+}
+
+function mergeDrgOptions(groups) {
+  const byCode = new Map();
+  for (const opt of groups.flat()) {
+    const code = String(opt?.value || '').trim();
+    if (!code) continue;
+    const key = code.toUpperCase();
+    const names = descriptionList(opt);
+    const existing = byCode.get(key);
+    if (!existing) {
+      byCode.set(key, {
+        label: names[0] ? `${code} — ${names[0]}` : code,
+        value: code,
+        desc: names[0] || '',
+        descriptions: names,
+      });
+      continue;
+    }
+    const seen = new Set(existing.descriptions.map((name) => name.toLowerCase()));
+    for (const name of names) {
+      if (seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      existing.descriptions.push(name);
+    }
+    existing.desc = existing.descriptions[0] || '';
+  }
+  return [...byCode.values()];
+}
+
+function gdrgSelectOptions(row) {
+  const opts = Array.isArray(row?._gdrgPickerOptions)
+    ? row._gdrgPickerOptions
+    : (row?._drgOptions || []);
+  const current = String(row?.gdrgCode || '').trim();
+  if (current && !opts.some((o) => o.value === current)) {
+    return [{ label: current, value: current }, ...opts];
+  }
+  return opts;
+}
+
+function gdrgFieldHint(row) {
+  const n = (row?._drgOptions || []).length;
+  if (n === 1) return 'Filled from the diagnosis mapping. Type to search other insurance DRGs.';
+  if (n > 1) return 'This diagnosis maps to more than one DRG. Type to filter, or search the full insurance list.';
+  return 'Not mapped. Open the list, or type so DRGs that start with that text come first.';
+}
+
+function mappedDrgMatches(row, needle) {
+  const mapped = Array.isArray(row?._drgOptions) ? row._drgOptions : [];
+  if (!needle) return mapped;
+  return mapped.filter((o) => {
+    const code = String(o.value || '').toLowerCase();
+    const label = String(o.label || '').toLowerCase();
+    return code.startsWith(needle) || label.includes(needle);
+  });
+}
+
+async function loadInsuranceDrgOptions(row, needle, token) {
+  const mappedMatches = mappedDrgMatches(row, needle);
+  let catalog = [];
+  try {
+    const res = await priceListAPI.searchDrgCodes(needle, 60);
+    catalog = drgRowsToOptions(res.data);
+  } catch (_) {
+    catalog = [];
+  }
+  if (token != null && row._gdrgFilterToken !== token) return null;
+  const starts = [];
+  const rest = [];
+  for (const opt of catalog) {
+    const code = String(opt.value || '');
+    if (!needle || code.toLowerCase().startsWith(needle)) starts.push(opt);
+    else rest.push(opt);
+  }
+  // A typed search stays on codes that begin with that text. The rest of the
+  // catalog is only for an empty search, so the list cannot jump back to ASUR.
+  // Names for the same code are combined so every mapped description is visible.
+  const ordered = needle ? [...mappedMatches, ...starts] : [...mappedMatches, ...starts, ...rest];
+  return mergeDrgOptions([ordered]);
+}
+
+function filterDiagnosisGdrg(index, val, update, abort) {
+  const row = payload.diagnoses[index];
+  if (!row) {
+    abort?.();
+    return;
+  }
+  const needle = String(val || '').trim().toLowerCase();
+  const typed = String(row._gdrgInput || '').trim();
+  // The menu refreshes and asks for every DRG while the box still says OPDC.
+  // Keep the filtered list instead of jumping back to ASUR.
+  if (!needle && (typed || (row._gdrgHoldTypedUntil && Date.now() < row._gdrgHoldTypedUntil))) {
+    abort?.();
+    return;
+  }
+  const token = (row._gdrgFilterToken || 0) + 1;
+  row._gdrgFilterToken = token;
+  const mappedMatches = mappedDrgMatches(row, needle);
+  if (!needle && mappedMatches.length) {
+    update(() => {
+      if (row._gdrgFilterToken !== token) return;
+      row._gdrgPickerOptions = mappedMatches;
+    });
+    return;
+  }
+  loadInsuranceDrgOptions(row, needle, token).then((options) => {
+    if (options == null || row._gdrgFilterToken !== token) return;
+    update(() => {
+      if (row._gdrgFilterToken !== token) return;
+      row._gdrgPickerOptions = options;
+      if (needle) row._gdrgHoldTypedUntil = Date.now() + 800;
+    });
+  });
+}
+
+function onDiagnosisGdrgPicked(index, val) {
   const row = payload.diagnoses[index];
   if (!row) return;
-  row.gdrgCode = val || '';
-  if (principalDiagnosisIndex.value === index) {
-    payload.principalGDRG = row.gdrgCode || '';
-    syncSpecialtyFromPrincipalDiagnosis();
+  if (val && typeof val === 'object') {
+    row.gdrgCode = val.value || val.drg_code || '';
+  } else {
+    row.gdrgCode = val || '';
   }
+  if (!row.gdrgCode) row._gdrgHoldTypedUntil = 0;
+  onDiagnosisGdrgEdited(index);
 }
 
 function onDiagnosisGdrgEdited(index) {
@@ -2782,7 +2961,7 @@ async function resolveServiceNames() {
                     if (!code || seen.has(code)) return null;
                     seen.add(code);
                     const desc = String(d.drg_description || '').trim();
-                    return { label: desc ? `${code} — ${desc}` : code, value: code };
+                    return { label: desc ? `${code} — ${desc}` : code, value: code, desc };
                   })
                   .filter(Boolean);
                 if (diag._drgOptions.length === 1 && !diag.gdrgCode) {
@@ -3804,4 +3983,27 @@ watch(
 }
 .claim-audit-old { color: #b91c1c; text-decoration: line-through; }
 .claim-audit-new { color: #047857; font-weight: 600; }
+.gdrg-option {
+  min-height: 0;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.gdrg-option-code {
+  font-size: 13px;
+  line-height: 1.2;
+  font-weight: 600;
+}
+.gdrg-option-names {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: normal;
+  color: #64748b;
+}
+.gdrg-option-names span {
+  display: block;
+}
 </style>
