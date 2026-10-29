@@ -45,6 +45,8 @@ class RequisitionCreate(BaseModel):
     store_id: int
     items: List[RequisitionItemCreate]
     notes: Optional[str] = None
+    shift: Optional[str] = None
+    catalog_source: Optional[str] = None
 
 
 class RequisitionItemResponse(BaseModel):
@@ -98,6 +100,7 @@ class PharmacyRequisitionResponse(BaseModel):
     fulfilled_by_name: Optional[str] = None
     fulfilled_at: Optional[datetime] = None
     notes: Optional[str] = None
+    shift: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     items: List[RequisitionItemResponse] = []
@@ -245,6 +248,27 @@ def create_requisition(
             detail="Store not found"
         )
     
+    shift = (requisition_data.shift or "").strip().lower() or None
+    if requisition_data.catalog_source == "ghims":
+        if shift not in {"morning", "afternoon", "night"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Choose morning, afternoon, or night for this request.",
+            )
+        from app.models.stock_accountability import GhimsCatalogItem
+
+        codes = [item.product_code for item in requisition_data.items]
+        found = {
+            row.drug_id
+            for row in db.query(GhimsCatalogItem).filter(GhimsCatalogItem.drug_id.in_(codes)).all()
+        }
+        missing = [item.product_name for item in requisition_data.items if item.product_code not in found]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="These names are not on the GHIMS list: " + ", ".join(missing),
+            )
+
     # Check if user is IC or Deputy of the department (Admin can bypass)
     if current_user.role != "Admin":
         if not check_user_is_department_ic_or_deputy(db, current_user.id, requisition_data.department_id):
@@ -288,7 +312,8 @@ def create_requisition(
         ward=department.name,  # Keep for backward compatibility
         requested_by=current_user.id,
         status=RequisitionStatus.PENDING,
-        notes=requisition_data.notes
+        notes=requisition_data.notes,
+        shift=shift,
     )
     db.add(requisition)
     db.flush()
@@ -319,8 +344,8 @@ def create_requisition(
             db=db,
             roles=["Pharmacy Head", "Admin"],
             notification_type=NotificationType.REQUISITION_CREATED,
-            title=f"New Requisition from {requisition_data.ward}",
-            message=f"Requisition {requisition_number} has been created by {current_user.full_name or current_user.username} from {requisition_data.ward}. Please review and approve.",
+            title=f"New Requisition from {department.name}",
+            message=f"Requisition {requisition_number} has been created by {current_user.full_name or current_user.username} from {department.name}. Please review and approve.",
             related_id=requisition.id,
             related_type="requisition"
         )
@@ -360,6 +385,7 @@ def create_requisition(
         fulfilled_by=requisition.fulfilled_by,
         fulfilled_at=requisition.fulfilled_at,
         notes=requisition.notes,
+        shift=requisition.shift,
         created_at=requisition.created_at,
         updated_at=requisition.updated_at,
         items=[
@@ -542,6 +568,7 @@ def get_requisitions(
             fulfilled_by_name=fulfiller.full_name if fulfiller else fulfiller.username if fulfiller else None,
             fulfilled_at=req.fulfilled_at,
             notes=req.notes,
+            shift=req.shift,
             created_at=req.created_at,
             updated_at=req.updated_at,
             items=[
@@ -644,6 +671,7 @@ def get_requisition(
         fulfilled_by_name=fulfiller.full_name if fulfiller else fulfiller.username if fulfiller else None,
         fulfilled_at=requisition.fulfilled_at,
         notes=requisition.notes,
+        shift=requisition.shift,
         created_at=requisition.created_at,
         updated_at=requisition.updated_at,
         items=[

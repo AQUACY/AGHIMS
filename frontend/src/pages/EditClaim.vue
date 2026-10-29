@@ -1650,6 +1650,11 @@ async function vetByDoctor() {
   }
   vettingDoctor.value = true;
   try {
+    if (!clearing) {
+      assertClaimPrescriptionFieldsOrThrow(prescriptionsList.value, 'doctor vetting');
+      await validateCoveredMedicinesOrThrow();
+      await claimsAPI.updateDetailed(claimId.value, buildClaimPayload());
+    }
     const res = await claimsAPI.vetClaim(claimId.value, 'doctor', clearing);
     applyVettingFromClaim(res.data || {});
     $q.notify({
@@ -1657,7 +1662,12 @@ async function vetByDoctor() {
       message: clearing ? 'Doctor vet removed' : 'Doctor vet recorded',
     });
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Failed to update doctor vet' });
+    $q.notify({
+      type: 'negative',
+      multiLine: true,
+      timeout: 12000,
+      message: e.response?.data?.detail || e.message || 'Failed to update doctor vet',
+    });
   } finally {
     vettingDoctor.value = false;
   }

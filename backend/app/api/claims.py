@@ -1225,6 +1225,8 @@ def vet_claim(
     else:
         if by == "pharmacy":
             _assert_claim_prescriptions_complete_for_pharmacy(claim)
+        else:
+            _assert_claim_prescriptions_complete_for_pharmacy(claim, action="doctor vetting")
         now = datetime.utcnow()
         if by == "pharmacy":
             claim.pharmacy_vetted_at = now
@@ -5061,8 +5063,8 @@ def _assert_ghims_medicines_complete(payload: dict, *, action: str = "saving") -
         )
 
 
-def _assert_claim_prescriptions_complete_for_pharmacy(claim: Claim) -> None:
-    """Require full prescription fields before pharmacy vet on HMS claims."""
+def _assert_claim_prescriptions_complete_for_pharmacy(claim: Claim, *, action: str = "pharmacy vetting") -> None:
+    """Require full prescription fields before pharmacy or doctor vet on HMS claims."""
     prescriptions = list(getattr(claim, "claim_prescriptions", None) or [])
     problems: List[str] = []
     for idx, presc in enumerate(prescriptions):
@@ -5103,7 +5105,7 @@ def _assert_claim_prescriptions_complete_for_pharmacy(claim: Claim) -> None:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Cannot pharmacy-vet: drug fields incomplete. "
+                f"Cannot complete {action}: drug fields incomplete. "
                 + "; ".join(problems)
                 + ". Fill medicine code, name, quantity, date, dose, frequency, and duration."
             ),
@@ -5779,6 +5781,9 @@ def vet_ghims_import_item(
     else:
         if by == "pharmacy":
             _assert_ghims_medicines_complete(item.payload or {}, action="pharmacy vetting")
+        else:
+            item.payload = _validate_and_normalize_ghims_payload(db, item.payload or {})
+            _assert_ghims_medicines_complete(item.payload or {}, action="doctor vetting")
         now = datetime.utcnow()
         if by == "pharmacy":
             item.pharmacy_vetted_at = now

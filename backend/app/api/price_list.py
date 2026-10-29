@@ -1089,95 +1089,101 @@ def search_drg_codes(
     current_user: User = Depends(require_role(["Admin", "Billing", "Doctor", "Records", "PA", "Nurse", "Pharmacy", "Pharmacy Head", "Store Manager", "Lab", "Lab Head", "Scan", "Scan Head", "Xray", "Xray Head", "Claims"])),
     _module_check: User = Depends(require_module_permission("price_list", "read"))
 ):
-    """Search DRG codes across all sources (procedures, surgeries, unmapped DRG, and existing mappings)"""
+    """Search DRG codes across all sources (procedures, surgeries, unmapped DRG, and existing mappings).
+
+    Codes that start with the typed text are returned before other matches.
+    """
     from sqlalchemy import or_
-    
-    # Collect DRG codes from all sources
+
+    limit = max(1, min(int(limit or 50), 100))
+    term = (search_term or "").strip()
     drg_codes_map = {}  # {drg_code: {code, description}}
-    
-    # 1. From ProcedurePrice
-    if search_term:
-        procedures = db.query(ProcedurePrice).filter(
-            ProcedurePrice.g_drg_code.ilike(f"%{search_term}%"),
-            ProcedurePrice.is_active == True
-        ).distinct(ProcedurePrice.g_drg_code).limit(limit).all()
-    else:
-        procedures = db.query(ProcedurePrice).filter(
-            ProcedurePrice.is_active == True
-        ).distinct(ProcedurePrice.g_drg_code).limit(limit).all()
-    
-    for proc in procedures:
-        if proc.g_drg_code:
-            drg_codes_map[proc.g_drg_code] = {
-                "drg_code": proc.g_drg_code,
-                "drg_description": proc.service_name or ""
-            }
-    
-    # 2. From SurgeryPrice
-    if search_term:
-        surgeries = db.query(SurgeryPrice).filter(
-            SurgeryPrice.g_drg_code.ilike(f"%{search_term}%"),
-            SurgeryPrice.is_active == True
-        ).distinct(SurgeryPrice.g_drg_code).limit(limit).all()
-    else:
-        surgeries = db.query(SurgeryPrice).filter(
-            SurgeryPrice.is_active == True
-        ).distinct(SurgeryPrice.g_drg_code).limit(limit).all()
-    
-    for surg in surgeries:
-        if surg.g_drg_code:
-            if surg.g_drg_code not in drg_codes_map or not drg_codes_map[surg.g_drg_code]["drg_description"]:
-                drg_codes_map[surg.g_drg_code] = {
-                    "drg_code": surg.g_drg_code,
-                    "drg_description": surg.service_name or ""
-                }
-    
-    # 3. From UnmappedDRGPrice
-    if search_term:
-        unmapped = db.query(UnmappedDRGPrice).filter(
-            UnmappedDRGPrice.g_drg_code.ilike(f"%{search_term}%"),
-            UnmappedDRGPrice.is_active == True
-        ).distinct(UnmappedDRGPrice.g_drg_code).limit(limit).all()
-    else:
-        unmapped = db.query(UnmappedDRGPrice).filter(
-            UnmappedDRGPrice.is_active == True
-        ).distinct(UnmappedDRGPrice.g_drg_code).limit(limit).all()
-    
-    for unm in unmapped:
-        if unm.g_drg_code:
-            if unm.g_drg_code not in drg_codes_map or not drg_codes_map[unm.g_drg_code]["drg_description"]:
-                drg_codes_map[unm.g_drg_code] = {
-                    "drg_code": unm.g_drg_code,
-                    "drg_description": unm.service_name or ""
-                }
-    
-    # 4. From ICD10DRGMapping (existing mappings)
-    if search_term:
-        mappings = db.query(ICD10DRGMapping).filter(
-            or_(
-                ICD10DRGMapping.drg_code.ilike(f"%{search_term}%"),
-                ICD10DRGMapping.drg_description.ilike(f"%{search_term}%")
-            ),
-            ICD10DRGMapping.is_active == True
-        ).distinct(ICD10DRGMapping.drg_code).limit(limit).all()
-    else:
-        mappings = db.query(ICD10DRGMapping).filter(
-            ICD10DRGMapping.is_active == True
-        ).distinct(ICD10DRGMapping.drg_code).limit(limit).all()
-    
-    for mapping in mappings:
-        if mapping.drg_code:
-            if mapping.drg_code not in drg_codes_map or not drg_codes_map[mapping.drg_code]["drg_description"]:
-                drg_codes_map[mapping.drg_code] = {
-                    "drg_code": mapping.drg_code,
-                    "drg_description": mapping.drg_description or ""
-                }
-    
-    # Convert to list and sort
+
+    def matching_rows(model, code_name: str, desc_name: str):
+        code_col = getattr(model, code_name)
+        desc_col = getattr(model, desc_name)
+        base = db.query(model).filter(
+            model.is_active == True,
+            code_col.isnot(None),
+            code_col != "",
+        )
+        if not term:
+            return base.order_by(code_col).limit(limit).all()
+        prefix_rows = (
+            base.filter(code_col.ilike(f"{term}%"))
+            .order_by(code_col)
+            .limit(limit)
+            .all()
+        )
+        if len(prefix_rows) >= limit:
+            return prefix_rows
+        seen = {getattr(row, code_name) for row in prefix_rows}
+        extra = (
+            base.filter(or_(code_col.ilike(f"%{term}%"), desc_col.ilike(f"%{term}%")))
+            .order_by(code_col)
+            .limit(limit)
+            .all()
+        )
+        prefix_rows.extend(row for row in extra if getattr(row, code_name) not in seen)
+        return prefix_rows
+
+    def remember(code, description):
+        code = (code or "").strip()
+        if not code:
+            return
+        description = (description or "").strip()
+        entry = drg_codes_map.get(code)
+        if entry is None:
+            entry = {"drg_code": code, "drg_description": "", "drg_descriptions": []}
+            drg_codes_map[code] = entry
+        if not description:
+            return
+        folded = description.casefold()
+        if any(existing.casefold() == folded for existing in entry["drg_descriptions"]):
+            return
+        entry["drg_descriptions"].append(description)
+        if not entry["drg_description"]:
+            entry["drg_description"] = description
+
+    for proc in matching_rows(ProcedurePrice, "g_drg_code", "service_name"):
+        remember(proc.g_drg_code, proc.service_name or "")
+    for surg in matching_rows(SurgeryPrice, "g_drg_code", "service_name"):
+        remember(surg.g_drg_code, surg.service_name or "")
+    for unm in matching_rows(UnmappedDRGPrice, "g_drg_code", "service_name"):
+        remember(unm.g_drg_code, unm.service_name or "")
+    for mapping in matching_rows(ICD10DRGMapping, "drg_code", "drg_description"):
+        remember(mapping.drg_code, mapping.drg_description or "")
+
+    term_key = term.upper()
+
+    def sort_key(row):
+        code = (row.get("drg_code") or "").upper()
+        starts = 0 if term_key and code.startswith(term_key) else 1
+        return (starts, code)
+
     results = list(drg_codes_map.values())
-    results.sort(key=lambda x: x["drg_code"])
-    
-    return results[:limit]
+    results.sort(key=sort_key)
+    results = results[:limit]
+    # The first pass is limited by row count, so a code can arrive with only one
+    # service name. Load every name stored for the codes we are actually returning.
+    selected_codes = [row["drg_code"] for row in results if row.get("drg_code")]
+    if selected_codes:
+        def add_all_names(model, code_name: str, desc_name: str):
+            code_col = getattr(model, code_name)
+            desc_col = getattr(model, desc_name)
+            rows = (
+                db.query(code_col, desc_col)
+                .filter(model.is_active == True, code_col.in_(selected_codes))
+                .all()
+            )
+            for code, desc in rows:
+                remember(code, desc)
+
+        add_all_names(ProcedurePrice, "g_drg_code", "service_name")
+        add_all_names(SurgeryPrice, "g_drg_code", "service_name")
+        add_all_names(UnmappedDRGPrice, "g_drg_code", "service_name")
+        add_all_names(ICD10DRGMapping, "drg_code", "drg_description")
+    return results
 
 
 # ICD-10 DRG Mapping Management Endpoints

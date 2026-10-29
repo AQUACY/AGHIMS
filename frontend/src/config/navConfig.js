@@ -250,6 +250,13 @@ export const CLAIMS_NAV_GROUPS = [
         moduleKey: 'price_list',
       },
       {
+        id: 'claims-staff',
+        label: 'Staff Management',
+        icon: 'people',
+        to: { name: 'ClaimsStaffManagement' },
+        roles: ['Admin'],
+      },
+      {
         id: 'claims-icd10',
         label: 'ICD-10 DRG Mapping',
         icon: 'medical_information',
