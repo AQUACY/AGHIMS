@@ -73,6 +73,15 @@ const routes = [
         meta: { requiresAuth: true },
       },
       {
+        path: '/confidential',
+        name: 'Confidential',
+        component: () => import('../pages/Confidential.vue'),
+        meta: {
+          requiresAuth: true,
+          allowedRoles: ['Records', 'Admin', 'Doctor', 'PA', 'Nurse', 'Lab', 'Lab Head', 'Scan', 'Scan Head', 'Xray', 'Xray Head', 'Claims'],
+        },
+      },
+      {
         path: '/vitals',
         name: 'Vitals',
         component: () => import('../pages/Vitals.vue'),
@@ -262,7 +271,7 @@ const routes = [
         path: '/claims/ghims-import/item/:itemId',
         name: 'GhimsImportedClaimEdit',
         component: () => import('../pages/GhimsImportedClaimEdit.vue'),
-        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA', 'Pharmacy', 'Pharmacy Head'] },
       },
       {
         path: '/claims/cxf-tools',
@@ -277,10 +286,22 @@ const routes = [
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
       },
       {
+        path: '/claims/confidential',
+        name: 'ClaimsConfidential',
+        component: () => import('../pages/Confidential.vue'),
+        meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
         path: '/claims/generate/:encounterId',
         name: 'GenerateClaim',
         component: () => import('../pages/GenerateClaim.vue'),
         meta: { requiresAuth: true, allowedRoles: ['Claims', 'Admin', 'Doctor', 'PA'] },
+      },
+      {
+        path: '/claims/staff',
+        name: 'ClaimsStaffManagement',
+        component: () => import('../pages/StaffManagement.vue'),
+        meta: { requiresAuth: true, requiresRole: 'Admin' },
       },
       {
         path: '/claims/price-list',
@@ -521,6 +542,24 @@ const routes = [
         path: 'requisitions',
         name: 'InventoryModeRequisitions',
         component: () => import('../pages/PharmacyRequisitions.vue'),
+        meta: { requiresAuth: true, requiresInventoryHubAccess: true },
+      },
+      {
+        path: 'ghims-drugs',
+        name: 'InventoryModeGhimsDrugs',
+        component: () => import('../pages/GhimsDrugList.vue'),
+        meta: { requiresAuth: true, requiresInventoryHubAccess: true },
+      },
+      {
+        path: 'stocktaking',
+        name: 'InventoryModeStocktaking',
+        component: () => import('../pages/Stocktaking.vue'),
+        meta: { requiresAuth: true, requiresInventoryHubAccess: true },
+      },
+      {
+        path: 'stocktaking/:sheetId',
+        name: 'InventoryModeStocktakingSheet',
+        component: () => import('../pages/Stocktaking.vue'),
         meta: { requiresAuth: true, requiresInventoryHubAccess: true },
       },
       {
@@ -795,6 +834,7 @@ const routeModuleMap = {
   'BloodTransfusionLabManagement': 'ipd',
   'PriceListManagement': 'price_list',
   'ClaimsPriceListManagement': 'price_list',
+  'ClaimsStaffManagement': 'staff',
   'InventoryManagement': 'inventory',
   'InventoryModeDashboard': 'inventory',
   'InventoryModeReports': 'inventory',
@@ -802,6 +842,9 @@ const routeModuleMap = {
   'InventoryModeStoreStock': 'inventory',
   'InventoryModeRequisitions': 'inventory',
   'InventoryModeCreateRequisition': 'inventory',
+  'InventoryModeStocktaking': 'inventory',
+  'InventoryModeGhimsDrugs': 'inventory',
+  'InventoryModeStocktakingSheet': 'inventory',
   'InventoryModeWardStock': 'inventory',
   'InventoryModeDebits': 'inventory',
   'InventoryModeStoreManagement': 'inventory',

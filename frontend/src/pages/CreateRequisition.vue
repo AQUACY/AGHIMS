@@ -13,7 +13,12 @@
       <template v-slot:avatar>
         <q-icon name="info" color="primary" />
       </template>
-      Request items from stores. Your requisition will be reviewed by Pharmacy Head and fulfilled by Store Manager before items are added to your department/unit stock.
+      <span v-if="useGhimsCatalog">
+        Request a GHIMS medicine by name. Quantity on hand is not checked. The in-charge approves it, the store manager serves it, and dispensing stays in GHIMS.
+      </span>
+      <span v-else>
+        Request items from stores. Your requisition will be reviewed by Pharmacy Head and fulfilled by Store Manager before items are added to your department/unit stock.
+      </span>
     </q-banner>
 
     <section class="diag-panel">
@@ -39,6 +44,23 @@
           >
             <template v-slot:prepend>
               <q-icon name="local_hospital" />
+            </template>
+          </q-select>
+
+          <q-select
+            v-if="useGhimsCatalog"
+            v-model="requisition.shift"
+            :options="shiftOptions"
+            label="Shift *"
+            filled
+            required
+            class="q-mb-md"
+            emit-value
+            map-options
+            :rules="[val => !!val || 'Choose the shift this request is for']"
+          >
+            <template v-slot:prepend>
+              <q-icon name="schedule" />
             </template>
           </q-select>
 
@@ -159,7 +181,7 @@
             use-input
             input-debounce="300"
             label="Search Product *"
-            hint="Type to search for products - Select to add"
+            :hint="useGhimsCatalog ? 'Type the GHIMS name. Stock quantity is not checked.' : 'Type to search for products - Select to add'"
             @filter="filterProducts"
             @update:model-value="onProductSelected"
             option-label="label"
@@ -183,7 +205,7 @@
             <template v-slot:no-option>
               <q-item>
                 <q-item-section class="text-grey">
-                  No products found. Type to search.
+                  {{ useGhimsCatalog ? 'No GHIMS name matches. Load the drug list from Stocktaking, or upload a dispense report first.' : 'No products found. Type to search.' }}
                 </q-item-section>
               </q-item>
             </template>
@@ -199,11 +221,11 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useQuasar, Notify } from 'quasar';
-import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, departmentStaffAssignmentsAPI } from '../services/api';
+import { pharmacyRequisitionsAPI, priceListAPI, wardsAPI, storesAPI, departmentStaffAssignmentsAPI, stockAccountabilityAPI } from '../services/api';
 import { storeSelectLabel } from '../utils/storeKind';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
 import HmsButton from '../components/ui/HmsButton.vue';
@@ -212,9 +234,19 @@ export default {
   name: 'CreateRequisition',
   components: { HmsPageHeader, HmsButton },
   setup() {
+    const route = useRoute();
     const router = useRouter();
     const authStore = useAuthStore();
     const $q = useQuasar();
+    const useGhimsCatalog = computed(() => route.path.startsWith('/inventory-mode'));
+    const shiftOptions = [
+      { label: 'Morning', value: 'morning' },
+      { label: 'Afternoon', value: 'afternoon' },
+      { label: 'Night', value: 'night' },
+    ];
+    const requisitionsRoute = computed(() =>
+      useGhimsCatalog.value ? 'InventoryModeRequisitions' : 'PharmacyRequisitions'
+    );
     
     const requisitionForm = ref(null);
     const creating = ref(false);
@@ -230,6 +262,7 @@ export default {
     const requisition = ref({
       department_id: null,
       store_id: null,
+      shift: null,
       notes: '',
       items: [],
     });
@@ -291,7 +324,29 @@ export default {
       }
     };
 
-    const loadProducts = async () => {
+    const loadProducts = async (searchText = '') => {
+      if (useGhimsCatalog.value) {
+        try {
+          loadingProducts.value = true;
+          const res = await stockAccountabilityAPI.searchCatalog(searchText, 40);
+          const rows = Array.isArray(res.data) ? res.data : [];
+          filteredProductOptions.value = rows.map((item) => ({
+            label: `${item.drug_name} (${item.drug_id})`,
+            value: { code: item.drug_id, name: item.drug_name, formulation: '' },
+          }));
+          allProducts.value = filteredProductOptions.value;
+        } catch (error) {
+          Notify.create({
+            type: 'negative',
+            message: error.response?.data?.detail || 'Failed to load GHIMS names',
+            position: 'top',
+          });
+          filteredProductOptions.value = [];
+        } finally {
+          loadingProducts.value = false;
+        }
+        return;
+      }
       try {
         loadingProducts.value = true;
         console.log('Loading products from price list...');
@@ -349,7 +404,22 @@ export default {
       }
     };
 
-    const filterProducts = (val, update) => {
+    const filterProducts = (val, update, abort) => {
+      if (useGhimsCatalog.value) {
+        stockAccountabilityAPI
+          .searchCatalog(val, 40)
+          .then((res) => {
+            const rows = Array.isArray(res.data) ? res.data : [];
+            update(() => {
+              filteredProductOptions.value = rows.map((item) => ({
+                label: `${item.drug_name} (${item.drug_id})`,
+                value: { code: item.drug_id, name: item.drug_name, formulation: '' },
+              }));
+            });
+          })
+          .catch(() => abort());
+        return;
+      }
       if (val === '') {
         update(() => {
           filteredProductOptions.value = allProducts.value.slice(0, 50);
@@ -443,6 +513,15 @@ export default {
         return;
       }
 
+      if (useGhimsCatalog.value && !requisition.value.shift) {
+        Notify.create({
+          type: 'negative',
+          message: 'Choose the shift this request is for',
+          position: 'top',
+        });
+        return;
+      }
+
       if (requisition.value.items.length === 0) {
         Notify.create({
           type: 'negative',
@@ -465,7 +544,11 @@ export default {
 
       creating.value = true;
       try {
-        await pharmacyRequisitionsAPI.create(requisition.value);
+        const payload = { ...requisition.value };
+        if (useGhimsCatalog.value) {
+          payload.catalog_source = 'ghims';
+        }
+        await pharmacyRequisitionsAPI.create(payload);
         Notify.create({
           type: 'positive',
           message: 'Requisition created successfully! It will be reviewed by Pharmacy Head.',
@@ -473,7 +556,7 @@ export default {
           timeout: 5000,
         });
         // Navigate to requisitions page
-        router.push({ name: 'PharmacyRequisitions' });
+        router.push({ name: requisitionsRoute.value });
       } catch (error) {
         console.error('Error creating requisition:', error);
         const errorData = error.response?.data;
@@ -497,7 +580,7 @@ export default {
               flat: true
             }
           }).onOk(() => {
-            router.push({ name: 'PharmacyRequisitions' });
+            router.push({ name: requisitionsRoute.value });
           });
         } else {
           Notify.create({
@@ -535,6 +618,8 @@ export default {
       createRequisition,
       loadDepartments,
       loadStores,
+      useGhimsCatalog,
+      shiftOptions,
     };
   },
 };

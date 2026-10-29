@@ -43,9 +43,12 @@ class Encounter(Base):
     finalized_at = Column(DateTime, nullable=True)
     finalized_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Doctor/PA who finalized
     archived = Column(Boolean, default=False, nullable=False)  # Soft delete flag
+    is_confidential = Column(Boolean, default=False, nullable=False, server_default="0")
+    confidential_code_id = Column(Integer, ForeignKey("confidential_codes.id"), nullable=True, index=True)
     
     # Relationships
     patient = relationship("Patient", back_populates="encounters")
+    code_link = relationship("ConfidentialCode", foreign_keys=[confidential_code_id])
     vitals = relationship("Vital", back_populates="encounter", uselist=False, cascade="all, delete-orphan")
     diagnoses = relationship("Diagnosis", back_populates="encounter", cascade="all, delete-orphan")
     prescriptions = relationship("Prescription", back_populates="encounter", cascade="all, delete-orphan")

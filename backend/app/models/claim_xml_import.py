@@ -18,7 +18,8 @@ class ClaimXmlImportBatch(Base):
     uploaded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     claim_count = Column(Integer, default=0)
     # Saved demarcation plan (list of rules) so managers can reopen and edit
-    demarcation_rules = Column(JSON, nullable=True)
+    demarcation_rules = Column(JSON, nullable=True)  # doctor / PA ownership
+    pharmacy_demarcation_rules = Column(JSON, nullable=True)  # independent pharmacy ownership
     source = Column(String(30), nullable=True, default="xml")  # xml | ghims_live
     working_month = Column(String(7), nullable=True, index=True)  # 2026-09
     pinned = Column(String(1), nullable=True, default="0")
@@ -47,10 +48,16 @@ class ClaimXmlImportItem(Base):
     doctor_vetted_at = Column(DateTime, nullable=True)
     doctor_vetted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    # Ownership / demarcation (workload signal only — does not restrict who can vet)
+    # Doctor / PA ownership (workload signal only — does not restrict who can vet)
     assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     assigned_at = Column(DateTime, nullable=True)
     assigned_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     assignment_note = Column(String(255), nullable=True)  # e.g. "OPD", "ANC", "Pedis OPD + IPD"
+
+    # Pharmacy ownership — independent of doctor assignment
+    pharmacy_assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    pharmacy_assigned_at = Column(DateTime, nullable=True)
+    pharmacy_assigned_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    pharmacy_assignment_note = Column(String(255), nullable=True)
 
     batch = relationship("ClaimXmlImportBatch", back_populates="items")

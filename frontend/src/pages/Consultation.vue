@@ -43,8 +43,12 @@
           <div class="patient-cell">
             <div class="avatar">{{ consultInitials(row) }}</div>
             <div>
-              <div class="name">{{ titleCaseName(row.patient_name) }}</div>
-              <div class="sub mono">{{ row.patient_card_number }}</div>
+              <div class="name">{{ row.is_confidential ? (row.confidential_code || row.patient_name) : titleCaseName(row.patient_name) }}</div>
+              <div v-if="row.procedure_name || row.procedure_g_drg_code" class="sub">
+                {{ row.procedure_name || row.department }}
+                <span v-if="row.procedure_g_drg_code" class="mono"> · {{ row.procedure_g_drg_code }}</span>
+              </div>
+              <div v-if="!row.is_confidential" class="sub mono">{{ row.patient_card_number }}</div>
             </div>
           </div>
         </template>
@@ -65,10 +69,16 @@
           <div class="hero-text">
             <div class="hero-name-row">
               <h1 class="hero-name">{{ patientDisplayName }}</h1>
-              <HmsBadge v-if="patientInfo?.insured" tone="success">Insured</HmsBadge>
+              <HmsBadge v-if="encounterStore.currentEncounter?.is_confidential" tone="warning">Confidential</HmsBadge>
+              <HmsBadge v-else-if="patientInfo?.insured" tone="success">Insured</HmsBadge>
               <HmsBadge v-else tone="warning">Cash</HmsBadge>
             </div>
-            <div class="hero-meta">
+            <div v-if="encounterStore.currentEncounter?.is_confidential" class="hero-meta">
+              <span class="mono">{{ encounterStore.currentEncounter.confidential_code }}</span>
+              <span class="sep">·</span>
+              <span>{{ formatDate(encounterStore.currentEncounter?.created_at) || 'N/A' }}</span>
+            </div>
+            <div v-else class="hero-meta">
               <span class="mono">{{ patientInfo?.card_number || 'N/A' }}</span>
               <span class="sep">·</span>
               <span>{{ patientInfo?.gender === 'M' ? 'Male' : patientInfo?.gender === 'F' ? 'Female' : (patientInfo?.gender || '—') }}</span>
@@ -1973,6 +1983,9 @@ const consultStatusTone = (status) => {
 };
 
 const patientDisplayName = computed(() => {
+  if (encounterStore.currentEncounter?.is_confidential) {
+    return encounterStore.currentEncounter.confidential_code || 'Confidential';
+  }
   if (!patientInfo.value) return '';
   return [titleCaseName(patientInfo.value.name), titleCaseName(patientInfo.value.surname)]
     .filter(Boolean)
@@ -1990,8 +2003,10 @@ const patientHeroInitials = computed(() => {
 const filteredEncounters = computed(() => {
   if (!cardNumberFilter.value) return encountersList.value;
   const needle = cardNumberFilter.value.toLowerCase().trim();
-  return encountersList.value.filter(e => 
+  return encountersList.value.filter(e =>
     (e.patient_card_number || '').toLowerCase().includes(needle)
+    || (e.confidential_code || '').toLowerCase().includes(needle)
+    || (e.is_confidential && (e.patient_name || '').toLowerCase().includes(needle))
   );
 });
 
@@ -2733,8 +2748,21 @@ const loadEncounter = async () => {
   try {
     await encounterStore.getEncounter(searchEncounterId.value);
     
-    // Load patient info if needed  
-    if (encounterStore.currentEncounter?.patient_id) {
+    // Confidential visits stay on the code. Do not load the client record.
+    if (encounterStore.currentEncounter?.is_confidential) {
+      const code = encounterStore.currentEncounter.confidential_code || 'Confidential';
+      patientsStore.currentPatient = {
+        id: encounterStore.currentEncounter.patient_id,
+        name: code,
+        surname: '',
+        other_names: '',
+        card_number: '',
+        gender: '',
+        age: null,
+        insured: false,
+        insurance_id: '',
+      };
+    } else if (encounterStore.currentEncounter?.patient_id) {
       // Check if we need to load patient data
       // The patient might already be in the store if accessed from patient profile
       if (!patientsStore.currentPatient || patientsStore.currentPatient.id !== encounterStore.currentEncounter.patient_id) {

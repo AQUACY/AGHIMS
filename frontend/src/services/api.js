@@ -219,14 +219,27 @@ export const patientsAPI = {
 
 // Encounter endpoints
 export const encountersAPI = {
-  get: (encounterId) => api.get(`/encounters/${encounterId}`),
+  get: (encounterId, params) => api.get(`/encounters/${encounterId}`, { params }),
   update: (encounterId, data) => api.put(`/encounters/${encounterId}`, data),
   updateStatus: (encounterId, newStatus) => 
     api.put(`/encounters/${encounterId}/status?new_status=${newStatus}`),
   delete: (encounterId) => api.delete(`/encounters/${encounterId}`),
-  getPatientEncounters: (patientId) => api.get(`/encounters/patient/${patientId}`),
+  getPatientEncounters: (patientId, includeConfidential = false) =>
+    api.get(`/encounters/patient/${patientId}`, {
+      params: includeConfidential ? { include_confidential: true } : {},
+    }),
   getByDate: (date) => api.get(`/encounters/date/${date}`),
   getBillTotal: (encounterId) => api.get(`/encounters/${encounterId}/bill-total`),
+};
+
+export const confidentialAPI = {
+  generateCodes: (data) => api.post('/confidential/codes/generate', data),
+  listCodes: (statusFilter = 'available') =>
+    api.get('/confidential/codes', { params: { status_filter: statusFilter } }),
+  issueVisit: (data) => api.post('/confidential/visits', data),
+  followUp: (data) => api.post('/confidential/follow-up', data),
+  lookup: (code) => api.get('/confidential/lookup', { params: { code } }),
+  register: (search = '') => api.get('/confidential/register', { params: search ? { search } : {} }),
 };
 
 // Companion (copayment) visits - external card/visit from government system
@@ -932,6 +945,7 @@ export const claimsAPI = {
     api.get(`/claims/ghims-import/batches/${batchId}/claim-totals`),
   deleteGhimsImportBatch: (batchId) => api.delete(`/claims/ghims-import/batches/${batchId}`),
   getGhimsImportItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}`),
+  getGhimsImportItemAudit: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/audit`),
   ghimsLiveCompareItem: (itemId) => api.get(`/claims/ghims-import/items/${itemId}/ghims-live-compare`, { timeout: 60000 }),
   listGhimsMonths: () => api.get('/claims/ghims-months', { timeout: 60000 }),
   getGhimsMonth: (monthKey) => api.get(`/claims/ghims-months/${encodeURIComponent(monthKey)}`, { timeout: 60000 }),
@@ -949,14 +963,16 @@ export const claimsAPI = {
   revertGhimsMerge: (sourceId) => api.post(`/claims/ghims-import/items/${sourceId}/revert-merge`),
   bulkUpdateGhimsImportItemsStatus: (itemIds, action, comment = null) =>
     api.patch('/claims/ghims-import/items/bulk-status', { item_ids: itemIds, action, comment }),
-  getGhimsImportAssignees: () => api.get('/claims/ghims-import/assignees'),
-  assignGhimsImportItem: (itemId, { assigned_to_id = null, assignment_note = null } = {}) =>
-    api.patch(`/claims/ghims-import/items/${itemId}/assign`, { assigned_to_id, assignment_note }),
-  bulkAssignGhimsImportBatch: (batchId, rules, { replace_plan = false, save_plan = false } = {}) =>
+  getGhimsImportAssignees: (category = null) =>
+    api.get('/claims/ghims-import/assignees', category ? { params: { category } } : undefined),
+  assignGhimsImportItem: (itemId, { assigned_to_id = null, assignment_note = null, category = 'doctor' } = {}) =>
+    api.patch(`/claims/ghims-import/items/${itemId}/assign`, { assigned_to_id, assignment_note, category }),
+  bulkAssignGhimsImportBatch: (batchId, rules, { replace_plan = false, save_plan = false, category = 'doctor' } = {}) =>
     api.post(`/claims/ghims-import/batches/${batchId}/assign`, {
       rules,
       replace_plan: !!replace_plan,
       save_plan: !!save_plan,
+      category,
     }),
   exportGhimsImportItems: (itemIds) => api.post('/claims/ghims-import/export', { item_ids: itemIds }, { responseType: 'blob' }),
   // CFX convert / diff tools
@@ -1422,6 +1438,37 @@ export const departmentStaffAssignmentsAPI = {
   create: (data) => api.post('/department-staff-assignments', data),
   update: (assignmentId, data) => api.put(`/department-staff-assignments/${assignmentId}`, data),
   delete: (assignmentId) => api.delete(`/department-staff-assignments/${assignmentId}`),
+};
+
+export const stockAccountabilityAPI = {
+  searchCatalog: (q = '', limit = 40) =>
+    api.get('/stock-accountability/catalog', { params: { q, limit } }),
+  listGhimsDrugs: (q = '') =>
+    api.get('/stock-accountability/ghims-drugs', { params: { q } }),
+  syncCatalog: () => api.post('/stock-accountability/catalog/sync'),
+  listSheets: (departmentId) =>
+    api.get('/stock-accountability/sheets', {
+      params: departmentId ? { department_id: departmentId } : {},
+    }),
+  createSheet: (data) => api.post('/stock-accountability/sheets', data),
+  getSheet: (sheetId) => api.get(`/stock-accountability/sheets/${sheetId}`),
+  updateSheet: (sheetId, data) => api.put(`/stock-accountability/sheets/${sheetId}`, data),
+  addLine: (sheetId, drugId) =>
+    api.post(`/stock-accountability/sheets/${sheetId}/lines`, { drug_id: drugId }),
+  deleteLine: (sheetId, lineId) =>
+    api.delete(`/stock-accountability/sheets/${sheetId}/lines/${lineId}`),
+  fillFromRequisitions: (sheetId) =>
+    api.post(`/stock-accountability/sheets/${sheetId}/fill-requisitions`),
+  listReports: () => api.get('/stock-accountability/reports'),
+  uploadReport: (file) => {
+    const body = new FormData();
+    body.append('file', file);
+    return api.post('/stock-accountability/reports/upload', body);
+  },
+  reconcile: (sheetId, reportId) =>
+    api.get(`/stock-accountability/sheets/${sheetId}/reconciliation`, {
+      params: reportId ? { report_id: reportId } : {},
+    }),
 };
 
 export const storeStaffAssignmentsAPI = {

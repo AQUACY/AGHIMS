@@ -1,4 +1,4 @@
-# 🎉 Major Requisitions System Update - Team Announcement
+image.png# 🎉 Major Requisitions System Update - Team Announcement
 
 ## Overview
 We're excited to announce a **major update** to our Requisitions Management System! The system has been significantly enhanced with new features including **Department/Unit Management**, **Store Management**, **role-based access control**, and **multi-store support**. This update provides better organization, security, and flexibility for managing inventory requests across the hospital.

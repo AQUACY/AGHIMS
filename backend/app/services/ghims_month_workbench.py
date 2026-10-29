@@ -16,6 +16,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
+from app.models.user import User
+from app.services.claim_vetting_audit import (
+    diff_claim_payloads,
+    record_claim_vetting_event,
+    snapshot_payload,
+)
 from app.services.ghims_live_compare import (
     GhimsLiveConfigError,
     _connect,
@@ -699,9 +705,11 @@ def sync_month_from_ghims(
     batch = get_or_create_month_batch(db, month_key, user_id)
     existing = existing_items_by_claim_id(db, claim_ids, batch_id=batch.id)
     main_items, _attendance_aligned = align_imported_claim_copies(db, claim_ids)
+    actor = db.query(User).filter(User.id == user_id).first() if user_id else None
     created = 0
     linked = 0
     refreshed = 0
+    created_items: List[ClaimXmlImportItem] = []
     for cid, header in by_id.items():
         lines = grouped.get(cid) or []
         if lines:
@@ -735,8 +743,18 @@ def sync_month_from_ghims(
                 or old.get("typeOfService") != new_payload.get("typeOfService")
                 or old.get("typeOfAttendance") != new_payload.get("typeOfAttendance")
             ):
+                old_snap = snapshot_payload(old)
                 item.payload = new_payload
                 refreshed += 1
+                record_claim_vetting_event(
+                    db,
+                    item=item,
+                    user=actor,
+                    action="ghims_synced",
+                    changes=diff_claim_payloads(old_snap, new_payload),
+                    details={"source": SOURCE_GHIMS_LIVE, "month_key": month_key},
+                    skip_if_empty=True,
+                )
             continue
         if not create_missing:
             continue
@@ -751,8 +769,17 @@ def sync_month_from_ghims(
         )
         db.add(item)
         created += 1
+        created_items.append(item)
         existing[cid] = item
     db.flush()
+    for item in created_items:
+        record_claim_vetting_event(
+            db,
+            item=item,
+            user=actor,
+            action="imported",
+            details={"source": SOURCE_GHIMS_LIVE, "month_key": month_key},
+        )
     dropped = 0
     extras = (
         db.query(ClaimXmlImportItem)

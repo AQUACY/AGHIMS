@@ -40,6 +40,7 @@ class PharmacyRequisition(Base):
     fulfilled_at = Column(DateTime, nullable=True)
     
     notes = Column(Text, nullable=True)  # Additional notes from requester
+    shift = Column(String(20), nullable=True, index=True)  # morning, afternoon, night
     
     created_at = Column(DateTime, default=utcnow_callable, nullable=False, index=True)
     updated_at = Column(DateTime, default=utcnow_callable, onupdate=utcnow_callable, nullable=False)

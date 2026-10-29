@@ -15,7 +15,7 @@
       </div>
       <div class="toolbar-controls">
         <input v-model="selectedDate" type="date" class="tool-input" @change="loadEncounters" />
-        <input v-model="cardSearch" type="search" class="tool-input" placeholder="Filter by card…" />
+        <input v-model="cardSearch" type="search" class="tool-input" placeholder="Filter by card or code…" />
       </div>
     </div>
 
@@ -36,8 +36,8 @@
         <div class="patient-cell">
           <div class="avatar">{{ patientInitials(row) }}</div>
           <div>
-            <div class="name">{{ titleCaseName(row.patient_name) }}</div>
-            <div class="sub mono">{{ row.patient_card_number }}</div>
+            <div class="name">{{ row.is_confidential ? (row.confidential_code || row.patient_name) : titleCaseName(row.patient_name) }}</div>
+            <div v-if="!row.is_confidential" class="sub mono">{{ row.patient_card_number }}</div>
           </div>
         </div>
       </template>
@@ -63,8 +63,11 @@
       <q-card class="vitals-dialog-card" style="min-width: min(900px, 96vw); max-width: 960px">
       <q-card-section class="vitals-dialog-head">
           <div class="dialog-title">Record vitals</div>
-          <div class="dialog-sub">Encounter #{{ selectedEncounter?.id }}</div>
-          <div class="row q-gutter-md q-mt-md">
+          <div class="dialog-sub">{{ selectedEncounter?.is_confidential ? selectedEncounter.confidential_code : `Encounter #${selectedEncounter?.id}` }}</div>
+          <div v-if="selectedEncounter?.is_confidential" class="q-mt-md text-body2">
+            <strong>Code:</strong> {{ selectedEncounter.confidential_code || selectedEncounter.patient_name }}
+          </div>
+          <div v-else class="row q-gutter-md q-mt-md">
             <div class="col-12 col-md-6">
               <div class="text-body2"><strong>Patient:</strong> {{ selectedEncounter?.patient_name || 'N/A' }}</div>
               <div class="text-body2"><strong>Card Number:</strong> {{ selectedEncounter?.patient_card_number || 'N/A' }}</div>
@@ -74,7 +77,7 @@
               <div class="text-body2"><strong>Sex:</strong> {{ selectedEncounter?.patient_gender === 'M' ? 'Male' : selectedEncounter?.patient_gender === 'F' ? 'Female' : selectedEncounter?.patient_gender || 'N/A' }}</div>
             </div>
           </div>
-          <div class="row q-gutter-md q-mt-xs">
+          <div v-if="!selectedEncounter?.is_confidential" class="row q-gutter-md q-mt-xs">
             <div class="col-12 col-md-6">
               <div class="text-body2"><strong>Insurance Number:</strong> {{ selectedEncounter?.patient_insurance_id || 'N/A' }}</div>
             </div>
@@ -614,7 +617,11 @@ const formattedDate = computed(() => {
 const filteredEncounters = computed(() => {
   const needle = (cardSearch.value || '').toLowerCase().trim();
   if (!needle) return encounters.value;
-  return encounters.value.filter(e => (e.patient_card_number || '').toLowerCase().includes(needle));
+  return encounters.value.filter(e =>
+    (e.patient_card_number || '').toLowerCase().includes(needle)
+    || (e.confidential_code || '').toLowerCase().includes(needle)
+    || (e.is_confidential && (e.patient_name || '').toLowerCase().includes(needle))
+  );
 });
 
 const setToday = () => {

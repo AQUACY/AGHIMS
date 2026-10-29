@@ -5,6 +5,7 @@ from app.models.user import User
 from app.models.user_role import UserRole
 from app.models.patient import Patient
 from app.models.encounter import Encounter, EncounterStatus, Department
+from app.models.confidential import ConfidentialCode
 from app.models.vital import Vital
 from app.models.diagnosis import Diagnosis
 from app.models.prescription import Prescription
@@ -20,6 +21,7 @@ from app.models.claim import Claim, ClaimStatus
 from app.models.claim_detail import ClaimDiagnosis, ClaimInvestigation, ClaimPrescription, ClaimProcedure
 from app.models.claimit_report import ClaimItReportBatch, ClaimItReportError
 from app.models.claim_xml_import import ClaimXmlImportBatch, ClaimXmlImportItem
+from app.models.claim_vetting_event import ClaimVettingEvent
 from app.models.ai_claim_vetting import AiClaimVettingFinding, AiClaimVettingJob, AiClaimVettingRule
 from app.models.consultation_notes import ConsultationNotes
 from app.models.doctor_note_entry import DoctorNoteEntry
@@ -54,6 +56,13 @@ from app.models.consultation_template import ConsultationTemplate
 from app.models.claim_diagnosis_template import ClaimDiagnosisTemplate
 from app.models.ward_stock import WardStock
 from app.models.pharmacy_requisition import PharmacyRequisition, RequisitionStatus
+from app.models.stock_accountability import (
+    DispenseReport,
+    DispenseReportLine,
+    GhimsCatalogItem,
+    StocktakingLine,
+    StocktakingSheet,
+)
 from app.models.requisition_item import RequisitionItem
 from app.models.requisition_history import RequisitionHistory, HistoryAction
 from app.models.notification import Notification, NotificationType
@@ -88,6 +97,7 @@ __all__ = [
     "Encounter",
     "EncounterStatus",
     "Department",
+    "ConfidentialCode",
     "Vital",
     "Diagnosis",
     "Prescription",
@@ -114,6 +124,7 @@ __all__ = [
     "ClaimItReportError",
     "ClaimXmlImportBatch",
     "ClaimXmlImportItem",
+    "ClaimVettingEvent",
     "AiClaimVettingFinding",
     "AiClaimVettingJob",
     "AiClaimVettingRule",

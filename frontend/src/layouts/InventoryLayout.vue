@@ -96,6 +96,38 @@
           v-if="authStore.canAccessInventoryMode"
           clickable
           v-ripple
+          :to="{ name: 'InventoryModeGhimsDrugs' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="medication" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>GHIMS drugs</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="authStore.canAccessInventoryMode"
+          clickable
+          v-ripple
+          :to="{ name: 'InventoryModeStocktaking' }"
+          class="glass-nav-item"
+          active-class="glass-nav-active"
+        >
+          <q-item-section avatar>
+            <q-icon name="fact_check" />
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>Stocktaking</q-item-label>
+          </q-item-section>
+        </q-item>
+
+        <q-item
+          v-if="authStore.canAccessInventoryMode"
+          clickable
+          v-ripple
           :to="{ name: 'InventoryModeReports' }"
           class="glass-nav-item"
           active-class="glass-nav-active"

@@ -15,6 +15,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.audit import create_audit_log, get_effective_creator_id
+from app.services.claim_vetting_audit import (
+    diff_claim_payloads,
+    record_claim_vetting_event,
+    snapshot_payload,
+)
 from app.core.database import SessionLocal, get_db
 from app.core.datetime_utils import utcnow
 from app.core.dependencies import require_module_permission, require_role
@@ -415,12 +420,40 @@ def _mark_item_ai_vetted(item: ClaimXmlImportItem) -> None:
         item.status = "ai_vetted"
 
 
-def _save_item_payload(db: Session, item: ClaimXmlImportItem, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _save_item_payload(
+    db: Session,
+    item: ClaimXmlImportItem,
+    payload: Dict[str, Any],
+    *,
+    user: Optional[User] = None,
+    finding: Optional[AiClaimVettingFinding] = None,
+) -> Dict[str, Any]:
+    old_payload = snapshot_payload(item.payload)
     item.payload = payload
     flag_modified(item, "payload")
     db.add(item)
     db.commit()
     db.refresh(item)
+    if user is not None:
+        details = {"provider": "ai"}
+        if finding is not None:
+            details.update(
+                {
+                    "finding_id": finding.id,
+                    "rule_code": finding.rule_code,
+                    "suggested_action": finding.suggested_action,
+                }
+            )
+        record_claim_vetting_event(
+            db,
+            item=item,
+            user=user,
+            action="ai_applied",
+            changes=diff_claim_payloads(old_payload, item.payload or {}),
+            details=details,
+            skip_if_empty=True,
+        )
+        db.commit()
     return payload
 
 
@@ -431,6 +464,7 @@ def _apply_suggested_action(
     *,
     otac: Optional[str] = None,
     chosen_value: Optional[str] = None,
+    user: Optional[User] = None,
 ) -> tuple[Dict[str, Any], bool]:
     """
     Apply an accepted suggestion to the GHIMS import payload and persist.
@@ -452,7 +486,7 @@ def _apply_suggested_action(
         value = (chosen_value or action.get("value") or "OPDC").strip().upper()
         payload["specialtyAttended"] = value
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type == "set_field":
         if not field:
@@ -464,7 +498,7 @@ def _apply_suggested_action(
             value = details.get("value")
         payload[field] = "" if value is None else str(value)
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type == "strip_prefix":
         if not field:
@@ -477,7 +511,7 @@ def _apply_suggested_action(
             current = current[len(prefix) :]
         payload[field] = current.strip()
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type == "trim_field":
         if not field:
@@ -486,7 +520,7 @@ def _apply_suggested_action(
             raise HTTPException(status_code=400, detail=f"Field '{field}' is not allowed.")
         payload[field] = str(payload.get(field) or "").strip()
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type == "set_diagnosis_gdrg":
         idx = details.get("index")
@@ -521,7 +555,7 @@ def _apply_suggested_action(
             if not principal or principal == current:
                 payload["principalGDRG"] = value
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type == "set_procedure_gdrg":
         idx = details.get("index")
@@ -551,7 +585,7 @@ def _apply_suggested_action(
         procedures[int(idx)]["gdrgCode"] = value
         payload["procedures"] = procedures
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type in (
         "review_diagnosis_codes",
@@ -573,7 +607,7 @@ def _apply_suggested_action(
                 raise HTTPException(status_code=400, detail=f"Field '{target_field}' is not allowed.")
             payload[target_field] = str(chosen_value).strip()
             _mark_item_ai_vetted(item)
-            return _save_item_payload(db, item, payload), reopened
+            return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
         raise HTTPException(
             status_code=400,
             detail=(
@@ -593,7 +627,7 @@ def _apply_suggested_action(
         payload["hin"] = hin
         payload["memberNo"] = hin
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     if action_type == "convert_ghana_card_to_hin":
         ghana_card = normalize_ghana_card(
@@ -622,7 +656,7 @@ def _apply_suggested_action(
         payload["hin"] = hin
         payload["memberNo"] = hin
         _mark_item_ai_vetted(item)
-        return _save_item_payload(db, item, payload), reopened
+        return _save_item_payload(db, item, payload, user=user, finding=finding), reopened
 
     raise HTTPException(
         status_code=400,
@@ -807,6 +841,7 @@ def decide_finding(
                 finding,
                 otac=body.otac,
                 chosen_value=body.chosen_value,
+                user=current_user,
             )
             item_status = item.status
         else:
@@ -825,6 +860,13 @@ def decide_finding(
             reopened = _reopen_ghims_item_if_finalized(item)
             _mark_item_ai_vetted(item)
             db.add(item)
+            record_claim_vetting_event(
+                db,
+                item=item,
+                user=current_user,
+                action="ai_vetted",
+                details={"finding_id": finding.id, "rule_code": finding.rule_code, "decision": "edited"},
+            )
             db.commit()
             db.refresh(item)
             item_status = item.status
@@ -888,11 +930,12 @@ def _try_apply_suggested_action(
     *,
     otac: Optional[str] = None,
     chosen_value: Optional[str] = None,
+    user: Optional[User] = None,
 ) -> tuple[bool, Optional[str], Optional[Dict[str, Any]], bool]:
     """Like _apply_suggested_action but returns (ok, error, payload, reopened)."""
     try:
         payload, reopened = _apply_suggested_action(
-            db, item, finding, otac=otac, chosen_value=chosen_value
+            db, item, finding, otac=otac, chosen_value=chosen_value, user=user
         )
         return True, None, payload, reopened
     except HTTPException as exc:
@@ -1469,6 +1512,7 @@ def bulk_decide_findings(
                 finding,
                 otac=body.otac,
                 chosen_value=body.chosen_value,
+                user=current_user,
             )
             if not applied:
                 results.append({
