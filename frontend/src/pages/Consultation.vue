@@ -944,9 +944,12 @@
 
     <!-- Investigation Dialog -->
     <q-dialog v-model="showInvestigationDialog">
-      <q-card style="min-width: 400px">
+      <q-card style="min-width: 520px; max-width: 680px">
         <q-card-section>
-          <div class="text-h6">{{ editingInvestigationId ? 'Edit Investigation' : 'Add Investigation' }}</div>
+          <div class="text-h6">{{ editingInvestigationId ? 'Edit Investigation' : 'Add investigations' }}</div>
+          <div v-if="!editingInvestigationId" class="text-caption text-grey-7 q-mt-xs">
+            Pick a department, then select every test you need. Each one is requested on its own.
+          </div>
         </q-card-section>
 
         <q-card-section>
@@ -971,6 +974,7 @@
               </template>
             </q-select>
             <q-select
+              v-if="editingInvestigationId"
               v-model="selectedProcedure"
               filled
               :options="procedureOptions"
@@ -999,7 +1003,61 @@
                 </q-item>
               </template>
             </q-select>
+            <q-select
+              v-else
+              v-model="selectedProcedures"
+              filled
+              multiple
+              use-chips
+              :options="procedureOptions"
+              label="Tests *"
+              option-label="service_name"
+              :disable="!investigationForm.service_type"
+              hint="Type to find a test, select it, then type the next. FBC, BF, and blood grouping can all go in together."
+              use-input
+              input-debounce="200"
+              @filter="filterProcedures"
+              clearable
+            >
+              <template #option="scope">
+                <q-item v-bind="scope.itemProps">
+                  <q-item-section>
+                    <q-item-label>{{ scope.opt.service_name }}</q-item-label>
+                    <q-item-label caption>{{ scope.opt.g_drg_code }} · GHC {{ procedurePrice(scope.opt) }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </template>
+              <template #selected-item="scope">
+                <q-chip
+                  removable
+                  dense
+                  color="primary"
+                  text-color="white"
+                  class="q-ma-xs"
+                  @remove="scope.removeAtIndex(scope.index)"
+                >
+                  {{ scope.opt.service_name }}
+                </q-chip>
+              </template>
+              <template #no-option>
+                <q-item>
+                  <q-item-section class="text-grey">
+                    {{
+                      investigationForm.service_type
+                        ? 'No test matches that. Try another name.'
+                        : 'Select a department first'
+                    }}
+                  </q-item-section>
+                </q-item>
+              </template>
+            </q-select>
+            <div v-if="!editingInvestigationId && selectedProcedures.length" class="text-caption text-grey-8">
+              <div v-for="proc in selectedProcedures" :key="procedureKey(proc)">
+                {{ proc.service_name }} · {{ proc.g_drg_code }} · GHC {{ procedurePrice(proc) }}
+              </div>
+            </div>
             <q-input
+              v-if="editingInvestigationId"
               v-model="investigationForm.gdrg_code"
               filled
               label="GDRG Code (auto-filled)"
@@ -1023,6 +1081,7 @@
               hint="Add any notes or remarks for this investigation request"
             />
             <q-input
+              v-if="editingInvestigationId"
               v-model="investigationForm.price"
               filled
               label="Price (Auto-fetched from price list)"
@@ -1039,7 +1098,7 @@
               </template>
             </q-input>
             <div>
-              <q-btn :label="editingInvestigationId ? 'Update' : 'Add'" type="submit" color="primary" />
+              <q-btn :label="editingInvestigationId ? 'Update' : addInvestigationsLabel" type="submit" color="primary" :loading="savingInvestigations" />
               <q-btn label="Cancel" flat v-close-popup @click="resetInvestigationForm" />
             </div>
           </q-form>
@@ -2704,6 +2763,8 @@ const serviceTypeOptions = ref([]);
 const allProcedures = ref([]);  // All procedures for current service type
 const procedureOptions = ref([]);  // Filtered procedures for autocomplete
 const selectedProcedure = ref(null);
+const selectedProcedures = ref([]);
+const savingInvestigations = ref(false);
 
 const patientInfo = computed(() => {
   if (encounterStore.currentEncounter?.patient_id) {
@@ -4026,7 +4087,10 @@ const onServiceTypeSelected = async (serviceType) => {
     allProcedures.value = procedures;
     procedureOptions.value = allProcedures.value;
     selectedProcedure.value = null;
+    selectedProcedures.value = [];
     investigationForm.gdrg_code = '';
+    const guessed = guessInvestigationType(serviceType);
+    if (guessed) investigationForm.investigation_type = guessed;
     
     console.log('Loaded procedures:', allProcedures.value.length);
   } catch (error) {
@@ -4139,9 +4203,36 @@ const editInvestigation = async (investigation) => {
   showInvestigationDialog.value = true;
 };
 
+const procedureKey = (proc) => `${proc?.g_drg_code || ''}|${proc?.service_name || ''}`;
+
+const procedurePrice = (proc) => {
+  if (!proc) return '0.00';
+  const insured = !!encounterStore.currentEncounter?.ccc_number;
+  const amount = insured && proc.nhia_claim_co_payment != null
+    ? proc.nhia_claim_co_payment
+    : proc.base_rate;
+  const number = Number(amount);
+  return Number.isFinite(number) ? number.toFixed(2) : '0.00';
+};
+
+const guessInvestigationType = (serviceType) => {
+  const name = String(serviceType || '').toLowerCase();
+  if (name.includes('x-ray') || name.includes('xray') || name.includes('x ray')) return 'xray';
+  if (name.includes('scan') || name.includes('ultra') || name.includes('radiol')) return 'scan';
+  if (name.includes('lab')) return 'lab';
+  return '';
+};
+
+const addInvestigationsLabel = computed(() => {
+  const count = selectedProcedures.value.length;
+  if (count > 1) return `Add ${count} tests`;
+  return 'Add';
+});
+
 const resetInvestigationForm = () => {
   editingInvestigationId.value = null;
   selectedProcedure.value = null;
+  selectedProcedures.value = [];
   Object.assign(investigationForm, {
     encounter_id: encounterStore.currentEncounter?.id || null,
     service_type: '',
@@ -4156,19 +4247,35 @@ const resetInvestigationForm = () => {
 };
 
 const saveInvestigation = async () => {
-  // Validate that procedure is selected
-  if (!selectedProcedure.value || !investigationForm.gdrg_code) {
+  if (editingInvestigationId.value) {
+    if (!selectedProcedure.value || !investigationForm.gdrg_code) {
+      $q.notify({
+        type: 'warning',
+        message: 'Please select a procedure',
+        position: 'top',
+      });
+      return;
+    }
+  } else if (!selectedProcedures.value.length) {
     $q.notify({
       type: 'warning',
-      message: 'Please select a procedure',
+      message: 'Select at least one test',
       position: 'top',
     });
     return;
   }
-  
+  if (!investigationForm.investigation_type) {
+    $q.notify({
+      type: 'warning',
+      message: 'Select lab, scan, or X-ray',
+      position: 'top',
+    });
+    return;
+  }
+
+  savingInvestigations.value = true;
   try {
     if (editingInvestigationId.value) {
-      // Update existing investigation
       await consultationAPI.updateInvestigation(editingInvestigationId.value, investigationForm);
       $q.notify({
         type: 'positive',
@@ -4176,15 +4283,38 @@ const saveInvestigation = async () => {
         position: 'top',
       });
     } else {
-      // Create new investigation
-    await consultationAPI.createInvestigation(investigationForm);
-      $q.notify({
-        type: 'positive',
-        message: 'Investigation added successfully',
-        position: 'top',
-      });
+      const failures = [];
+      for (const proc of selectedProcedures.value) {
+        try {
+          await consultationAPI.createInvestigation({
+            ...investigationForm,
+            gdrg_code: proc.g_drg_code,
+            procedure_name: proc.service_name || '',
+            price: procedurePrice(proc),
+          });
+        } catch (error) {
+          failures.push(proc.service_name || proc.g_drg_code);
+        }
+      }
+      const added = selectedProcedures.value.length - failures.length;
+      if (added) {
+        $q.notify({
+          type: 'positive',
+          message: added === 1 ? '1 test added' : `${added} tests added`,
+          position: 'top',
+        });
+      }
+      if (failures.length) {
+        $q.notify({
+          type: 'negative',
+          message: `Could not add: ${failures.join(', ')}`,
+          position: 'top',
+          timeout: 8000,
+        });
+        if (!added) return;
+      }
     }
-    
+
     await encounterStore.loadEncounterData(encounterStore.currentEncounter.id);
     showInvestigationDialog.value = false;
     resetInvestigationForm();
@@ -4195,6 +4325,8 @@ const saveInvestigation = async () => {
       message: error.response?.data?.detail || (editingInvestigationId.value ? 'Failed to update investigation' : 'Failed to add investigation'),
       position: 'top',
     });
+  } finally {
+    savingInvestigations.value = false;
   }
 };
 
