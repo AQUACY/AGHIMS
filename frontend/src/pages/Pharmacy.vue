@@ -13,7 +13,7 @@
       <div class="panel-head">
         <div>
           <div class="panel-title">Search patient</div>
-          <div class="panel-sub">Load encounters, admissions, and prescriptions by card number.</div>
+          <div class="panel-sub">Load encounters and prescriptions by card number or confidential code.</div>
         </div>
       </div>
       <div class="panel-body search-body">
@@ -21,7 +21,7 @@
           v-model="cardNumber"
           type="search"
           class="tool-input tool-input--search tool-input--grow"
-          placeholder="Patient card number"
+          placeholder="Card number or confidential code"
           :disabled="loadingPatient"
           @keyup.enter="searchPatient"
         />
@@ -43,7 +43,8 @@
         <div class="hero-text">
           <div class="hero-name-row">
             <h1 class="hero-name">{{ patientDisplayName }}</h1>
-            <HmsBadge v-if="patient.insured" tone="success">Insured</HmsBadge>
+            <HmsBadge v-if="patient.is_confidential" tone="warning">Confidential</HmsBadge>
+            <HmsBadge v-else-if="patient.insured" tone="success">Insured</HmsBadge>
             <HmsBadge v-else tone="warning">Cash</HmsBadge>
             <HmsBadge v-if="serviceType === 'opd'" tone="info">OPD</HmsBadge>
             <HmsBadge v-else-if="serviceType === 'ipd'" tone="healthcare">IPD</HmsBadge>
@@ -2001,7 +2002,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useQuasar } from 'quasar';
-import { consultationAPI, patientsAPI, encountersAPI, vitalsAPI, priceListAPI, staffAPI, billingAPI } from '../services/api';
+import { consultationAPI, patientsAPI, encountersAPI, vitalsAPI, priceListAPI, staffAPI, billingAPI, confidentialAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { useFacilityStore } from '../stores/facility';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
@@ -3232,8 +3233,14 @@ const searchPatient = async () => {
 
   loadingPatient.value = true;
   try {
-    // Get patient by card number (returns list)
-    const patientResponse = await patientsAPI.getByCard(cardNumber.value.trim());
+    // Card search first. A confidential code is not a card, so an empty or failed
+    // card search continues to the visit code.
+    let patientResponse = { data: [] };
+    try {
+      patientResponse = await patientsAPI.getByCard(cardNumber.value.trim());
+    } catch (_) {
+      patientResponse = { data: [] };
+    }
     
     // getByCard returns a list of patients
     let patients = [];
@@ -3244,10 +3251,13 @@ const searchPatient = async () => {
     }
     
     if (patients.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that card number',
-      });
+      const opened = await openConfidentialClient(cardNumber.value.trim());
+      if (!opened) {
+        $q.notify({
+          type: 'info',
+          message: 'No client found for that card number or confidential code',
+        });
+      }
       return;
     }
     
@@ -3275,59 +3285,7 @@ const searchPatient = async () => {
       loadWardAdmissions().catch(err => console.warn('Failed to load ward admissions:', err))
     ]).catch(() => {}); // Silently handle any errors
     
-    const allEncounters = (encountersResponse?.data || []).filter(e => !e.archived);
-    
-    // Separate today's encounter from old encounters
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const todaysEncountersList = allEncounters.filter(e => {
-      const encounterDate = new Date(e.created_at);
-      encounterDate.setHours(0, 0, 0, 0);
-      return encounterDate.getTime() === today.getTime();
-    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
-    
-    const oldEncs = allEncounters.filter(e => {
-      const encounterDate = new Date(e.created_at);
-      encounterDate.setHours(0, 0, 0, 0);
-      return encounterDate.getTime() !== today.getTime();
-    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // Sort newest first
-    
-    // Set all today's encounters (not just the most recent one)
-    todaysEncounters.value = todaysEncountersList;
-    
-    // Set today's encounter to the most recent one for backward compatibility
-    if (todaysEncountersList.length > 0) {
-      todaysEncounter.value = todaysEncountersList[0];
-      // Pre-fetch procedure names for all today's encounters (non-blocking)
-      Promise.all(todaysEncountersList.map(encounter => 
-        getEncounterProcedures(encounter).catch(() => {})
-      )).catch(() => {});
-    } else {
-      todaysEncounter.value = null;
-      todaysEncounters.value = [];
-    }
-    
-    // Set old encounters (only encounters NOT from today) and pre-fetch their procedure names (non-blocking)
-    oldEncounters.value = oldEncs;
-    // Load procedure names in background without blocking
-    Promise.all(oldEncounters.value.map(encounter => 
-      getEncounterProcedures(encounter).catch(() => {})
-    )).catch(() => {});
-    
-    // Keep for backward compatibility
-    activeEncounters.value = allEncounters.map(e => ({
-        id: e.id,
-        label: `Encounter #${e.id} - ${e.department} (${new Date(e.created_at).toLocaleDateString()})`,
-        value: e.id,
-      }));
-
-    if (allEncounters.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No active encounters found for this patient',
-      });
-    }
+    splitEncounters((encountersResponse?.data || []).filter(e => !e.archived));
   } catch (error) {
     console.error('Error in searchPatient:', error);
     // Only clear patient if we haven't successfully loaded them
@@ -3371,6 +3329,7 @@ const loadPrescriptions = async () => {
       prescriptionsResponse = await consultationAPI.getPrescriptions(selectedEncounterId.value);
       prescriptions.value = prescriptionsResponse.data || [];
     } catch (e) {
+      if (patient.value?.is_confidential) throw e;
       // Fallback to patient card endpoint
       console.warn('Direct endpoint failed, trying patient card endpoint:', e);
       prescriptionsResponse = await consultationAPI.getPrescriptionsByPatientCard(
@@ -4634,6 +4593,27 @@ const autoLoadFromRoute = async () => {
       const encounter = encounterResponse.data;
       currentEncounter.value = encounter;
       
+      if (encounter?.is_confidential) {
+        const code = encounter.confidential_code || 'Confidential';
+        patient.value = {
+          name: code,
+          surname: '',
+          other_names: '',
+          card_number: code,
+          is_confidential: true,
+          confidential_code: code,
+          insured: false,
+        };
+        cardNumber.value = code;
+        try {
+          const looked = await confidentialAPI.lookup(code);
+          splitEncounters(looked.data?.encounters || []);
+        } catch (_) {
+          splitEncounters([encounter]);
+        }
+        await loadPrescriptions();
+        return;
+      }
       if (encounter && encounter.patient_id) {
         // Get patient info
         const patientResponse = await patientsAPI.get(encounter.patient_id);
@@ -4810,8 +4790,73 @@ watch([() => prescriptions.value, () => currentEncounter.value], () => {
 }, { deep: true });
 
 // Load ward admissions for the current patient
+const openConfidentialClient = async (term) => {
+  let data;
+  try {
+    const response = await confidentialAPI.lookup(term);
+    data = response.data;
+  } catch (error) {
+    if (error.response?.status === 404) return false;
+    throw error;
+  }
+  if (!data?.code) return false;
+  patient.value = {
+    name: data.code,
+    surname: '',
+    other_names: '',
+    card_number: data.code,
+    is_confidential: true,
+    confidential_code: data.code,
+    insured: false,
+  };
+  wardAdmissions.value = [];
+  patientBillInfo.value = { totalAmount: null, paidAmount: null, remainingBalance: null };
+  const encounters = data.encounters || [];
+  splitEncounters(encounters);
+  if (encounters.length === 1) {
+    await selectOPDEncounter(encounters[0].id);
+  }
+  return true;
+};
+
+const splitEncounters = (allEncounters) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todaysEncountersList = allEncounters.filter((encounter) => {
+    const encounterDate = new Date(encounter.created_at);
+    encounterDate.setHours(0, 0, 0, 0);
+    return encounterDate.getTime() === today.getTime();
+  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const oldEncs = allEncounters.filter((encounter) => {
+    const encounterDate = new Date(encounter.created_at);
+    encounterDate.setHours(0, 0, 0, 0);
+    return encounterDate.getTime() !== today.getTime();
+  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  todaysEncounters.value = todaysEncountersList;
+  if (todaysEncountersList.length > 0) {
+    todaysEncounter.value = todaysEncountersList[0];
+    Promise.all(todaysEncountersList.map((encounter) => getEncounterProcedures(encounter).catch(() => {}))).catch(() => {});
+  } else {
+    todaysEncounter.value = null;
+    todaysEncounters.value = [];
+  }
+  oldEncounters.value = oldEncs;
+  Promise.all(oldEncounters.value.map((encounter) => getEncounterProcedures(encounter).catch(() => {}))).catch(() => {});
+  activeEncounters.value = allEncounters.map((encounter) => ({
+    id: encounter.id,
+    label: `Encounter #${encounter.id} - ${encounter.department} (${new Date(encounter.created_at).toLocaleDateString()})`,
+    value: encounter.id,
+  }));
+  if (allEncounters.length === 0) {
+    $q.notify({
+      type: 'info',
+      message: 'No active encounters found for this patient',
+    });
+  }
+};
+
 const loadWardAdmissions = async () => {
-  if (!patient.value || !patient.value.card_number) {
+  if (!patient.value || !patient.value.card_number || patient.value.is_confidential) {
     wardAdmissions.value = [];
     return;
   }
