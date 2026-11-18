@@ -74,19 +74,15 @@
       </q-toolbar>
     </q-header>
 
-    <q-dialog v-model="showNotifications" style="min-width: 600px; max-width: 800px">
-      <q-card>
-        <q-card-section>
-          <div class="row items-center">
-            <div class="text-h6">Notifications</div>
-            <q-space />
-            <q-btn flat dense round icon="close" v-close-popup />
-          </div>
-        </q-card-section>
-        <q-card-section>
-          <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
-        </q-card-section>
-      </q-card>
+    <q-dialog
+      v-model="showNotifications"
+      class="notice-sheet"
+      position="right"
+      full-height
+      transition-show="slide-left"
+      transition-hide="slide-right"
+    >
+      <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
     </q-dialog>
 
     <q-drawer

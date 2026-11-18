@@ -14,14 +14,22 @@
         <div>
           <div class="result-hero-name-row">
             <h1 class="result-hero-name">{{ patientDisplayName }}</h1>
-            <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+            <HmsBadge v-if="patient.is_confidential" tone="warning">Confidential</HmsBadge>
+            <HmsBadge v-else :tone="patient.insured ? 'success' : 'warning'">
               {{ patient.insured ? 'Insured' : 'Cash & carry' }}
             </HmsBadge>
             <HmsBadge v-if="investigation?.status" :tone="statusTone(investigation.status)">
               {{ investigation.status }}
             </HmsBadge>
           </div>
-          <div class="result-hero-meta">
+          <div v-if="patient.is_confidential" class="result-hero-meta">
+            <span class="mono">{{ patient.name }}</span>
+            <span class="sep">·</span>
+            <span>{{ (patient.ccc_number || encounter?.ccc_number) ? ('CCC ' + (patient.ccc_number || encounter.ccc_number)) : 'Cash' }}</span>
+            <span class="sep">·</span>
+            <span>{{ formatDate(encounter?.created_at || investigation?.created_at) || '—' }}</span>
+          </div>
+          <div v-else class="result-hero-meta">
             <span class="mono">{{ patient.card_number || '—' }}</span>
             <span class="sep">·</span>
             <span>{{ patient.gender || '—' }}</span>
@@ -455,9 +463,25 @@ const loadInvestigation = async () => {
       return;
     }
 
-    // For IPD investigations, use patient_id directly from investigation response if available
-    // This ensures we get the correct patient even if encounter_id points to a different encounter
-    if (isInpatient) {
+    const applyConfidentialPatient = () => {
+      const code = encounter.value?.confidential_code || investigation.value?.confidential_code || investigation.value?.patient_name || 'Confidential';
+      patient.value = {
+        name: code,
+        surname: '',
+        other_names: '',
+        card_number: '',
+        is_confidential: true,
+        ccc_number: encounter.value?.ccc_number || investigation.value?.ccc_number || null,
+        insured: !!(encounter.value?.ccc_number || investigation.value?.ccc_number),
+        gender: '',
+        age: null,
+      };
+    };
+
+    // Confidential visits stay on the code. Do not load the client record.
+    if (investigation.value?.is_confidential) {
+      applyConfidentialPatient();
+    } else if (isInpatient) {
       if (investigation.value.patient_id) {
         // Use patient_id directly from investigation response (most reliable)
         try {
@@ -515,9 +539,9 @@ const loadInvestigation = async () => {
           }
         }
         
-        // Load patient from encounter to ensure correct patient
-        // For IPD, we already loaded patient from investigation above, so only load for OPD
-        if (!isInpatient && encounter.value && encounter.value.patient_id) {
+        if (encounter.value?.is_confidential || investigation.value?.is_confidential) {
+          applyConfidentialPatient();
+        } else if (!isInpatient && encounter.value && encounter.value.patient_id) {
           try {
             const patientResponse = await patientsAPI.get(encounter.value.patient_id);
             patient.value = patientResponse.data;

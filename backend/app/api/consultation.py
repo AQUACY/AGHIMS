@@ -586,6 +586,7 @@ class InvestigationResponse(BaseModel):
     completed_by_name: Optional[str] = None
     is_confidential: bool = False
     confidential_code: Optional[str] = None
+    ccc_number: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -2219,6 +2220,7 @@ def get_investigation(
         "patient_card_number": _masked_card,
         "is_confidential": _masked_flag,
         "confidential_code": _masked_code,
+        "ccc_number": investigation.encounter.ccc_number,
         "encounter_date": investigation.encounter.created_at,
         "requested_by_name": requested_by_name,
         "confirmed_by_name": confirmed_by_name,
@@ -2581,6 +2583,7 @@ def get_investigations_by_type(
             "patient_card_number": _list_card,
             "is_confidential": _list_flag,
             "confidential_code": _list_code,
+            "ccc_number": inv.encounter.ccc_number,
             "encounter_date": inv.encounter.created_at,
             "requested_by_name": requested_by_name,
             "confirmed_by_name": confirmed_by_name,
@@ -9663,6 +9666,8 @@ def get_inpatient_investigations_by_type(
             # Build patient name safely
             patient_name = "Unknown"
             patient_card_number = None
+            _conf_flag = False
+            _conf_code = None
             ward = None
             bed_number = None
             encounter_id = None
@@ -9704,6 +9709,9 @@ def get_inpatient_investigations_by_type(
                 "created_at": inv.created_at,
                 "patient_name": patient_name,
                 "patient_card_number": patient_card_number,
+                "is_confidential": _conf_flag if patient else False,
+                "confidential_code": _conf_code if patient else None,
+                "ccc_number": encounter.ccc_number if encounter else None,
                 "encounter_date": inv.created_at,  # Use investigation created_at (request date) instead of encounter date
                 "requested_by_name": requested_by_name,
                 "confirmed_by_name": confirmed_by_name,
@@ -9781,19 +9789,28 @@ def get_inpatient_investigation(
     encounter = ward_admission.encounter if ward_admission else None
     patient = encounter.patient if encounter else None
     
-    # Build patient name safely
+    # Build patient name safely. Confidential visits keep the code, not the client.
     patient_name = "Unknown"
     patient_card_number = None
+    is_confidential = False
+    confidential_code = None
     ward = None
     bed_number = None
     encounter_id = None
     ward_admission_id = None
     
     patient_id = None
-    if patient:
-        patient_name = f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown"
-        patient_card_number = patient.card_number
-        patient_id = patient.id
+    if patient and encounter:
+        from app.services.confidential import masked_patient_label
+
+        patient_name, patient_card_number, is_confidential, confidential_code = masked_patient_label(
+            db,
+            encounter,
+            f"{patient.name or ''} {patient.surname or ''}".strip() or "Unknown",
+            patient.card_number,
+        )
+        if not is_confidential:
+            patient_id = patient.id
     
     if ward_admission:
         ward = ward_admission.ward
@@ -9806,7 +9823,10 @@ def get_inpatient_investigation(
         "clinical_review_id": investigation.clinical_review_id,
         "ward_admission_id": ward_admission_id,
         "encounter_id": encounter_id,
-        "patient_id": patient_id,  # Include patient_id for direct patient lookup
+        "patient_id": patient_id,  # Omitted for confidential visits so the client record is not loaded
+        "is_confidential": is_confidential,
+        "confidential_code": confidential_code,
+        "ccc_number": encounter.ccc_number if encounter else None,
         "gdrg_code": investigation.gdrg_code,
         "procedure_name": investigation.procedure_name,
         "investigation_type": investigation.investigation_type,

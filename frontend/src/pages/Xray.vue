@@ -89,15 +89,19 @@
             <div class="patient-cell">
               <div class="avatar">{{ patientInitials(props.row) }}</div>
               <div>
-                <div class="name">{{ props.row.patient_name || '—' }}</div>
-                <div class="sub mono">{{ props.row.patient_card_number || '—' }}</div>
+                <div class="name">{{ props.row.is_confidential ? (props.row.confidential_code || props.row.patient_name || 'Confidential') : (props.row.patient_name || '—') }}</div>
+                <div v-if="props.row.is_confidential" class="sub">
+                  {{ props.row.ccc_number ? 'CCC ' + props.row.ccc_number : 'Cash' }}
+                  · {{ formatDate(props.row.created_at || props.row.encounter_date) }}
+                </div>
+                <div v-else class="sub mono">{{ props.row.patient_card_number || '—' }}</div>
               </div>
             </div>
           </q-td>
         </template>
         <template v-slot:body-cell-patient_card_number="props">
           <q-td :props="props">
-            <span class="mono">{{ props.value }}</span>
+            <span class="mono">{{ props.row.is_confidential ? (props.row.ccc_number || '—') : (props.value || '—') }}</span>
           </q-td>
         </template>
         <template v-slot:body-cell-status="props">
@@ -310,7 +314,14 @@
         <q-card-section>
           <div class="text-h6">Update Service</div>
           <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="selectedInvestigation">
-            Patient: {{ selectedInvestigation.patient_name }} ({{ selectedInvestigation.patient_card_number }})
+            <template v-if="selectedInvestigation.is_confidential">
+              {{ selectedInvestigation.confidential_code || selectedInvestigation.patient_name }}
+              · {{ selectedInvestigation.ccc_number ? 'CCC ' + selectedInvestigation.ccc_number : 'Cash' }}
+              · {{ formatDate(selectedInvestigation.created_at || selectedInvestigation.encounter_date) }}
+            </template>
+            <template v-else>
+              Patient: {{ selectedInvestigation.patient_name }} ({{ selectedInvestigation.patient_card_number }})
+            </template>
           </div>
         </q-card-section>
         <q-card-section>
@@ -374,7 +385,14 @@
         <q-card-section>
           <div class="text-h6">Add New Service</div>
           <div class="text-subtitle2 text-grey-7 q-mt-xs" v-if="selectedInvestigation">
-            Patient: {{ selectedInvestigation.patient_name }} ({{ selectedInvestigation.patient_card_number }})
+            <template v-if="selectedInvestigation.is_confidential">
+              {{ selectedInvestigation.confidential_code || selectedInvestigation.patient_name }}
+              · {{ selectedInvestigation.ccc_number ? 'CCC ' + selectedInvestigation.ccc_number : 'Cash' }}
+              · {{ formatDate(selectedInvestigation.created_at || selectedInvestigation.encounter_date) }}
+            </template>
+            <template v-else>
+              Patient: {{ selectedInvestigation.patient_name }} ({{ selectedInvestigation.patient_card_number }})
+            </template>
           </div>
         </q-card-section>
         <q-card-section>
@@ -504,7 +522,7 @@ const addServiceForm = ref({
 
 const requestColumns = [
   { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left', sortable: true },
-  { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left', sortable: true },
+  { name: 'patient_card_number', label: 'Card / CCC', field: 'patient_card_number', align: 'left', sortable: true },
   { name: 'source', label: 'Source', field: 'source', align: 'center', sortable: true },
   { name: 'ward', label: 'Ward/Bed', field: 'ward', align: 'left', sortable: true },
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left', sortable: true },
@@ -536,7 +554,8 @@ const statusTone = (status) => {
 };
 
 const patientInitials = (row) => {
-  const parts = String(row?.patient_name || '?').trim().split(/\s+/);
+  const source = row?.is_confidential ? (row.confidential_code || row.patient_name || '?') : (row?.patient_name || '?');
+  const parts = String(source).trim().split(/\s+/);
   const a = (parts[0] || '?')[0] || '?';
   const b = (parts[1] || '')[0] || '';
   return `${a}${b}`.toUpperCase();
@@ -1022,8 +1041,12 @@ const openAddServiceDialogForNew = async () => {
   const firstRequest = requests.value[0];
   selectedInvestigation.value = {
     encounter_id: firstRequest.encounter_id,
-    patient_name: firstRequest.patient_name,
-    patient_card_number: firstRequest.patient_card_number,
+    patient_name: firstRequest.is_confidential ? (firstRequest.confidential_code || firstRequest.patient_name) : firstRequest.patient_name,
+    patient_card_number: firstRequest.is_confidential ? null : firstRequest.patient_card_number,
+    is_confidential: !!firstRequest.is_confidential,
+    confidential_code: firstRequest.confidential_code,
+    ccc_number: firstRequest.ccc_number,
+    created_at: firstRequest.created_at || firstRequest.encounter_date,
   };
   
   addServiceForm.value = {

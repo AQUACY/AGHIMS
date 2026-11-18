@@ -45,6 +45,9 @@ class BillItem(Base):
     quantity = Column(Float, default=1.0, nullable=False)  # Changed to Float to support fractional quantities (e.g., 6.15 hours)
     unit_price = Column(Float, nullable=False)
     total_price = Column(Float, nullable=False)
+    cancelled = Column(Boolean, default=False, nullable=False)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=utcnow_callable)
     
     # Relationships

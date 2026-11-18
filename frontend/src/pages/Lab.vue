@@ -150,15 +150,19 @@
             <div class="patient-cell">
               <div class="avatar">{{ patientInitials(props.row) }}</div>
               <div>
-                <div class="name">{{ props.row.patient_name || '—' }}</div>
-                <div class="sub mono">{{ props.row.patient_card_number || '—' }}</div>
+                <div class="name">{{ props.row.is_confidential ? (props.row.confidential_code || props.row.patient_name || 'Confidential') : (props.row.patient_name || '—') }}</div>
+                <div v-if="props.row.is_confidential" class="sub">
+                  {{ props.row.ccc_number ? 'CCC ' + props.row.ccc_number : 'Cash' }}
+                  · {{ formatDate(props.row.created_at || props.row.encounter_date) }}
+                </div>
+                <div v-else class="sub mono">{{ props.row.patient_card_number || '—' }}</div>
               </div>
             </div>
           </q-td>
         </template>
         <template v-slot:body-cell-patient_card_number="props">
           <q-td :props="props">
-            <span class="mono">{{ props.value }}</span>
+            <span class="mono">{{ props.row.is_confidential ? (props.row.ccc_number || '—') : (props.value || '—') }}</span>
           </q-td>
         </template>
         <template v-slot:body-cell-status="props">
@@ -469,7 +473,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useQuasar } from 'quasar';
 import { FlaskConical } from 'lucide-vue-next';
-import { consultationAPI, patientsAPI, encountersAPI, billingAPI } from '../services/api';
+import { consultationAPI, patientsAPI, encountersAPI, billingAPI, confidentialAPI } from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { getApplicationTodaySync } from '../utils/dateUtils';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
@@ -546,7 +550,7 @@ const confirmInpatientForm = ref({
 
 const requestColumns = [
   { name: 'patient_name', label: 'Patient Name', field: 'patient_name', align: 'left', sortable: true },
-  { name: 'patient_card_number', label: 'Card Number', field: 'patient_card_number', align: 'left', sortable: true },
+  { name: 'patient_card_number', label: 'Card / CCC', field: 'patient_card_number', align: 'left', sortable: true },
   { name: 'source', label: 'Source', field: 'source', align: 'center', sortable: true },
   { name: 'ward', label: 'Ward/Bed', field: 'ward', align: 'left', sortable: true },
   { name: 'procedure_name', label: 'Procedure', field: 'procedure_name', align: 'left', sortable: true },
@@ -593,7 +597,8 @@ const statusTone = (status) => {
 };
 
 const patientInitials = (row) => {
-  const parts = String(row?.patient_name || '?').trim().split(/\s+/);
+  const source = row?.is_confidential ? (row.confidential_code || row.patient_name || '?') : (row?.patient_name || '?');
+  const parts = String(source).trim().split(/\s+/);
   const a = (parts[0] || '?')[0] || '?';
   const b = (parts[1] || '')[0] || '';
   return `${a}${b}`.toUpperCase();
@@ -728,6 +733,53 @@ const canAddResults = (row) => {
   return true;
 };
 
+const openConfidentialLab = async (term) => {
+  try {
+    const response = await confidentialAPI.lookup(String(term || '').trim());
+    const data = response.data || {};
+    const visits = data.encounters || [];
+    if (!data.code || visits.length === 0) return false;
+    patient.value = {
+      name: data.code,
+      surname: '',
+      card_number: '',
+      is_confidential: true,
+      confidential_code: data.code,
+    };
+    const today = getApplicationTodaySync();
+    const dated = visits.map((visit) => ({
+      ...visit,
+      is_confidential: true,
+      confidential_code: data.code,
+    }));
+    const todaysEncounters = dated.filter((visit) => {
+      const encounterDate = new Date(visit.created_at);
+      encounterDate.setHours(0, 0, 0, 0);
+      return encounterDate.getTime() === today.getTime();
+    });
+    const oldEncs = dated.filter((visit) => {
+      const encounterDate = new Date(visit.created_at);
+      encounterDate.setHours(0, 0, 0, 0);
+      return encounterDate.getTime() !== today.getTime();
+    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    oldEncounters.value = oldEncs;
+    activeEncounters.value = dated.map((visit) => ({
+      id: visit.id,
+      label: `${data.code} · ${visit.department || 'Visit'} · ${new Date(visit.created_at).toLocaleString('en-GB')}${visit.ccc_number ? ' · CCC ' + visit.ccc_number : ''}`,
+      value: visit.id,
+    }));
+    const chosen = todaysEncounters.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || oldEncs[0];
+    if (chosen) {
+      todaysEncounter.value = todaysEncounters.length > 0 ? chosen : null;
+      selectedEncounterId.value = chosen.id;
+      await loadInvestigations();
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
 const searchPatient = async () => {
   if (!cardNumber.value || !cardNumber.value.trim()) {
     $q.notify({
@@ -750,10 +802,13 @@ const searchPatient = async () => {
     }
     
     if (patients.length === 0) {
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that card number',
-      });
+      const opened = await openConfidentialLab(cardNumber.value.trim());
+      if (!opened) {
+        $q.notify({
+          type: 'info',
+          message: 'No client found for that card number or confidential code',
+        });
+      }
       return;
     }
     
@@ -810,15 +865,18 @@ const searchPatient = async () => {
       });
     }
   } catch (error) {
-    patient.value = null;
-    activeEncounters.value = [];
-    selectedEncounterId.value = null;
-    investigations.value = [];
-    diagnoses.value = [];
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Patient not found',
-    });
+    const opened = await openConfidentialLab(cardNumber.value.trim());
+    if (!opened) {
+      patient.value = null;
+      activeEncounters.value = [];
+      selectedEncounterId.value = null;
+      investigations.value = [];
+      diagnoses.value = [];
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'No client found for that card number or confidential code',
+      });
+    }
   } finally {
     loadingPatient.value = false;
   }
@@ -1548,6 +1606,13 @@ const autoLoadFromRoute = async () => {
       const encounterResponse = await encountersAPI.get(encounterId);
       const encounter = encounterResponse.data;
       currentEncounter.value = encounter;
+
+      if (encounter?.is_confidential) {
+        const code = encounter.confidential_code || encounter.patient_name || 'Confidential';
+        cardNumber.value = code;
+        await openConfidentialLab(code);
+        return;
+      }
       
       if (encounter && encounter.patient_id) {
         // Get patient info

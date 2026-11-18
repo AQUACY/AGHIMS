@@ -2,6 +2,7 @@
 Billing endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Request, File, UploadFile
+from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from typing import Optional, List, Union
@@ -24,6 +25,29 @@ from app.services.opd_government_export import (
 import random
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+def ensure_bill_line_cancel_columns(db: Session) -> None:
+    """Add cancel columns on bill lines created before this action existed."""
+    bind = db.get_bind()
+    dialect = bind.dialect.name if hasattr(bind, "dialect") else ""
+    flag = "TINYINT(1) NOT NULL DEFAULT 0" if dialect == "mysql" else "INTEGER NOT NULL DEFAULT 0"
+    when = "DATETIME NULL" if dialect == "mysql" else "TIMESTAMP NULL"
+    specs = [
+        ("cancelled", flag),
+        ("cancelled_at", when),
+        ("cancelled_by", "INTEGER NULL"),
+    ]
+    for name, typ in specs:
+        try:
+            db.execute(text(f"ALTER TABLE bill_items ADD COLUMN {name} {typ}"))
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            err = str(exc).lower()
+            if "duplicate column" in err or "already exists" in err or "1060" in err:
+                continue
+            raise
 
 
 class GovernmentServiceLineResponse(BaseModel):
@@ -332,6 +356,7 @@ class BillItemPaymentInfo(BaseModel):
     payment_method: Optional[str] = None
     issued_at: datetime
     refunded: bool = False
+    issued_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -349,6 +374,8 @@ class BillItemResponse(BaseModel):
     amount_paid: float = 0.0  # Total amount paid for this item across all receipts
     remaining_balance: float = 0.0  # Remaining balance for this item
     payment_info: List[BillItemPaymentInfo] = []  # List of receipts that paid for this item
+    cancelled: bool = False
+    cancelled_by_name: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -405,6 +432,7 @@ def create_bill(
     _module_check: User = Depends(require_module_permission("billing", "create"))
 ):
     """Create a bill for an encounter"""
+    ensure_bill_line_cancel_columns(db)
     encounter = db.query(Encounter).filter(Encounter.id == bill_data.encounter_id).first()
     if not encounter:
         raise HTTPException(status_code=404, detail="Encounter not found")
@@ -452,7 +480,8 @@ def create_bill(
                 BillItem.bill_id == bill.id,
                 BillItem.item_code == item_data.item_code,
                 BillItem.item_name == item_data.item_name,
-                BillItem.category == category
+                BillItem.category == category,
+                BillItem.cancelled == False,
             ).first()
         else:
             # For items without codes, match by name and category only
@@ -460,7 +489,8 @@ def create_bill(
                 BillItem.bill_id == bill.id,
                 BillItem.item_code == "MISC",
                 BillItem.item_name == item_data.item_name,
-                BillItem.category == category
+                BillItem.category == category,
+                BillItem.cancelled == False,
             ).first()
         
         if existing_item:
@@ -508,6 +538,18 @@ def create_bill(
     return bill
 
 
+def _paid_for_bill_item(bill, bill_item_id: int) -> float:
+    """Amount already receipted for one line, ignoring refunded receipts."""
+    total = 0.0
+    for receipt in bill.receipts or []:
+        if receipt.refunded:
+            continue
+        for receipt_item in receipt.receipt_items or []:
+            if receipt_item.bill_item_id == bill_item_id:
+                total += receipt_item.amount_paid or 0
+    return total
+
+
 @router.post("/receipt", status_code=status.HTTP_201_CREATED)
 def create_receipt(
     request: Request,
@@ -541,13 +583,25 @@ def create_receipt(
         # Create a map for quick lookup
         bill_item_map = {item.id: item for item in bill_items}
         
-        # Validate amounts and calculate total
+        # Validate amounts against what is still unpaid on each line
         for receipt_item_data in receipt_data.receipt_items:
             bill_item = bill_item_map[receipt_item_data.bill_item_id]
-            if receipt_item_data.amount_paid > bill_item.total_price:
+            if getattr(bill_item, "cancelled", False):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Amount paid ({receipt_item_data.amount_paid}) exceeds bill item price ({bill_item.total_price}) for {bill_item.item_name}"
+                    detail=f"{bill_item.item_name} is cancelled and is not payable"
+                )
+            already_paid = _paid_for_bill_item(bill, bill_item.id)
+            remaining = round((bill_item.total_price or 0) - already_paid, 2)
+            if remaining <= 0.009:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{bill_item.item_name} is already paid"
+                )
+            if receipt_item_data.amount_paid - remaining > 0.009:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Amount paid ({receipt_item_data.amount_paid}) exceeds the remaining balance ({remaining:.2f}) for {bill_item.item_name}"
                 )
             if receipt_item_data.amount_paid <= 0:
                 raise HTTPException(
@@ -562,8 +616,8 @@ def create_receipt(
     if total_paid <= 0:
         raise HTTPException(status_code=400, detail="Total payment amount must be greater than 0")
     
-    if total_paid > bill.total_amount:
-        raise HTTPException(status_code=400, detail="Total payment exceeds bill amount")
+    if bill.paid_amount + total_paid > bill.total_amount + 0.009:
+        raise HTTPException(status_code=400, detail="Total payment exceeds the remaining bill balance")
     
     # Group items by receipt number if provided, otherwise create one receipt
     receipts_created = []
@@ -614,35 +668,41 @@ def create_receipt(
             
             if existing_receipt:
                 receipt = existing_receipt
-                # Update receipt amount
-                receipt.amount_paid += receipt_data_map["total"]
             else:
-                # Create new receipt
                 receipt = Receipt(
                     bill_id=bill.id,
                     receipt_number=receipt_number,
-                    amount_paid=receipt_data_map["total"],
+                    amount_paid=0,
                     payment_method=receipt_data.payment_method,
                     issued_by=get_effective_creator_id(db, current_user)
                 )
                 db.add(receipt)
                 db.flush()
             
-            # Create receipt items
+            # Create receipt items. A line already on this receipt is not charged again.
+            applied = 0.0
             for receipt_item_data in receipt_data_map["items"]:
-                # Check if receipt item already exists
                 existing_item = db.query(ReceiptItem).filter(
                     ReceiptItem.receipt_id == receipt.id,
                     ReceiptItem.bill_item_id == receipt_item_data.bill_item_id
                 ).first()
                 
-                if not existing_item:
-                    receipt_item = ReceiptItem(
-                        receipt_id=receipt.id,
-                        bill_item_id=receipt_item_data.bill_item_id,
-                        amount_paid=receipt_item_data.amount_paid
+                if existing_item:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="That receipt is already recorded for this item"
                     )
-                    db.add(receipt_item)
+                receipt_item = ReceiptItem(
+                    receipt_id=receipt.id,
+                    bill_item_id=receipt_item_data.bill_item_id,
+                    amount_paid=receipt_item_data.amount_paid
+                )
+                db.add(receipt_item)
+                applied += receipt_item_data.amount_paid
+            if existing_receipt:
+                receipt.amount_paid = (receipt.amount_paid or 0) + applied
+            else:
+                receipt.amount_paid = applied
             
             receipts_created.append({
                 "receipt_id": receipt.id,
@@ -797,7 +857,7 @@ def update_bill(
         
         # Recalculate bill total from all items
         all_items = db.query(BillItem).filter(BillItem.bill_id == bill_id).all()
-        bill.total_amount = sum(item.total_price for item in all_items)
+        bill.total_amount = sum(item.total_price for item in all_items if not getattr(item, "cancelled", False))
         
         # Check if bill is still paid (paid_amount should not exceed total_amount)
         if bill.paid_amount > bill.total_amount:
@@ -816,6 +876,43 @@ def update_bill(
     db.refresh(bill)
     
     return bill
+
+
+def _refresh_bill_totals(bill: Bill) -> None:
+    active = [item for item in bill.bill_items if not getattr(item, "cancelled", False)]
+    bill.total_amount = sum((item.total_price or 0) for item in active)
+    settled = bill.total_amount > 0 and (bill.paid_amount or 0) + 0.009 >= bill.total_amount
+    bill.is_paid = settled
+    if settled and not bill.paid_at:
+        bill.paid_at = datetime.utcnow()
+    if not settled:
+        bill.paid_at = None
+
+
+@router.post("/bill-item/{bill_item_id}/cancel")
+def cancel_bill_item(
+    bill_item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Billing", "Admin"])),
+    _module_check: User = Depends(require_module_permission("billing", "update")),
+):
+    """Cancel a wrongly added line. The line stays on the bill and leaves the amount due."""
+    ensure_bill_line_cancel_columns(db)
+    bill_item = db.query(BillItem).filter(BillItem.id == bill_item_id).first()
+    if not bill_item:
+        raise HTTPException(status_code=404, detail="Bill item not found")
+    if getattr(bill_item, "cancelled", False):
+        raise HTTPException(status_code=400, detail="This line is already cancelled")
+    bill = db.query(Bill).options(joinedload(Bill.bill_items), joinedload(Bill.receipts).joinedload(Receipt.receipt_items)).filter(Bill.id == bill_item.bill_id).first()
+    already_paid = _paid_for_bill_item(bill, bill_item.id)
+    if already_paid > 0.009:
+        raise HTTPException(status_code=400, detail="Refund the receipt on this line before cancelling it")
+    bill_item.cancelled = True
+    bill_item.cancelled_at = datetime.utcnow()
+    bill_item.cancelled_by = current_user.id
+    _refresh_bill_totals(bill)
+    db.commit()
+    return {"message": f"{bill_item.item_name} cancelled", "bill_id": bill.id}
 
 
 @router.put("/bill-item/{bill_item_id}")
@@ -911,6 +1008,7 @@ def get_encounter_bills(
     _module_check: User = Depends(require_module_permission("billing", "read"))
 ):
     """Get all bills for an encounter - visible to all users so they can see what patient owes"""
+    ensure_bill_line_cancel_columns(db)
     # Query bills and explicitly refresh to ensure we get the latest data
     bills = db.query(Bill).filter(Bill.encounter_id == encounter_id).order_by(Bill.created_at.desc()).all()
     
@@ -956,6 +1054,7 @@ def get_bill_details(
     _module_check: User = Depends(require_module_permission("billing", "read"))
 ):
     """Get detailed bill information with all bill items and receipt"""
+    ensure_bill_line_cancel_columns(db)
     # Eager load all relationships
     bill = db.query(Bill)\
         .options(
@@ -982,6 +1081,17 @@ def get_bill_details(
         if inv.gdrg_code:
             item_code_to_investigation_type[inv.gdrg_code] = inv.investigation_type
     
+    issuer_ids = {receipt.issued_by for receipt in bill.receipts if receipt.issued_by}
+    issuer_names = {}
+    if issuer_ids:
+        for user in db.query(User).filter(User.id.in_(issuer_ids)).all():
+            issuer_names[user.id] = user.full_name or user.username
+    canceller_ids = {item.cancelled_by for item in bill.bill_items if getattr(item, "cancelled_by", None)}
+    canceller_names = {}
+    if canceller_ids:
+        for user in db.query(User).filter(User.id.in_(canceller_ids)).all():
+            canceller_names[user.id] = user.full_name or user.username
+
     # Build bill items with payment information
     bill_items_with_payment = []
     for item in bill.bill_items:
@@ -1001,12 +1111,14 @@ def get_bill_details(
                         "payment_method": receipt.payment_method,
                         "issued_at": receipt.issued_at,
                         "refunded": receipt.refunded,
+                        "issued_by_name": issuer_names.get(receipt.issued_by),
                     })
                     # Only count non-refunded receipts towards paid amount
                     if not receipt.refunded:
                         total_paid_for_item += receipt_item.amount_paid
         
-        remaining_balance = item.total_price - total_paid_for_item
+        line_cancelled = bool(getattr(item, "cancelled", False))
+        remaining_balance = 0.0 if line_cancelled else item.total_price - total_paid_for_item
         
         # Determine service group
         service_group = "Other"
@@ -1044,6 +1156,8 @@ def get_bill_details(
             "remaining_balance": remaining_balance,
             "payment_info": receipt_items_for_item,
             "service_group": service_group,
+            "cancelled": line_cancelled,
+            "cancelled_by_name": canceller_names.get(item.cancelled_by) if line_cancelled else None,
         })
     
     # Build response

@@ -50,7 +50,13 @@
             <HmsBadge v-else-if="serviceType === 'ipd'" tone="healthcare">IPD</HmsBadge>
           </div>
           <div class="hero-meta">
-            <span class="mono">{{ patient.card_number }}</span>
+            <span class="mono">{{ patient.is_confidential ? (patient.confidential_code || patient.name) : patient.card_number }}</span>
+            <template v-if="patient.is_confidential">
+              <span class="sep">·</span>
+              <span>{{ currentEncounter?.ccc_number ? 'CCC ' + currentEncounter.ccc_number : 'Cash' }}</span>
+              <span v-if="currentEncounter?.created_at" class="sep">·</span>
+              <span v-if="currentEncounter?.created_at">{{ formatDateTime(currentEncounter.created_at) }}</span>
+            </template>
             <template v-if="patient.age">
               <span class="sep">·</span>
               <span>Age {{ patient.age }}</span>

@@ -77,6 +77,12 @@
               <span class="mono">{{ encounterStore.currentEncounter.confidential_code }}</span>
               <span class="sep">·</span>
               <span>{{ formatDate(encounterStore.currentEncounter?.created_at) || 'N/A' }}</span>
+              <span class="sep">·</span>
+              <span>{{ formatTime(encounterStore.currentEncounter?.created_at) }}</span>
+              <template v-if="encounterStore.currentEncounter?.ccc_number">
+                <span class="sep">·</span>
+                <span>CCC {{ encounterStore.currentEncounter.ccc_number }}</span>
+              </template>
             </div>
             <div v-else class="hero-meta">
               <span class="mono">{{ patientInfo?.card_number || 'N/A' }}</span>
@@ -2029,7 +2035,8 @@ const titleCaseName = (value) => {
 };
 
 const consultInitials = (row) => {
-  const parts = String(row.patient_name || '?').trim().split(/\s+/);
+  const source = row.is_confidential ? (row.confidential_code || row.patient_name || '?') : (row.patient_name || '?');
+  const parts = String(source).trim().split(/\s+/);
   return `${(parts[0] || '?')[0] || '?'}${(parts[1] || '')[0] || ''}`.toUpperCase();
 };
 
@@ -2052,6 +2059,10 @@ const patientDisplayName = computed(() => {
 });
 
 const patientHeroInitials = computed(() => {
+  if (encounterStore.currentEncounter?.is_confidential) {
+    const code = encounterStore.currentEncounter.confidential_code || 'C';
+    return code.slice(0, 2).toUpperCase();
+  }
   if (!patientInfo.value) return '?';
   const a = (patientInfo.value.name || '?')[0] || '?';
   const b = (patientInfo.value.surname || '')[0] || '';

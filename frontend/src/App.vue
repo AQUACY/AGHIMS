@@ -235,6 +235,10 @@ body {
   max-width: 800px;
 }
 
+.notice-sheet .q-dialog__inner {
+  padding: 0;
+}
+
 .body--dark .text-grey-7,
 .body--dark .text-grey-6,
 .body--dark .text-grey {

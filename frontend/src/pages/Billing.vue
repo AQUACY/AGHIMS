@@ -32,7 +32,7 @@
       <div class="panel-head">
         <div>
           <div class="panel-title">Search patient</div>
-          <div class="panel-sub">Enter a card number to load encounters and bills.</div>
+          <div class="panel-sub">Enter a card number or confidential code to load encounters and bills.</div>
         </div>
       </div>
       <div class="panel-body search-body">
@@ -40,7 +40,7 @@
           v-model="cardNumber"
           type="search"
           class="tool-input tool-input--search tool-input--grow"
-          placeholder="Patient card number"
+          placeholder="Card number or confidential code"
           :disabled="loadingPatient"
           @keyup.enter="searchPatient"
         />
@@ -62,13 +62,14 @@
         <div class="hero-text">
           <div class="hero-name-row">
             <h1 class="hero-name">{{ patientDisplayName }}</h1>
-            <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+            <HmsBadge v-if="patient.is_confidential" tone="warning">Confidential</HmsBadge>
+            <HmsBadge v-else :tone="patient.insured ? 'success' : 'warning'">
               {{ patient.insured ? 'Insured' : 'Cash' }}
             </HmsBadge>
             <HmsBadge tone="info">{{ billingModule === 'opd' ? 'OPD' : 'IPD' }}</HmsBadge>
           </div>
           <div class="hero-meta">
-            <span class="mono">{{ patient.card_number }}</span>
+            <span class="mono">{{ patient.is_confidential ? (patient.confidential_code || patient.name) : patient.card_number }}</span>
             <template v-if="selectedEncounter && selectedEncounter.ccc_number">
               <span class="sep">·</span>
               <span>CCC {{ selectedEncounter.ccc_number }}</span>
@@ -312,8 +313,17 @@
                 </q-td>
               </template>
               <template v-slot:body-cell-services="props">
-                <q-td :props="props">
-                  <div class="services-cell" :title="props.value">{{ props.value }}</div>
+                <q-td :props="props" class="services-td">
+                  <div class="services-breakdown">
+                    <div v-if="!props.row.serviceGroups || props.row.serviceGroups.length === 0" class="services-empty">No services</div>
+                    <div v-for="group in props.row.serviceGroups" :key="group.name" class="service-group">
+                      <div class="service-group-name">{{ group.name }}</div>
+                      <div v-for="(item, index) in group.items" :key="index" class="service-line">
+                        <span>{{ item.name }}</span>
+                        <span v-if="item.total != null" class="service-amt">₵{{ Number(item.total).toFixed(2) }}</span>
+                      </div>
+                    </div>
+                  </div>
                 </q-td>
               </template>
               <template v-slot:body-cell-remaining_balance="props">
@@ -374,67 +384,44 @@
           </div>
         </div>
 
-        <!-- OPD Bills (Regular Table) -->
-        <q-table
-          v-if="billingModule === 'opd' && existingBills.length > 0"
-          class="diag-table"
-          :rows="existingBills"
-          :columns="existingBillColumns"
-          row-key="id"
-          flat
-          dense
-          :loading="loadingBills"
-        >
-          <template v-slot:body-cell-encounter_id="props">
-            <q-td :props="props">
-              <span class="mono">#{{ props.value }}</span>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-services="props">
-            <q-td :props="props">
-              <div class="services-cell" :title="props.value">{{ props.value }}</div>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-remaining_balance="props">
-            <q-td :props="props">
-              <span :class="(props.row.total_amount - props.row.paid_amount) > 0 ? 'amt-due' : 'amt-ok'">
-                {{ (props.row.total_amount - props.row.paid_amount) > 0 ? `₵${(props.row.total_amount - props.row.paid_amount).toFixed(2)}` : '₵0.00' }}
-              </span>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-is_paid="props">
-            <q-td :props="props">
-              <HmsBadge :tone="props.value ? 'success' : 'warning'">
-                {{ props.value ? 'Paid' : 'Unpaid' }}
-              </HmsBadge>
-            </q-td>
-          </template>
-          <template v-slot:body-cell-actions="props">
-            <q-td :props="props">
+        <div v-if="billingModule === 'opd' && existingBills.length > 0" class="bill-list">
+          <article v-for="bill in existingBills" :key="bill.id" class="bill-card">
+            <header class="bill-card-head">
+              <div>
+                <div class="bill-card-title">{{ bill.bill_number }}</div>
+                <div class="bill-card-sub">
+                  Total ₵{{ Number(bill.total_amount || 0).toFixed(2) }}
+                  <span class="sep">·</span>
+                  Paid ₵{{ Number(bill.paid_amount || 0).toFixed(2) }}
+                  <span class="sep">·</span>
+                  Balance ₵{{ Number((bill.total_amount || 0) - (bill.paid_amount || 0)).toFixed(2) }}
+                </div>
+              </div>
               <div class="row-actions">
-                <HmsButton variant="ghost" size="sm" @click="viewBillDetails(props.row.id)">View</HmsButton>
+                <HmsBadge :tone="bill.is_paid ? 'success' : 'warning'">{{ bill.is_paid ? 'Paid' : 'Unpaid' }}</HmsBadge>
+                <HmsButton variant="ghost" size="sm" @click="viewBillDetails(bill.id)">View</HmsButton>
                 <HmsButton
-                  v-if="!props.row.is_paid"
+                  v-if="unpaidLines(bill).length"
                   variant="primary"
                   size="sm"
-                  @click="openReceiptDialog(props.row)"
+                  @click="paySelected(bill)"
                 >
-                  Pay
+                  Pay selected ({{ selectedUnpaidCount(bill) }})
                 </HmsButton>
                 <HmsButton
                   v-if="authStore.userRole === 'Admin'"
                   variant="secondary"
                   size="sm"
-                  :loading="updatingBillId === props.row.id"
-                  @click="editBill(props.row)"
+                  :loading="updatingBillId === bill.id"
+                  @click="editBill(bill)"
                 >
                   Edit
                 </HmsButton>
                 <HmsButton
-                  v-if="props.row.is_paid && authStore.userRole === 'Admin'"
+                  v-if="bill.is_paid && authStore.userRole === 'Admin'"
                   variant="healthcare"
                   size="sm"
-                  @click="refundReceipt(props.row)"
+                  @click="refundReceipt(bill)"
                 >
                   Refund
                 </HmsButton>
@@ -442,14 +429,106 @@
                   v-if="authStore.userRole === 'Admin'"
                   variant="ghost"
                   size="sm"
-                  @click="confirmDeleteBill(props.row)"
+                  @click="confirmDeleteBill(bill)"
                 >
                   Delete
                 </HmsButton>
               </div>
-            </q-td>
-          </template>
-        </q-table>
+            </header>
+            <table class="line-table">
+              <thead>
+                <tr>
+                  <th class="line-check">
+                    <q-checkbox
+                      :model-value="allUnpaidSelected(bill)"
+                      :disable="unpaidLines(bill).length === 0"
+                      @update:model-value="(checked) => toggleAllUnpaid(bill, checked)"
+                    />
+                  </th>
+                  <th>Item</th>
+                  <th class="num">Total</th>
+                  <th class="num">Paid</th>
+                  <th class="num">Balance</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody v-for="group in billGroups(bill)" :key="group.name">
+                <tr class="group-head-row">
+                  <td class="line-check">
+                    <q-checkbox
+                      :model-value="allGroupSelected(bill, group.name)"
+                      :disable="groupUnpaid(bill, group.name).length === 0"
+                      @update:model-value="(checked) => toggleGroup(bill, group.name, checked)"
+                    />
+                  </td>
+                  <td colspan="6">
+                    <span class="service-group-name">{{ groupLabel(group.name) }}</span>
+                    <span class="group-head-note">Select all in {{ groupLabel(group.name) }}</span>
+                  </td>
+                </tr>
+                <tr v-for="item in group.items" :key="item.id" :class="{ 'line-paid': item.paid, 'line-cancelled': item.cancelled }">
+                  <td class="line-check">
+                    <q-checkbox
+                      v-if="!item.paid && !item.cancelled"
+                      :model-value="isLineSelected(bill.id, item.id)"
+                      @update:model-value="(checked) => toggleLine(bill, item, checked)"
+                    />
+                  </td>
+                  <td>
+                    <div :class="{ 'cancelled-name': item.cancelled }">{{ item.item_name }}</div>
+                    <div v-if="item.cancelled" class="line-receipt">
+                      Cancelled<span v-if="item.cancelled_by_name"> ({{ item.cancelled_by_name }})</span>
+                    </div>
+                    <div v-for="payment in item.payment_info || []" :key="payment.receipt_item_id" class="line-receipt">
+                      <span>
+                        {{ payment.receipt_number }}<span v-if="payment.issued_by_name"> ({{ payment.issued_by_name }})</span>
+                        <span v-if="payment.refunded"> · Refunded</span>
+                      </span>
+                      <span v-if="authStore.userRole === 'Admin' && !payment.refunded" class="row-actions">
+                        <HmsButton variant="healthcare" size="sm" @click="confirmRefundReceipt(payment.receipt_id)">Refund</HmsButton>
+                        <HmsButton variant="ghost" size="sm" @click="confirmDeleteReceipt(payment.receipt_id, item.id, payment)">Delete</HmsButton>
+                      </span>
+                    </div>
+                  </td>
+                  <td class="num">₵{{ item.total_price.toFixed(2) }}</td>
+                  <td class="num">₵{{ item.amount_paid.toFixed(2) }}</td>
+                  <td class="num" :class="item.paid ? 'amt-ok' : 'amt-due'">₵{{ item.remaining_balance.toFixed(2) }}</td>
+                  <td>
+                    <HmsBadge :tone="item.cancelled ? 'neutral' : (item.paid ? 'success' : 'warning')">
+                      {{ item.cancelled ? 'Cancelled' : (item.paid ? 'Paid' : 'Unpaid') }}
+                    </HmsBadge>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <HmsButton
+                        v-if="!item.paid && !item.cancelled"
+                        variant="primary"
+                        size="sm"
+                        @click="openReceiptDialog(bill, [item.id])"
+                      >
+                        Make payment
+                      </HmsButton>
+                      <HmsButton
+                        v-if="!item.paid && !item.cancelled"
+                        variant="ghost"
+                        size="sm"
+                        @click="cancelLine(item)"
+                      >
+                        Cancel
+                      </HmsButton>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+              <tbody v-if="!(bill.lineItems || []).length">
+                <tr>
+                  <td colspan="7" class="services-empty">No items on this bill</td>
+                </tr>
+              </tbody>
+            </table>
+          </article>
+        </div>
         <div v-if="billingModule === 'opd' && existingBills.length === 0 && !loadingBills" class="empty-hint">
           No bills found for this encounter
         </div>
@@ -506,7 +585,7 @@
           <!-- Grouped Bill Items -->
           <div v-for="(group, groupName) in groupedBillItems" :key="groupName" class="q-mb-md">
             <div class="text-subtitle2 q-mb-sm" style="color: #1976d2; font-weight: bold;">
-              {{ groupName }}
+              {{ groupLabel(groupName) }}
             </div>
             <q-table
               :rows="group"
@@ -836,13 +915,21 @@
               filled
             />
           </div>
+          <div class="q-mb-md">
+            <q-input
+              v-model="sharedReceiptNumber"
+              filled
+              label="Receipt number"
+              hint="This one receipt covers every selected line"
+            />
+          </div>
 
-          <div class="text-subtitle2 q-mb-sm">Select Items to Pay:</div>
+          <div class="text-subtitle2 q-mb-sm">Selected lines, grouped. Paid lines stay off this list.</div>
           
           <!-- Grouped Receipt Items -->
           <div v-for="(group, groupName) in groupedReceiptItems" :key="groupName" class="q-mb-md">
             <div class="text-subtitle2 q-mb-sm" style="color: #1976d2; font-weight: bold;">
-              {{ groupName }}
+              {{ groupLabel(groupName) }}
             </div>
             <q-table
               :rows="group"
@@ -853,19 +940,6 @@
               v-model:selected="selectedBillItems"
               selection="multiple"
             >
-            <template v-slot:body-cell-receipt_number="props">
-              <q-td :props="props">
-                <q-input
-                  v-if="receiptItemData && receiptItemData[props.row.id]"
-                  v-model="receiptItemData[props.row.id].receipt_number"
-                  dense
-                  filled
-                  placeholder="Enter receipt number"
-                  :disable="!selectedBillItems.some(sel => sel.id === props.row.id)"
-                />
-                <span v-else>-</span>
-              </q-td>
-            </template>
             <template v-slot:body-cell-amount_paid="props">
               <q-td :props="props">
                 <q-input
@@ -1239,7 +1313,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { billingAPI, patientsAPI, encountersAPI, priceListAPI, consultationAPI } from '../services/api';
+import { billingAPI, patientsAPI, encountersAPI, priceListAPI, consultationAPI, confidentialAPI } from '../services/api';
 import { useQuasar } from 'quasar';
 import { useAuthStore } from '../stores/auth';
 import HmsPageHeader from '../components/ui/HmsPageHeader.vue';
@@ -1358,7 +1432,7 @@ const billItemColumns = [
 const existingBillColumns = [
   { name: 'bill_number', label: 'Bill Number', field: 'bill_number', align: 'left' },
   { name: 'encounter_id', label: 'Encounter', field: 'encounter_id', align: 'center' },
-  { name: 'services', label: 'Services', field: 'services', align: 'left' },
+  { name: 'services', label: 'Services', field: 'services', align: 'left', style: 'white-space: normal; vertical-align: top; min-width: 280px' },
   { name: 'total_amount', label: 'Total Amount', field: 'total_amount', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
   { name: 'paid_amount', label: 'Paid', field: 'paid_amount', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
   { name: 'remaining_balance', label: 'Balance', field: 'remaining_balance', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
@@ -1531,6 +1605,46 @@ const totalAmount = computed(() => {
   return billItems.reduce((sum, item) => sum + (item.total_price || 0), 0);
 });
 
+const openConfidentialBilling = async (term) => {
+  try {
+    const response = await confidentialAPI.lookup(String(term || '').trim());
+    const data = response.data || {};
+    const visits = data.encounters || [];
+    if (!data.code || visits.length === 0) return false;
+    patient.value = {
+      name: data.code,
+      surname: '',
+      other_names: '',
+      card_number: '',
+      is_confidential: true,
+      confidential_code: data.code,
+      insured: visits.some((visit) => !!visit.ccc_number),
+    };
+    wardAdmissions.value = [];
+    existingBills.value = [];
+    autoCalculatedItems.value = [];
+    activeEncounters.value = visits.map((visit) => ({
+      id: visit.id,
+      label: `${data.code} · ${visit.department || 'Visit'} · ${new Date(visit.created_at).toLocaleString('en-GB')}${visit.ccc_number ? ' · CCC ' + visit.ccc_number : ' · Cash'}`,
+      value: visit.id,
+      ...visit,
+      is_confidential: true,
+      confidential_code: data.code,
+    }));
+    if (activeEncounters.value.length === 1) {
+      selectedEncounterId.value = activeEncounters.value[0].id;
+      selectedEncounter.value = activeEncounters.value[0];
+      await loadEncounterData();
+    } else {
+      selectedEncounterId.value = null;
+      selectedEncounter.value = null;
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
 const searchPatient = async () => {
   if (!cardNumber.value || !cardNumber.value.trim()) {
     $q.notify({
@@ -1556,14 +1670,17 @@ const searchPatient = async () => {
     }
     
     if (patients.length === 0) {
-      patient.value = null;
-      activeEncounters.value = [];
-      wardAdmissions.value = [];
-      selectedEncounterId.value = null;
-      $q.notify({
-        type: 'info',
-        message: 'No patients found with that card number',
-      });
+      const opened = await openConfidentialBilling(cardNumber.value.trim());
+      if (!opened) {
+        patient.value = null;
+        activeEncounters.value = [];
+        wardAdmissions.value = [];
+        selectedEncounterId.value = null;
+        $q.notify({
+          type: 'info',
+          message: 'No client found for that card number or confidential code',
+        });
+      }
       return;
     }
     
@@ -1629,14 +1746,17 @@ const searchPatient = async () => {
       });
     }
   } catch (error) {
-    patient.value = null;
-    activeEncounters.value = [];
-    wardAdmissions.value = [];
-    selectedEncounterId.value = null;
-    $q.notify({
-      type: 'negative',
-      message: error.response?.data?.detail || 'Failed to search patients',
-    });
+    const opened = await openConfidentialBilling(cardNumber.value.trim());
+    if (!opened) {
+      patient.value = null;
+      activeEncounters.value = [];
+      wardAdmissions.value = [];
+      selectedEncounterId.value = null;
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to search patients',
+      });
+    }
   } finally {
     loadingPatient.value = false;
   }
@@ -1724,6 +1844,52 @@ const addDiagnosisToBill = async (diagnosisItem) => {
   }
 };
 
+const serviceGroupLabel = (item) => {
+  const raw = String(item?.service_group || item?.category || 'Other').trim();
+  const key = raw.toLowerCase();
+  const labels = {
+    lab: 'Lab',
+    scan: 'Scan',
+    xray: 'X-ray',
+    'x-ray': 'X-ray',
+    diagnose: 'Diagnose',
+    diagnosis: 'Diagnose',
+    drg: 'Diagnose',
+    surgery: 'Surgery',
+    pharmacy: 'Pharmacy',
+    drug: 'Pharmacy',
+    drugs: 'Pharmacy',
+    medication: 'Pharmacy',
+    procedure: 'Services',
+    service: 'Services',
+    services: 'Services',
+  };
+  return labels[key] || raw;
+};
+
+const groupBillServices = (items) => {
+  const order = ['Lab', 'Scan', 'X-ray', 'Pharmacy', 'Services', 'Diagnose', 'Surgery', 'Other'];
+  const groups = {};
+  (items || []).forEach((item) => {
+    const name = serviceGroupLabel(item);
+    if (!groups[name]) groups[name] = [];
+    const amount = item.total_price;
+    groups[name].push({
+      name: item.item_name || item.item_code || 'Item',
+      total: amount == null || amount === '' ? null : Number(amount),
+    });
+  });
+  const ordered = [];
+  order.forEach((name) => {
+    if (groups[name]?.length) ordered.push({ name, items: groups[name] });
+    delete groups[name];
+  });
+  Object.keys(groups).forEach((name) => {
+    if (groups[name].length) ordered.push({ name, items: groups[name] });
+  });
+  return ordered;
+};
+
 const loadExistingBills = async () => {
   if (billingModule.value === 'ipd') {
     // For IPD: Load all bills for all IPD encounters (ward admissions) of the patient
@@ -1735,7 +1901,7 @@ const loadExistingBills = async () => {
       let ipdEncounterIds = wardAdmissions.value.map(wa => wa.encounter_id);
       
       // If no ward admissions loaded yet, try to load them first
-      if (ipdEncounterIds.length === 0 && patient.value.card_number) {
+      if (ipdEncounterIds.length === 0 && patient.value.card_number && !patient.value.is_confidential) {
         console.log('No ward admissions found, attempting to load...');
         try {
           const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number, false);
@@ -1803,27 +1969,28 @@ const loadExistingBills = async () => {
           // Calculate remaining balance
           const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
           
-          // Group services by category/service group
-          const services = [];
-          if (billDetails?.bill_items) {
-            const serviceGroups = {};
-            billDetails.bill_items.forEach(item => {
-              const serviceGroup = item.service_group || item.category || 'Other';
-              if (!serviceGroups[serviceGroup]) {
-                serviceGroups[serviceGroup] = [];
-              }
-              serviceGroups[serviceGroup].push(item.item_name || item.item_code);
-            });
-            
-            Object.keys(serviceGroups).forEach(group => {
-              services.push(`${group}: ${serviceGroups[group].join(', ')}`);
-            });
-          }
+          const serviceGroups = groupBillServices(billDetails?.bill_items);
+          const lineItems = (billDetails?.bill_items || []).map((item) => ({
+            id: item.id,
+            item_code: item.item_code,
+            item_name: item.item_name || item.item_code || 'Item',
+            service_group: item.service_group || item.category || 'Other',
+            quantity: item.quantity,
+            total_price: Number(item.total_price || 0),
+            amount_paid: Number(item.amount_paid || 0),
+            remaining_balance: Number(item.remaining_balance || 0),
+            payment_info: item.payment_info || [],
+            cancelled: !!item.cancelled,
+            cancelled_by_name: item.cancelled_by_name || '',
+            paid: !item.cancelled && Number(item.remaining_balance || 0) <= 0.009,
+          }));
           
           return {
             ...bill,
             remaining_balance: remainingBalance,
-            services: services.join('; ') || 'No services',
+            serviceGroups,
+            lineItems,
+            services: serviceGroups.map((group) => `${group.name}: ${group.items.map((item) => item.name).join(', ')}`).join('; ') || 'No services',
             service_count: billDetails?.bill_items?.length || 0,
           };
         } catch (error) {
@@ -1832,6 +1999,8 @@ const loadExistingBills = async () => {
           return {
             ...bill,
             remaining_balance: remainingBalance,
+            serviceGroups: [],
+            lineItems: [],
             services: 'Details unavailable',
             service_count: 0,
           };
@@ -1839,6 +2008,7 @@ const loadExistingBills = async () => {
       }));
       
       existingBills.value = enrichedBills;
+      selectUnpaidLines(enrichedBills);
       console.log('Final enriched bills:', enrichedBills.length, 'bills loaded');
       if (enrichedBills.length === 0) {
         console.warn('No bills found for IPD encounters. Encounter IDs searched:', ipdEncounterIds);
@@ -1868,27 +2038,28 @@ const loadExistingBills = async () => {
           // Calculate remaining balance
           const remainingBalance = (bill.total_amount || 0) - (bill.paid_amount || 0);
           
-          // Group services by category/service group
-          const services = [];
-          if (billDetails?.bill_items) {
-            const serviceGroups = {};
-            billDetails.bill_items.forEach(item => {
-              const serviceGroup = item.service_group || item.category || 'Other';
-              if (!serviceGroups[serviceGroup]) {
-                serviceGroups[serviceGroup] = [];
-              }
-              serviceGroups[serviceGroup].push(item.item_name || item.item_code);
-            });
-            
-            Object.keys(serviceGroups).forEach(group => {
-              services.push(`${group}: ${serviceGroups[group].join(', ')}`);
-            });
-          }
+          const serviceGroups = groupBillServices(billDetails?.bill_items);
+          const lineItems = (billDetails?.bill_items || []).map((item) => ({
+            id: item.id,
+            item_code: item.item_code,
+            item_name: item.item_name || item.item_code || 'Item',
+            service_group: item.service_group || item.category || 'Other',
+            quantity: item.quantity,
+            total_price: Number(item.total_price || 0),
+            amount_paid: Number(item.amount_paid || 0),
+            remaining_balance: Number(item.remaining_balance || 0),
+            payment_info: item.payment_info || [],
+            cancelled: !!item.cancelled,
+            cancelled_by_name: item.cancelled_by_name || '',
+            paid: !item.cancelled && Number(item.remaining_balance || 0) <= 0.009,
+          }));
           
           return {
             ...bill,
             remaining_balance: remainingBalance,
-            services: services.join('; ') || 'No services',
+            serviceGroups,
+            lineItems,
+            services: serviceGroups.map((group) => `${group.name}: ${group.items.map((item) => item.name).join(', ')}`).join('; ') || 'No services',
             service_count: billDetails?.bill_items?.length || 0,
           };
         } catch (error) {
@@ -1897,6 +2068,8 @@ const loadExistingBills = async () => {
           return {
             ...bill,
             remaining_balance: remainingBalance,
+            serviceGroups: [],
+            lineItems: [],
             services: 'Details unavailable',
             service_count: 0,
           };
@@ -1904,6 +2077,7 @@ const loadExistingBills = async () => {
       }));
       
       existingBills.value = enrichedBills;
+      selectUnpaidLines(enrichedBills);
     } catch (error) {
       console.error('Failed to load bills:', error);
       existingBills.value = [];
@@ -2105,8 +2279,7 @@ const receiptItemColumnsWithInputs = [
   { name: 'item_code', label: 'Code', field: 'item_code', align: 'left' },
   { name: 'item_name', label: 'Name', field: 'item_name', align: 'left' },
   { name: 'total_price', label: 'Item Total', field: 'total_price', align: 'right', format: (val) => `₵${val.toFixed(2)}` },
-  { name: 'receipt_number', label: 'Receipt Number', field: 'receipt_number', align: 'left' },
-  { name: 'amount_paid', label: 'Amount Paid', field: 'amount_paid', align: 'right' },
+  { name: 'amount_paid', label: 'Amount', field: 'amount_paid', align: 'right' },
 ];
 
 const receiptItemsWithFields = computed(() => {
@@ -2521,42 +2694,147 @@ const updateReceiptItemData = (itemId, field, value) => {
   receiptItemData.value[itemId][field] = value;
 };
 
-const openReceiptDialog = async (bill) => {
+const sharedReceiptNumber = ref('');
+const selectedLineKeys = ref({});
+const LINE_GROUP_ORDER = ['Lab', 'Scan', 'X-ray', 'Pharmacy', 'Services', 'Diagnose', 'Surgery', 'Other'];
+const groupLabel = (name) => (name === 'Pharmacy' ? 'Drugs' : name);
+
+const billGroups = (bill) => {
+  const buckets = {};
+  (bill?.lineItems || []).forEach((item) => {
+    const name = item.service_group || 'Other';
+    if (!buckets[name]) buckets[name] = [];
+    buckets[name].push(item);
+  });
+  const ordered = [];
+  LINE_GROUP_ORDER.forEach((name) => {
+    if (buckets[name]?.length) ordered.push({ name, items: buckets[name] });
+    delete buckets[name];
+  });
+  Object.keys(buckets).forEach((name) => {
+    if (buckets[name].length) ordered.push({ name, items: buckets[name] });
+  });
+  return ordered;
+};
+
+const groupUnpaid = (bill, groupName) => unpaidLines(bill).filter((item) => (item.service_group || 'Other') === groupName);
+
+const allGroupSelected = (bill, groupName) => {
+  const lines = groupUnpaid(bill, groupName);
+  return lines.length > 0 && lines.every((item) => isLineSelected(bill.id, item.id));
+};
+
+const toggleGroup = (bill, groupName, checked) => {
+  const next = { ...selectedLineKeys.value };
+  groupUnpaid(bill, groupName).forEach((item) => {
+    const key = lineKey(bill.id, item.id);
+    if (checked) next[key] = true;
+    else delete next[key];
+  });
+  selectedLineKeys.value = next;
+};
+
+const lineKey = (billId, itemId) => `${billId}:${itemId}`;
+
+const unpaidLines = (bill) => (bill?.lineItems || []).filter((item) => !item.cancelled && !item.paid && Number(item.remaining_balance || 0) > 0.009);
+
+const isLineSelected = (billId, itemId) => !!selectedLineKeys.value[lineKey(billId, itemId)];
+
+const selectedUnpaidCount = (bill) => unpaidLines(bill).filter((item) => isLineSelected(bill.id, item.id)).length;
+
+const allUnpaidSelected = (bill) => {
+  const unpaid = unpaidLines(bill);
+  return unpaid.length > 0 && unpaid.every((item) => isLineSelected(bill.id, item.id));
+};
+
+const toggleLine = (bill, item, checked) => {
+  const key = lineKey(bill.id, item.id);
+  const next = { ...selectedLineKeys.value };
+  if (checked) next[key] = true;
+  else delete next[key];
+  selectedLineKeys.value = next;
+};
+
+const toggleAllUnpaid = (bill, checked) => {
+  const next = { ...selectedLineKeys.value };
+  unpaidLines(bill).forEach((item) => {
+    const key = lineKey(bill.id, item.id);
+    if (checked) next[key] = true;
+    else delete next[key];
+  });
+  selectedLineKeys.value = next;
+};
+
+const selectUnpaidLines = (bills) => {
+  const next = {};
+  (bills || []).forEach((bill) => {
+    unpaidLines(bill).forEach((item) => {
+      next[lineKey(bill.id, item.id)] = true;
+    });
+  });
+  selectedLineKeys.value = next;
+};
+
+const cancelLine = (item) => {
+  $q.dialog({
+    title: 'Cancel line',
+    message: `Cancel ${item.item_name}? It stays on the bill and comes off the amount due.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      await billingAPI.cancelBillItem(item.id);
+      $q.notify({
+        type: 'positive',
+        message: `${item.item_name} cancelled`,
+      });
+      await loadExistingBills();
+    } catch (error) {
+      $q.notify({
+        type: 'negative',
+        message: error.response?.data?.detail || 'Failed to cancel line',
+      });
+    }
+  });
+};
+
+const paySelected = (bill) => {
+  const ids = unpaidLines(bill).filter((item) => isLineSelected(bill.id, item.id)).map((item) => item.id);
+  if (!ids.length) {
+    $q.notify({
+      type: 'warning',
+      message: 'Select at least one unpaid item',
+    });
+    return;
+  }
+  openReceiptDialog(bill, ids);
+};
+
+const openReceiptDialog = async (bill, onlyIds = null) => {
   try {
     const response = await billingAPI.getBillDetails(bill.id);
-    // Handle both response.data and response.data.data structures
     const billData = response.data?.data || response.data;
-    currentBillForReceipt.value = billData;
-    
-    // Initialize receipt item data for all items
-    receiptItemData.value = {};
     const billItems = billData?.bill_items || [];
-    billItems.forEach(item => {
-      if (!item || !item.id) return;
-      // Use remaining balance if available, otherwise use total price
-      const defaultAmount = (item.remaining_balance && item.remaining_balance > 0) ? item.remaining_balance : (item.total_price || 0);
+    const unpaid = billItems.filter((item) => item && item.id && Number(item.remaining_balance || 0) > 0.009);
+    const chosen = onlyIds ? unpaid.filter((item) => onlyIds.includes(item.id)) : unpaid;
+    if (!chosen.length) {
+      $q.notify({
+        type: 'info',
+        message: 'Those items are already paid',
+      });
+      return;
+    }
+    currentBillForReceipt.value = { ...billData, bill_items: chosen };
+    receiptItemData.value = {};
+    chosen.forEach((item) => {
       receiptItemData.value[item.id] = {
         receipt_number: '',
-        amount_paid: defaultAmount,
+        amount_paid: Number(item.remaining_balance),
       };
     });
-    
-    // Select unpaid items by default
-    const billDetails = billData;
-    const totalAmount = billDetails?.total_amount || 0;
-    const paidAmount = billDetails?.paid_amount || 0;
-    const remainingBalance = totalAmount - paidAmount;
-    
-    // If there's remaining balance, select items that have remaining balance
-    if (remainingBalance > 0 && billItems.length > 0) {
-      selectedBillItems.value = billItems.filter(
-        item => item && item.remaining_balance && item.remaining_balance > 0
-      );
-    } else {
-      selectedBillItems.value = [];
-    }
-    
+    selectedBillItems.value = [...chosen];
     receiptPaymentMethod.value = 'cash';
+    sharedReceiptNumber.value = '';
     showReceiptDialog.value = true;
   } catch (error) {
     console.error('Error opening receipt dialog:', error);
@@ -2576,32 +2854,31 @@ const createReceiptWithItems = async () => {
     return;
   }
 
-  // Validate all selected items have receipt numbers and amounts
-  const missingFields = [];
+  const shared = (sharedReceiptNumber.value || '').trim();
+  if (!shared) {
+    $q.notify({
+      type: 'warning',
+      message: 'Enter one receipt number. It covers every selected line.',
+    });
+    return;
+  }
+
   const invalidAmounts = [];
   
   for (const item of selectedBillItems.value) {
     const itemData = receiptItemData.value[item.id];
-    
-    if (!itemData || !itemData.receipt_number || !itemData.receipt_number.trim()) {
-      missingFields.push(item.item_name);
-    }
+    if (itemData) itemData.receipt_number = shared;
     
     if (!itemData || !itemData.amount_paid || itemData.amount_paid <= 0) {
       invalidAmounts.push(item.item_name);
     }
     
-    if (itemData && itemData.amount_paid > item.total_price) {
-      invalidAmounts.push(`${item.item_name} (exceeds total: ₵${item.total_price.toFixed(2)})`);
+    const remaining = Number(item.remaining_balance || 0);
+    if (item.paid || remaining <= 0.009) {
+      invalidAmounts.push(`${item.item_name} is already paid`);
+    } else if (itemData && itemData.amount_paid - remaining > 0.009) {
+      invalidAmounts.push(`${item.item_name} (exceeds balance: ₵${remaining.toFixed(2)})`);
     }
-  }
-  
-  if (missingFields.length > 0) {
-    $q.notify({
-      type: 'warning',
-      message: `Please enter receipt numbers for: ${missingFields.join(', ')}`,
-    });
-    return;
   }
   
   if (invalidAmounts.length > 0) {
@@ -2717,12 +2994,9 @@ const saveManualReceipt = async () => {
   }
 };
 
-const confirmDeleteReceipt = (receiptId, billItemId) => {
-  // Find the receipt_item_id from payment_info
+const confirmDeleteReceipt = (receiptId, billItemId, knownPayment = null) => {
   const billItem = billItemsWithReceipts.value.find(item => item.id === billItemId);
-  if (!billItem || !billItem.payment_info) return;
-
-  const payment = billItem.payment_info.find(p => p.receipt_id === receiptId);
+  const payment = knownPayment || billItem?.payment_info?.find(p => p.receipt_id === receiptId);
   if (!payment || !payment.receipt_item_id) return;
 
   $q.dialog({
@@ -2739,7 +3013,7 @@ const confirmDeleteReceipt = (receiptId, billItemId) => {
         message: 'Receipt deleted successfully',
       });
 
-      // Reload bill details
+      await loadExistingBills();
       if (currentBillDetails.value) {
         await viewBillDetails(currentBillDetails.value.id);
       }
@@ -2767,7 +3041,7 @@ const confirmRefundReceipt = (receiptId) => {
         message: 'Receipt refunded successfully',
       });
 
-      // Reload bill details
+      await loadExistingBills();
       if (currentBillDetails.value) {
         await viewBillDetails(currentBillDetails.value.id);
       }
@@ -3002,7 +3276,7 @@ watch(billingModule, async () => {
   existingBills.value = [];
   
   // Reload ward admissions if patient is already loaded
-  if (patient.value) {
+  if (patient.value && !patient.value.is_confidential) {
     try {
       const wardAdmissionsResponse = await consultationAPI.getWardAdmissionsByPatientCard(patient.value.card_number);
       wardAdmissions.value = wardAdmissionsResponse.data || [];
@@ -3028,6 +3302,19 @@ const autoLoadFromRoute = async () => {
       // Get encounter details to get patient info
       const encounterResponse = await encountersAPI.get(encounterId);
       const encounter = encounterResponse.data;
+
+      if (encounter?.is_confidential) {
+        const opened = await openConfidentialBilling(encounter.confidential_code || encounter.patient_name);
+        if (opened) {
+          const match = activeEncounters.value.find((item) => item.id === encounterId);
+          if (match) {
+            selectedEncounterId.value = encounterId;
+            selectedEncounter.value = match;
+            await loadEncounterData();
+          }
+        }
+        return;
+      }
       
       if (encounter && encounter.patient_id) {
         // Get patient info
@@ -3208,9 +3495,50 @@ onMounted(() => {
 }
 .total-value { font-size: var(--hms-text-lg); font-weight: 750; color: var(--hms-text-primary); font-variant-numeric: tabular-nums; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-.services-cell {
-  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--hms-text-secondary); font-size: var(--hms-text-sm);
+.services-td { vertical-align: top; }
+.services-breakdown {
+  max-height: 240px; overflow-y: auto; min-width: 240px; max-width: 440px;
+  padding-right: 0.25rem;
+}
+.services-empty { color: var(--hms-text-muted); font-size: var(--hms-text-sm); }
+.service-group { margin-bottom: 0.45rem; }
+.service-group-name {
+  font-size: 0.68rem; font-weight: 750; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--hms-text-muted);
+}
+.service-line {
+  display: flex; justify-content: space-between; gap: 0.75rem;
+  font-size: var(--hms-text-sm); color: var(--hms-text-secondary); padding: 0.08rem 0;
+}
+.service-amt { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--hms-text-primary); }
+.bill-list { display: flex; flex-direction: column; gap: 0.85rem; padding: 0.75rem 0.85rem 1rem; }
+.bill-card {
+  border: 1px solid var(--hms-border); border-radius: var(--hms-radius-lg);
+  overflow: hidden; background: var(--hms-surface);
+}
+.bill-card-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.55rem; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--hms-border);
+}
+.bill-card-title { font-weight: 700; color: var(--hms-text-primary); }
+.bill-card-sub { margin-top: 0.15rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted); }
+.line-table { width: 100%; border-collapse: collapse; }
+.line-table th, .line-table td {
+  padding: 0.45rem 0.65rem; text-align: left; border-bottom: 1px solid var(--hms-border);
+  font-size: var(--hms-text-sm); vertical-align: middle;
+}
+.line-table th { font-size: 0.68rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hms-text-muted); }
+.line-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.line-table .line-check { width: 42px; }
+.group-head-row { background: color-mix(in srgb, var(--hms-healthcare, #0f6e56) 8%, transparent); }
+.group-head-row td { border-bottom: 1px solid var(--hms-border); }
+.group-head-note { margin-left: 0.55rem; font-size: var(--hms-text-xs); font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--hms-text-muted); }
+.line-paid { background: color-mix(in srgb, var(--hms-success) 8%, transparent); }
+.line-cancelled { background: color-mix(in srgb, var(--hms-text-muted) 8%, transparent); }
+.cancelled-name { text-decoration: line-through; }
+.line-receipt {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+  margin-top: 0.2rem; font-size: var(--hms-text-xs); color: var(--hms-text-muted);
 }
 .amt-due { color: var(--hms-critical); font-weight: 700; font-variant-numeric: tabular-nums; }
 .amt-ok { color: var(--hms-success); font-weight: 650; font-variant-numeric: tabular-nums; }

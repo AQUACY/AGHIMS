@@ -34,6 +34,23 @@
         </q-btn>
         <q-btn
           flat
+          round
+          dense
+          icon="notifications"
+          class="header-icon-btn"
+          @click="showNotifications = true"
+        >
+          <q-badge
+            v-if="unreadNotificationCount > 0"
+            color="negative"
+            :label="unreadNotificationCount > 99 ? '99+' : unreadNotificationCount"
+            floating
+            rounded
+          />
+          <q-tooltip>Notifications ({{ unreadNotificationCount }} unread)</q-tooltip>
+        </q-btn>
+        <q-btn
+          flat
           dense
           round
           :icon="themeStore.isDark ? 'light_mode' : 'dark_mode'"
@@ -315,15 +332,28 @@
       <router-view />
     </q-page-container>
   </q-layout>
+
+  <q-dialog
+    v-model="showNotifications"
+    class="notice-sheet"
+    position="right"
+    full-height
+    transition-show="slide-left"
+    transition-hide="slide-right"
+  >
+    <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
+  </q-dialog>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { useThemeStore } from '../stores/theme';
 import { useFacilityStore } from '../stores/facility';
 import { useQuasar } from 'quasar';
+import { notificationsAPI } from '../services/api';
+import NotificationsPanel from '../components/NotificationsPanel.vue';
 import LicenseTitleLink from '../components/LicenseTitleLink.vue';
 
 const $q = useQuasar();
@@ -332,6 +362,41 @@ const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const facilityStore = useFacilityStore();
 const drawerOpen = ref(true);
+const showNotifications = ref(false);
+const unreadNotificationCount = ref(0);
+const notificationPollInterval = ref(null);
+
+const loadUnreadNotificationCount = async () => {
+  try {
+    const response = await notificationsAPI.getUnreadCount();
+    unreadNotificationCount.value = response.data.unread_count || 0;
+  } catch (error) {
+    console.error('Error loading notification count:', error);
+  }
+};
+
+const startNotificationPolling = () => {
+  if (notificationPollInterval.value) clearInterval(notificationPollInterval.value);
+  notificationPollInterval.value = setInterval(() => {
+    if (authStore.isAuthenticated) loadUnreadNotificationCount();
+  }, 30000);
+  loadUnreadNotificationCount();
+};
+
+const stopNotificationPolling = () => {
+  if (notificationPollInterval.value) {
+    clearInterval(notificationPollInterval.value);
+    notificationPollInterval.value = null;
+  }
+};
+
+onMounted(() => {
+  if (authStore.isAuthenticated) startNotificationPolling();
+});
+
+onUnmounted(() => {
+  stopNotificationPolling();
+});
 const isSuperAdmin = computed(() => authStore.isSuperAdmin);
 const canAccessAdminOrSuper = computed(() => authStore.canAccess(['Admin']) || authStore.isSuperAdmin);
 const canAccessAuditLogs = computed(() => authStore.canAccess(['Admin', 'Auditor']));

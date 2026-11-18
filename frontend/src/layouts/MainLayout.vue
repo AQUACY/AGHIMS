@@ -97,18 +97,15 @@
 
   <CommandPalette v-model="showCommandPalette" />
 
-  <!-- Notifications Dialog -->
-  <q-dialog v-model="showNotifications">
-    <q-card class="notifications-dialog-card">
-      <q-card-section class="row items-center q-pb-none">
-        <div class="text-h6">Notifications</div>
-        <q-space />
-        <q-btn flat dense round icon="close" v-close-popup />
-      </q-card-section>
-      <q-card-section>
-        <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
-      </q-card-section>
-    </q-card>
+  <q-dialog
+    v-model="showNotifications"
+    class="notice-sheet"
+    position="right"
+    full-height
+    transition-show="slide-left"
+    transition-hide="slide-right"
+  >
+    <NotificationsPanel @close="showNotifications = false" @count-updated="loadUnreadNotificationCount" />
   </q-dialog>
 </template>
 

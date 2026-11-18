@@ -724,6 +724,7 @@ export const billingAPI = {
   deleteBill: (billId) => api.delete(`/billing/bill/${billId}`),
   updateBill: (billId, data) => api.put(`/billing/bill/${billId}`, data),
   updateBillItem: (billItemId, data) => api.put(`/billing/bill-item/${billItemId}`, data),
+  cancelBillItem: (billItemId) => api.post(`/billing/bill-item/${billItemId}/cancel`),
   getOpdCccForEncounter: (encounterId) => api.get(`/billing/encounter/${encounterId}/opd-ccc`),
   recalculateBillingWithInsurance: (encounterId, data) => api.post(`/billing/encounter/${encounterId}/recalculate-insurance`, data),
   /** Parse government IPD (in-patient) invoice file (.xls/.xlsx). For companion app IPD check. */

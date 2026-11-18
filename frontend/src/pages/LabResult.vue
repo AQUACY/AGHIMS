@@ -14,14 +14,22 @@
         <div>
           <div class="result-hero-name-row">
             <h1 class="result-hero-name">{{ patientDisplayName }}</h1>
-            <HmsBadge :tone="patient.insured ? 'success' : 'warning'">
+            <HmsBadge v-if="patient.is_confidential" tone="warning">Confidential</HmsBadge>
+            <HmsBadge v-else :tone="patient.insured ? 'success' : 'warning'">
               {{ patient.insured ? 'Insured' : 'Cash & carry' }}
             </HmsBadge>
             <HmsBadge v-if="investigation?.status" :tone="statusTone(investigation.status)">
               {{ investigation.status }}
             </HmsBadge>
           </div>
-          <div class="result-hero-meta">
+          <div v-if="patient.is_confidential" class="result-hero-meta">
+            <span class="mono">{{ patient.name }}</span>
+            <span class="sep">·</span>
+            <span>{{ (patient.ccc_number || encounter?.ccc_number) ? ('CCC ' + (patient.ccc_number || encounter.ccc_number)) : 'Cash' }}</span>
+            <span class="sep">·</span>
+            <span>{{ formatDate(encounter?.created_at || investigation?.created_at) || '—' }}</span>
+          </div>
+          <div v-else class="result-hero-meta">
             <span class="mono">{{ patient.card_number || '—' }}</span>
             <span class="sep">·</span>
             <span>{{ patient.gender || '—' }}</span>
@@ -571,8 +579,21 @@ const loadInvestigation = async () => {
           }
         }
         
-        // Load patient from encounter to ensure correct patient
-        if (encounter.value && encounter.value.patient_id) {
+        // Confidential visits stay on the code. Do not load the client record.
+        if (encounter.value?.is_confidential || investigation.value?.is_confidential) {
+          const code = encounter.value?.confidential_code || investigation.value?.confidential_code || investigation.value?.patient_name || 'Confidential';
+          patient.value = {
+            name: code,
+            surname: '',
+            other_names: '',
+            card_number: '',
+            is_confidential: true,
+            ccc_number: encounter.value?.ccc_number || investigation.value?.ccc_number || null,
+            insured: !!(encounter.value?.ccc_number || investigation.value?.ccc_number),
+            gender: '',
+            age: null,
+          };
+        } else if (encounter.value && encounter.value.patient_id) {
           try {
             const patientResponse = await patientsAPI.get(encounter.value.patient_id);
             patient.value = patientResponse.data;
