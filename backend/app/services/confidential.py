@@ -24,7 +24,6 @@ _IDENTITY_CLEAR = (
     "patient_address",
     "patient_surname",
     "patient_other_names",
-    "ccc_number",
 )
 
 
@@ -67,7 +66,7 @@ def format_code(prefix: str, number: int, pad: int) -> str:
 
 
 def redact_service_payload(payload: dict, *, confidential: bool, code: Optional[str], reveal: bool) -> dict:
-    """Replace identity with the visit code on service-point payloads."""
+    """Replace identity with the visit code. The visit CCC stays, so pharmacy, labs, and scans still bill insurance."""
     data = dict(payload)
     data["is_confidential"] = bool(confidential)
     data["confidential_code"] = code if confidential else None

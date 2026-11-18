@@ -71,6 +71,7 @@ def _encounter_brief(encounter: Encounter) -> dict:
         "procedure_g_drg_code": encounter.procedure_g_drg_code,
         "created_at": encounter.created_at,
         "finalized_at": encounter.finalized_at,
+        "ccc_number": encounter.ccc_number,
         "is_confidential": True,
         "confidential_code": encounter.code_link.code if encounter.code_link else None,
     }

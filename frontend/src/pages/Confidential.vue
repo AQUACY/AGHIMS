@@ -258,7 +258,7 @@
       <q-card class="follow-card">
         <q-card-section>
           <div class="text-h6">Follow-up on {{ followUpTarget?.code }}</div>
-          <p class="hint">Choose the priced service. The claim uses that G-DRG code. The client keeps the same visit code.</p>
+          <p class="hint">The client keeps the same visit code. If they are insured, this follow-up needs its own CCC. Drugs, labs, and scans on this visit use that CCC. A cash client can leave it empty.</p>
         </q-card-section>
         <q-card-section class="stack">
           <q-select
@@ -299,7 +299,15 @@
             The claim will use <strong>{{ followProcedure.g_drg_code }}</strong>
           </div>
           <div class="ccc-row">
-            <q-input v-model="followCcc" filled dense class="col" label="CCC number, if any" maxlength="20" />
+            <q-input
+              v-model="followCcc"
+              filled
+              dense
+              class="col"
+              :label="followCccRequired ? 'CCC number' : 'CCC number, if any'"
+              :hint="followCccHint"
+              maxlength="20"
+            />
             <q-btn
               v-if="followUpTarget?.patient_id"
               color="secondary"
@@ -313,7 +321,7 @@
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Cancel" @click="followUpOpen = false" />
-          <q-btn color="primary" label="Open follow-up" :loading="busy" :disable="!followProcedure" @click="submitFollowUp" />
+          <q-btn color="primary" label="Open follow-up" :loading="busy" :disable="!canOpenFollowUp" @click="submitFollowUp" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -402,6 +410,14 @@ const chosenCodeLabel = computed(() => {
 });
 const canGive = computed(() => !!selectedPatient.value && !!selectedServiceType.value && !!selectedProcedure.value && !!chosenCodeId.value && (!cccRequired.value || !!cccNumber.value.trim()));
 const canGetFollowCcc = computed(() => canFetchNhiaCcc(followUpTarget.value));
+const followCccRequired = computed(() => canGetFollowCcc.value);
+const followCccHint = computed(() => {
+  const person = followUpTarget.value;
+  if (!person?.insured) return 'Optional for a cash client. Type a CCC or leave it empty.';
+  if (!person?.nhis_active) return 'Inactive NHIS. This follow-up is cash, and Get CCC stays off.';
+  return 'Required for active NHIS. Get CCC for this follow-up, or type it. Medications, labs, and scans on this visit use it.';
+});
+const canOpenFollowUp = computed(() => !!followProcedure.value && (!followCccRequired.value || !!followCcc.value.trim()));
 
 const visitLine = (visit) => {
   const service = visit.procedure_name || visit.department || 'General';
@@ -666,7 +682,7 @@ const openFollowUp = (target) => {
 };
 
 const submitFollowUp = async () => {
-  if (!followUpTarget.value?.code || !followServiceType.value || !followProcedure.value) return;
+  if (!canOpenFollowUp.value || !followUpTarget.value?.code || !followServiceType.value) return;
   busy.value = true;
   try {
     const response = await confidentialAPI.followUp({

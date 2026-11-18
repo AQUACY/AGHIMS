@@ -37,7 +37,7 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(shown["patient_name"], "SCRN0001")
         self.assertIsNone(shown["patient_card_number"])
         self.assertIsNone(shown["patient_insurance_id"])
-        self.assertIsNone(shown["ccc_number"])
+        self.assertEqual(shown["ccc_number"], "12345")
         self.assertEqual(shown["department"], "General")
         self.assertTrue(shown["is_confidential"])
 
